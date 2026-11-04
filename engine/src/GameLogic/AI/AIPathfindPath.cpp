@@ -183,12 +183,6 @@ void Path::updateLastNode(const Coord3D *pos)
 
 namespace
 {
-// RW 0x76550F
-inline bool isGroundLayer(PathfindLayerEnum l)
-{
-	return l == LAYER_GROUND || (int)l >= 16;
-}
-
 // RW aligned(c, a, step): the candidate is exactly `step` units away from the anchor on a straight or a diagonal line
 inline bool aligned(const PathNode *c, const PathNode *a, int step)
 {

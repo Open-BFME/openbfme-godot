@@ -206,7 +206,8 @@ TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's ga
 	CHECK(c.firstHit == 20);
 	CHECK(c.deathFrame == 190);
 	const GateRun t = pinnedRun(*s, kHelmsDeep, "Main Gate", "GondorTrebuchet", 400.0f, 600);
-	CHECK(t.contactsWhileStanding == 0);
+	// lane WALLSEARCH-1 (a goal in a ramp or wall-top cell is searched exactly, RW 0x6FD2B2 / 0x6EA4E7: main's allowsLayer made it approximate; measured on the lane's tree): a wanderer's goal on a ramp cell gets an exact path, the scatter moves: 0 -> 1
+	CHECK(t.contactsWhileStanding == 1);
 	CHECK(t.firstHit == 19);
 	CHECK(t.deathFrame == 341);
 	const GateRun dc = pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenCatapult", 400.0f, 600);

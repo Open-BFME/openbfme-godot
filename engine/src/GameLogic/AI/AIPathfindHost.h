@@ -44,6 +44,8 @@ enum PathfindLayerEnum
 };
 
 inline bool isWallLayer(PathfindLayerEnum l) { return (int)l >= (int)LAYER_WALL_FIRST && (int)l <= (int)LAYER_WALL_LAST; }
+// RW 0x76550F (BFME2 0x6E6E6C): a layer of the ground grid, the ground, the ramp or a wall top (no raised walkway grid)
+inline bool isGroundLayer(PathfindLayerEnum l) { return l == LAYER_GROUND || (int)l >= (int)LAYER_RAMP; }
 // RW 0x5E2F24 (IS_BRIDGE_LAYER): 2 .. 15
 inline bool isRaisedLayer(PathfindLayerEnum l) { return (int)l >= (int)LAYER_TOP && (int)l <= (int)LAYER_RAISED_LAST; }
 

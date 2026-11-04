@@ -1093,8 +1093,9 @@ public:
 	float getLayerHeight(float x, float y, PathfindLayerEnum layer) const;
 	// ZH TerrainLogic::getHighestLayerForDestination + getLayerHeight: the highest walkable surface at (x, y) (a wall top or a ramp over the terrain)
 	float getHighestLayerHeight(float x, float y) const;
-	// lane WALL-2 (review #63): the layer a search aims at for the point `to`: a raised walkway's when getLayerAt (RW 0x680A75) names one there, else the
-	// ground grid (wall tops and ramps are layers of the ground grid's cells, as before)
+	// lane WALL-2 (review #63): the layer whose grid holds the cell at the point `to`: a raised walkway's when getLayerAt (RW 0x680A75) names one there,
+	// else the ground grid (wall tops and ramps are layers of the ground grid's cells). Lane WALLSEARCH-1: a cell lookup only; internalFindPath and
+	// adjustToPossibleDestination take getLayerAt's own answer (a wall top's or the ramp's layer, RW 0x6FD2B2 / 0x6F3C87)
 	PathfindLayerEnum searchDestinationLayer(const Coord3D &to) const;
 	// the layer of the walkable surface a point stands on (TerrainLogic::getLayerForDestination RW 0x680A75 / BFME2 0x6802FE: a ramp under it first, then a
 	// raised layer whose passable cell is there and whose height is less than 25 above `z` (RW 0x6EE600), else the ground grid cell's layer). The form
