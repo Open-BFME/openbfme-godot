@@ -257,8 +257,8 @@ Dictionary PathfindView::build(const Ref<RetailFileSystem> &fsRef, const String 
 	report["width"] = s.width;
 	report["height"] = s.height;
 	Dictionary cells;
-	static const char *names[8] = { "clear", "water", "cliff", "rubble", "obstacle", "bridge_impassable", "impassable", "deep_water" };
-	for (int i = 0; i < 8; ++i) cells[names[i]] = s.types[i];
+	static const char *names[9] = { "clear", "water", "cliff", "rubble", "obstacle", "bridge_impassable", "impassable", "deep_water", "wall_edge" };
+	for (int i = 0; i < 9; ++i) cells[names[i]] = s.types[i];
 	cells["pinched"] = s.pinched;
 	cells["impassable_to_players"] = s.impassableToPlayers;
 	cells["extra_pass"] = s.extraPass;
@@ -317,6 +317,7 @@ Dictionary PathfindView::get_overlay(const Dictionary &options)
 			case PathfindCell::CELL_OBSTACLE: col = Color(1.0f, 0.95f, 0.1f, a); break;
 			case PathfindCell::CELL_IMPASSABLE:
 			case PathfindCell::CELL_BRIDGE_IMPASSABLE: col = Color(0.2f, 1.0f, 0.2f, a); break;
+			case PathfindCell::CELL_WALL_EDGE: col = Color(0.75f, 0.2f, 1.0f, a); break; // lane WALL-5: a wall top's rim
 			default:
 				draw = false;
 				if (showPinched && c->getPinched())

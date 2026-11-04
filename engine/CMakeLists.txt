@@ -926,11 +926,14 @@ add_executable(openbfme_tests
     # ---- PATH-1 (pathfinder, AI move path) ----
     tests/test_pathfind_cells.cpp
     tests/test_pathfind_grid.cpp
+    tests/test_qpath1.cpp
     tests/test_pathfind_path.cpp
     tests/test_pathfind_retail.cpp
     tests/test_pathfind_retail_search.cpp
     tests/test_pathfind_move.cpp
     tests/test_pathfind_numerics.cpp
+    tests/test_locodist1.cpp
+    tests/test_sails1.cpp
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp

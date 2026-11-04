@@ -201,7 +201,7 @@ void Pathfinder::xferWalls(Xfer &x, WallState &w)
 			throw XferException("pathfinder: raised layer " + std::to_string(l) + " of " + std::to_string(r.width) + " x " + std::to_string(r.depth) + " cells");
 		}
 		// the wall connect cells (+ 0x18 / + 0x20, saved by RW's layer xfer RW 0x7683B8) in their live order: a removed piece's rebuild resets them and
-		// gives back only those of the ramps it meets (restampWalls), which the ramps on the map need not make again
+		// the ramps give them back (lane WALL-5: restampWalls stamps every ramp, newest first, RW 0x935BFF)
 		if (version >= 2)
 		{
 			for (int k = 0; k < 2; ++k)

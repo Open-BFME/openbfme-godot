@@ -156,6 +156,10 @@ struct Unit : AIMoveHost
 	float closeEnoughDist() const override { return 10.0f; }
 	float locomotorSpeed() const override { return loco->speed(); }
 	bool movingBackwards() const override { return false; }
+	bool isProjectile() const override { return false; }
+	bool treatAsAircraftForLocoDistToGoal() const override { return false; }
+	Coord3D machineGoal{};
+	Coord3D machineGoalPosition() const override { return machineGoal; }
 	bool setModelCondition(const char *, bool) override { return true; }
 	float relativeAngleTo(const Coord3D &p) const override { return std::atan2(p.y - obj.pos.y, p.x - obj.pos.x) - angle; }
 	const PathfindObject *findPathfindObject(PathfindObjectID id) override; // lane ATTACKPATH-1: the attack path's victim lookup
@@ -606,7 +610,7 @@ TEST_CASE("ai move: the repath cadence: a path found from the queue is not asked
 	// onEnter queued one request; after the path came, update asked for none or one more (the quick path leaves pathGoal stale)
 	CHECK(u.state->pathRequests() <= 2);
 	CHECK(u.ai->path() != nullptr);
-	CHECK(AIMover::allStops().size() == 6);
+	CHECK(AIMover::allStops().size() == 5);
 	for (const std::string &s : AIMover::allStops())
 	{
 		CHECK(s.compare(0, 6, "S-166 ") == 0);

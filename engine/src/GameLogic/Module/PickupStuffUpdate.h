@@ -39,11 +39,10 @@
 //     every rate whose product needs no more than the extended mantissa (any rate above 2^-24);
 //   * the snapshot is OpenBFME native (S-4190): RW's fields in RW's order.
 // NOT PORTED (stop S-1422): SpecialAbilityUpdate's use of the same temporary machine (its initiate RW 0x852FB1 begins one, its finish RW 0x853105 gives it
-// back: S-859), so a skirmish AI's hero ability does not end a pick-up's machine. The crates: the CRATEs of the 2.01 data the scan can find (SalvageCrate and
-// its treasure chests) are collected by SalvageCrateCollide (ported: SalvageCrateCollide.h; its contacts: AIWorld::processCrateContacts), and the
-// collected crate is gone. A crate of another crate collide class (the 2.01 VeterancyCrateCollide of TreasureChestLevelUpMedium / Moria, not ported) has no runtime here: it
-// would stay and the horde would walk back to it every ScanIntervalSeconds for the rest of the game, so a scan whose stuff is such a crate begins no
-// pick-up (crateCollideRuns; counted, the stop noted).
+// back: S-859), so a skirmish AI's hero ability does not end a pick-up's machine.
+// Both SalvageCrateCollide and VeterancyCrateCollide are recognized by the existing
+// collide-interface guard and shared AIWorld crate contacts. Genuinely unported
+// crate classes remain refused; pilot veterancy collection remains S-5901.
 
 #pragma once
 
@@ -83,7 +82,7 @@ public:
 	unsigned long long scans() const { return m_scans; }
 	unsigned long long pickups() const { return m_pickups; }
 	unsigned long long blocked() const { return m_blocked; } ///< the scans whose stuff was a crate without a crate collide runtime
-	// lane MODCOMPAT-MOD1: false when `stuff` lists a crate collide this port does not run (a crate collide class other than SalvageCrateCollide)
+	// lane MODCOMPAT-MOD1: false when `stuff` lists a crate collide this port does not run (a genuinely unported crate class)
 	static bool crateCollideRuns(const Object &stuff);
 
 	static void registerModule(ModuleFactory &modules);

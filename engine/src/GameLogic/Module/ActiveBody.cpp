@@ -407,6 +407,14 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 	{
 		return;
 	}
+	// INVUL-1: RW 0x8C3FE7 `push 0x14A; call 0x46E918` (Object::testModelCondition): model condition INVULNERABLE takes nothing, of any
+	// damage type (ProductionUpdate's UnitInvulnerableTime, the castle unpack). Donor: Open-BFME-2 ActiveBody.cpp:2189 (BFME2 0x8BFE07, same
+	// shape); both editions. The function's other retail differences stay open (S-322, ATTEMPTDMG-2)
+	static const int kInvulnerable = CombatNames::modelCondition("INVULNERABLE"); // 0x14A
+	if (obj.testModelCondition(kInvulnerable))
+	{
+		return;
+	}
 	// (3) UNATTACKABLE only takes UNRESISTABLE
 	if (obj.testStatus((unsigned)st.unattackable) && type != DAMAGE_UNRESISTABLE)
 	{

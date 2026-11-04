@@ -73,7 +73,14 @@ public:
 	virtual float closeEnoughDist() const = 0;      // locomotor +0x3C
 	virtual float locomotorSpeed() const = 0;       // locomotor +0x40 (RW getter 0x5E36F7), per frame
 	virtual bool movingBackwards() const = 0;       // locomotor flags bit 7
+	// lane LOCODIST-1, getLocomotorDistanceToGoal (RW 0x664127): the object's template KindOf PROJECTILE (RW template + 0x10B bit 1), AI vslot 0x25C
+	// getTreatAsAircraftForLocoDistToGoal (RW 0x6629D3) and the state machine's goal position (AI + 0x30, machine + 0x24)
+	virtual bool isProjectile() const = 0;
+	virtual bool treatAsAircraftForLocoDistToGoal() const = 0;
+	virtual Coord3D machineGoalPosition() const = 0;
 	virtual bool setModelCondition(const char *name, bool on) = 0; // MOVING, CLIMBING, RAPPELLING, BACKING_UP
+	// RW 0x666FA3, called at the end of every doLocomotor pass (RW 0x66A4B7): the SAIL_* model conditions of a SHIP
+	virtual void updateSailModelConditions() {}
 	virtual float relativeAngleTo(const Coord3D &p) const = 0;     // RW relAngle2D(obj, p)
 	virtual bool isCellTypeTwo(const Coord3D &p, PathfindLayerEnum layer) const { (void)p; (void)layer; return false; } // RW 0x6EAD0E
 	// ---- lane PHYS-1 ----
@@ -231,7 +238,7 @@ public:
 	// distance left to the goal for the current goal type (RW 0x664127)
 	float locomotorDistanceToGoal() const;
 	// lane WALL-1 / WALL-4: a unit whose wall top, walkway or ramp went away under it takes the ground (Pathfinder::layerAfterSurfaceLoss, INFERENCE S-1750),
-	// then stands on the terrain, and AdjustLayer (S-4840). doLocomotor's branches make RotWK's layer changes: a path goal's UpdateLayer (RW 0x669D3D .. 0x669D66, the
+	// then stands on the terrain (lane WALL-5: no per-frame AdjustLayer, S-4840). doLocomotor's branches make RotWK's layer changes: a path goal's UpdateLayer (RW 0x669D3D .. 0x669D66, the
 	// point ahead's layer), an explicit goal's RW 0x680A75 after its step (RW 0x669B95), the horde member update's (RW 0x66C748). The member update calls it too
 	void refreshLayer();
 

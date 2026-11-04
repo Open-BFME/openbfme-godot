@@ -43,7 +43,7 @@
 //     object-pair variant (slot 2: the primary object and the killer); the nugget kinds and fields that port does not run are its own stop S-530;
 //   * names (CreationList, DeathWeapon) are resolved at the death, not at parse time like RW (the same lists, unless a later INI replaces one);
 //   * (lane DECOMP-1) the death weapon is RotWK's temporary weapon (RW 0x88611D -> createAndFireTempWeapon RW 0x6CF530: the full fire path);
-//   * the DieMux killer angle window is not ported (reported when consulted, as RefundDie).
+//   * the DieMux killer angle window is ported in DieMuxData::isDieApplicable (RW 0x8D29A9, lane SIEGEFALL-1).
 
 #pragma once
 
@@ -55,6 +55,14 @@
 
 #include <string>
 #include <vector>
+
+class Object;
+
+namespace ExtraDieModules
+{
+// RW 0x70BFD1 Thing::transformPoint (BFME2 0x70A812, the same SSE order): a model-space point through the object's transform
+Coord3D transformPoint(const Object &obj, const Coord3D &p);
+} // namespace ExtraDieModules
 
 class CreateObjectDieModuleData : public ModuleData
 {
