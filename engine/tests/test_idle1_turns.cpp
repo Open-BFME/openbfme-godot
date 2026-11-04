@@ -103,7 +103,9 @@ TEST_CASE("idle1 retail: a cavalry melee leaves no rider running on the spot (RW
 	{
 		const TurnScenario s = runTurns(cavalry, "MordorFighterHorde", 260.0f, 300);
 		MESSAGE(reportOf(cavalry, s));
-		CHECK(s.probe.turnedCavalry >= 30); // not vacuous: riders turn where they stand in the melee
+		// the aim's half-turn success rule (RW 0x75232F / 0x5E372D) ends an aim a rider can already make, so the knights turn on the spot less
+		// (52 member-frames on upstream to 25 here); the bound stays a non-vacuity floor
+		CHECK(s.probe.turnedCavalry >= 20); // tolerance: non-vacuity floor; the aim's half-turn rule measures 25 for the knights
 		CHECK(s.probe.turnedCavalryMoving == 0);
 		CHECK(s.probe.stillMovingStreaks == 0);
 	}
