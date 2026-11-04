@@ -5,11 +5,6 @@
 #include "Common/Audio/AudioEntryPoints.h"
 #include "Common/Audio/AudioLog.h"
 #include "GodotDevice/GodotInGameHud.h"
-#include "GodotDevice/MacOSTrackpad.h"
-#include <godot_cpp/classes/input_event_pan_gesture.hpp>
-#include <godot_cpp/classes/input_event_magnify_gesture.hpp>
-#include <godot_cpp/classes/window.hpp>
-#include <limits>
 #include "GameClient/GUI/AptScreens/AptImageMode.h"
 #include "GodotDevice/GodotPackedTexture.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
@@ -176,7 +171,6 @@ int dikOf(Key key)
 
 struct HudDevice : public AptNativeHook
 {
-	void *trackpadMonitor = nullptr;
 	std::map<int, Ref<ShaderMaterial>> imageModes; ///< community PR #37: the canvas materials of the Apt image modes (AptImageMode)
 	Ref<RetailFileSystem> fs;
 	GameWorld *world = nullptr;
@@ -261,6 +255,7 @@ struct HudDevice : public AptNativeHook
 	struct GlobeLayer
 	{
 		SubViewport *view = nullptr;
+		std::uint64_t viewId = 0; // child viewports may be freed before the owned movie player's canvas teardown
 		W3DInstancer *inst = nullptr;
 	};
 	GlobeLayer globeAdd, globeMul; ///< SPHERE01 alone over black (A), SPHERE02 alone over white (M)
@@ -272,6 +267,10 @@ struct HudDevice : public AptNativeHook
 	// the globe's backbuffer copy: an empty child of the globe's item drawn behind it, with the clip's rectangle (see drawPlaceholder); freed with this node
 	RID globeCopyItem;
 	bool globeTried = false;
+	bool globeInCanvas = false;
+	void beginCanvas() override { globeInCanvas = false; }
+	void endCanvas() override { syncGlobeVisibility(); }
+	void syncGlobeVisibility();
 	unsigned globeDraws = 0;
 	bool ensureGlobe();
 	bool makeGlobeLayer(GlobeLayer &layer, const char *name, const Color &clear, const char *hidden);
@@ -514,14 +513,33 @@ void fragment() {
 }
 )";
 
+// Presentation for both editions: hidden movies/HUD owners retain their globe resources, but draw no scenes.
+// Keep animation clocks and mapper state intact so showing the same canvas resumes normally.
+void HudDevice::syncGlobeVisibility()
+{
+	const Node2D *hudOwner = Object::cast_to<Node2D>(owner);
+	const auto *movie = playerId ? Object::cast_to<AptMenuPlayer>(ObjectDB::get_instance(ObjectID(playerId))) : nullptr;
+	const bool shown = globeInCanvas && hudOwner && hudOwner->is_visible_in_tree() && movie && movie->is_visible_in_tree();
+	const SubViewport::UpdateMode mode = shown ? SubViewport::UPDATE_ALWAYS : SubViewport::UPDATE_DISABLED;
+	for (GlobeLayer *layer : { &globeAdd, &globeMul })
+	{
+		SubViewport *view = layer->viewId ? Object::cast_to<SubViewport>(ObjectDB::get_instance(ObjectID(layer->viewId))) : nullptr;
+		if (view && view->get_update_mode() != mode)
+		{
+			view->set_update_mode(mode);
+		}
+	}
+}
+
 bool HudDevice::makeGlobeLayer(GlobeLayer &layer, const char *name, const Color &clear, const char *hidden)
 {
 	layer.view = memnew(SubViewport);
+	layer.viewId = layer.view->get_instance_id();
 	layer.view->set_name(name);
 	layer.view->set_use_own_world_3d(true);
 	layer.view->set_transparent_background(false);
 	layer.view->set_size(Vector2i(256, 256));
-	layer.view->set_update_mode(SubViewport::UPDATE_ALWAYS);
+	layer.view->set_update_mode(SubViewport::UPDATE_DISABLED); // enabled only while RenderGlobe is in the visible retained canvas
 	owner->add_child(layer.view);
 	Ref<Environment> env;
 	env.instantiate();
@@ -645,6 +663,7 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 			}
 			return;
 		}
+		globeInCanvas = true; // #210: the globe was drawn this canvas (endCanvas -> syncGlobeVisibility)
 		// D: the frame buffer behind the clip. Godot 4.7's canvas renderer copies the WHOLE frame for the first screen-texture material of a canvas,
 		// whatever rect its own item asks for (RendererCanvasRenderRD::_render_items replaces the item's rect with Rect2()); a rect copy made by an
 		// item drawn before it marks the screen texture as copied. So the copy is an empty child drawn behind the globe's item, with the clip's
@@ -1257,9 +1276,6 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("create_radar_event", "world_xy", "type", "jump_to"), &InGameHudNode::create_radar_event, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_radar_state"), &InGameHudNode::get_radar_state); // lane HUD-7
 	ClassDB::bind_method(D_METHOD("radar_probe", "world_xy"), &InGameHudNode::radar_probe); // lane HUD-7
-	ClassDB::bind_method(D_METHOD("trackpad_pan", "delta", "position"), &InGameHudNode::trackpad_pan);
-	ClassDB::bind_method(D_METHOD("trackpad_zoom", "factor", "position"), &InGameHudNode::trackpad_zoom);
-	ClassDB::bind_method(D_METHOD("trackpad_rotate", "degrees", "position"), &InGameHudNode::trackpad_rotate);
 	ClassDB::bind_method(D_METHOD("camera_set_angle_pitch", "angle", "pitch"), &InGameHudNode::camera_set_angle_pitch); // lane HUD-7 (a test hook)
 	ClassDB::bind_method(D_METHOD("dump_tree", "max_depth"), &InGameHudNode::dump_tree, DEFVAL(4));
 	ClassDB::bind_method(D_METHOD("invoke_at", "path", "function", "args"), &InGameHudNode::invoke_at, DEFVAL(PackedStringArray()));
@@ -1866,7 +1882,6 @@ InGameHudNode::InGameHudNode() : d(std::make_unique<HudDevice>()) {}
 
 InGameHudNode::~InGameHudNode()
 {
-	MacOSTrackpad::uninstall(d->trackpadMonitor);
 	d->freeSelectionDecals(); // lane UI-4
 	if (d->fogShift != 0.0f)
 	{
@@ -1919,8 +1934,6 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 {
 	Dictionary result;
 	Array errors;
-	MacOSTrackpad::uninstall(d->trackpadMonitor);
-	d->trackpadMonitor = nullptr;
 	d->ready = false;
 	if (fs.is_null() || !fs->is_mounted())
 	{
@@ -2186,8 +2199,6 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 	}
 	d->hud->setSelectionDecalSettings(decalSettings); // lane UI-4
 	d->ready = errors.is_empty();
-	MacOSTrackpad::uninstall(d->trackpadMonitor);
-	d->trackpadMonitor = d->ready ? MacOSTrackpad::install(get_instance_id(), get_window()->get_window_id()) : nullptr;
 	set_process(true);
 	// the camera is set before the world's own _process (the streak ribbons face the camera transform of the same frame)
 	set_process_priority(-100);
@@ -3122,6 +3133,7 @@ void InGameHudNode::_process(double delta)
 	{
 		return;
 	}
+	d->syncGlobeVisibility(); // a parent hide/reveal also applies when the retained movie list did not change
 	Viewport *vp = get_viewport();
 	const Vector2 window = vp ? vp->get_visible_rect().get_size() : Vector2(1024, 768);
 	d->hud->setWindowSize((int)window.x, (int)window.y);
@@ -3618,13 +3630,6 @@ void InGameHudNode::syncModifiers(const InputEventWithModifiers *e)
 // only end what the HUD already holds
 void InGameHudNode::_notification(int what)
 {
-	if (what == NOTIFICATION_EXIT_TREE && d)
-	{
-		MacOSTrackpad::uninstall(d->trackpadMonitor);
-		d->trackpadMonitor = nullptr;
-	}
-	if (what == NOTIFICATION_ENTER_TREE && d && d->ready && !d->trackpadMonitor)
-		d->trackpadMonitor = MacOSTrackpad::install(get_instance_id(), get_window()->get_window_id());
 	if ((what == NOTIFICATION_WM_WINDOW_FOCUS_OUT || what == NOTIFICATION_APPLICATION_FOCUS_OUT) && d && d->ready && d->hud)
 	{
 		std::vector<Ref<InputEvent>> kept;
@@ -3686,17 +3691,6 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 {
 	if (!d->ready || event.is_null())
 	{
-		return;
-	}
-	// These gestures only move the client camera: do not defer them behind a busy logic worker.
-	if (const auto *pan = Object::cast_to<InputEventPanGesture>(event.ptr()))
-	{
-		if (trackpad_pan(pan->get_delta(), pan->get_position())) get_viewport()->set_input_as_handled();
-		return;
-	}
-	if (const auto *pinch = Object::cast_to<InputEventMagnifyGesture>(event.ptr()))
-	{
-		if (trackpad_zoom(pinch->get_factor(), pinch->get_position())) get_viewport()->set_input_as_handled();
 		return;
 	}
 	// SMOOTH-1 (S-810): the HUD's input reads the live game (picking, selection, the control bar). While the logic worker runs a frame the event waits,
@@ -3822,44 +3816,6 @@ void InGameHudNode::camera_look_at(const Vector2 &sage_xy)
 		d->cam->lookAt(Coord3D{ sage_xy.x, sage_xy.y, 0.0f });
 		d->cam->snapInterpolation(); // lane MOVE-2 r2: a script's pose is drawn at once (no 30 Hz steps when it is set every render frame)
 	}
-}
-
-// Enhanced camera presentation, both editions (and BFME1's existing compatibility mode).
-// Pan/pinch use Godot's incremental gesture deltas; rotation is AppKit NSEvent.rotation in degrees.
-bool InGameHudNode::trackpad_allowed(const Vector2 &position) const
-{
-	return d->ready && d->cam && d->hud && !d->modal &&
-		!(d->player && !d->ownsPlayer && d->player->modal_menu()) && d->hud->input().ui().getInputEnabled() &&
-		std::isfinite(position.x) && std::isfinite(position.y) && get_viewport_rect().has_point(position) &&
-		!d->hud->isOverGui((int)position.x, (int)position.y);
-}
-
-bool InGameHudNode::trackpad_pan(const Vector2 &delta, const Vector2 &position)
-{
-	const Vector2 pixels = delta * 40.0f; // native scroll units to the existing camera drag scale
-	if (!trackpad_allowed(position) || !std::isfinite(pixels.x) || !std::isfinite(pixels.y)) return false;
-	d->cam->scrollBy(pixels.x, pixels.y);
-	d->cam->snapInterpolation();
-	return true;
-}
-
-bool InGameHudNode::trackpad_zoom(double factor, const Vector2 &position)
-{
-	if (!trackpad_allowed(position) || !std::isfinite(factor) || factor <= 0.0) return false;
-	const double height = d->cam->getHeightAboveGround() / factor;
-	if (!std::isfinite(height) || height > std::numeric_limits<float>::max()) return false;
-	d->cam->setHeightAboveGround((float)height); // spread zooms in; the camera retains its configured height limits
-	d->cam->snapInterpolation();
-	return true;
-}
-
-bool InGameHudNode::trackpad_rotate(double degrees, const Vector2 &position)
-{
-	if (!trackpad_allowed(position) || !std::isfinite(degrees)) return false;
-	const double radians = std::remainder(degrees, 360.0) * 0.017453292519943295;
-	d->cam->setAngle(d->cam->getAngle() + (float)radians);
-	d->cam->snapInterpolation();
-	return true;
 }
 
 void InGameHudNode::camera_set_height(float height_above_ground)
@@ -4080,7 +4036,6 @@ Dictionary InGameHudNode::get_camera() const
 	out["terrain_height"] = c.terrainHeightUnderCamera();
 	out["min_height"] = c.minHeight();
 	out["max_height"] = c.maxHeight();
-	out["native_trackpad_rotation"] = d->trackpadMonitor != nullptr;
 	out["free_camera"] = c.freeCamera(); // lane PLAY-1
 	out["free_camera_toggles"] = d->freeCameraToggles; // lane INPUT-1: Ctrl+Z
 	out["zoom_out_limit"] = c.zoomOutLimit();

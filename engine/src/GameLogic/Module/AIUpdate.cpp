@@ -1825,6 +1825,47 @@ bool AIUpdateInterface::setModelCondition(const char *name, bool on)
 	return true;
 }
 
+// lane SAILS-1: RW 0x666FA3 (BFME2 0x66717B), the sails of a SHIP from its facing. The decomp misnames the body: its row sits in
+// AIUpdateInterface_computeAttackPath.cpp (lines 251-264) as rva0026717B, it is not computeAttackPath. Called from doLocomotor (RW 0x66A4B7).
+// The wind is a function static (0.5, 0.5, 0) that the retail Vector3::Normalize (BFME2 0x405A70, length BFME2 0x405A26) scales IN PLACE on every
+// call, with no zero test: the first call of the process leaves (0x3F3504F3, 0x3F3504F3, 0), every later one (0x3F3504F4, 0x3F3504F4, 0), as retail.
+void AIUpdateInterface::updateSailModelConditions()
+{
+	static const int kShip = ObjectTemplateInfoBuilder::kindOfIndex("SHIP"); // KindOf 191 (BFME2 0x667185: template byte 0x17, mask 0x80)
+	Object &obj = *getObject();
+	if (!hasKind(obj, kShip))
+	{
+		return;
+	}
+	static Coord3D wind{ 0.5f, 0.5f, 0.0f };
+	// the length: fld x, y, z; z*z + y*y, + x*x under PC24, fstp qword, the CRT sqrt, fst dword; then 1 / len (divss) and the three mulss
+	const double sq = SimMath::pc24AddW(SimMath::pc24AddW(SimMath::pc24MulW((double)wind.z, (double)wind.z), SimMath::pc24MulW((double)wind.y, (double)wind.y)),
+		SimMath::pc24MulW((double)wind.x, (double)wind.x));
+	const float len = SimMath::fstpDword(SimMath::sqrtPC24(sq));
+	const float inv = SimMath::divf32(1.0f, len);
+	wind.x = SimMath::mulf32(wind.x, inv);
+	wind.y = SimMath::mulf32(inv, wind.y);
+	wind.z = SimMath::mulf32(inv, wind.z);
+	// the clear (BFME2 0x665254 builds the flags, 0x5E42F2 clears them) of SAIL_FLAPPING / SAIL_BLOWN_RIGHT / SAIL_BLOWN_LEFT (0x151 .. 0x153)
+	static const int kFlapping = modelConditionIndex("SAIL_FLAPPING");
+	static const int kRight = modelConditionIndex("SAIL_BLOWN_RIGHT");
+	static const int kLeft = modelConditionIndex("SAIL_BLOWN_LEFT");
+	Object::ModelConditionBits clear{};
+	for (const int bit : { kFlapping, kRight, kLeft })
+	{
+		clear[(size_t)bit >> 5] |= 1u << (bit & 31);
+	}
+	obj.clearAndSetModelConditionFlags(clear, Object::ModelConditionBits{});
+	// the X axis of the transform (Object +0x0C, +0x1C, +0x2C: the basis's first column) dotted with the wind: z, then y, then x (mulss / addss)
+	const float *b = obj.getBasis();
+	const float dot = SimMath::addf32(SimMath::addf32(SimMath::mulf32(wind.z, b[6]), SimMath::mulf32(wind.y, b[3])), SimMath::mulf32(wind.x, b[0]));
+	const int bit = dot > 0.0f ? kLeft : kRight;
+	if (!obj.testModelCondition(bit))
+	{
+		obj.setModelConditionState(bit, true);
+	}
+}
+
 // RW relAngle2D(obj, p): the angle to the point relative to the object's facing, in [-pi, pi]
 float AIUpdateInterface::relativeAngleTo(const Coord3D &p) const
 {

@@ -855,11 +855,14 @@ void AIMover::refreshLayer()
 		return;
 	}
 	// lane WALL-4: RotWK's doLocomotor sets no layer before its goal's branch (the branches do: UpdateLayer on a path, RW 0x680A75 after an explicit goal's
-	// step). The port keeps two rules of its own here (INFERENCE, S-4840 and S-1750): a unit whose wall top, walkway or ramp went away stands on the ground;
-	// and AdjustLayer (RW 0x6F0741) on every unit, because the port's wall tops are a cell wider than RotWK's (no edge pass, S-4840): a unit at a wall's foot
-	// can stand on a wall-top cell, and the search refuses that cell to a ground unit; AdjustLayer puts it on the wall only when the top is more than 10 above
+	// step). The port keeps one rule of its own here (INFERENCE, S-1750): a unit whose wall top, walkway or ramp went away stands on the ground. Lane WALL-5:
+	// with ClassifyWall's edge pass (the wall tops' rims type 8, S-4840) a unit at a wall's foot no longer stands on a wall-top cell, so the per-frame AdjustLayer
+	// lane WALL-4 added for it is gone (RotWK runs AdjustLayer only from its callers)
 	PathfindLayerEnum layer = m_pf.layerAfterSurfaceLoss(obj);
-	if (layer == obj.getLayer())
+	// merge of #207 with lane WALLJOINT-1 (INFERENCE, S-4840 / S-1750): a unit that kept the ramp's layer off every ramp (the surface-loss rule's walkway
+	// guard) is given AdjustLayer (RW 0x6F0741) here, as before #207: the port's height of the ramp layer off every ramp is the terrain (RotWK: the point's
+	// own z), so its next path's first step would drop it into the gate's passage below Helm's Deep's gatehouse walkway before UpdateLayer lifts it again
+	if (layer == LAYER_RAMP && layer == obj.getLayer() && !m_pf.isPointOnRamp(obj.getPosition().x, obj.getPosition().y))
 	{
 		layer = m_pf.adjustLayer(obj, layer);
 	}
@@ -1187,6 +1190,7 @@ unsigned AIMover::doLocomotor()
 		m_blockedFrames = 1;
 	}
 	m_curMaxBlockedSpeed = AI_FAST_SPEED;
+	m_host.updateSailModelConditions(); // RW 0x66A4B7 (BFME2 0x66AF25): after the blocked-speed reset, before the sleep test
 	return (loco && m_goalType == AIGOAL_NONE && !m_doFinalPosition && !m_isBlocked && !requiresConstantCalling) ? AI_SLEEP_FOREVER : 1u;
 }
 

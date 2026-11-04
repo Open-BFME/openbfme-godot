@@ -311,8 +311,9 @@ void SkirmishAIManager::updateGroup(AISkirmishGroup &g)
 
 // RW 0x8ED6DC / RW 0x8ED726: the manager + 0xA74's vector, in registration order. `before`: every gate whose closed geometry is the one in the pathfinder's map
 // (RW 0x89C12F) and whose owner is the AI player's ENEMY (RW 0x89C18E: Player::getRelationship, ENEMIES) gets the CLOSED geometry (RW 0x89C9FA(0)); after the
-// group's AIs the same gates get the OPEN geometry (RW 0x89CA84(1, 0), forced even when already open). The pathfinder's portal refresh RW 0x6E85B0 follows
-// each walk; the port's add / removeObjectFromPathfindMap (GateOpenAndCloseBehavior::setGeometry) apply at once, so it has nothing left to do.
+// group's AIs the same gates get the OPEN geometry (RW 0x89CA84(1, 0), forced even when already open). Both walks change the geometry only through
+// GateOpenAndCloseBehavior::setGeometry, so they take lane WALLFOOT-1's keeping removal (RW 0x6E861E). The pathfinder's portal refresh RW 0x6E85B0 follows
+// each walk; the port's add / removeObjectFromPathfindMap apply at once, so it has nothing left to do.
 void SkirmishAIManager::updateGates(bool before, Player &player)
 {
 	for (GateOpenAndCloseBehavior *gate : m_gates)
