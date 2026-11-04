@@ -574,6 +574,10 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // the mover hash covers the path's node chain, so the big battle and the allied blob differ from frame 0, the skirmish from frame 2.
 // Merge queue q37 re-measured once on the merged tree (OPENBFME_PERF1_REGEN=1), compared at each merge point: #187 on top of WARG-1's FindClosestPath
 // moves the big battle and the skirmish, and ATKRESET-1 (attack orders end the FiringDuration lock) moves both again; the allied blob keeps #187's vector.
+// Lane RAI-DEF re-measured the skirmish (OPENBFME_PERF1_REGEN=1 on the lane's tree): the player info record's position sampler (RW 0x8E4042)
+// is part of the skirmish AI's state hash from frame 0; the battle, the allied blob and the Uber battle keep their vectors.
+// pin: the skirmish AI player info record's position sampler (RW 0x8E4042) is hashed
+// pin: re-measured after the sampler's append order (RW 0x8E4082: radius + distance + padding) settled
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

@@ -735,7 +735,10 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// in the mover hash)
 	// merge queue q38 (measured once on the merged tree and at LOCODIST-1's merge point; goals unchanged): 0xE4523180 -> 0x45726314 (the retail locomotor
 	// distance to the goal, RW 0x664127, moves when the units arrive)
-	CHECK(a.hashes.back() == 0x45726314U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// lane RAI-DEF (measured on the lane's tree; goals and positions unchanged): 0x45726314 -> 0xCA4B529D: the player info record's position sampler
+	// (RW 0x8E4042) is in the skirmish AI's state hash
+	// pin: the skirmish AI player info record's position sampler (RW 0x8E4042) is hashed
+	CHECK(a.hashes.back() == 0xCA4B529DU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);
