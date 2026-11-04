@@ -12,6 +12,8 @@
 #include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/AI/AIGroup.h"
+#include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
@@ -781,20 +783,40 @@ static_assert(SIMPLE_EXPANSION == kSimpleExpansionIndex, "AITactic::kindIndex of
 constexpr float kFlankMinDistanceSq = 2000000.0f; // RW 0xC89630
 
 // RW 0x9EF9AF (AITactic's common check): a unit of the AI's army list (CAN_ATTACK or SUPPORT, not IMMOBILE, not IGNORES_SELECT_ALL) that can path to the target
-// (S-418: taken as reachable); the tactic's vslot 0x34 (true for the siege tactics RW 0x8BD372, false for the others RW 0x9188EB) equal to that answer refuses;
-// an EASY AI in the Rush phase refuses a living DOZER_FACTORY target
+// (RW 0x6F5BB0 to the target's position, or RW 0x6F5F65 to the target object when the target has one); the tactic's vslot 0x34 (true for the siege tactics
+// RW 0x8BD372, false for the others RW 0x9188EB) equal to that answer refuses; an EASY AI in the Rush phase refuses a living DOZER_FACTORY target
 bool commonApplies(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const AITarget &t, const Player &player, bool siegeTactic)
 {
 	const Kinds &k = kinds();
+	Object *target = t.object != INVALID_ID ? logic.findObjectByID(t.object) : nullptr;
+	AIWorld *world = logic.aiWorld();
 	bool reachable = false;
 	const Object *last = nullptr;
 	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
 	{
-		const Object *o = logic.findObjectByID(id);
+		Object *o = logic.findObjectByID(id);
 		last = o;
-		if (o && (is(*o, k.canAttack) || is(*o, k.support)) && !is(*o, k.immobile) && !is(*o, k.ignoresSelectAll))
+		if (!o || !(is(*o, k.canAttack) || is(*o, k.support)) || is(*o, k.immobile) || is(*o, k.ignoresSelectAll))
 		{
-			reachable = true; // RW 0x6F5BB0 / 0x6F5F65 (S-418)
+			continue;
+		}
+		AIUpdateInterface *u = o->getAIUpdateInterface();
+		if (!u || !world)
+		{
+			continue; // RW 0x6F5F6F / 0x6F5F7C: no AI and no locomotor set, no path
+		}
+		Pathfinder &pf = world->pathfinder();
+		const PathfindLocomotorInfo loco = u->locomotorInfo();
+		if (target)
+		{
+			reachable = pf.pathToObject(u->adapter(), loco, *o->getPosition(), world->adapterFor(*target)); // RW 0x6F5F65
+		}
+		else
+		{
+			reachable = pf.quickDoesPathExist(u->adapter(), o->getPosition(), &t.position, &loco); // RW 0x6F5BB0
+		}
+		if (reachable)
+		{
 			break;
 		}
 	}
@@ -802,7 +824,6 @@ bool commonApplies(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainSt
 	{
 		return false;
 	}
-	const Object *target = t.object != INVALID_ID ? logic.findObjectByID(t.object) : nullptr;
 	if (ai.build.phase == 0 && player.getSkirmishDifficulty() == 0 && target && is(*target, k.dozerFactory) && alive(target))
 	{
 		return false;
@@ -2031,7 +2052,7 @@ void launchOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 		}
 		return;
 	}
-	case SIMPLE_SIEGE: // RW 0x9B3380 (nothing) and RW 0x9B31C5: never reached, the siege tactics do not apply in the port (RW 0x9EF9AF's path check, S-418)
+	case SIMPLE_SIEGE: // RW 0x9B3380 (state 0) / RW 0x9B31C5 (the wall target): the bodies are not ported (S-417); the common path check now lets them apply (S-418)
 	case SIEGE_GATES:
 		return;
 	}
@@ -2239,7 +2260,7 @@ void updateOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 		}
 		return;
 	case SIMPLE_ATTACK:
-	case SIMPLE_SIEGE: // never started in the port (S-418)
+	case SIMPLE_SIEGE: // the bodies are not ported (S-417); this generic idle end is SimpleAttack's
 	case SIEGE_GATES:
 	default:
 		// SimpleAttack RW 0x9B4DE7: every team done (RW 0x8F175A) or the target inactive ends it with success
@@ -2632,6 +2653,23 @@ void AITacticalAI::addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, 
 void AITacticalAI::pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target)
 {
 	pincerWaypoints(logic, tac, start, target);
+}
+
+bool AITacticalAI::offensiveAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const char *kind, const AITarget &target)
+{
+	const Player *player = playerOf(logic, ai.playerIndex);
+	if (!player)
+	{
+		return false;
+	}
+	for (int i = 0; i <= (int)SIMPLE_EXPANSION; ++i)
+	{
+		if (kind == std::string(kOffensiveNames[i]))
+		{
+			return tacticApplies(logic, (OffensiveKind)i, ai, b, target, *player);
+		}
+	}
+	throw std::logic_error(std::string("AITacticalAI: no offensive prototype named ") + kind);
 }
 
 const AIStatCollector &AITacticalAI::recordOf(GameLogic &logic, int playerIndex)

@@ -692,7 +692,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"default team backwards as RW's prepended member list); (lane DECOMP-2: the team builder's recruit test "
 		"RW 0x9A24FC, the SUPPORT rule, the hand-over at the minimum when DEFENSIVE, full or meeting the target's threat RW 0x9A26A1, the pooled defaults and the "
 		"idle dispatch RW 0x9A3040 are ported; its unit list is taken as the army list) a unit in another team is never taken (RW's priority and DEFENSIVE-target branches), a member counts until it is destroyed, the threat sum runs "
-		"newest member first; RW 0x9EF9AF's path check is taken as reachable; the enemy score root is the double root of the float sum",
+		"newest member first; RW 0x9EF9AF's path check is RW 0x6F5F65 (the target object) or RW 0x6F5BB0 (its position); the enemy score root is the double root of the float sum",
 		"[S-415] skirmish ai unit builder (+ 0x38, RW 0x9A1196): the factories by unit (RW 0x9A0838, BuildAssistant slot 0x68), the composition from the "
 		"ArmyDefinition percentages blended by the phase fraction (RW 0x9A0E2B / 0x82FCAB), the request list (RW 0x9A0D4F), one new request per frame among "
 		"the members below their share of the command point limit with a free factory (RW 0x9A0BC0 / 0x9A0B26, one logic random draw), priority 500 in Rush "

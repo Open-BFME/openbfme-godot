@@ -75,7 +75,7 @@
 // Historical initial-lane limitations (the current S-417 / S-418 runtime reports and docs/FEATURE-MAP.md track subsequent ports): the other 8 offensive tactics, the
 // DEFENSIVE / OPPORTUNITY / EXPANSION heuristics and tactics, the targetless tactics (RW 0x90C5E2: FarmBuilder, StructureCreep, ...), the AIThreatFinder (threat
 // taken as 0: no draw at RW 0x90B2A0), RW 0x6C7344, RW 0x90CCCB, RW 0x8F144C (the teams' AIGroup step) and RW 0x8F2784's retreat (no threat finder), the other tactics'
-// launch / update bodies, the end's merge of the teams, the AI team objects (members stay in the player's team), the pathfinder check of RW 0x9EF9AF (taken as reachable), the filters
+// launch / update bodies, the end's merge of the teams, the AI team objects (members stay in the player's team), the filters
 // RW 0x97D425 / 0x97CC29 / 0x9A24FC in full (RW 0x88B897: lane DECOMP-3, AIStatCollector).
 
 #pragma once
@@ -229,4 +229,6 @@ void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D 
 // test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
+// test hook (lane RAI-SIEGE): an offensive prototype's vslot 1 applicability by its name, RW 0x9EF9AF's common path-to-object check included
+bool offensiveAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const char *kind, const AITarget &target);
 } // namespace AITacticalAI
