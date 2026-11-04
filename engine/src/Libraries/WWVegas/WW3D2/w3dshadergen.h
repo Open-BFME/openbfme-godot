@@ -80,6 +80,11 @@ struct W3DShaderKey
 	//    (global w3d_occl_colors[slot], gamma space, blended SRC_ALPHA / ONE_MINUS_SRC_ALPHA as retail's quad) once: the pixel's stencil becomes
 	//    W3D_OCCLUSION_STENCIL_DONE, which no longer passes the compare. Off while the global w3d_occl_on is 0
 	int OcclusionPass = 0;
+	// lane SELWALL-1: the surface receives the selection's merge decals (godot/shaders/selection_decals.gdshaderinc sel_merge_at, the wall side): RotWK
+	// projects every selection decal onto the parts of the WALK_ON_TOP_OF_WALL objects near it (W3DProjectedShadowManager RW 0x50C23A, BFME2 0x50C841;
+	// GameClient/SelectionDecals.h). Set by the material factory for an opaque surface of a wall model (W3DMaterialFactory::Set_Selection_Decals); the
+	// generator ignores it for any other surface. The decal is laid over the lit colour as on the terrain, kept above the object shadows
+	bool SelectionDecals = false;
 
 	std::string Id() const;
 };

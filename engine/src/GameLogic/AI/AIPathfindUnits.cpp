@@ -1672,11 +1672,12 @@ bool Pathfinder::checkForAdjust(PathfindObject &obj, const PathfindLocomotorInfo
 	}
 	else
 	{
-		pathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), dest, &obj); // RW 0x6F5BB0 with the unit (lane WALL-2)
-		adjustedPathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), &adjustDest, &obj);
+		// RW 0x6F6AE4 / 0x6F6B26 / 0x6F6B59 -> 0x6F5BB0 (lane QPATH-1); the last two give no set (the AI's: the port's caller passes that same set)
+		pathExists = quickDoesPathExist(obj, &obj.getPosition(), dest, &loco);
+		adjustedPathExists = quickDoesPathExist(obj, &obj.getPosition(), &adjustDest, &loco);
 		if (!pathExists)
 		{
-			if (clientSafeQuickDoesPathExist(loco, dest, &adjustDest, &obj))
+			if (quickDoesPathExist(obj, dest, &adjustDest, &loco))
 			{
 				adjustedPathExists = true;
 			}

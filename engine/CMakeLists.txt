@@ -260,6 +260,7 @@ include(cmake/Rules1.cmake)     # RULES-1: the Rules tab, the game rules, Legend
 include(cmake/Cheat1.cmake)        # CHEAT-1: the open Cheat Mode of custom games (appends to OPENBFME_SIM_SOURCES; OPENBFME_CHEAT1_TESTS)
 include(cmake/Gamemodes1.cmake) # GAMEMODES-1: the game modes' tests (OPENBFME_GAMEMODES1_TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
+include(cmake/PathRebuild.cmake) # PATH-REBUILD: the finish of a found path, RW 0x767B0E (appends to OPENBFME_SIM_SOURCES)
 include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
 include(cmake/Opts2.cmake)      # OPTS-2: the Options menu (OPENBFME_OPTS2_TESTS)
 include(cmake/Opts3.cmake)      # OPTS-3: the OpenBFME page of the Options screen (appends to OPENBFME_APT_SOURCES)
@@ -925,11 +926,14 @@ add_executable(openbfme_tests
     # ---- PATH-1 (pathfinder, AI move path) ----
     tests/test_pathfind_cells.cpp
     tests/test_pathfind_grid.cpp
+    tests/test_qpath1.cpp
     tests/test_pathfind_path.cpp
     tests/test_pathfind_retail.cpp
     tests/test_pathfind_retail_search.cpp
     tests/test_pathfind_move.cpp
     tests/test_pathfind_numerics.cpp
+    tests/test_locodist1.cpp
+    tests/test_sails1.cpp
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp

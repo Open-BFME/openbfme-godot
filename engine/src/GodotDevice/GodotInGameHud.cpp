@@ -255,6 +255,7 @@ struct HudDevice : public AptNativeHook
 	struct GlobeLayer
 	{
 		SubViewport *view = nullptr;
+		std::uint64_t viewId = 0; // child viewports may be freed before the owned movie player's canvas teardown
 		W3DInstancer *inst = nullptr;
 	};
 	GlobeLayer globeAdd, globeMul; ///< SPHERE01 alone over black (A), SPHERE02 alone over white (M)
@@ -263,7 +264,13 @@ struct HudDevice : public AptNativeHook
 	Ref<ShaderMaterial> globeMaterial;
 	// lane QA-1: the probe's own canvas items (globeProbe): freed with this node, before the globe material
 	std::vector<RID> probeItems;
+	// the globe's backbuffer copy: an empty child of the globe's item drawn behind it, with the clip's rectangle (see drawPlaceholder); freed with this node
+	RID globeCopyItem;
 	bool globeTried = false;
+	bool globeInCanvas = false;
+	void beginCanvas() override { globeInCanvas = false; }
+	void endCanvas() override { syncGlobeVisibility(); }
+	void syncGlobeVisibility();
 	unsigned globeDraws = 0;
 	bool ensureGlobe();
 	bool makeGlobeLayer(GlobeLayer &layer, const char *name, const Color &clear, const char *hidden);
@@ -285,9 +292,8 @@ struct HudDevice : public AptNativeHook
 	IconUIOp dragBox;
 	unsigned long long dragBoxFrames = 0;
 	void drawIconOps(RID parent);
-	// lane UI-4: the selection markers (GameClient/SelectionDecals.h) as Godot Decal nodes under a Node3D beside the camera, one per decal, reused
+	// lane UI-4: the Node3D beside the camera the HUD's own Decal nodes live under (lane HERORING-1: the selection decals are in the shaders' grid)
 	uint64_t decalRootId = 0;
-	std::vector<uint64_t> decalIds;
 	unsigned decalsDrawn = 0;
 	// lane SELPERF-1: the SHADOW_MERGE_DECAL decals drawn by the terrain shader (godot/shaders/selection_decals.gdshaderinc) from the grid of this frame
 	// (BuildMergeDecalGrid) in the global sel_data and their textures in the global sel_atlas; the atlas grows when a texture is new to it
@@ -354,11 +360,13 @@ Ref<ImageTexture> HudDevice::grayTextureFor(const std::string &file)
 	{
 		return it->second;
 	}
-	Ref<ImageTexture> colour = textureFor(file);
+	// Use the retained decoded image: ImageTexture::get_image() reads back from
+	// the GPU on the first disabled draw (shared presentation, both editions).
+	Ref<godot::Image> colour = imageFor(file);
 	Ref<ImageTexture> out;
 	if (colour.is_valid())
 	{
-		Ref<godot::Image> img = colour->get_image();
+		Ref<godot::Image> img = colour;
 		if (img.is_valid() && !img->is_empty())
 		{
 			img = img->duplicate();
@@ -505,14 +513,33 @@ void fragment() {
 }
 )";
 
+// Presentation for both editions: hidden movies/HUD owners retain their globe resources, but draw no scenes.
+// Keep animation clocks and mapper state intact so showing the same canvas resumes normally.
+void HudDevice::syncGlobeVisibility()
+{
+	const Node2D *hudOwner = Object::cast_to<Node2D>(owner);
+	const auto *movie = playerId ? Object::cast_to<AptMenuPlayer>(ObjectDB::get_instance(ObjectID(playerId))) : nullptr;
+	const bool shown = globeInCanvas && hudOwner && hudOwner->is_visible_in_tree() && movie && movie->is_visible_in_tree();
+	const SubViewport::UpdateMode mode = shown ? SubViewport::UPDATE_ALWAYS : SubViewport::UPDATE_DISABLED;
+	for (GlobeLayer *layer : { &globeAdd, &globeMul })
+	{
+		SubViewport *view = layer->viewId ? Object::cast_to<SubViewport>(ObjectDB::get_instance(ObjectID(layer->viewId))) : nullptr;
+		if (view && view->get_update_mode() != mode)
+		{
+			view->set_update_mode(mode);
+		}
+	}
+}
+
 bool HudDevice::makeGlobeLayer(GlobeLayer &layer, const char *name, const Color &clear, const char *hidden)
 {
 	layer.view = memnew(SubViewport);
+	layer.viewId = layer.view->get_instance_id();
 	layer.view->set_name(name);
 	layer.view->set_use_own_world_3d(true);
 	layer.view->set_transparent_background(false);
 	layer.view->set_size(Vector2i(256, 256));
-	layer.view->set_update_mode(SubViewport::UPDATE_ALWAYS);
+	layer.view->set_update_mode(SubViewport::UPDATE_DISABLED); // enabled only while RenderGlobe is in the visible retained canvas
 	owner->add_child(layer.view);
 	Ref<Environment> env;
 	env.instantiate();
@@ -630,9 +657,27 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		// lane HUD-2 (see ensureGlobe): the clip's rectangle, the colour transform of the clip is not applied (retail draws the scene directly)
 		if (r.size.x < 1.0f || r.size.y < 1.0f || !ensureGlobe())
 		{
+			if (globeCopyItem.is_valid())
+			{
+				rs->canvas_item_set_copy_to_backbuffer(globeCopyItem, false, Rect2()); // no globe, no copy
+			}
 			return;
 		}
-		rs->canvas_item_set_copy_to_backbuffer(item, true, r); // D: the frame buffer behind the clip
+		globeInCanvas = true; // #210: the globe was drawn this canvas (endCanvas -> syncGlobeVisibility)
+		// D: the frame buffer behind the clip. Godot 4.7's canvas renderer copies the WHOLE frame for the first screen-texture material of a canvas,
+		// whatever rect its own item asks for (RendererCanvasRenderRD::_render_items replaces the item's rect with Rect2()); a rect copy made by an
+		// item drawn before it marks the screen texture as copied. So the copy is an empty child drawn behind the globe's item, with the clip's
+		// rectangle rounded out to whole pixels: the shader reads D only inside it (SCREEN_UV, nearest), so the picture is the same and the copy
+		// shrinks from the full window (2.1 ms of GPU time at 2880x1800 on the UHD 770) to the globe.
+		if (!globeCopyItem.is_valid())
+		{
+			globeCopyItem = rs->canvas_item_create();
+			rs->canvas_item_set_draw_behind_parent(globeCopyItem, true);
+		}
+		rs->canvas_item_set_parent(globeCopyItem, item); // the item may be a new one (AptMenuPlayer remakes a slot's item)
+		const Vector2 lo = (r.position - Vector2(1.0f, 1.0f)).floor();
+		const Vector2 hi = (r.position + r.size + Vector2(1.0f, 1.0f)).ceil();
+		rs->canvas_item_set_copy_to_backbuffer(globeCopyItem, true, Rect2(lo, hi - lo));
 		rs->canvas_item_set_material(item, globeMaterial->get_rid());
 		rs->canvas_item_add_texture_rect(item, r, globeAdd.view->get_texture()->get_rid());
 		++globeDraws;
@@ -1266,7 +1311,8 @@ void HudDevice::drawRadiusCursor()
 
 void HudDevice::drawResourceFeedback()
 {
-	// lane OWNERFIX-2 (GameClient/TerrainResourceFeedback.h): drawn as the selection decals are (S-2522): a Godot Decal over the terrain layer. The claim
+	// lane OWNERFIX-2 (GameClient/TerrainResourceFeedback.h): a Godot Decal over the terrain layer (lane HERORING-1: the selection decals left that path;
+	// a Decal blends into ALBEDO, the terrain's shadow weight since its colour went to EMISSION, so these show faintly: S-2522, a follow-up). The claim
 	// decals: TerrainResourceClaimDecal tinted 0x6464C8 at opacity 0x80 (type 0x20, SHADOW_ALPHA_DECAL); the placement decal: PlaceTerrainResourceClaimantDecal
 	// tinted the band colour, its alpha the texture's times the claimable vertices' alpha (RW 0x75C1A9 with the opacity 0x80; INFERENCE S-5030: bilinear across
 	// a terrain quad)
@@ -1575,62 +1621,12 @@ void HudDevice::drawSelectionDecals()
 		root->set_name("SelectionDecals");
 		parent->add_child(root);
 		decalRootId = root->get_instance_id();
-		decalIds.clear();
 	}
 	const std::vector<SelectionDecal> &list = hud->selectionDecals();
 	decalsDrawn = 0;
-	for (size_t i = 0; i < list.size(); ++i)
-	{
-		const SelectionDecal &sd = list[i];
-		if (sd.style & 0x1000u)
-		{
-			continue; // composed below
-		}
-		const DecalTextures *dt = unlitDecalFor(sd.texture, sd.color & 0xFFFFFFu);
-		if (!dt)
-		{
-			continue; // the texture's error is in drawErrors (textureFor)
-		}
-		Decal *decal = nullptr;
-		if (decalsDrawn < decalIds.size())
-		{
-			decal = Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(decalIds[decalsDrawn])));
-		}
-		if (!decal)
-		{
-			decal = memnew(Decal);
-			root->add_child(decal);
-			if (decalsDrawn < decalIds.size())
-			{
-				decalIds[decalsDrawn] = decal->get_instance_id();
-			}
-			else
-			{
-				decalIds.push_back(decal->get_instance_id());
-			}
-		}
-		++decalsDrawn;
-		// SAGE (x, y, z up) -> Godot (x, z, -y); the decal projects down its -Y over a box as wide as the decal and 60 units deep around the drawable
-		decal->set_position(Vector3(sd.position.x, sd.position.z, -sd.position.y));
-		decal->set_rotation(Vector3(0.0f, sd.angle, 0.0f));
-		decal->set_size(Vector3(sd.size, 60.0f, sd.size));
-		// RotWK's alpha shader (terrain * (1 - a) + texel * colour * a, a = texel alpha * the colour's alpha); the terrain is unshaded (terrain.gdshader), so the
-		// decal's albedo reaches the screen as it is
-		decal->set_texture(Decal::TEXTURE_ALBEDO, dt->albedo);
-		decal->set_modulate(Color(1, 1, 1, ((sd.color >> 24) & 0xFF) / 255.0f));
-		decal->set_albedo_mix(1.0f);
-		decal->set_cull_mask(1u << 19); // the terrain's layer (GodotMapTerrain): the units stand on the marker, it is not painted on them
-		decal->set_upper_fade(0.0f);
-		decal->set_lower_fade(0.0f);
-		decal->set_visible(true);
-	}
-	for (size_t i = decalsDrawn; i < decalIds.size(); ++i)
-	{
-		if (Decal *decal = Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(decalIds[i]))))
-		{
-			decal->set_visible(false);
-		}
-	}
+	// lane HERORING-1: a non-merge decal (a hero's ring, SHADOW_ALPHA_DECAL) is no Godot Decal node any more: a Decal blends into ALBEDO, which the terrain
+	// and the W3D receivers use as the shadow weight since their colour went to EMISSION, so it barely showed; it is in the shaders' grid below with the
+	// merge decals (sel_alpha_at). The root node stays: the resource feedback's decals live under it (drawResourceFeedback)
 
 	// lane SELPERF-1: the merge decals: this frame's grid to the terrain shader (RotWK's two stencil passes per pixel there); the composed image is only the
 	// state report's (composeMergeReport)
@@ -1640,18 +1636,24 @@ void HudDevice::drawSelectionDecals()
 	// the grid follows the markers: built and uploaded when they changed (hud->selectionDecalsVersion), else the shader keeps the last one
 	const bool fresh = hud->selectionDecalsVersion() != selVersion || selMode < 0;
 	selVersion = hud->selectionDecalsVersion();
-	if (fresh && (!selAtlasFor(list) || !BuildMergeDecalGrid(list, [this](const std::string &f, MergeDecalAtlasRect &r) {
-			// a missing texture is not in the atlas: BuildMergeDecalGrid fails with its name (no outline this frame)
-			return selAtlasPack.rect(f, r);
-		}, ds, selGrid, &error)))
+	if (fresh)
 	{
-		if (!error.empty() && drawErrors.size() < 100)
+		const bool built = selAtlasFor(list) && BuildMergeDecalGrid(list, [this](const std::string &f, MergeDecalAtlasRect &r) {
+			// a missing texture is not in the atlas: BuildMergeDecalGrid fails with its name (no outline this frame); lane HERORING-1: an alpha decal's is
+			// left out with its error
+			return selAtlasPack.rect(f, r);
+		}, ds, selGrid, &error);
+		// once each: the grid is built again every client frame a selected decal throbs (lane HERORING-1: a skipped alpha decal's note would fill the list)
+		if (!error.empty() && drawErrors.size() < 100 && std::find(drawErrors.begin(), drawErrors.end(), error) == drawErrors.end())
 		{
 			drawErrors.push_back(error);
 		}
-		selGrid = MergeDecalGrid();
+		if (!built)
+		{
+			selGrid = MergeDecalGrid();
+		}
 	}
-	const int mode = selGrid.decals == 0 ? 0 : (selGrid.simple ? 2 : 1);
+	const int mode = SelectionDecalShaderMode(selGrid); // lane HERORING-1: + 4 when there are alpha decals (sel_alpha_at)
 	if (mode != 0 && rs)
 	{
 		if (fresh)
@@ -1697,7 +1699,7 @@ void HudDevice::drawSelectionDecals()
 			rs->global_shader_parameter_set("sel_alpha_ref", (float)selGrid.alphaRef);
 			selAlphaSet = selGrid.alphaRef;
 		}
-		decalsDrawn += (unsigned)selGrid.decals;
+		decalsDrawn += (unsigned)(selGrid.decals + selGrid.alphaDecals);
 	}
 	else if (mode != selMode && rs)
 	{
@@ -1848,7 +1850,6 @@ void HudDevice::freeSelectionDecals()
 		root->queue_free();
 	}
 	decalRootId = 0;
-	decalIds.clear();
 	if (radiusCursorBound)
 	{
 		if (RenderingServer *rs = RenderingServer::get_singleton())
@@ -1893,6 +1894,11 @@ InGameHudNode::~InGameHudNode()
 		for (const RID &item : d->probeItems)
 		{
 			rs->free_rid(item); // lane QA-1: the globe probe's items go before the globe material
+		}
+		if (d->globeCopyItem.is_valid())
+		{
+			rs->free_rid(d->globeCopyItem);
+			d->globeCopyItem = RID();
 		}
 		if (d->iconItem.is_valid())
 		{
@@ -2331,6 +2337,8 @@ Dictionary InGameHudNode::get_state() const
 			e["color"] = (int64_t)sd.color;
 			e["x"] = sd.position.x;
 			e["y"] = sd.position.y;
+			e["z"] = sd.position.z;   // lane SELWALL-1
+			e["raised"] = sd.raised; // lane SELWALL-1: no terrain part (a wall top under it)
 			decals.push_back(e);
 		}
 		s["selection_decals"] = decals;
@@ -2343,6 +2351,8 @@ Dictionary InGameHudNode::get_state() const
 		m["simple"] = d->hud->selectionDecalSettings().useSimpleMergeDecals;
 		m["composes"] = d->mergeComposes; // lane SELPERF-1
 		m["gpu_decals"] = (int64_t)d->selGrid.decals;
+		m["gpu_alpha_decals"] = (int64_t)d->selGrid.alphaDecals; // lane HERORING-1
+		m["gpu_max_alpha_per_cell"] = (int64_t)d->selGrid.maxAlphaPerCell;
 		m["gpu_cells"] = (int64_t)d->selGrid.cellsX * d->selGrid.cellsY;
 		m["gpu_max_per_cell"] = (int64_t)d->selGrid.maxPerCell;
 		m["gpu_uploads"] = d->selUploads;
@@ -3123,6 +3133,7 @@ void InGameHudNode::_process(double delta)
 	{
 		return;
 	}
+	d->syncGlobeVisibility(); // a parent hide/reveal also applies when the retained movie list did not change
 	Viewport *vp = get_viewport();
 	const Vector2 window = vp ? vp->get_visible_rect().get_size() : Vector2(1024, 768);
 	d->hud->setWindowSize((int)window.x, (int)window.y);

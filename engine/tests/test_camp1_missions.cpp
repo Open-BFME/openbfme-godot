@@ -468,7 +468,9 @@ TEST_CASE("camp1 barrow downs: MAP ANG Barrow Downs plays from its intro to the 
 	MESSAGE("the Arnor units beaten: " << killed << "; end at frame " << m.frame());
 	REQUIRE(won);
 	expectVictory(m, 10);
-	expectTeamScripts(m, 13, 0, 0); // lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough
+	// lane PATH-REBUILD (RW 0x767B0E, the found paths bent from the units' facing with their corners rounded: the mission's teams reach their triggers on other
+	// frames; measured twice on the lane's tree): 17 OnCreate (was 13)
+	expectTeamScripts(m, 17, 0, 0); // lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough
 }
 
 TEST_CASE("camp1 carn dum: MAP ANG Carn Dum plays from its intro to the victory by its own scripts")

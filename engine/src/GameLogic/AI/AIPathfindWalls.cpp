@@ -1458,5 +1458,14 @@ PathfindLayerEnum Pathfinder::layerAfterSurfaceLoss(const PathfindObject &obj) c
 			return cur; // the walkway is still there
 		}
 	}
+	// lane WALLJOINT-1: a unit over a walkway that RW 0x6EE600 names at its point (a passable cell, the walkway less than 25 above it) and that AdjustLayer
+	// would take (|height - z| < 10, RW 0x6F0741) has lost nothing: a unit that stepped off a ramp's top onto the walkway keeps the ramp's layer until
+	// AdjustLayer (refreshLayer's call for a unit on the ramp's layer off every ramp, kept by the merge with #207) or the next UpdateLayer puts it on the walkway, as in RotWK, which has no surface-loss rule. This rule put it on
+	// the ground and the terrain 84 below (Helm's Deep's gatehouse: horde members walked the gate's passage under the walkway and came up on the far ramp)
+	const PathfindLayerEnum walkway = raisedLayerAtPoint(pos.x, pos.y, pos.z);
+	if (walkway != LAYER_INVALID && SimMath::absD(SimMath::subD((double)raisedLayerHeight(walkway), (double)pos.z)) < 10.0)
+	{
+		return cur;
+	}
 	return isPointOnRamp(pos.x, pos.y) ? cur : LAYER_GROUND;
 }

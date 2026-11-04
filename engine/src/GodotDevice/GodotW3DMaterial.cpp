@@ -203,7 +203,8 @@ void W3D_Ensure_Light_Globals()
 	{
 		rs->global_shader_parameter_add(StringName(String("w3d_sway") + String::num_int64(i)), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4());
 	}
-	// lane SELPERF-1: the selection's merge decals the terrain shader draws (godot/shaders/selection_decals.gdshaderinc; the HUD sets them, mode 0 = none)
+	// lane SELPERF-1: the selection's merge decals the terrain shader draws (godot/shaders/selection_decals.gdshaderinc; the HUD sets them, mode 0 = none;
+	// lane SELWALL-1 / HERORING-1: the wall models' shaders too, and the alpha decals)
 	rs->global_shader_parameter_add(StringName("sel_data"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
 	rs->global_shader_parameter_add(StringName("sel_atlas"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
 	rs->global_shader_parameter_add(StringName("sel_grid"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4(0.0f, 0.0f, 1.0f, 0.0f));
@@ -912,6 +913,7 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 	Ref<ShaderMaterial> mat;
 	mat.instantiate();
 	key.AlphaOverride = AlphaOverride; // lane BUILD-5 r3
+	key.SelectionDecals = SelectionDecals && key.Blend == W3D_GODOT_BLEND_OPAQUE && !AlphaOverride; // lane SELWALL-1: the generator's opaque surfaces only
 	mat->set_shader(Get_Shader(key));
 	mat->set_shader_parameter("w3d_diffuse", Vector4(diffuse.r, diffuse.g, diffuse.b, diffuse.a));
 	mat->set_shader_parameter("w3d_ambient_mat", Vector3(ambientMat.r, ambientMat.g, ambientMat.b));

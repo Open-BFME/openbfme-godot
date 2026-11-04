@@ -702,17 +702,18 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 			return false;
 		}
 	}
-	// RW 0x82D2C9 (PATHABLE_ONLY): RW 0x6F5BB0(obj, its position, loc, 0), the port's quick path test with the object's locomotor (S-1280, as FindPositionAround)
+	// RW 0x82D2C9 (PATHABLE_ONLY): RW 0x6F5BB0(obj, its position, loc, 0) (RW 0x82D2F5: no locomotor set given), Pathfinder::quickDoesPathExist (lane QPATH-1)
 	if (t.m_flags & SPF_PATHABLE_ONLY)
 	{
 		AIUpdateInterface *ai = obj.getAIUpdateInterface();
 		AIWorld *world = logic.aiWorld();
 		if (!ai || !world)
 		{
-			return false; // RW 0x6F5BB0: no AI (+ 0x260) and no locomotor set given -> no (INFERENCE: its earlier status / Object + 0x4AC tests, RW 0x44DDEC / 0x68C053, do not apply)
+			// RW 0x6F5BB0 without an AI (+ 0x260) and no set: "Failure 2". Its earlier tests give the same answer: IMMOBILE -> false, and Object + 0x4AC
+			// (RW 0x68C053) is never set in the port (S-4851)
+			return false;
 		}
-		const PathfindLocomotorInfo loco = ai->locomotorInfo();
-		if (!world->pathfinder().clientSafeQuickDoesPathExist(loco, obj.getPosition(), &loc, &ai->adapter())) // lane WALL-2: with the unit, its portals
+		if (!world->pathfinder().quickDoesPathExist(ai->adapter(), obj.getPosition(), &loc, nullptr))
 		{
 			return false;
 		}

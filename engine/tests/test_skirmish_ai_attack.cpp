@@ -319,6 +319,10 @@ TEST_CASE("skirmish ai attack: each of the 7 factions as the Medium computer on 
 		}());
 		CHECK(run.targetsSet >= 1);
 		CHECK(run.attacksLaunched >= 1);
+		// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E, move the logic random stream): an earlier measurement of the
+		// lane had Isengard's generator draw a PincerAttack whose crossbow team kept acquiring a BarrowWight_Slaved across the water in its attack-move
+		// and never finished its leg, so nothing of Isengard's arrived; that stall is the approach's missing give-up rules (stop S-7162) and shows on
+		// main too (the same crossbow horde stands in attack-move for a whole run). The lane's final tree draws other tactics and every faction arrives
 		CHECK(run.arrivalFrame > 0);
 		CHECK(run.arrivalFrame <= 2400);
 	}

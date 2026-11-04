@@ -91,6 +91,7 @@ public:
 	PathfindObjectID getID() const override;
 	const Coord3D &getPosition() const override;
 	float getOrientation() const override;
+	Coord2D getUnitDirection2D() const override; // the transform's basis, as AIUpdateInterface::unitDirectionOf
 	PathfindLayerEnum getLayer() const override { return m_layer; }
 	void setLayer(PathfindLayerEnum layer) { m_layer = layer; }
 	float getHeightAboveTerrain() const override;
@@ -114,6 +115,8 @@ public:
 	const PathfindObject *getTopContainer() const override;
 	bool isParked() const override;
 	bool hasAI() const override;
+	bool isStatusImmobile() const override;
+	bool getAILocomotorInfo(PathfindLocomotorInfo &out) const override;
 	PathfindObjectID getIgnoredObstacleID() const override;
 	bool canPathThroughUnits() const override;
 	bool isAircraftThatAdjustsDestination() const override;
@@ -215,6 +218,7 @@ public:
 	void objectLeftWorld(Object &obj);
 	void addObjectToPathfindMap(Object &obj);
 	void removeObjectFromPathfindMap(Object &obj);
+	void removeObjectFromPathfindMapKeepGateFlag(Object &obj); // lane WALLFOOT-1: RW 0x6E861E, the gate's removal (bit 17 kept)
 	// the AI of an object (null when it has none)
 	AIUpdateInterface *aiOf(PathfindObjectID id) const;
 	AIUpdateInterface *aiOf(const Object &obj) const;

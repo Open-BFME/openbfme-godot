@@ -2985,6 +2985,11 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	// so the Taint line passes; it still asserts no effect of TaintSpecialPower of its own (S-1997 keeps the explanation)
 	// merge queue q26 (community #73's slot table centred on the horde, as #73's own run found): the scene misses the 500 heuristic again (1536 with the cast,
 	// 1732 without), so Taint is a KNOWN line once more
+	// merge queue q37 (measured once on the merged tree and at each merge point): at #187's the Devastation scene still misses the 500 heuristic (1536 with
+	// the cast, 1672 without); ATKRESET-1 (attack orders end the FiringDuration lock) moves the fight so it meets it (532 more lost with the cast), so its
+	// line passes; S-921 keeps the explanation (no effect of its own is asserted)
+	// merge queue q38 (measured once on the merged tree and at each merge point): LOCODIST-1's retail locomotor distance to the goal (RW 0x664127) moves the
+	// fight so the Devastation scene misses the 500 heuristic again (1600 lost with the cast, 1604 without): a KNOWN line once more (S-921)
 	r.check({ { "spell SpellBookDevastation", "S-921 (SPELL-3)" }, { "spell SpellBookIndustry", "S-1997" },
 		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" }, { "spell SpellBookIsengardTaint", "S-1997" } });
 }
@@ -3267,6 +3272,19 @@ void fortressOf(const std::string &faction, Results &res)
 	g.logic().combat().setAutoAcquireEnabled(false);
 	const Coord3D at = g.rig.freeSpot(kp.x + 450.0f, kp.y + 250.0f, 120.0f);
 	Object *target = g.rig.make("GondorFighterHorde", at.x, at.y, enemy);
+	// merge queue q38: with LOCODIST-1's retail locomotor distance to the goal (RW 0x664127) the scene's computer opponent marches the new horde off before the
+	// stone lands (it lands about 280 from the horde), so the target is held where it was made (DISABLED_HELD, the scene's control, not a retail rule)
+	{
+		std::vector<Object *> held{ target };
+		if (target->getContain() && target->getContain()->getContainedItemsList())
+		{
+			held.insert(held.end(), target->getContain()->getContainedItemsList()->begin(), target->getContain()->getContainedItemsList()->end());
+		}
+		for (Object *x : held)
+		{
+			x->setDisabled(DISABLED_HELD, 0x7FFFFFFFu);
+		}
+	}
 	g.step(10);
 	toughen(g.logic(), target->getID());
 	target = g.logic().findObjectByID(target->getID());

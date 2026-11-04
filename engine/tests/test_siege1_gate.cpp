@@ -174,12 +174,14 @@ TEST_CASE("siege1 gate: #64's catapult made inside its MinimumAttackRange of Hel
 	// merge queue q32 (#159's ramp cells, RW 0x93527F, move the stones' scatter at Helm's Deep; measured once on the merged tree, the change appears at #159's merge point): one contact while the gate stands (two), first hit and death unchanged
 	// merge queue q33 (MODCOMPAT-MOD1's modules move the stones' scatter; measured at each merge point and named with a contact log): two contacts while the
 	// gate stands, both the gatehouse in the line of fire (HelmsDeepGatehouseLeft at frame 259, HelmsDeepGatehouseCenter at 294), first hit 48, death 319
-	// lane WARG-1 (FindClosestPath RW 0x6FB869 at the attack path's adjust RW 0x666E51 and computePath's fallback, the unclamped cells RW 0x6E8CE6; measured once on the lane's tree after the archive merge, a CI host): one contact while the gate stands, death 319 -> 354
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): no contact while the gate stands (two), first hit 53 (48), death 393 (319)
+	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the throwers' drives, the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps them): one contact while the gate stands (0), death 427 (223)
 	CHECK(r.contactsWhileStanding == 1);
 	// lane MODCOMPAT-MOD1 (GeometryUpgrade: every object reads its own GeometryInfo, RW Object + 0xA8, for its combat circle and sphere (+ 0xB8 / + 0xBC), partition cells and pathfinder footprint, and the gate's open / closed switch runs the full refresh RW 0x68B244; measured at its commit, a CI host):
 	// first hit 49 -> 48, the gate's death 287 -> 252
-	CHECK(r.firstHit == 48);
-	CHECK(r.deathFrame == 354);
+	CHECK(r.firstHit == 53);
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the Mordor catapult from 120: death 427 -> 393
+	CHECK(r.deathFrame == 393); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 393 -> 223
 }
 
 TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's gate break it; the arch takes no stone meant for the gate")
@@ -195,27 +197,33 @@ TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's ga
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, moves the AI defender and the random stream at Helm's
 	// Deep; measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): the catapult 10 shots (9), death 326
 	// (292); the ballista two contacts while the gate stands (0; what they met was not identified, as the trebuchet's one since q31), death 467 (389)
-	// lane WARG-1 (FindClosestPath RW 0x6FB869 at the attack path's adjust RW 0x666E51 and computePath's fallback, the unclamped cells RW 0x6E8CE6; measured once on the lane's tree after the archive merge, a CI host): the catapult 7 shots (10), death 224 (326); the trebuchet death 386 (387); the
-	// ballista one contact while the gate stands (2), death 311 (467)
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): the catapult 8 shots (10), one contact while the gate stands (0), death 258 (326); the trebuchet two contacts (1); the Dwarven
+	// catapult two contacts (0); the ballista three contacts (2); what they met was not identified (as since q31); the first hits and the other deaths hold
+	// with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): the catapult 9 shots, three contacts, death 292; the trebuchet three contacts; the Dwarven catapult no contact, death 301; the
+	// ballista no contact, death 350
+	// merge queue q37 (#187's rebuilt paths on top of WARG-1's FindClosestPath, measured once on the merged tree; ATKRESET-1 keeps them): the catapult 6 shots (9), no contact (3),
+	// death 190 (292); the trebuchet no contact (3), death 341 (386); the Dwarven catapult two contacts (0), death 369 (301); the ballista death 389 (350)
+	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the throwers' drives, the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps them): the catapult 7 shots (6), one contact while the gate stands (0), death 224 (190); the trebuchet death 387 (341); the Dwarven
+	// catapult no contact (2), death 301 (369); the ballista one contact (0); what they met was not identified (as since q31)
 	CHECK(c.shots == 7);
-	CHECK(c.contactsWhileStanding == 0);
+	CHECK(c.contactsWhileStanding == 1);
 	CHECK(c.firstHit == 20);
 	CHECK(c.deathFrame == 224);
 	const GateRun t = pinnedRun(*s, kHelmsDeep, "Main Gate", "GondorTrebuchet", 400.0f, 600);
-	// lane WALL-5 (ClassifyWall's edge pass RW 0x936686 .. 0x936811 and its height choice RW 0x9362A3: the wall tops' rims refuse every locomotor, the pinched ground beside them costs more, moving the routes and the random stream at Helm's Deep; measured once on the lane's tree): the trebuchet no contact while the gate stands (1), death 386 -> 341; the Dwarven catapult death 369 -> 301
 	CHECK(t.contactsWhileStanding == 0);
 	CHECK(t.firstHit == 19);
-	CHECK(t.deathFrame == 341);
+	CHECK(t.deathFrame == 387);
 	const GateRun dc = pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenCatapult", 400.0f, 600);
 	// its two stones a throw (until q31): both met HelmsDeepGatehouseLeft at frame 102 and, at frame 341, the front of the arch (HelmsDeepGatehouseCenter) 51 before
 	// its centre at z 174, below the lintel (the stones fell short; not the lintel reaching down, which the pair rule removed)
 	CHECK(dc.contactsWhileStanding == 0);
-	CHECK(dc.deathFrame == 301);
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the Dwarven catapult's death 301 -> 267
+	CHECK(dc.deathFrame == 267);
 	const GateRun b = pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBallista", 400.0f, 600);
 	// merge queue q27: one contact while the gate stands (was 0) and death 311 -> 389, LOS-1 (the terrain line of sight with the wall layers' heights;
 	// measured at each merge point)
 	CHECK(b.contactsWhileStanding == 1);
-	CHECK(b.deathFrame == 311);
+	CHECK(b.deathFrame == 389);
 }
 
 TEST_CASE("siege1 gate: Mordor's catapult and Gondor's trebuchet in front of Minas Tirith's gate break it")
@@ -225,11 +233,12 @@ TEST_CASE("siege1 gate: Mordor's catapult and Gondor's trebuchet in front of Min
 	CHECK(c.ordered);
 	// merge queue q28 (measured once on the merged tree and at each merge point): the catapult's stones no longer meet MinisGate1 while the gate stands
 	// (1 -> 0) and the first hit is at 20 (21); the trebuchet breaks the gate at 158 (203)
-	CHECK(c.contactsWhileStanding == 0);
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): the catapult one contact while the gate stands (0), first hit 23 (21), death 125 (123); the trebuchet holds
+	CHECK(c.contactsWhileStanding == 1);
 	// With map creeps removed, both first-hit engine pins are frame 21.
 	// Contact limits and the original gate-death pins remain unchanged.
-	CHECK(c.firstHit == 21);
-	CHECK(c.deathFrame == 123);
+	CHECK(c.firstHit == 23);
+	CHECK(c.deathFrame == 125);
 	const GateRun t = pinnedRun(*s, kMinasTirith, "Gate", "GondorTrebuchet", 400.0f, 600);
 	CHECK(t.contactsWhileStanding == 0);
 	CHECK(t.firstHit == 21);
@@ -243,7 +252,7 @@ TEST_CASE("siege1 gate: the rams, Grond and the mumak in front of the gates (no 
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 134);
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 143); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244); lane WARG-1 (FindClosestPath, measured once on the lane's tree): 145 -> 143
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorGrond", 250.0f, 600).deathFrame == 128);
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorMumakil", 250.0f, 600).deathFrame == 247); // merge queue q27: 246 -> 247, LOS-1
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorMumakil", 250.0f, 600).deathFrame == 246); // merge queue q27: 246 -> 247, LOS-1; lane PATH-REBUILD: 247 -> 246
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 90);
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "MordorGrond", 250.0f, 600).deathFrame == 83);
 }

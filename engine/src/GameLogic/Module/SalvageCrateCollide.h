@@ -69,13 +69,14 @@
 
 class ModuleFactory;
 class Object;
+class CrateCollideModuleData;
 class SalvageCrateCollideModuleData;
 class StateHasher;
 
 class CrateCollide : public BehaviorModule, public CollideModuleInterface
 {
 public:
-	CrateCollide(Thing *thing, const SalvageCrateCollideModuleData *data); // RW 0x8C066C
+	CrateCollide(Thing *thing, const CrateCollideModuleData *data); // RW 0x8C066C
 
 	CollideModuleInterface *getCollide() override { return this; }
 	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override; // RW 0x8C06B6
@@ -96,10 +97,10 @@ public:
 protected:
 	// RW 0x8C0760: version (current 2), BehaviorModule, + 0x14
 	void xferCrateCollide(Xfer &x);
-	const SalvageCrateCollideModuleData *crateData() const { return m_crateData; }
+	const CrateCollideModuleData *crateData() const { return m_crateData; }
 
 private:
-	const SalvageCrateCollideModuleData *m_crateData;
+	const CrateCollideModuleData *m_crateData;
 	bool m_everExecuted = false;         ///< + 0x14
 	unsigned long long m_executions = 0; ///< executeCrateBehavior calls that used the crate up (OpenBFME, hashed)
 };
@@ -126,9 +127,11 @@ public:
 	int lastMoney() const { return m_lastMoney; }
 
 private:
+	const SalvageCrateCollideModuleData *salvageData() const { return m_salvageData; }
 	int pickOutcome();          // RW 0x8C136C
 	void doMoney(Object &other); // RW 0x8C148B
 
+	const SalvageCrateCollideModuleData *m_salvageData;
 	unsigned long long m_refusedComputer = 0; ///< executeCrateBehavior's computer-player refusals (AllowAIPickup clear)
 	int m_lastOutcome = 0;                    ///< the last outcome (0: none yet)
 	int m_lastMoney = 0;                      ///< the last money outcome's deposit (after the multiplier and the handicap)

@@ -127,8 +127,12 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		{
 			MESSAGE("citadel hits: " << kv.second << " x " << kv.first);
 		}
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 101 }, { "AngmarTrollSling dealt 1350 taken 1017", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 1033 } };
+		// merge queue q37 (measured once on the merged tree; the table at #187's merge point differs again, ATKRESET-1's attack orders move it): wolf rider
+		// hits 1033 -> 1006, banner carrier hits 101 -> 83, the last sling hit takes 955 (1017)
+		// merge queue q38 (measured once on the merged tree and at each merge point; LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves it,
+		// #172 keeps it): wolf rider hits 1006 -> 1016, banner carrier hits 83 -> 88, the last sling hit takes 1111 (955)
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 88 }, { "AngmarTrollSling dealt 1350 taken 1111", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 1016 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)

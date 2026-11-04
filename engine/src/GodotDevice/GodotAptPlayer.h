@@ -67,6 +67,10 @@ class AptNativeHook
 public:
 	virtual ~AptNativeHook() = default;
 	virtual void drawPlaceholder(const AptCanvasOp &op, RID canvasItem) = 0;
+	// Retained-canvas lifecycle, including cached/partial redraws and an empty canvas. Native offscreen
+	// scenes can stop rendering when no current placeholder uses them; no simulation/animation state changes.
+	virtual void beginCanvas() {}
+	virtual void endCanvas() {}
 	// lane CAH-1: whether the hook draws this placeholder; a placeholder it leaves goes the player's own way (a RenderImage's mapped image)
 	virtual bool handlesPlaceholder(const AptCanvasOp &op) const
 	{
