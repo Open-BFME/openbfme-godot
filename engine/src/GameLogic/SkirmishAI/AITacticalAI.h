@@ -72,7 +72,8 @@
 //     RW 0x9B5042, started update RW 0x9B52BD: a plain structure request for "MenFortress" (whatever the side; RW 0x9B51E9 -> ctor RW 0x97DA21, vtable
 //     RW 0xC85750, priority 3000) at the target, the team attack-moves there once the request is in progress, a complete request adds a base at the target
 //     (RW 0x9B5020 -> RW 0x90D3C7, AIBaseBuilder::addBase), a failed one ends the tactic (0, 0)). All ported.
-// Historical initial-lane limitations (the current S-417 / S-418 runtime reports and docs/FEATURE-MAP.md track subsequent ports): the other 8 offensive tactics, the
+// Historical initial-lane limitations (the current S-417 / S-418 runtime reports and docs/FEATURE-MAP.md track subsequent ports; all 8 offensive bodies, the two
+// siege ones included, and RW 0x9EF9AF's path check are ported now): the then-unported offensive tactics, the
 // DEFENSIVE / OPPORTUNITY / EXPANSION heuristics and tactics, the targetless tactics (RW 0x90C5E2: FarmBuilder, StructureCreep, ...), the AIThreatFinder (threat
 // taken as 0: no draw at RW 0x90B2A0), RW 0x6C7344, RW 0x90CCCB, RW 0x8F144C (the teams' AIGroup step) and RW 0x8F2784's retreat (no threat finder), the other tactics'
 // launch / update bodies, the end's merge of the teams, the AI team objects (members stay in the player's team), the filters
@@ -155,7 +156,7 @@ struct AITactic
 	Coord3D origin;                  ///< + 0x44: the first such centre after the start (RW 0x8F2955), where a retreat goes (RW 0x8F243A)
 	bool retreated = false;          ///< + 0x50
 	bool targetless = false;         ///< lane AI-2 r3: a clone of a targetless prototype (generator list + 0x58)
-	ObjectID squadTarget = INVALID_ID; ///< FarmKillSquad / FlagCaptureSquad + 0x58: the attack or capture target
+	ObjectID squadTarget = INVALID_ID; ///< + 0x58: FarmKillSquad's / FlagCaptureSquad's target, the siege tactics' wall target (RW 0x9EF829)
 	// lane AI-2 r5: the offensive bodies' own state (the tactic's + 0x58 object / fields)
 	int step = 0;                    ///< FormationAttack state (+ 0x58 -> + 0); FlankAttack waypoint index; PincerAttack team 0's waypoint index
 	int step2 = 0;                   ///< PincerAttack team 1's waypoint index
@@ -231,4 +232,9 @@ void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget 
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
 // test hook (lane RAI-SIEGE): an offensive prototype's vslot 1 applicability by its name, RW 0x9EF9AF's common path-to-object check included
 bool offensiveAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const char *kind, const AITarget &target);
+// test hooks (lane RAI-SIEGE): one tactic's launch (vslot 0x18) and started update (vslot 0x1C) on the target `tac.targetIndex` of `owner`
+void launchTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner);
+void updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner);
+// test hook (lane RAI-SIEGE): RW 0x9B3453's stand-back point, wall position + normalise(team 0's first member - wall) * 500 (RW 0xC894AC)
+Coord3D siegeStandBackPointForTest(const Coord3D &leader, const Coord3D &wall);
 } // namespace AITacticalAI

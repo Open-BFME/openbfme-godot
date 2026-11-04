@@ -178,3 +178,193 @@ TEST_CASE("skirmish ai path: RW 0x9EF9AF asks RW 0x6F5F65 for the target object,
 	CHECK(AITacticalAI::offensiveAppliesForTest(logic, ai, brain, "SimpleSiege", target));
 	CHECK_FALSE(AITacticalAI::offensiveAppliesForTest(logic, ai, brain, "SiegeGates", target));
 }
+
+TEST_CASE("skirmish ai siege: SiegeGates attacks the wall gate while the path is blocked, then sends every team at the target once it opens (RW 0x9B31E6 / 0x9B3184 / 0x9EF829)")
+{
+	OPENBFME_REQUIRE_START(s);
+	WallTest w(*s);
+	GameLogic &logic = w.game.game->logic();
+	AISkirmishPlayer ai;
+	useAI(ai, *w.mordor, logic);
+	AIBrainState brain;
+	brain.currentEnemy = w.men->getPlayerIndex();
+	AIBrainState owner;
+	AITarget target;
+	target.type = 0; // ENEMY_STRUCTURE
+	target.position = *w.inside->getPosition();
+	target.object = w.inside->getID();
+	target.inactive = false;
+	target.teams = 1;
+	owner.targets.push_back(target);
+	AITactic tac;
+	tac.kindIndex = 7;
+	tac.kind = "SiegeGates";
+	tac.targetIndex = 0;
+	tac.started = true;
+	AITacticTeam team;
+	team.index = 0;
+	team.type = 0;
+	team.handedOver = true;
+	std::vector<Object *> units;
+	for (int i = 0; i < 5; ++i)
+	{
+		Object *u = w.spawn("MordorCaveTroll", 300.0f + 12.0f * (float)i);
+		units.push_back(u);
+		team.members.push_back(u->getID());
+	}
+	w.frames(5);
+	tac.teams.push_back(team);
+
+	AITacticalAI::launchTacticForTest(logic, ai, brain, tac, owner); // RW 0x9B31C5 -> 0x9B3184
+	CHECK(tac.squadTarget == w.gate->getID());
+	CHECK(tac.step == 0); // RW 0x9B31E6: the wall stage
+	w.frames(3);
+	for (Object *u : units)
+	{
+		AIUpdateInterface *uai = u->getAIUpdateInterface();
+		REQUIRE(uai != nullptr);
+		CHECK(uai->stateMachine().goalObjectID() == w.gate->getID()); // RW 0x8F1792: team 0 attacks the wall gate
+	}
+	// the wall target lives and the path is blocked: the stage stays at the wall
+	AITacticalAI::updateTacticForTest(logic, ai, brain, tac, owner);
+	CHECK(tac.step == 0);
+
+	// the breach: the gate is destroyed, the path opens; every team attack-moves to the target and the stage becomes 1
+	logic.destroyObject(w.gate);
+	w.gate = nullptr;
+	w.frames(30);
+	AITacticalAI::updateTacticForTest(logic, ai, brain, tac, owner); // RW 0x9EF783 -> RW 0x8F19E9
+	CHECK(tac.step == 1);
+	for (Object *u : units)
+	{
+		AIUpdateInterface *uai = u->getAIUpdateInterface();
+		REQUIRE(uai != nullptr);
+		CHECK(uai->attackMoveActive());
+	}
+	// the target is gone and the teams are idle: every team idle for TeamTimeUntilConsideredIdle ends it with success
+	logic.destroyObject(w.inside);
+	w.inside = nullptr;
+	for (Object *u : units)
+	{
+		if (AIUpdateInterface *uai = u->getAIUpdateInterface())
+		{
+			uai->aiIdle(CMD_FROM_AI);
+		}
+	}
+	for (int f = 0; f < 1200 && !tac.ended; ++f)
+	{
+		logic.runLogicFrame();
+		AITacticalAI::updateTacticForTest(logic, ai, brain, tac, owner);
+	}
+	CHECK(tac.ended);
+	CHECK(tac.success);
+}
+
+TEST_CASE("skirmish ai siege: SimpleSiege attacks the wall with team 0 and stands team 1 500 off, then sends it through the breach (RW 0x9B3548 / 0x9B3453)")
+{
+	OPENBFME_REQUIRE_START(s);
+	WallTest w(*s);
+	GameLogic &logic = w.game.game->logic();
+	AISkirmishPlayer ai;
+	useAI(ai, *w.mordor, logic);
+	AIBrainState brain;
+	brain.currentEnemy = w.men->getPlayerIndex();
+	AIBrainState owner;
+	AITarget target;
+	target.type = 0; // ENEMY_STRUCTURE
+	target.position = *w.inside->getPosition();
+	target.object = w.inside->getID();
+	target.inactive = false;
+	target.teams = 1;
+	owner.targets.push_back(target);
+	AITactic tac;
+	tac.kindIndex = 6;
+	tac.kind = "SimpleSiege";
+	tac.targetIndex = 0;
+	tac.started = true;
+	AITacticTeam team0;
+	team0.index = 0;
+	team0.type = 0;
+	team0.handedOver = true;
+	AITacticTeam team1;
+	team1.index = 1;
+	team1.type = 0;
+	team1.handedOver = true;
+	Object *catapult = w.spawn("MordorCatapult", 300.0f);
+	Object *troll0 = w.spawn("MordorCaveTroll", 312.0f);
+	team0.members.push_back(catapult->getID());
+	team0.members.push_back(troll0->getID());
+	std::vector<Object *> assault;
+	for (int i = 0; i < 3; ++i)
+	{
+		Object *u = w.spawn("MordorCaveTroll", 330.0f + 12.0f * (float)i);
+		assault.push_back(u);
+		team1.members.push_back(u->getID());
+	}
+	w.frames(5);
+	tac.teams.push_back(team0);
+	tac.teams.push_back(team1);
+
+	AITacticalAI::launchTacticForTest(logic, ai, brain, tac, owner); // RW 0x9B3380: state 0
+	CHECK(tac.step == 0);
+	const Coord3D leader = *catapult->getPosition();
+	AITacticalAI::updateTacticForTest(logic, ai, brain, tac, owner); // RW 0x9B3453
+	CHECK(tac.step == 1);
+	CHECK(tac.squadTarget == w.gate->getID());
+	for (Object *u : { catapult, troll0 })
+	{
+		AIUpdateInterface *uai = u->getAIUpdateInterface();
+		REQUIRE(uai != nullptr);
+		CHECK(uai->stateMachine().goalObjectID() == w.gate->getID()); // team 0 attacks the wall
+	}
+	for (Object *u : assault)
+	{
+		AIUpdateInterface *uai = u->getAIUpdateInterface();
+		REQUIRE(uai != nullptr);
+		CHECK(uai->attackMoveActive()); // team 1 moves to the stand-back point (the group's own slots)
+	}
+	const Coord3D stand = AITacticalAI::siegeStandBackPointForTest(leader, *w.gate->getPosition()); // RW 0xC894AC: 500, in 3D
+	const float sx = stand.x - w.gate->getPosition()->x, sy = stand.y - w.gate->getPosition()->y, sz = stand.z - w.gate->getPosition()->z;
+	CHECK(std::fabs(std::sqrt(sx * sx + sy * sy + sz * sz) - 500.0f) < 0.05f); // tolerance: float32 normalise and the map's position bits
+	CHECK(sx * (leader.x - w.gate->getPosition()->x) >= 0.0f); // tolerance: the sign only says the leader lies on the same side as the stand-back step
+	CHECK(sy * (leader.y - w.gate->getPosition()->y) >= 0.0f); // tolerance: the sign only says the leader lies on the same side as the stand-back step
+
+	// the breach: the gate is destroyed, the path opens; stage 1 -> 2, then team 1 goes at the target (2 -> 3)
+	logic.destroyObject(w.gate);
+	w.gate = nullptr;
+	w.frames(30);
+	AITacticalAI::updateTacticForTest(logic, ai, brain, tac, owner); // RW 0x9EF783
+	CHECK(tac.step == 2);
+	AITacticalAI::updateTacticForTest(logic, ai, brain, tac, owner); // RW 0x8F17EE(1, target)
+	CHECK(tac.step == 3);
+	for (Object *u : assault)
+	{
+		AIUpdateInterface *uai = u->getAIUpdateInterface();
+		REQUIRE(uai != nullptr);
+		CHECK(uai->attackMoveActive());
+	}
+	// the target is gone and the teams are idle: team 1 idle for TeamTimeUntilConsideredIdle ends it with success (RW 0x8F1725)
+	logic.destroyObject(w.inside);
+	w.inside = nullptr;
+	for (Object *u : { catapult, troll0 })
+	{
+		if (AIUpdateInterface *uai = u->getAIUpdateInterface())
+		{
+			uai->aiIdle(CMD_FROM_AI);
+		}
+	}
+	for (Object *u : assault)
+	{
+		if (AIUpdateInterface *uai = u->getAIUpdateInterface())
+		{
+			uai->aiIdle(CMD_FROM_AI);
+		}
+	}
+	for (int f = 0; f < 1200 && !tac.ended; ++f)
+	{
+		logic.runLogicFrame();
+		AITacticalAI::updateTacticForTest(logic, ai, brain, tac, owner);
+	}
+	CHECK(tac.ended);
+	CHECK(tac.success);
+}

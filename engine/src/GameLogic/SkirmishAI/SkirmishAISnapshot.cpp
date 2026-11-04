@@ -885,7 +885,8 @@ void SkirmishAIManager::checkLoaded() const
 			AIXfer::inRange(i, 0, (long long)s.units.heroNames.size() - 1, "skirmish ai: a built hero");
 		}
 		// a tactic's progress (AITacticalAI.cpp): FormationAttack's state 0 .. 3, FlankAttack's next waypoint 0 .. its waypoint count, PincerAttack's two
-		// teams' waypoint codes ({ 0, 1, 3, 4 } and { 0, 2, 3, 4 }, RW 0x9B3EAB); the other prototypes keep both at 0
+		// teams' waypoint codes ({ 0, 1, 3, 4 } and { 0, 2, 3, 4 }, RW 0x9B3EAB), SimpleSiege's 0 .. 3 and SiegeGates' 0 .. 1 (lane RAI-SIEGE); the other
+		// prototypes keep both at 0
 		// lane SAVE-4e (closed sets): the targets', tactics' and attack records' ids are unique and below their counters (the next id each issues)
 		std::set<std::uint32_t> targetIds, tacticIds;
 		for (const AITarget &tg : ai.brain.targets)
@@ -935,6 +936,16 @@ void SkirmishAIManager::checkLoaded() const
 				{
 					throw XferException(what + "s " + std::to_string(tac.step) + " / " + std::to_string(tac.step2) + " are not PincerAttack's codes");
 				}
+				break;
+			case 6:
+				// lane RAI-SIEGE: SimpleSiege's stages 0 (the wall target) .. 3 (team 1 idle, RW 0x9B3548); step2 is unused
+				AIXfer::inRange(tac.step, 0, 3, what.c_str());
+				AIXfer::inRange(tac.step2, 0, 0, what.c_str());
+				break;
+			case 7:
+				// lane RAI-SIEGE: SiegeGates' 0 (the wall target, RW 0x9B31E6) or 1 (every team sent at the target); step2 is unused
+				AIXfer::inRange(tac.step, 0, 1, what.c_str());
+				AIXfer::inRange(tac.step2, 0, 0, what.c_str());
 				break;
 			case 8:
 				// lane AIEXPAND-1: SimpleExpansion's stages 0 .. 4 (RW 0x9B52BD); a running one has its request from stage 1 on (made with the move to 1, RW 0x9B51E9);

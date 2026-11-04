@@ -1836,6 +1836,258 @@ void teamAttackObject(GameLogic &logic, AITacticTeam &team, Object &target)
 	team.idleFrames = 0;
 }
 
+// ---- lane RAI-SIEGE: the two siege tactic bodies (RW 0x9B3548 SimpleSiege, RW 0x9B31E6 SiegeGates) ------------------------------------------------------
+constexpr float kSiegeStandBack = 500.0f; // RW 0xC894AC: the point team 1 waits at, 500 from the wall target toward team 0's first member
+
+// RW 0x9EF946: the tactic's wall target (+ 0x58, the field FarmKillSquad's squad target also uses)
+Object *wallTargetOf(GameLogic &logic, const AITactic &tac)
+{
+	return tac.squadTarget != INVALID_ID ? logic.findObjectByID(tac.squadTarget) : nullptr;
+}
+
+// RW 0x9EF955: the wall target is gone (RW 0x449681 finds none) or effectively dead (+ 0x458 bit 0)
+bool wallTargetGone(GameLogic &logic, const AITactic &tac)
+{
+	return !alive(wallTargetOf(logic, tac));
+}
+
+// RW 0x9EF829: team 0's first member finds the nearest living enemy WALL_GATE, or WALL_SEGMENT that is not WALK_ON_TOP_OF_WALL, never
+// NOT_AUTOACQUIRABLE (the enemy's structures list, RW 0x6A9999 + 8; 2D squared distance, the first on ties); kept at + 0x58
+bool findWallTarget(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, AITactic &tac)
+{
+	const Kinds &k = kinds();
+	const AITacticTeam *team0 = teamByIndex(tac, 0);
+	if (!team0 || team0->members.empty())
+	{
+		return false;
+	}
+	const Object *leader = logic.findObjectByID(team0->members[0]);
+	if (!leader)
+	{
+		return false;
+	}
+	const int enemy = ai.groupFirst ? ai.groupFirst->brain.currentEnemy : b.currentEnemy; // RW 0x6C7807
+	if (enemy < 0)
+	{
+		return false;
+	}
+	Object *best = nullptr;
+	float bestDist = 0.0f;
+	for (ObjectID id : AITacticalAI::recordOf(logic, enemy).structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (!alive(o) || is(*o, k.notAutoAcquirable))
+		{
+			continue;
+		}
+		if (!is(*o, k.wallGate) && !(is(*o, k.wallSegment) && !is(*o, k.walkOnTopOfWall)))
+		{
+			continue;
+		}
+		const float dx = SimMath::subf32(o->getPosition()->x, leader->getPosition()->x);
+		const float dy = SimMath::subf32(o->getPosition()->y, leader->getPosition()->y);
+		const float d = SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
+		if (!best || d == 0.0f || d < bestDist) // RW 0x9EF90B: a zero distance always takes the pick
+		{
+			best = o;
+			bestDist = d;
+		}
+	}
+	if (!best)
+	{
+		return false;
+	}
+	tac.squadTarget = best->getID();
+	return true;
+}
+
+// RW 0x9B3184: the wall target (RW 0x9EF829), attacked by team 0 (RW 0x8F1792)
+bool siegeWallTarget(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, AITactic &tac)
+{
+	if (!findWallTarget(logic, ai, b, tac))
+	{
+		return false;
+	}
+	Object *wall = wallTargetOf(logic, tac);
+	AITacticTeam *team0 = teamByIndex(tac, 0);
+	if (!wall || !team0)
+	{
+		return false;
+	}
+	teamAttackObject(logic, *team0, *wall);
+	return true;
+}
+
+// RW 0x9EF783: team 0's first CAN_ATTACK / HERO / SUPPORT member not IGNORES_SELECT_ALL paths to the tactic's target object, else to its position
+bool siegePathToTarget(GameLogic &logic, AITactic &tac, const AITarget *t)
+{
+	if (!t)
+	{
+		return false;
+	}
+	const Kinds &k = kinds();
+	const AITacticTeam *team0 = teamByIndex(tac, 0);
+	if (!team0)
+	{
+		return false;
+	}
+	const Object *unit = nullptr;
+	for (ObjectID id : team0->members)
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && (is(*o, k.canAttack) || is(*o, k.hero) || is(*o, k.support)) && !is(*o, k.ignoresSelectAll))
+		{
+			unit = o;
+			break;
+		}
+	}
+	const AIUpdateInterface *u = unit ? unit->getAIUpdateInterface() : nullptr;
+	AIWorld *world = logic.aiWorld();
+	if (!u || !world)
+	{
+		return false;
+	}
+	Object *target = t->object != INVALID_ID ? logic.findObjectByID(t->object) : nullptr;
+	const PathfindLocomotorInfo loco = u->locomotorInfo();
+	if (target)
+	{
+		return world->pathfinder().pathToObject(u->adapter(), loco, *unit->getPosition(), world->adapterFor(*target)); // RW 0x6F5F65
+	}
+	return world->pathfinder().quickDoesPathExist(u->adapter(), unit->getPosition(), &t->position, &loco); // RW 0x6F5BB0
+}
+
+// RW 0x9B3453 (SimpleSiege stage 0): the wall target (RW 0x9EF829), team 0 attacks it (RW 0x8F1792), team 1 attack-moves to the wall's position
+// stepped 500 toward team 0's first member (RW 0x7A11FF, RW 0xC894AC, RW 0x8F17EE)
+Coord3D siegeStandBackPoint(const Coord3D &leader, const Coord3D &wall)
+{
+	Coord3D away{ SimMath::subf32(leader.x, wall.x), SimMath::subf32(leader.y, wall.y), SimMath::subf32(leader.z, wall.z) };
+	normalize3(away);
+	return Coord3D{ SimMath::addf32(wall.x, SimMath::mulf32(away.x, kSiegeStandBack)), SimMath::addf32(wall.y, SimMath::mulf32(away.y, kSiegeStandBack)),
+		SimMath::addf32(wall.z, SimMath::mulf32(away.z, kSiegeStandBack)) };
+}
+
+bool simpleSiegeStageZero(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, AITactic &tac)
+{
+	if (!siegeWallTarget(logic, ai, b, tac))
+	{
+		return false;
+	}
+	Object *wall = wallTargetOf(logic, tac);
+	AITacticTeam *team0 = teamByIndex(tac, 0);
+	const AITacticTeam *team1 = teamByIndex(tac, 1);
+	const Object *leader = team0 && !team0->members.empty() ? logic.findObjectByID(team0->members[0]) : nullptr;
+	if (!wall || !team0 || !team1 || !leader)
+	{
+		return false;
+	}
+	teamAttackMove(logic, tac, 1, siegeStandBackPoint(*leader->getPosition(), *wall->getPosition())); // RW 0x8F17EE(1, pos)
+	return true;
+}
+
+// RW 0x9B3380: SimpleSiege's start (state 0)
+void startSimpleSiege(AITactic &tac)
+{
+	tac.step = 0;
+}
+
+// RW 0x9B31C5: SiegeGates' start: team 0's wall target, else the end (0, 0)
+void startSiegeGates(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (!teamByIndex(tac, 0))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false); // RW 0x9B31DB
+		return;
+	}
+	siegeWallTarget(logic, ai, b, tac); // RW 0x9B31D6 -> 0x9B3184
+}
+
+// RW 0x9B3548: SimpleSiege's started update (the target inactive ends it with success; teams 1 and 0 needed; stage + 0x5C 0 .. 3)
+void updateSimpleSiege(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner, AITarget *t)
+{
+	if (!tac.started)
+	{
+		return;
+	}
+	if (!t || t->inactive)
+	{
+		endAnyTactic(logic, ai, b, tac, owner, true);
+		return;
+	}
+	if (!teamByIndex(tac, 1) || !teamByIndex(tac, 0))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	switch (tac.step)
+	{
+	case 0: // RW 0x9B3453: the wall, else the end (0, 0)
+		if (simpleSiegeStageZero(logic, ai, b, tac))
+		{
+			tac.step = 1;
+		}
+		else
+		{
+			endAnyTactic(logic, ai, b, tac, owner, false);
+		}
+		break;
+	case 1: // RW 0x9EF783: the path through the breach
+		if (siegePathToTarget(logic, tac, t))
+		{
+			tac.step = 2;
+		}
+		break;
+	case 2: // RW 0x8F17EE(1, target): team 1 goes in
+		teamAttackMove(logic, tac, 1, t->position);
+		tac.step = 3;
+		break;
+	case 3: // RW 0x8F1725(1): team 1 idle ends it with success
+		if (teamDone(ai, tac, 1))
+		{
+			endAnyTactic(logic, ai, b, tac, owner, true);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+// RW 0x9B31E6: SiegeGates' started update (team 0; stage 0: the path opens -> every team attack-moves to the target and + 0x5C = 1; else a dead wall
+// target or every team idle picks/attacks the wall again; stage 1: every team idle ends it with success)
+void updateSiegeGates(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner, AITarget *t)
+{
+	if (!tac.started)
+	{
+		return;
+	}
+	if (!teamByIndex(tac, 0))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false); // RW 0x9B31FB
+		return;
+	}
+	if (tac.step == 0)
+	{
+		if (siegePathToTarget(logic, tac, t))
+		{
+			if (t)
+			{
+				for (const AITacticTeam &team : tac.teams)
+				{
+					teamAttackMove(logic, tac, team.index, t->position); // RW 0x8F19E9
+				}
+			}
+			tac.step = 1;
+		}
+		else if (wallTargetGone(logic, tac) || allTeamsDone(ai, tac))
+		{
+			siegeWallTarget(logic, ai, b, tac); // RW 0x9B3184
+		}
+	}
+	else if (allTeamsDone(ai, tac))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9B3249
+	}
+}
+
 // FlagCaptureSquad update RW 0x9BC3F4, nearest flag RW 0x9BC213, command RW 0x8F1933.
 void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
@@ -2052,8 +2304,11 @@ void launchOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 		}
 		return;
 	}
-	case SIMPLE_SIEGE: // RW 0x9B3380 (state 0) / RW 0x9B31C5 (the wall target): the bodies are not ported (S-417); the common path check now lets them apply (S-418)
-	case SIEGE_GATES:
+	case SIMPLE_SIEGE: // RW 0x9B3380: state 0 (team 1 attacks the wall on the first update)
+		startSimpleSiege(tac);
+		return;
+	case SIEGE_GATES: // RW 0x9B31C5: team 0's wall target at the start
+		startSiegeGates(logic, ai, b, tac, owner);
 		return;
 	}
 }
@@ -2259,9 +2514,13 @@ void updateOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 			endAnyTactic(logic, ai, b, tac, owner, false);
 		}
 		return;
+	case SIMPLE_SIEGE: // RW 0x9B3548: the wall, the breach, team 1 through it, then the end on team 1's idle
+		updateSimpleSiege(logic, ai, b, tac, owner, t);
+		return;
+	case SIEGE_GATES: // RW 0x9B31E6: the wall until the path opens, every team to the target, then the end on every team's idle
+		updateSiegeGates(logic, ai, b, tac, owner, t);
+		return;
 	case SIMPLE_ATTACK:
-	case SIMPLE_SIEGE: // the bodies are not ported (S-417); this generic idle end is SimpleAttack's
-	case SIEGE_GATES:
 	default:
 		// SimpleAttack RW 0x9B4DE7: every team done (RW 0x8F175A) or the target inactive ends it with success
 		if (allTeamsDone(ai, tac) || targetGone)
@@ -2670,6 +2929,22 @@ bool AITacticalAI::offensiveAppliesForTest(GameLogic &logic, const AISkirmishPla
 		}
 	}
 	throw std::logic_error(std::string("AITacticalAI: no offensive prototype named ") + kind);
+}
+
+void AITacticalAI::launchTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	AITarget *t = tac.targetIndex >= 0 && tac.targetIndex < (int)owner.targets.size() ? &owner.targets[(size_t)tac.targetIndex] : nullptr;
+	launchOffensive(logic, ai, b, tac, owner, t);
+}
+
+void AITacticalAI::updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	updateTactic(logic, ai, b, tac, owner);
+}
+
+Coord3D AITacticalAI::siegeStandBackPointForTest(const Coord3D &leader, const Coord3D &wall)
+{
+	return siegeStandBackPoint(leader, wall);
 }
 
 const AIStatCollector &AITacticalAI::recordOf(GameLogic &logic, int playerIndex)
