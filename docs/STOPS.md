@@ -901,3 +901,21 @@ exact S-090 limitation. Owner/capturer sides come from the live players; client
 flush events carry the capturer’s colour while raising and the owner’s after
 cancellation or transfer. Regression: `capture flag presentation: ...` in
 `test_hero_retail.cpp`.
+
+| S-6102 | code | Regional mission shroud reveals | BFME2/RotWK wrapper equivalence and exact trigger-edge coverage are unverified; current raster uses cell centers and the existing polygon predicate | ScriptEngine regional-action note | `save4d regional reveals` asserts the exact note, masks, undo, and save round trip | exact regional visibility parity | compare trusted retail radius and polygon-edge traces |
+
+## S-6102: regional mission reveal wrappers and edge coverage
+
+Regional waypoint/trigger actions now update the shared shroud manager. Circle
+raster primitives are already ported; trigger cells use pointInTrigger at cell
+centers. Exact BFME2/RotWK wrapper and trigger-edge equivalence is unverified.
+Every regional action reports S-6102; synthetic tests pin masks, overlap,
+concave exclusion, named undo, and snapshot preservation. See
+[Tutorial/campaign fixes](TUTORIAL_CAMPAIGN_FIXES.md) for sources and limits.
+
+The additive explicit-size drawable marker slice extends S-3304: terrain
+projection and emission are a Godot adaptation; exact retail blend/opacity,
+automatic sizing and rotated offsets remain unverified. Nodes expose S-3304.
+The dozer slice of position-targeted construction is now implemented; non-dozer
+buildObjectNow remains S-5305. Existing S-1182 regional presentation-only wording
+is superseded for the six implemented reveal/undo actions described above.

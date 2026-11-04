@@ -736,6 +736,8 @@ private:
 	std::vector<MapCacheEntry> m_mapCache;           ///< maps\\mapcache.ini, read by setup()
 	struct EntryView
 	{
+		uint64_t shadowDecalId = 0;
+		std::string shadowDecalTexture;
 		int64_t instance = -1;
 		std::string model;              ///< the lower-case model the instance shows ("" none)
 		std::string rawModel, rawLowered; ///< lane PERF-1: the last model name as the draw gave it and its lower-case form (lowered once per change)

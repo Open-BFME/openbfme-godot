@@ -34,6 +34,8 @@
 #include "GameLogic/Module/LogicModules.h"
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/System/TerrainResourceManager.h"
+#include "GameLogic/System/ShroudManager.h"
+#include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/SpellStores.h"
 #include "GameLogic/VictoryConditions.h"
 
@@ -1043,4 +1045,43 @@ TEST_CASE("save4d script engine: a non-default acquired-science queue and generi
 	CHECK(b.g.engine().getUnitNamed("RefN2") == b.dummy); // lane CASTLE-UNPACK
 	CHECK(b.g.engine().references().size() == 1u);
 	CHECK(b.g.engine().sequentialScripts().size() == 1u);
+}
+
+TEST_CASE("save4d regional reveals: named polygon reveals survive snapshots and undo without revealing the bounding box")
+{
+	ScriptGame a, b;
+	TriggerArea area;
+	area.name = "Opening";
+	area.points = {{80,80}, {240,80}, {240,160}, {160,160}, {160,240}, {80,240}};
+	a.triggers.push_back(area); b.triggers.push_back(area);
+	a.start(); b.start();
+	ShroudManager sa(*a.lw.logic), sb(*b.lw.logic);
+	for (ShroudManager *shroud : {&sa, &sb})
+	{
+		shroud->init(40, 1); shroud->setExtent(0, 0, 400, 400); shroud->attach();
+	}
+	const int alice = a.lw.players.findPlayerWithName("Alice")->getPlayerIndex();
+	const int bob = a.lw.players.findPlayerWithName("Bob")->getPlayerIndex();
+	ScriptActions::execute(a.engine(), act("MAP_REVEAL_PERMANENTLY_IN_TRIGGER", {sp(9,"Opening"), sp(11,"Alice"), sp(49,"OpeningReveal")}));
+	CHECK(sa.getCellStatus(alice, 2, 2) == CELLSHROUD_CLEAR);
+	CHECK(sa.getCellStatus(alice, 5, 5) == CELLSHROUD_SHROUDED); // inside bounds but outside the concave polygon
+	CHECK(sa.getCellStatus(bob, 2, 2) == CELLSHROUD_SHROUDED);
+	CHECK(a.engine().stats().notes.at("[S-6102] regional script reveals use BFME2 wrappers; trigger cell-edge parity remains unverified") == 1u);
+	CHECK(a.engine().takeClientRequests().empty()); // authoritative shroud changes run in the logic
+	const std::vector<std::string> tokens = {"obfme:ScriptEngine", "obfme:Shroud"};
+	std::vector<std::uint8_t> saved, again;
+	a.lw.logic->gameState().saveBlocks(tokens, saved);
+	b.lw.logic->gameState().loadBlocks(tokens, saved);
+	b.lw.logic->gameState().saveBlocks(tokens, again);
+	CHECK(saved == again);
+	CHECK(section(*a.lw.logic, "script engine") == section(*b.lw.logic, "script engine"));
+	CHECK(sb.getCellStatus(alice, 2, 2) == CELLSHROUD_CLEAR);
+	for (ScriptGame *game : {&a, &b})
+		ScriptActions::execute(game->engine(), act("MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER", {sp(49,"OpeningReveal")}));
+	CHECK(sa.getCellStatus(alice, 2, 2) == CELLSHROUD_FOGGED);
+	CHECK(sb.getCellStatus(alice, 2, 2) == CELLSHROUD_FOGGED);
+	CHECK(sb.getCellStatus(alice, 5, 5) == CELLSHROUD_SHROUDED);
+	// A one-time reveal explores but does not keep a looker.
+	ScriptActions::execute(b.engine(), act("MAP_REVEAL_IN_TRIGGER", {sp(9,"Opening"), sp(11,"Bob")}));
+	CHECK(sb.getCellStatus(bob, 2, 2) == CELLSHROUD_FOGGED);
 }
