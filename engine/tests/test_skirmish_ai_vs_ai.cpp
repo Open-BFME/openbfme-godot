@@ -919,7 +919,10 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q38 (measured once on the merged tree and at each merge point; #172 keeps them): LOCODIST-1's retail locomotor distance to the goal
 	// (RW 0x664127) keeps seed 2 open at 9000 with a new table and ends seed 7 with Mordor's defeat (start position 1) at 8995; seed 1234 stays open at
 	// 9000. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 8995 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Lane RAI-DEF (the DEFENSIVE target heuristic and SimpleDefense, RW 0x97D74F / 0x90C436): seed 2 stays open at 9000 with a new table (the AI now
+	// forms defence teams when an enemy reaches its structures, which changes its build and attack timing), seed 7 stays open at 9000 (was Mordor's defeat,
+	// start position 1, at 8995), seed 1234 stays open at 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -965,16 +968,18 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// merge queue q37 (measured once on the merged tree; ATKRESET-1 moves it): a new table from the first window on; the game ends with the Men's defeat at 6858
 			// merge queue q38 (measured once on the merged tree and at each merge point; LOCODIST-1 moves it, #172 keeps it): a new table from the first window on; the game
 			// stays open at 9000
+			// Lane RAI-DEF's DEFENSIVE tactic re-measured this table (the new heuristic and tactic change the AI's build and attack timing)
+			// pin: the DEFENSIVE target heuristic and SimpleDefense move the AI-vs-AI game
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 75u/8s destroyed 19u/2s] [1 attacks 0 built 91u/8s destroyed 40u/2s]\n"
-		"frame 2000: [0 attacks 1 built 256u/9s destroyed 68u/2s] [1 attacks 1 built 154u/10s destroyed 198u/5s]\n"
-		"frame 3000: [0 attacks 3 built 344u/13s destroyed 160u/3s] [1 attacks 2 built 226u/13s destroyed 254u/5s]\n"
-		"frame 4000: [0 attacks 4 built 486u/15s destroyed 207u/4s] [1 attacks 2 built 300u/17s destroyed 433u/7s]\n"
-		"frame 5000: [0 attacks 8 built 683u/17s destroyed 331u/4s] [1 attacks 2 built 407u/21s destroyed 615u/8s]\n"
-		"frame 6000: [0 attacks 9 built 809u/20s destroyed 494u/4s] [1 attacks 2 built 590u/22s destroyed 737u/8s]\n"
-		"frame 7000: [0 attacks 11 built 994u/23s destroyed 600u/4s] [1 attacks 2 built 676u/24s destroyed 911u/8s]\n"
-		"frame 8000: [0 attacks 13 built 1199u/23s destroyed 635u/4s] [1 attacks 2 built 729u/25s destroyed 1106u/8s]\n"
-		"frame 9000: [0 attacks 16 built 1363u/25s destroyed 744u/4s] [1 attacks 2 built 829u/27s destroyed 1275u/9s]\n");
+		"frame 1000: [0 attacks 1 built 70u/7s destroyed 21u/2s] [1 attacks 1 built 92u/8s destroyed 42u/1s]\n"
+		"frame 2000: [0 attacks 2 built 203u/9s destroyed 107u/2s] [1 attacks 2 built 156u/10s destroyed 181u/5s]\n"
+		"frame 3000: [0 attacks 5 built 329u/13s destroyed 227u/4s] [1 attacks 4 built 284u/13s destroyed 246u/6s]\n"
+		"frame 4000: [0 attacks 9 built 435u/15s destroyed 271u/4s] [1 attacks 5 built 380u/15s destroyed 386u/11s]\n"
+		"frame 5000: [0 attacks 16 built 637u/16s destroyed 478u/4s] [1 attacks 6 built 523u/18s destroyed 596u/12s]\n"
+		"frame 6000: [0 attacks 18 built 784u/19s destroyed 603u/4s] [1 attacks 7 built 706u/21s destroyed 735u/12s]\n"
+		"frame 7000: [0 attacks 23 built 903u/19s destroyed 740u/4s] [1 attacks 10 built 840u/24s destroyed 857u/12s]\n"
+		"frame 8000: [0 attacks 25 built 1075u/21s destroyed 846u/4s] [1 attacks 13 built 952u/24s destroyed 988u/14s]\n"
+		"frame 9000: [0 attacks 30 built 1194u/23s destroyed 990u/4s] [1 attacks 15 built 1083u/24s destroyed 1167u/15s]\n");
 		}
 	}
 }

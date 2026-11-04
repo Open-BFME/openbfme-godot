@@ -24,6 +24,7 @@
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SnapshotXfer.h"
 
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -312,11 +313,20 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 		x.xferReal(&t.radius);
 		AIXfer::coord(x, t.finderPosition);
 		x.xferReal(&t.threat);
+		if (version >= 5)
+		{
+			x.xferInt(&t.defenseSize); // lane RAI-DEF: + 0x2C
+		}
+		else if (x.isLoading())
+		{
+			t.defenseSize = 0;
+		}
 		x.xferObjectID(&t.object);
 		x.xferUnsignedInt(&t.id);
 		if (x.isLoading())
 		{
 			AIXfer::inRange(t.type, 0, 4, "skirmish ai: a target's AITARGET"); // RW 0xDA1208: 5 names
+			AIXfer::inRange(t.defenseSize, 0, 2, "skirmish ai: a defensive target size");
 		}
 	}
 	x.xferUnsignedInt(&b.nextTargetId);
@@ -337,8 +347,8 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 		{
 			// an offensive prototype 0 .. 7 or the expansion prototype 8 (version 4) by its name, or a targetless one (100 + 0 .. 10, AITacticalAI.cpp)
 			static const char *const kOffensive[] = { "SimpleAttack", "FormationAttack", "FlankAttack", "PincerAttack", "FeintAttack",
-				"AIBasePenetrationTroopsTactic", "SimpleSiege", "SiegeGates", "SimpleExpansion" };
-			const int prototypes = version >= 4 ? 9 : 8;
+				"AIBasePenetrationTroopsTactic", "SimpleSiege", "SiegeGates", "SimpleExpansion", "SimpleDefense" };
+			const int prototypes = version >= 5 ? 10 : version >= 4 ? 9 : 8;
 			if (!(tac.kindIndex >= 0 && tac.kindIndex < prototypes && tac.kind == kOffensive[tac.kindIndex]) && !(tac.kindIndex >= 100 && tac.kindIndex < 111))
 			{
 				throw XferException("skirmish ai: a tactic '" + tac.kind + "' of the prototype " + std::to_string(tac.kindIndex));
@@ -360,6 +370,20 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 			AIXfer::coord(x, team.lastPosition);
 			x.xferInt(&team.index);
 			x.xferInt(&team.idleFrames);
+			if (version >= 5)
+			{
+				x.xferBool(&team.hasRecruitOrigin); // lane RAI-DEF: + 0x324 / + 0x328
+				AIXfer::coord(x, team.recruitOrigin);
+				if (x.isLoading() && team.hasRecruitOrigin &&
+					(!std::isfinite(team.recruitOrigin.x) || !std::isfinite(team.recruitOrigin.y) || !std::isfinite(team.recruitOrigin.z)))
+				{
+					throw XferException("skirmish ai: a tactic team's recruit origin is not finite");
+				}
+			}
+			else if (x.isLoading())
+			{
+				team.hasRecruitOrigin = false;
+			}
 			if (x.isLoading())
 			{
 				AIXfer::inRange(team.type, 0, 4, "skirmish ai: a tactic team's AITARGET");
@@ -459,9 +483,10 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 {
 	// version 2 (lane AI5): the upgrade / expansion requests and the unit upgrader / upgrade builder states. Version 3 (community #113) adds the capture-flag
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
-	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
-	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 3, 4 };
+	// counter, SimpleExpansion's request and plain structure requests. Version 5 (lane RAI-DEF): the DEFENSIVE target's defense size (+ 0x2C) and a
+	// SimpleDefense team's recruit origin (+ 0x324 / + 0x328). A version 3 / 4 snapshot predates the DEFENSIVE heuristic, so no such target or tactic is in
+	// it: the fields load at 0 / none
+	XferVersion v{ 3, 5 };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;

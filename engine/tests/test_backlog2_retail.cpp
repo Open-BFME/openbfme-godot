@@ -738,7 +738,10 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// lane RAI-DEF (measured on the lane's tree; goals and positions unchanged): 0x45726314 -> 0xCA4B529D: the player info record's position sampler
 	// (RW 0x8E4042) is in the skirmish AI's state hash
 	// pin: the skirmish AI player info record's position sampler (RW 0x8E4042) is hashed
-	CHECK(a.hashes.back() == 0xCA4B529DU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// lane RAI-DEF's DEFENSIVE tactic (measured on the lane's tree; goals and positions unchanged): 0xCA4B529D -> 0x57D4FF8F: the DEFENSIVE target's
+	// defense size (+0x2C) and a SimpleDefense team's recruit origin (+0x324 / +0x328) are in the skirmish AI's state hash too
+	// pin: the DEFENSIVE target's defense size and a SimpleDefense team's recruit origin are hashed
+	CHECK(a.hashes.back() == 0x57D4FF8FU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

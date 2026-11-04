@@ -580,6 +580,10 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: the player info record's position sampler (RW 0x8E4042) re-records the Uber battle vector from frame 0
 // pin: the skirmish AI player info record's position sampler (RW 0x8E4042) is hashed
 // pin: re-measured after the sampler's append order (RW 0x8E4082: radius + distance + padding) settled
+// Lane RAI-DEF's DEFENSIVE tactic re-measured the skirmish (OPENBFME_PERF1_REGEN=1 on the lane's tree): the DEFENSIVE target's defense size
+// (+0x2C) and a SimpleDefense team's recruit origin (+0x324 / +0x328) are hashed; the battle, the allied blob and the Uber battle keep their vectors.
+// pin: the DEFENSIVE target's defense size and a SimpleDefense team's recruit origin are hashed
+// pin: re-measured with the sampler's append order settled
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,
