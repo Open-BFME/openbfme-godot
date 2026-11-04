@@ -3,16 +3,20 @@
 
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
 
+#include "Common/GameCommon.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
+#include "Common/StateHash.h"
 #include "Common/Thing/KindOfTokens.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "Common/Xfer.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
+#include "GameLogic/SnapshotXfer.h"
 
 #include <cstring>
 #include <variant>
@@ -168,6 +172,122 @@ AIThreatFinder::ThreatRecord sumRecords(GameLogic &logic, const AIThreatFinder::
 	return out;
 }
 } // namespace
+
+// ---- the named map threat area (lane RAI-THREAT) -----------------------------------------------------------------------------------------------------------
+
+// RW 0x7EDDFB: the records zeroed, the name, position and radius 0, the scan frame 0
+AIThreatFinder::AIThreatFinder(std::string name, bool noStructures)
+	: m_name(std::move(name))
+	, m_noStructures(noStructures)
+{
+}
+
+// RW 0x7EDE52: the module removes the name's entry before the finder goes (ThreatFinderUpdate::destroyFinder)
+AIThreatFinder::~AIThreatFinder() = default;
+
+// RW 0x7EE166: (frame - lastScanFrame) * 5 >= 3.0 rescans; the per-frame cache is why one script action and the AI agree within a frame
+void AIThreatFinder::query(GameLogic &logic, const Player *owner, int mode, const Player *mode2Player, ThreatRecord &out)
+{
+	const std::uint32_t now = logic.getFrame();
+	const std::int32_t delta = (std::int32_t)(now - m_lastScanFrame); // RW 0x7EE179: the signed difference the fild reads
+	double scaled = (double)delta;
+	if (delta < 0)
+	{
+		scaled += 4294967296.0; // RW 0x7EE190: fadd [0xBD8698]
+	}
+	if (!(scaled * (double)LOGICFRAMES_PER_SECOND < 3.0)) // RW 0x7EE196 .. 0x7EE1A2: fld 3.0; fcomi; jb (below: keep the cache)
+	{
+		scan(logic, m_position, m_radius, m_noStructures, m_records); // RW 0x7EE1A6
+		m_lastScanFrame = now;                                        // RW 0x7EE1B3
+	}
+	out = ThreatRecord{}; // RW 0x7EE1BC
+	if (!owner)           // RW 0x7EE1C3: a null player returns the zeroed record
+	{
+		return;
+	}
+	if (mode == 2) // RW 0x7EE1D8: the record of mode2Player's index
+	{
+		const int index = mode2Player ? mode2Player->getPlayerIndex() : -1;
+		if (index >= 0 && index < kRecords)
+		{
+			out = m_records[index];
+		}
+		return;
+	}
+	if (mode != 0 && mode != 1) // RW 0x7EE222: an unknown mode returns the zeroed record
+	{
+		return;
+	}
+	out = sumRecords(logic, m_records, *owner, mode); // RW 0x7EE1F1 .. 0x7EE21D
+}
+
+// RW 0x7EDC93: the manager's name travels with the finder (a save restores the finder's records and state); the records are 18 floats each
+void AIThreatFinder::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	for (ThreatRecord &r : m_records)
+	{
+		for (float &f : r.v)
+		{
+			x.xferReal(&f);
+		}
+	}
+	x.xferAsciiString(&m_name);
+	SnapshotXfer::coord3D(x, m_position);
+	x.xferReal(&m_radius);
+	std::int32_t lastScan = x.isLoading() ? 0 : (std::int32_t)m_lastScanFrame;
+	x.xferInt(&lastScan);
+	m_lastScanFrame = (std::uint32_t)lastScan;
+	x.xferBool(&m_noStructures);
+}
+
+void AIThreatFinder::crc(StateHasher &h) const
+{
+	h.addU32(0x54465231u); // "TFR1"
+	for (const ThreatRecord &r : m_records)
+	{
+		for (float f : r.v)
+		{
+			h.addFloat(f);
+		}
+	}
+	h.addString(m_name);
+	h.addFloat(m_position.x);
+	h.addFloat(m_position.y);
+	h.addFloat(m_position.z);
+	h.addFloat(m_radius);
+	h.addU32(m_lastScanFrame);
+	h.addBool(m_noStructures);
+}
+
+// RW 0x7EE33A: the map's name entry; an existing name keeps its node and takes this finder
+void ThreatFinderManager::add(const std::string &name, AIThreatFinder &finder)
+{
+	m_finders[name] = &finder;
+}
+
+// RW 0x7EE378: the name's entry goes
+void ThreatFinderManager::remove(const std::string &name)
+{
+	m_finders.erase(name);
+}
+
+void ThreatFinderManager::remove(const std::string &name, const AIThreatFinder &finder)
+{
+	auto it = m_finders.find(name);
+	if (it != m_finders.end() && it->second == &finder)
+	{
+		m_finders.erase(it);
+	}
+}
+
+// RW 0x7EE260: the finder of that name, null when the map has none
+AIThreatFinder *ThreatFinderManager::find(const std::string &name) const
+{
+	auto it = m_finders.find(name);
+	return it == m_finders.end() ? nullptr : it->second;
+}
+
 
 int AIThreatFinder::threatCategory(const ThingTemplate &tt)
 {

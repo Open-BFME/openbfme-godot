@@ -501,6 +501,7 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/Module/UnportedModule.cpp
     src/GameLogic/Module/SpawnUnitBehavior.cpp
     src/GameLogic/Module/ObjectHelper.cpp
+    src/GameLogic/Module/ThreatFinderUpdate.cpp
     src/GameLogic/Module/ActiveBody.cpp
     src/GameLogic/Module/LogicModules.cpp
     src/GameLogic/Object/Contain/HordeContainRuntime.cpp

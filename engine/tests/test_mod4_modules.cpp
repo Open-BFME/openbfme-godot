@@ -19,7 +19,6 @@
 #include "GameLogic/Module/AISpecialPowerUpdate.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
-#include "GameLogic/Module/Mod4Stops.h"
 #include "GameLogic/Module/RepairSpecialPower.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Module/SpawnBehavior.h"
@@ -365,35 +364,19 @@ TEST_CASE("MOD-4: a Rohan peasant's RepairSpecialPower sends it to repair a dama
 
 // lane MODCOMPAT-MOD1 ported the rebuild holes (RebuildHoleExposeDie / RebuildHoleBehavior): their S-1427 line is RebuildHoleBehavior's (test_rebuildhole.cpp)
 // lane MODCOMPAT-MOD1 ported PickupStuffUpdate (its stop [S-1422] is PickupStuffUpdate::stopLines, test_pickup_modules.cpp)
-TEST_CASE("MOD-4: ThreatFinderUpdate stays an UnportedModule, reported as its stop [S-1424]")
+// lane RAI-THREAT ported ThreatFinderUpdate (S-1424 closed; the module and its script readers are test_threat_finder.cpp)
+TEST_CASE("MOD-4: the lane's classes are bound and ThreatFinderUpdate is no longer an UnportedModule (S-1424 closed)")
 {
 	OPENBFME_REQUIRE_START(s);
 	const std::vector<std::string> unported = s->world->modules().unportedModuleClassNames();
 	const std::vector<std::string> stops = s->world->acceptanceStops();
-	// lane MODCOMPAT-MOD1 ported GeometryUpgrade (its [S-1423] is now GeometryUpgrade::stopLines, test_geometry_upgrade.cpp)
-	const char *const ids[] = { "[S-1424] ThreatFinderUpdate" };
-	REQUIRE(Mod4Stops::classes().size() == 1);
-	for (size_t i = 0; i < Mod4Stops::classes().size(); ++i)
+	CHECK(std::find(unported.begin(), unported.end(), "ThreatFinderUpdate") == unported.end());
+	int s1424 = 0;
+	for (const std::string &l : stops)
 	{
-		const std::string &name = Mod4Stops::classes()[i];
-		CHECK_MESSAGE(std::find(unported.begin(), unported.end(), name) != unported.end(), name);
-		int found = 0;
-		for (const std::string &l : stops)
-		{
-			found += l.rfind(ids[i], 0) == 0 ? 1 : 0;
-		}
-		CHECK_MESSAGE(found == 1, ids[i]);
-		// the retail data uses each class
-		int uses = 0;
-		for (const ThingTemplate *tt : s->world->things().templates())
-		{
-			for (const ThingTemplate::Nugget &n : tt->behaviorModules().nuggets())
-			{
-				uses += n.name == name ? 1 : 0;
-			}
-		}
-		CHECK_MESSAGE(uses > 0, name);
+		s1424 += l.rfind("[S-1424]", 0) == 0 ? 1 : 0;
 	}
+	CHECK(s1424 == 0);
 	// the lane's ported classes are bound (and lane MODCOMPAT-MOD1's PickupStuffUpdate)
 	CHECK(std::find(unported.begin(), unported.end(), "PickupStuffUpdate") == unported.end());
 	CHECK(std::find(unported.begin(), unported.end(), "AISpecialPowerUpdate") == unported.end());
@@ -409,7 +392,7 @@ TEST_CASE("MOD-4: ThreatFinderUpdate stays an UnportedModule, reported as its st
 	CHECK(s1421 == 1);
 }
 
-TEST_CASE("MOD-4: the binary facts behind [S-1422] .. [S-1424]: the three field tables (RW 0xC64600 / 0xC6F578 / 0xC4C320)")
+TEST_CASE("MOD-4 / RAI-THREAT binary facts: the three field tables (RW 0xC64600 / 0xC6F578 / 0xC4C320)")
 {
 	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
 	if (!pe)

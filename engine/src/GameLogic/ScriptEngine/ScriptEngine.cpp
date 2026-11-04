@@ -24,6 +24,7 @@
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/SimMath.h"
 
 #include <algorithm>
@@ -66,7 +67,8 @@ enum EngineAction
 	ACT_SET_RANDOM_COUNTER_IN_SECONDS = 416,
 	ACT_SET_COUNTER_TO_UNIT_THREAT = 439,
 	ACT_SET_COUNTER_TO_TEAM_THREAT = 440,
-	ACT_SET_COUNTER_TO_CLIENT_RANDOM_VALUE = 508
+	ACT_SET_COUNTER_TO_CLIENT_RANDOM_VALUE = 508,
+	ACT_SET_COUNTER_TO_THREAT_FINDER_THREAT = 556
 };
 
 // Parameter access as RotWK compiles getParameter(i): a missing parameter is a null pointer the callers dereference; the parsers guarantee the
@@ -1446,10 +1448,75 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 		}
 		return true;
 	}
-	case ACT_SET_COUNTER_TO_UNIT_THREAT:
-	case ACT_SET_COUNTER_TO_TEAM_THREAT:
-		noteUnportedAction(ScriptTemplates::action(a.resolved)->name); // engine-owned, not ported (S-1180)
+	case ACT_SET_COUNTER_TO_UNIT_THREAT: // RW 0x608BCA (the 439 call site passes isTeam = 0)
+	{
+		// The named unit must be a KindOf THREAT_FINDER map object (template + 0x120 bit 3, RW 0x608C9E): the counter becomes the area's
+		// enemies' total from TheThreatFinderManager, at the finder's own radius and position (RW 0x608CB4 .. 0x608CE2). A missing unit or
+		// finder does nothing (RW 0x608C99 / 0x608CC7). Every other unit reads the object's own cached threat (RW 0x697B41), not ported here.
+		const std::string &unitName = param(a.params, 1).stringValue;
+		Object *unit = getUnitNamed(unitName); // RW 0x75A243
+		if (!unit)
+		{
+			return true;
+		}
+		if (unit->isKindOfName("THREAT_FINDER"))
+		{
+			AIThreatFinder *finder = m_logic.threatFinders().find(unitName); // RW 0x7EE260
+			if (finder)
+			{
+				const Player *owner = unit->getControllingPlayer(); // RW 0x68B678 (null: RW 0x7EE166 returns the zeroed record)
+				AIThreatFinder::ThreatRecord record;
+				finder->query(m_logic, owner, 0, nullptr, record); // RW 0x7EE166(out, owner, 0, 0)
+				counter(param(a.params, 0).stringValue).value = SimMath::cvttss2si(record.v[0]); // RW 0x608CFD
+			}
+			return true;
+		}
+		noteUnportedAction(ScriptTemplates::action(a.resolved)->name); // RW 0x608CE9 -> 0x697B41 (S-1180)
 		return true;
+	}
+	case ACT_SET_COUNTER_TO_TEAM_THREAT: // RW 0x608BCA with isTeam = 1: the team's own threat (RW 0x7A6A20) is not ported (S-1180)
+		if (!ScriptConditions::team(*this, param(a.params, 1).stringValue))
+		{
+			return true; // RW 0x608C54: no team, nothing
+		}
+		noteUnportedAction(ScriptTemplates::action(a.resolved)->name);
+		return true;
+	case ACT_SET_COUNTER_TO_THREAT_FINDER_THREAT: // RW 0x7C68AA (counter, finder name, Enemies / Allies, player)
+	{
+		// RW 0x7C68C7: the counter, the player (RW 0x758F7C -> 0x6A85B6), then the relationship: "Enemies" mode 0, "Allies" mode 1,
+		// anything else returns without a warning (RW 0xC3638C / 0xC36384). The named finder's summed record's total is truncated to the
+		// counter (RW 0x7C6957: cvttss2si); a name the manager lacks warns and leaves the counter (RW 0xC36348).
+		Counter &target = counter(param(a.params, 0).stringValue); // RW 0x60817A
+		Player *player = ScriptConditions::firstPlayer(*this, param(a.params, 3).stringValue);
+		if (!player)
+		{
+			return true;
+		}
+		const std::string &relationship = param(a.params, 2).stringValue;
+		int mode = 0;
+		if (relationship == "Enemies")
+		{
+			mode = 0;
+		}
+		else if (relationship == "Allies")
+		{
+			mode = 1;
+		}
+		else
+		{
+			return true;
+		}
+		AIThreatFinder *finder = m_logic.threatFinders().find(param(a.params, 1).stringValue); // RW 0x7EE260
+		if (!finder)
+		{
+			note("WARNING - Threat Finder not found during script execution: " + param(a.params, 1).stringValue + ".");
+			return true;
+		}
+		AIThreatFinder::ThreatRecord record;
+		finder->query(m_logic, player, mode, nullptr, record); // RW 0x7EE166
+		target.value = SimMath::cvttss2si(record.v[0]);        // RW 0x7C6957
+		return true;
+	}
 	default:
 		if (a.resolved >= ACT_CAMERA_FADE_FIRST && a.resolved <= ACT_CAMERA_FADE_LAST)
 		{

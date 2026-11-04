@@ -20,20 +20,20 @@ A row's class is the provenance of what exists. A ported feature with a player-v
 
 | Class | Features | Share |
 |---|---:|---:|
-| RotWK 1:1 | 182 | 52% |
+| RotWK 1:1 | 183 | 52% |
 | BFME2 1:1 | 1 | 0% |
 | Generals/ZH | 16 | 5% |
 | best guess | 31 | 9% |
-| missing | 119 | 34% |
+| missing | 118 | 34% |
 
-Completeness: full 58, partial 173, stub 15, none 103. Confidence: high 192, medium 146, low 11.
+Completeness: full 59, partial 173, stub 15, none 102. Confidence: high 192, medium 146, low 11.
 
 What the numbers say:
 
-- **Where we have code, it is almost all RotWK 1:1.** 182 of the 230 implemented features port the RotWK binary. Only 1 feature is a straight BFME2 decomp port; the decomp is used as a cross-check next to RW addresses, not as the source. The 16 Zero Hour features are where BFME kept ZH's design and nobody has yet checked the RotWK binary: terrain height and rendering, the audio engine core and music, the cinematic camera, text and fonts, the lockstep frame model, the LAN lobby, the logic CRC exchange and archive mounting. Most RotWK rows are `partial`: the core is ported, details are open stops.
+- **Where we have code, it is almost all RotWK 1:1.** 183 of the 231 implemented features port the RotWK binary. Only 1 feature is a straight BFME2 decomp port; the decomp is used as a cross-check next to RW addresses, not as the source. The 16 Zero Hour features are where BFME kept ZH's design and nobody has yet checked the RotWK binary: terrain height and rendering, the audio engine core and music, the cinematic camera, text and fonts, the lockstep frame model, the LAN lobby, the logic CRC exchange and archive mounting. Most RotWK rows are `partial`: the core is ported, details are open stops.
 - **31 best-guess features.** More than half are OpenBFME-original by design (our online service, relay, rejoin, UDP transport, own save and replay formats, install verification, presentation options); retail had nothing to port there. The ones that matter for faithfulness: unit target choice (S-326), unit collision (S-780), the announcer's timing and selection (S-247), water rendering, group casting of powers, script AI orders without an AI state (S-1186), military captions and the under-attack notifications.
-- **120 missing features.** The biggest blocks are castle sieges (path layers + wall docking), War of the Ring (not on main), the computer player's higher-level decisions, and a long tail of effects and sounds.
-- **Module classes** (the INI building blocks retail data uses; current registry, regenerated for this lane): 153 of 245 ported, 4 run as the plain base AI, 2 parsed only, 86 missing. The 86 missing classes are used by 1,280 object templates (5% of module uses); every one appears in a row below.
+- **119 missing features.** The biggest blocks are castle sieges (path layers + wall docking), War of the Ring (not on main), the computer player's higher-level decisions, and a long tail of effects and sounds.
+- **Module classes** (the INI building blocks retail data uses; current registry, regenerated for this lane): 154 of 245 ported, 4 run as the plain base AI, 2 parsed only, 85 missing. The 85 missing classes are used by 1,240 object templates (5% of module uses); every one appears in a row below.
 
 ### Features per area
 
@@ -41,7 +41,7 @@ What the numbers say:
 |---|---:|---:|---:|---:|---:|---:|
 | Combat | 22 |  |  | 1 | 8 | 31 |
 | Movement/pathing | 19 |  | 1 | 2 | 9 | 31 |
-| AI | 21 |  |  |  | 12 | 33 |
+| AI | 22 |  |  |  | 11 | 33 |
 | Economy | 10 |  |  |  | 7 | 17 |
 | Heroes | 7 |  |  |  | 4 | 11 |
 | Powers/spellbook | 12 |  |  | 1 | 8 | 21 |
@@ -263,7 +263,7 @@ Columns: **Class**, **Done** (full / partial / stub / none), **Conf** (confidenc
 | Script guard orders (guard object / team / area; lane SCRIPT-4 ported the location guard command RW 0x771790 and the scripts' location guards), AI crates, layer test (AIUpdateInterface) | missing | none | medium | 3 | engine/src/GameLogic/AI/AIGuard.cpp | RW guard machine 0x949A10 outer state layer test 0x68BBE0/0x6FF7FA; ZH AIGuard.cpp / AITNGuard.cpp | S-3802, S-1186 | size: ~1000 LOC (ZH AIGuard/AITNGuard analogues + RW variants) | S-3802 lists object / team / area guards and crate state as not ported; crate state succeeds immediately; Campaign maps use guard-area orders; depends: script engine (Campaign area) |
 | Unported AI states: dock, wander, attack area, attack-follow waypoints, NAMED_ATTACK_TEAM, face-named turning (AIUpdateInterface) | missing | stub | medium | 3 | engine/src/GameLogic/ScriptEngine/ScriptActionsUnits.cpp; engine/src/GameLogic/AI/AIWaypointPath.cpp | RW attack-follow states 0x754A3C / 0x754AAA; ZH AIStates.cpp (wander, attack area), ZH AIDock.cpp | S-1186, S-222 | size: ~6-8 states, ~1500 LOC | S-1186: attack-follow waypoints run as stand-in attack-move along each waypoint's first link; face-named turns at once; no Wander/Dock/AttackArea state classes in engine/src; Stand-ins are best guess behaviour; depends: script engine; SiegeDocking |
 | Animal AI (AnimalAIUpdate: wild animals flee / wander) (AnimalAIUpdate) | missing | stub | medium | 2 | engine/src/GameLogic/Module/AIUpdate.cpp | BFME2 decomp Object/Update/AIUpdate/AnimalAIUpdate*.cpp (8 files, 463 lines; makeStateMachine 0x0047EC69 own key 0xD7F450E0) | S-222 | size: ~460 LOC | module-coverage: 'base AI' (37 templates); decomp shows its own state machine key, so behaviour differs from base; Runs as plain AIUpdateInterface (sheep, deer, wolves on maps); depends: AI state machine |
-| Named map threat areas (ThreatFinderUpdate + script threat action / condition) (ThreatFinderUpdate) | missing | none | high | 2 |  | RW update 0x7EDDB6, behaviour slot 0xB4 0x7EDECE, TheThreatFinderManager 0xDE8888, readers action 0x7C68AA / condition 0x608BCA; BFME2 decomp ThreatFinderUpdate*.cpp (6 files, 487 lines) | S-1424 | size: ~490 LOC + script action/condition | rw-text.asm: 0x7EDDB6 is a function entry; module-coverage: missing (40 templates, 2 objects); Only map scripts read it; depends: AIThreatFinder (ported for skirmish AI) |
+| Named map threat areas (ThreatFinderUpdate + script threat action) (ThreatFinderUpdate) | RotWK 1:1 | full | high | 2 | engine/src/GameLogic/Module/ThreatFinderUpdate.cpp; engine/src/GameLogic/SkirmishAI/AIThreatFinder.cpp; engine/src/GameLogic/ScriptEngine/ScriptEngine.cpp | RW update 0x7EDDB6, behaviour slot 0xB4 0x7EDECE, TheThreatFinderManager 0xDE8888, readers action 0x7C68AA / action 0x608BCA; BFME2 decomp ThreatFinderUpdate*.cpp (6 files, 487 lines) | (S-1424 closed) | size: ~490 LOC + script action | rw-text.asm: 0x7EDDB6 is a function entry; module-coverage: ported (40 templates); only map scripts read it; the two readers are SET_COUNTER_TO_THREAT_FINDER_THREAT (556) and SET_COUNTER_TO_UNIT_THREAT's KindOf THREAT_FINDER branch (439), not a condition (the old row's 0x608BCA is 439's helper) |
 | Idle flavour: bored animations and click reactions (BoredUpdate, ClickReactionBehavior) (BoredUpdate, ClickReactionBehavior) | missing | none | medium | 1 |  | BFME2 decomp Object/Update/BoredUpdate*.cpp (541 lines), Object/Behavior/ClickReactionBehavior*.cpp (351 lines) | S-140 | size: ~900 LOC | module-coverage: both missing (7 and 11 templates); Cosmetic; depends: client animation states |
 | Spawn / civilian spawners not ported (SpawnUnitBehavior runtime, CivilianSpawnUpdate, CivilianSpawnCollide, AllowBannerSpawnUpgrade) (SpawnUnitBehavior, CivilianSpawnUpdate, CivilianSpawnCollide, AllowBannerSpawnUpgrade) | missing | stub | medium | 1 | engine/src/GameLogic/Module/SpawnUnitBehavior.cpp | BFME2 decomp Object/Behavior/*Spawn*; RW SpawnUnitBehavior UnitName 0x8BC992 | S-2009, S-140 | size: ~4 small modules, ~800 LOC | module-coverage: SpawnUnitBehavior parsed only; others missing (1-2 templates each) |
 

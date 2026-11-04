@@ -8,7 +8,6 @@
 #include "GameLogic/SpellStops.h"
 #include "GameLogic/HeroSystem.h"
 #include "GameLogic/Module/AISpecialPowerUpdate.h"
-#include "GameLogic/Module/Mod4Stops.h"
 #include "GameLogic/Module/GeometryUpgrade.h"
 #include "GameLogic/Module/RebuildHoleModules.h"
 #include "GameLogic/Module/PickupStuffUpdate.h"
@@ -654,10 +653,6 @@ std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 		out.push_back(l);
 	}
 	for (const std::string &l : ActionManager::stopLines()) // AIPOW-1
-	{
-		out.push_back(l);
-	}
-	for (const std::string &l : Mod4Stops::lines()) // MOD-4
 	{
 		out.push_back(l);
 	}

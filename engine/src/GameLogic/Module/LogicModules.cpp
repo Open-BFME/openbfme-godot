@@ -27,6 +27,7 @@
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/HitReactionBehavior.h"
 #include "GameLogic/Module/InvisibilityModules.h"
+#include "GameLogic/Module/ThreatFinderUpdate.h"
 #include "GameLogic/Module/PortalModules.h"
 
 #include "Common/Thing/ModuleFactory.h"
@@ -131,6 +132,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	PickupStuffUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: a skirmish AI's hordes walk to the crates near them (S-1422)
 	AutoPickUpUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: the monsters' grab / eat scans and the WAKE_AUTO_PICKUP button (S-7160)
 	BoredUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: an idle troll clubs a troll friend (S-7161)
+	ThreatFinderUpdate::registerModule(modules); // lane RAI-THREAT: the named map threat areas (S-1424)
 	LargeGroupAudioUpdate::registerClass(modules); // lane AUDIO-4: the logic half of the large group battle sounds
 	ClientBehaviorModules::registerAll(modules); // lane AUDIO-4: the footsteps (a ClientBehavior: the drawables make it, GameClient/)
 	SiegeModules::registerAll(modules); // lane SIEGE-1: SiegeDockingBehavior, SiegeDeploySpecialPower, StopSpecialPower, SiegeAIUpdate (after the AI classes)

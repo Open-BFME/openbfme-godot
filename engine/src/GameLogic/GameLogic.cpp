@@ -18,6 +18,7 @@
 #include "GameLogic/BuildStops.h"
 #include "GameLogic/StructureStops.h"
 #include "GameLogic/VictoryConditions.h"
+#include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "Common/JobSystem.h"
 #include "Common/NumericState.h"
@@ -79,6 +80,7 @@ GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &p
 	// PRODUCTION lists now scale income. BFME2 1.06 the same. The sum seam (COMMAND_POINT_BONUS, BOUNTY_PERCENTAGE) stays uninstalled: S-253
 	m_economy->setAttributeModifierProvider([](const Object &obj, int type, float &product) { return obj.attributeModifierProduct(type, nullptr, true, product); });
 	m_partition = std::make_unique<PartitionManager>(*this);
+	m_threatFinders = std::make_unique<ThreatFinderManager>(); // lane RAI-THREAT
 	m_emotions = std::make_unique<EmotionWorld>(*this);
 	m_inertBit = ObjectTemplateInfoBuilder::kindOfIndex("INERT");
 	m_projectileBit = ObjectTemplateInfoBuilder::kindOfIndex("PROJECTILE");
@@ -1096,6 +1098,7 @@ void GameLogic::reset()
 	m_skirmishAI->reset();
 	m_experience->reset();
 	m_partition->reset();
+	m_threatFinders->clear(); // lane RAI-THREAT: the modules' destructors removed their names; a stale entry would be a bug, never a fallback
 	m_emotions->reset();
 	m_weather->reset(); // lane SPELL-2 (the objects are gone: nothing to remove from them)
 	m_invisibility->reset();

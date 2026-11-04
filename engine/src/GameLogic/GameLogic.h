@@ -105,6 +105,7 @@ class SkirmishAIManager;
 class ShroudManager;
 class PartitionManager;
 class EmotionWorld;
+class ThreatFinderManager;
 class ScriptEngine;
 class GameState;
 class Xfer;
@@ -792,6 +793,9 @@ public:
 	// INERT or PROJECTILE template), a transform or team change marks it, the partition row re-links the marked entries before the collisions (RW 0x62E93B)
 	PartitionManager &partition() { return *m_partition; }
 	const PartitionManager &partition() const { return *m_partition; }
+	// lane RAI-THREAT: TheThreatFinderManager of this game (GameLogic/SkirmishAI/AIThreatFinder.h; RW 0xDE8888): the named map threat areas a
+	// ThreatFinderUpdate registers and the script actions 556 / 439 read. Kept per game because the tests run two peers in one process
+	ThreatFinderManager &threatFinders() const { return *m_threatFinders; }
 	// lane MODULES-2: the game's side of TheEmotionSystem (GameLogic/System/EmotionSystem.h): the SCARY / HERO object list the fear and hero scans walk
 	EmotionWorld &emotions() { return *m_emotions; }
 	const EmotionWorld &emotions() const { return *m_emotions; }
@@ -1062,6 +1066,7 @@ private:
 	AIWorld *m_aiWorld = nullptr;
 	ShroudManager *m_shroud = nullptr;
 	std::unique_ptr<PartitionManager> m_partition; // lane MODULES-2
+	std::unique_ptr<ThreatFinderManager> m_threatFinders; // lane RAI-THREAT
 	std::unique_ptr<EmotionWorld> m_emotions;      // lane MODULES-2
 	int m_inertBit = -1, m_projectileBit = -1;     // the KindOf bits RW 0x68E31F tests (template + 0x110 bit 25, + 0x108 bit 25)
 	void partitionEnter(Object &obj);
