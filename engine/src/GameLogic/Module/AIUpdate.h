@@ -452,6 +452,9 @@ public:
 	float wanderFactor() const override;
 	float closeEnoughDist() const override;
 	float locomotorSpeed() const override;
+	bool isProjectile() const override;
+	bool treatAsAircraftForLocoDistToGoal() const override; // RW 0x6629D3; GiantBirdAIUpdate overrides it
+	Coord3D machineGoalPosition() const override;
 	bool movingBackwards() const override;
 	bool setModelCondition(const char *name, bool on) override;
 	void revealDisguiseOnClimb() override; // lane WALL-2: RW 0x66A143 (a Climb portal)

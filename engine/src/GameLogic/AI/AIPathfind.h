@@ -194,6 +194,12 @@ public:
 	// RW 0x765972: length from a point returned by computePointAhead (the segment containing it) to the end of the optimised path,
 	// measured with the retail approximation max + 0.25 * min on each segment
 	float remainingFrom(const PathNode *node, const Coord3D &pos) const;
+	// lane LOCODIST-1, RW 0x766173 then RW 0x765972 on its result (getLocomotorDistanceToGoal RW 0x664127): the remaining length from the point `speed`
+	// ahead (computePointAhead writes Path + 0x18 as retail does; the node is part of RW's returned record, so the port's m_lastAheadNode is kept)
+	float remainingFromPointAhead(float speed);
+	// RW 0x765B12 Path::computeFlightDistToGoal (BFME2 0x763EC0, decomp AI/Path.cpp:86): the sum of the non-negative projections of the unit's offset to
+	// every optimised node on its segment's direction; `goal` gets the first node past the unit (the head without a next node, zero without a head)
+	float computeFlightDistToGoal(const Coord3D &pos, Coord3D &goal) const;
 	// the node the follower is on (RW Path+0x10) and the fraction along its segment (RW Path+0x14)
 	const PathNode *currentNode() const { return m_closest; }
 	float currentT() const { return m_t; }

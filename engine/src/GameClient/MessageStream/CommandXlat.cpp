@@ -482,6 +482,15 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 			return msgType;
 		}
 	}
+	// OpenBFME input adaptation: retail CRATE objects are pickup destinations.
+	// Contact-command priority is not verified against RotWK (see CRATE_PICKUPS.md).
+	if (obj && obj->isKindOf((unsigned)CombatNames::kindOf("CRATE")) && !m_ctx.ui.isInForceAttackMode())
+	{
+		const Coord3D destination = *obj->getPosition();
+		if (type == EvaluateType::DoHint) hint(MouseCursorName::Move);
+		else return issueMove(nullptr, &destination, type);
+		return m_teamExists ? MSG_DO_MOVETO : 0;
+	}
 	// an UNATTACKABLE enemy fails the attack test and reaches the capture test below: a capture flag an enemy took is recaptured, not attacked.
 	// lane WALL-3 (CommandXlat.h): an enemy's walkable wall that no selected weapon damages is no attack (RW 0x81F618 .. 0x81F63A): the click falls through to the move
 	const bool walkableWall = obj && obj->isKindOfName("WALK_ON_TOP_OF_WALL") && !obj->isKindOfName("WALL_UPGRADE");

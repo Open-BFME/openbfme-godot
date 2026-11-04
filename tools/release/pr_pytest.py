@@ -79,6 +79,7 @@ SUBSET = [
     "tools/test_precommit_containers.py",
     "tools/test_precommit_audio.py",
     "tools/release/test_external_open.py",
+    "tools/test_precommit_pins.py",
     "tools/test_precommit_tolerance.py",
     "tools/test_stops_count.py",
     "tools/weapon/test_weapon_binary_facts.py",

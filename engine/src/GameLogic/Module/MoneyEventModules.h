@@ -96,9 +96,9 @@ private:
 	unsigned m_counter = 0; // RW module + 0x18
 };
 
-// the data of the crate collide: CrateCollideModuleData (constructor RW 0x8C07A0) then SalvageCrateCollide's (constructor RW 0x65592C); the runtime is
+// CrateCollideModuleData (constructor RW 0x8C07A0), shared by SalvageCrateCollide's data (constructor RW 0x65592C) and the veterancy shields'; the runtime is
 // GameLogic/Module/SalvageCrateCollide.h (lane MODCOMPAT-MOD1)
-class SalvageCrateCollideModuleData : public ModuleData
+class CrateCollideModuleData : public ModuleData
 {
 public:
 	KindOfMaskType m_requiredKindOf{};   // +8
@@ -112,6 +112,12 @@ public:
 	float m_executeAnimationTime = 0.0f; // +0x50
 	float m_executeAnimationZRise = 0.0f; // +0x54
 	bool m_executeAnimationFades = true; // +0x58 (RW 0x8C07FA)
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+class SalvageCrateCollideModuleData : public CrateCollideModuleData
+{
+public:
 	float m_porterChance = 0.0f;         // +0x5C
 	float m_bannerChance = 0.0f;         // +0x60
 	float m_levelUpChance = 0.5f;        // +0x64 (RW 0xBD869C)

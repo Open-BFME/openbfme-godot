@@ -931,6 +931,7 @@ add_executable(openbfme_tests
     tests/test_pathfind_retail_search.cpp
     tests/test_pathfind_move.cpp
     tests/test_pathfind_numerics.cpp
+    tests/test_locodist1.cpp
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp

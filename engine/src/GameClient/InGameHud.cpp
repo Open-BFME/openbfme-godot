@@ -721,12 +721,14 @@ void InGameHud::update(double seconds)
 		m_decalBuiltSettings = m_decalSettings;
 		m_decalLogic = &m_config.game.logic();
 		++m_decalBuilds;
+		markRaisedSelectionDecals();
 		++m_decalVersion;
 	}
 	else if (m_clientFrames != m_decalClientFrame && RefreshSelectionDecals(&m_config.game.drawables(), m_decalSettings, m_clientFrames, m_selectionDecals))
 	{
 		// lane SELPERF-1: once a client frame (30 a second of render time), as RadiusDecal::update runs (BFME2 decomp RadiusDecal.cpp: the throb counts
 		// client frames); INFERENCE: the markers follow their drawables at that rate too (retail draws at FramesPerSecondLimit 30, S-456)
+		markRaisedSelectionDecals();
 		++m_decalVersion;
 	}
 	m_decalClientFrame = m_clientFrames;
@@ -1729,4 +1731,12 @@ void InGameHud::presentBeacons()
 			}
 		}
 	}
+}
+
+// lane SELWALL-1: each selection decal's `raised` (SelectionDecals.h): the floor of its terrain part is the terrain's height at the decal's place (RotWK RW
+// 0x50C4DE .. 0x50C569: max(getLayerHeight(x, y, GROUND), the bridge's height + 1 or -100 without one); the port has no terrain bridges (S-161), so the
+// terrain alone). The logic is held here (RENDERWAIT-1: the HUD update runs in the held frame), so its terrain is read directly
+void InGameHud::markRaisedSelectionDecals()
+{
+	MarkRaisedSelectionDecals(m_selectionDecals, m_config.game.logic());
 }
