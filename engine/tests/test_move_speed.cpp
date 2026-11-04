@@ -4,6 +4,7 @@
 #include "doctest.h"
 #include "MoveTestUtil.h"
 #include "Common/JobSystem.h"
+#include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/Object/AttributeModifierPool.h"
 
@@ -297,4 +298,101 @@ TEST_CASE("move SPEED: repeated Uber traces agree at 1, 2 and 4 logic threads")
 		}
 		MESSAGE("SPEED trace: threads=" << threads << " frames=18 digest=" << digest.value());
 	}
+}
+
+namespace
+{
+// a fast and a slow walker with no weapon: the band range of a member without one is 100 (RW 0xBD88D8)
+const char kGroupSpeedWalkers[] =
+	"Object FastWalker\n"
+	"  KindOf = INFANTRY SELECTABLE\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = WalkerLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 80\n"
+	"  End\n"
+	"End\n"
+	"Object SlowWalker\n"
+	"  KindOf = INFANTRY SELECTABLE\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = WalkerLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 30\n"
+	"  End\n"
+	"End\n";
+} // namespace
+
+// MSG_DO_ATTACKMOVETO (RW 0x77AAEE) calls RW 0x77005F without a leader after the move order: every member's temporary speed cap (+ 0x2C) becomes the
+// group's slowest moving member's max speed. A plain move has no such call (RW 0x77BAAA).
+TEST_CASE("move SPEED: an attack-move caps every member's locomotor at the slowest member's max speed (RW 0x77AAEE -> RW 0x77005F(0))")
+{
+	MoveWorld w(100, 100, kGroupSpeedWalkers);
+	Object *fast = w.spawn("FastWalker", 300.0f, 300.0f);
+	Object *slow = w.spawn("SlowWalker", 330.0f, 300.0f);
+	w.buildMap();
+	w.frames(2);
+	AIUpdateInterface *fa = w.aiOf(fast), *sa = w.aiOf(slow);
+	REQUIRE(fa->curLocomotor() != nullptr);
+	REQUIRE(sa->curLocomotor() != nullptr);
+	const float slowMax = sa->curLocomotor()->getMaxSpeedForCondition(sa->locomotorHost());
+	const float fastMax = fa->curLocomotor()->getMaxSpeedForCondition(fa->locomotorHost());
+	REQUIRE(slowMax == 6.0f); // the fixture's SlowWalker: 30 a second over LOGICFRAMES_PER_SECOND (5)
+	REQUIRE(fastMax == 16.0f); // the fixture's FastWalker: 80 a second
+	const int alice = w.playerIndex("Alice");
+	w.select(alice, { fast, slow });
+	w.moveTo(alice, 800.0f, 300.0f, MSG_DO_ATTACKMOVETO);
+	w.frames(1);
+	CHECK(fa->curLocomotor()->temporarySpeedCap() == slowMax);
+	CHECK(sa->curLocomotor()->temporarySpeedCap() == slowMax);
+	// a plain move does not match speeds; the caps stay until a force-attack clears them (RW 0x76FD04)
+	w.moveTo(alice, 300.0f, 300.0f);
+	w.frames(1);
+	CHECK(fa->curLocomotor()->temporarySpeedCap() == slowMax);
+}
+
+// RW 0x77005F(1), the skirmish AI team step's call (RW 0x774F3B): the first member that is not dead leads, its pathfind goal (RW 0x68B411) is the goal,
+// and the leader's distance bands (a member without a weapon: 100, RW 0xBD88D8) cap a member that is ahead of it at 0.7 of the group's slowest speed and
+// free one that is more than 25 further behind than the leader; the leader itself takes the group's speed
+TEST_CASE("move SPEED: the team step's speed match caps a member ahead of the leader at 0.7 of the group's speed (RW 0x77005F(1))")
+{
+	MoveWorld w(100, 100, kGroupSpeedWalkers);
+	// the goal 700 east of the leader; one member 300 east of the leader (ahead of it, inside its band), one 200 west (behind, beyond its band)
+	Object *leader = w.spawn("FastWalker", 300.0f, 500.0f);
+	Object *ahead = w.spawn("FastWalker", 600.0f, 500.0f);
+	Object *behind = w.spawn("FastWalker", 100.0f, 500.0f);
+	w.buildMap();
+	w.frames(2);
+	// every member moves (only a moving locomotor, RW 0x5E36F7 > 0, enters the group's speed); the leader's goal is 700 east of it
+	w.aiOf(leader)->aiMoveToPosition({ 1000.0f, 500.0f, 0.0f }, CMD_FROM_PLAYER);
+	w.aiOf(ahead)->aiMoveToPosition({ 700.0f, 500.0f, 0.0f }, CMD_FROM_PLAYER);
+	w.aiOf(behind)->aiMoveToPosition({ 50.0f, 500.0f, 0.0f }, CMD_FROM_PLAYER);
+	w.frames(2);
+	Locomotor *ll = w.aiOf(leader)->curLocomotor(), *al = w.aiOf(ahead)->curLocomotor(), *bl = w.aiOf(behind)->curLocomotor();
+	REQUIRE(ll != nullptr);
+	REQUIRE(al != nullptr);
+	REQUIRE(bl != nullptr);
+	const float speed = ll->getMaxSpeedForCondition(w.aiOf(leader)->locomotorHost());
+	REQUIRE(speed == 16.0f); // the fixture's FastWalker: 80 a second over LOGICFRAMES_PER_SECOND (5)
+	// the leader and the member ahead of it: the group's speed is theirs, and the one ahead is capped at 0.7 of it
+	AIGroup pair(*w.logic, { leader->getID(), ahead->getID() });
+	pair.cohereMoveSpeed(true);
+	CHECK(ll->temporarySpeedCap() == speed);
+	CHECK(floatBits(al->temporarySpeedCap()) == floatBits(0.7f * speed));
+	// a straggler lowers the group's speed by 0.769 of its own and is itself freed (it is beyond its band)
+	AIGroup withStraggler(*w.logic, { leader->getID(), behind->getID() });
+	withStraggler.cohereMoveSpeed(true);
+	CHECK(floatBits(ll->temporarySpeedCap()) == floatBits(0.769f * speed));
+	CHECK(bl->temporarySpeedCap() == -1.0f);
 }
