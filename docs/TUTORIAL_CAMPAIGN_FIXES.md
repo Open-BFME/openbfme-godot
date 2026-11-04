@@ -100,3 +100,11 @@ retail-dependent skips are not evidence that the retail scenarios passed.
 - Python inventory/runner/stop-count checks: 13 passed.
 - Simulation flags/classification audit is blocked by upstream's existing
   unclassified MacOSTrackpad.mm; no exemption was added by this change.
+
+### Binary follow-up for named reveal review findings
+
+[Binary verification](MISSION_REVEAL_BINARY_VERIFICATION.md) establishes that
+clean BFME2 repeats the named apply call and re-resolves the selector on undo.
+The available modified RotWK image corroborates the control flow, with S-001
+still applying. Regression cases pin repeated-name and alliance-change behavior;
+no gameplay change or idempotence/original-mask enhancement was introduced.
