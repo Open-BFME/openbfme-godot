@@ -7,6 +7,7 @@
 #include "Common/SpecialPower.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Module/HeroModules.h"
+#include "GameLogic/Module/ExtraUpdateModules.h"
 #include "GameLogic/ExperienceLevels.h"
 #include "Common/AsciiString.h"
 #include "Common/INIException.h"
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <set>
 #include <stdexcept>
 
 const char *const TheCreateAHeroBlingTypeNames[] = { "ATTRIBUTE", "APPEARANCE", "INVALID", nullptr }; // RW 0xD9EDB8
@@ -725,6 +727,28 @@ const std::vector<std::pair<std::string, std::vector<int>>> &CreateAHeroGame::ch
 
 void CreateAHeroGame::onCreated(Object &obj)
 {
+	if (m_loadHeroes)
+	{
+		// Native snapshots, both editions: the current team may belong to a captor.
+		// Rebuild derived levels from the saved object binding, without applying a
+		// player's START hero or changing records/upgrades during object recreation.
+		for (auto &entry : *m_loadHeroes)
+		{
+			if (entry.second.objectID == obj.getID())
+			{
+				buildLevels(entry.second, obj);
+				// Both editions: the fresh drawable needs its saved presentation colors (RW 0x80AF0B).
+				// Send them directly; apply() would regrant upgrades and consume saved flags.
+				if (ObjectClientHooks *client = m_logic.clientHooks())
+				{
+					const CreateAHeroHero &hero = entry.second;
+					client->setCustomColors(obj, 3, hero.primaryColor, hero.secondaryColor, hero.tertiaryColor);
+				}
+				break;
+			}
+		}
+		return;
+	}
 	Player *player = obj.getControllingPlayer();
 	CreateAHeroHero *hero = player ? heroOf(*player) : nullptr;
 	if (!hero)
@@ -920,6 +944,16 @@ void CreateAHeroGame::apply(CreateAHeroHero &hero, Object &obj, std::uint32_t fl
 	hero.flags &= ~(8u | 0x200u);
 }
 
+namespace
+{
+std::string heroCommandSetName(const Object &obj, const CreateAHeroHero &hero, int rank)
+{
+	char name[512];
+	std::snprintf(name, sizeof(name), "CommandSet_%s_%s_rank_%d", obj.getName().c_str(), hero.uniqueID.c_str(), rank); // RW 0xC4F270
+	return name;
+}
+} // namespace
+
 void CreateAHeroGame::buildCommandSet(Object &obj, int rank)
 {
 	CreateAHeroHero *hero = heroOfObject(obj.getID()); // RW 0x619562
@@ -927,12 +961,15 @@ void CreateAHeroGame::buildCommandSet(Object &obj, int rank)
 	{
 		return;
 	}
+	buildCommandSetNamed(obj, *hero, rank, heroCommandSetName(obj, *hero, rank));
+}
+
+void CreateAHeroGame::buildCommandSetNamed(Object &obj, const CreateAHeroHero &hero, int rank, const std::string &name, bool installOverride)
+{
 	if (!TheCommandStore || !TheCreateAHeroSystem)
 	{
 		throw std::logic_error("CreateAHeroGame::buildCommandSet: the command store or TheCreateAHeroSystem is not installed");
 	}
-	char name[512];
-	std::snprintf(name, sizeof(name), "CommandSet_%s_%s_rank_%d", obj.getName().c_str(), hero->uniqueID.c_str(), rank); // RW 0xC4F270
 	CommandSet *set = TheCommandStore->newDynamicCommandSet(name); // RW 0x72028B(name, 1), cleared by RW 0x80C8D2
 	if (const CommandSet *tmpl = TheCommandStore->findCommandSet(TheCreateAHeroSystem->commandSetTemplate)) // RW 0x71EFA2
 	{
@@ -947,7 +984,7 @@ void CreateAHeroGame::buildCommandSet(Object &obj, int rank)
 	for (int slot = 0; slot < CommandSet::MAX_BUTTONS; ++slot)
 	{
 		bool found = false;
-		for (const CreateAHeroPower &p : hero->powers)
+		for (const CreateAHeroPower &p : hero.powers)
 		{
 			if (p.commandButton.empty() || p.buttonIndex != (std::uint32_t)slot)
 			{
@@ -971,8 +1008,54 @@ void CreateAHeroGame::buildCommandSet(Object &obj, int rank)
 	{
 		set->setDynamicButton(16, attackMove);
 	}
-	obj.setCommandSetOverride(name); // + 0x438
+	if (installOverride) obj.setCommandSetOverride(name); // + 0x438; post-load reconstruction may only define a displaced set
 	++m_stats.commandSets;
+}
+
+// Both editions, native snapshots: the command-set name is saved and hashed, but its dynamic definition is not.
+// Recreate only our own named set after the hero records and objects have loaded. A pending level grant can leave
+// the saved command set at an earlier rank than the tracker; never grant that level or replace a script/static set.
+void CreateAHeroGame::finishLoad()
+{
+	for (const auto &entry : m_heroes)
+	{
+		const CreateAHeroHero &hero = entry.second;
+		Object *obj = m_logic.findObjectByID(hero.objectID);
+		if (!obj || !obj->isKindOfName("CREATE_A_HERO"))
+		{
+			continue; // a record may name an object already gone (SAVE-4d)
+		}
+		const ExperienceTracker *tracker = obj->getExperienceTracker();
+		const auto *levels = tracker && TheExperienceLevelSystem ? TheExperienceLevelSystem->levelsFor(tracker->levelTargetName()) : nullptr;
+		if (!levels) continue;
+		std::vector<std::string> names{obj->getCommandSetOverride()};
+		for (const auto &module : obj->modules())
+		{
+			if (const auto *monitor = dynamic_cast<const MonitorConditionUpdate *>(module.get()))
+			{
+				names.push_back(monitor->savedCommandSet()); // persisted by the module; restored when its condition ends (RW 0x894EF5)
+			}
+		}
+		for (const std::string &savedName : names)
+		{
+			if (savedName.empty()) continue;
+			const CommandSet *existing = TheCommandStore ? TheCommandStore->findCommandSet(savedName) : nullptr;
+			if (existing && !existing->m_dynamic) continue; // static/script-selected definitions remain authoritative
+			for (const ExperienceLevelTemplate *level : *levels)
+			{
+				const int rank = level->getFinal()->m_rank;
+				// Object::setName leaves a generated set's historical object-name component intact.
+				const std::string prefix = "CommandSet_";
+				const std::string suffix = "_" + hero.uniqueID + "_rank_" + std::to_string(rank);
+				if (savedName.size() >= prefix.size() + suffix.size() && savedName.compare(0, prefix.size(), prefix) == 0 &&
+					savedName.compare(savedName.size() - suffix.size(), suffix.size(), suffix) == 0)
+				{
+					buildCommandSetNamed(*obj, hero, rank, savedName, false); // define only; preserve the active override and pending grants
+					break;
+				}
+			}
+		}
+	}
 }
 
 // RW 0x75CD7A: a power button's cost at a level
@@ -1084,6 +1167,21 @@ std::uint32_t CreateAHeroGame::crc() const
 // this game, listed once; the record's version 1 .. 8; the dirty flags within 0x2FF) before the game's heroes change.
 void CreateAHeroGame::xfer(Xfer &x)
 {
+	xferState(x, false);
+}
+
+void CreateAHeroGame::prepareLoad(Xfer &x)
+{
+	xferState(x, true);
+}
+
+void CreateAHeroGame::clearLoadPreparation() noexcept
+{
+	m_loadHeroes.reset();
+}
+
+void CreateAHeroGame::xferState(Xfer &x, bool preparing)
+{
 	const bool loading = x.isLoading();
 	XferVersion v{ 1, 1 };
 	x.xferVersion(v);
@@ -1190,8 +1288,24 @@ void CreateAHeroGame::xfer(Xfer &x)
 	}
 	if (loading)
 	{
-		m_heroes = std::move(loadedHeroes);
-		m_choices = std::move(loadedChoices);
+		if (preparing)
+		{
+			std::set<std::uint32_t> objects;
+			for (const auto &entry : loadedHeroes)
+			{
+				const std::uint32_t id = entry.second.objectID;
+				if (id && !objects.insert(id).second)
+				{
+					throw XferException("create-a-hero: object " + std::to_string(id) + " is bound to more than one saved hero");
+				}
+			}
+			m_loadHeroes = std::make_unique<std::map<int, CreateAHeroHero>>(std::move(loadedHeroes));
+		}
+		else
+		{
+			m_heroes = std::move(loadedHeroes);
+			m_choices = std::move(loadedChoices);
+		}
 	}
 }
 

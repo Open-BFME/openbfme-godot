@@ -242,6 +242,14 @@ to start a BFME2 linear campaign. BFME1 currently uses the English language view
 
 ## Checks
 
+When `BFME1_INSTALL` is set, the release gate (`tools/release/test_export.sh`)
+checks the packaged executable reaches `MainMenu.apt`, then runs the packaged
+`bfme1_test.gd` against that package's library and resources. An invalid install,
+a skipped test, a missing success marker, a script error or a nonzero exit fails
+the gate. When `BFME1_INSTALL` is unset or empty, both BFME1 checks print `SKIP`
+without failing publication; BFME1 packaged startup is unverified on that builder.
+Both nightly and stable candidates use these conditional checks.
+
 Synthetic CSF tests are included in `openbfme_tests --test-case="GameText:*"`.
 Legacy portal filtering, both bloodthirsty voice slots, per-sacrifice experience, and BFME2/RotWK rejection are
 covered by `openbfme_tests --test-case="bfme1 isolation:*"`. A core-only installed-data check can run without Godot:

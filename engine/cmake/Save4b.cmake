@@ -7,6 +7,7 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/GameLogicObjectSnapshot.cpp
 )
 set(OPENBFME_SAVE4B_TESTS
+    tests/test_cah_monitor_save.cpp
     tests/test_save4b.cpp
     tests/test_save4b_retail.cpp
 )

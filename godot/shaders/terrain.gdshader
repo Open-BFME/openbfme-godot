@@ -46,6 +46,15 @@ void fragment() {
 	vec3 ground = ALBEDO;
 	float ground_weight = 1.0;
 	// lane SELPERF-1: the selection's merge decals over the terrain, as RotWK's stencil passes draw them after it (selection_decals.gdshaderinc)
+	// lane HERORING-1: the alpha decals (a hero's ring) first, blended in retail's gamma space (the terrain's output decoded back, shadow_to_gamma is
+	// retail_output's inverse), then the merge decals over them (RotWK draws the merge list after the alpha list, RW 0x50DE6C after RW 0x50D9EB .. 0x50DA6A); the terrain's colour saturated first, as D3D9's
+	// frame buffer is before the decal blends
+	vec4 sela = sel_alpha_at(vec3(v_sage_xy, 0.0), false);
+	if (sela.a > 0.0) {
+		vec3 gamma = clamp(output_gamma == 1.0 ? ALBEDO : shadow_to_gamma(ALBEDO), 0.0, 1.0);
+		ALBEDO = retail_output(gamma * (1.0 - sela.a) + sela.rgb);
+		ground_weight *= 1.0 - sela.a;
+	}
 	vec4 sel = sel_merge(v_sage_xy);
 	if (sel.a > 0.0) {
 		ALBEDO = mix(ALBEDO, retail_output(sel.rgb), sel.a);

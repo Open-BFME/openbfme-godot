@@ -11,6 +11,25 @@ python -m pytest -q -rs tools/test_gdscript.py
 
 ## Scheduling policy
 
+The manual native HUD grayscale fixture is separate from the GDScript runner:
+
+```sh
+python godot/tests/hud_grayscale_test.py --bindings-build engine/build --scratch workspace/gray-check --godot "$GODOT"
+```
+
+On macOS with a configured native bindings build, it compiles a scratch extension
+and executes the production `grayTextureFor` body using real Godot CPU Images.
+A recording texture boundary checks that grayscale requests cause one grayscale
+upload and no color upload/readback; exact luminance/alpha, source immutability,
+cache identity, both request orders, mipmaps and missing/empty images are checked.
+Synthetic BC3/DXT5 mip blocks also pin exact decompressed grayscale/alpha bytes
+and verify that the cached compressed image's format and bytes stay unchanged.
+`--source-ref <old-ref>` runs the same assertions against a prior revision (the
+pre-fix code fails the upload/readback checks). No retail files or GPU are used;
+this is neither a rendered HUD test nor a GPU timing benchmark. It reuses only
+the bindings archive and never replaces the game extension. Logs and results
+remain under the requested new scratch directory.
+
 The launcher coverage gap is closed by the existing release pytest runners,
 including the resource-limited write-failure regression and the argument-aware
 social/OAuth fixtures. Every launcher entry point is listed below.
@@ -201,6 +220,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/packed_model_texture_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/pathperf1_render_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/perf3_cull_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/perfclient_views_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup; `godot --headless --path godot --script res://tests/perfclient_views_test.gd` (the parallel and the serial view refresh leave identical instancers). |
 | `godot/tests/pose_buffer_cull_query_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pose_buffer_query_trigger_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pose_buffer_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
@@ -240,6 +260,8 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/tangent_convention_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/terrain_lighting_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/timeline_markers_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: score timeline markers against a stub shell; headless, 20 s timeout. |
+| `godot/tests/wotr_preview_visibility_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: hidden War of the Ring preview rendering and reveal; synthetic shell, no retail assets or readback; headless, 20 s timeout. |
+| `godot/tests/save_failure_menu_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: late save refusals resume the shell and replace the loading canvas; synthetic world and shell; headless, 20 s timeout. |
 | `godot/tests/uberjoin1_lan_test.gd` | `godot/tests/start_test.gd` | CI gate's helper/child; not scheduled separately by pytest. |
 | `godot/tests/uberjoin1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/ui4_resize_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
@@ -254,6 +276,8 @@ runner is claimed. All paths below are relative to the repository root.
 
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 | `godot/tests/edainfactions1_test.gd` | Manual only; no generic pytest runner | Needs the Edain 4.8.5.3 install (OPENBFME_EDAIN_INSTALL, OPENBFME_EDAIN_ASSETS_INSTALL); without them it only parses. Runs the Dwarven clan choices and the Dwarven AI in real skirmishes. |
+
+| `godot/tests/harlindon_creep_combat_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
 
 ## OAuth readiness regression
 

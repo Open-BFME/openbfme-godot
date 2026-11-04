@@ -363,6 +363,7 @@ var _display_game := false               # --display-game
 var _fs: RefCounted
 var _audio: Node
 var _world: Node3D           # GameWorld
+var _crash_test_logic := false # lane WORKERFAIL-1: --crash-test-logic
 var _shell: Node2D           # AptMenuPlayer
 var _camera: Camera3D
 var _env: WorldEnvironment
@@ -791,6 +792,8 @@ func _ready() -> void:
 			_cheat_script = arg.substr(15) # lane CHEAT-1
 		elif arg == "--cheat-lobby":
 			_cheat_lobby = true
+		elif arg == "--crash-test-logic":
+			_crash_test_logic = true
 		elif arg == "--auto":
 			_auto = true
 		elif arg.begins_with("--perf-stat="):
@@ -1673,6 +1676,15 @@ func _sdk_show_banner(text: String) -> void:
 
 func _process(delta: float) -> void:
 	_frames += 1
+	if _world != null and _state != State.FAILED:
+		# lane WORKERFAIL-1: the logic worker stopped on an exception: named to the player and in the crash report, not a crash from the next HUD wait
+		var logic_failure: String = _world.logic_failure()
+		if not logic_failure.is_empty():
+			_fail("The game logic stopped with an internal error " + logic_failure)
+			return
+		if _crash_test_logic and _state == State.PLAYING:
+			_crash_test_logic = false
+			_world.crash_test_logic() # debug builds: a throw on the logic worker, once the game runs
 	if _platform_ready:
 		_platform_tick() # lane ONLINEHUB-1
 	if not _capture_dir.is_empty():
@@ -6051,6 +6063,8 @@ func _online_walk_run() -> void:
 		return _online_walk_end(await fwalk.run(self, _friends_code))
 	if _online_walk == "rejoin":
 		return _online_walk_rejoin()
+	if _online_walk == "warrejoin":
+		return _online_walk_war_rejoin()
 	if _online_walk == "hub":
 		await _online_walk_hub()
 		return
@@ -6283,6 +6297,26 @@ func _online_walk_rejoin() -> void:
 	if not await _online_wait("the rejoin START", func(_st): return _net_state != "", 240):
 		return _online_walk_end(false)
 	print("GAME ONLINE WALK: the rejoin START arrived: catching up")
+
+
+## --online-walk=warrejoin (WOTR2 S-4075): a War of the Ring player whose game crashed starts again with its kept session. RotWK has no reconnect, so
+## the running war is listed as the player's (/v1/mine) but never offered: no Yes / No box, and no REJOIN or WATCH row on the strategic page
+func _online_walk_war_rejoin() -> void:
+	if not await _online_wait("the running war in /v1/mine", func(st): return not st.get("running", []).is_empty(), 60):
+		return _online_walk_end(false)
+	var war_id := str(_shell.online_status().get("running", [])[0])
+	await _wait_seconds(10.0) # the offer would come with the sign-in's /v1/mine
+	var offered: bool = str(_shell.online_status().get("boxes", [])).contains("rejoin-offer")
+	await _online_click("Toggles.ButtonNav.Strategic")
+	if not await _online_wait("OnlineStrategic", func(st): return st.get("page", "") == "OnlineStrategic" and int(st.get("state", -1)) == 2, 60):
+		return _online_walk_end(false)
+	await _wait_seconds(10.0) # a few list polls
+	var rows: Array = _shell.online_status().get("games", [])
+	var listed := false
+	for r in rows:
+		listed = listed or str(r).ends_with("|rejoin") or str(r).ends_with("|watch")
+	print("GAME ONLINE WAR REJOIN %s: running %s, offered %s, rows %s" % ["ok" if not offered and not listed else "FAILED", war_id, str(offered), str(rows)])
+	_online_walk_end(not offered and not listed)
 
 
 ## --capture-dir (lane ONLINE-4): one picture of the window every 66 ms of wall-clock time, named by its unix time in ms
@@ -7395,7 +7429,7 @@ func _run_lan_wotr() -> void:
 	if _lan_wotr_stall_turn == -2:
 		# Sol review wotr2m8s2b2: the stalled client left by itself; its score screen's Continue shows the LAN lobby again (Shell::pop RW 0x75DB34)
 		var left: bool = not _wotr.active
-		var lobby_again: bool = _start_stack.has("LanLobby.apt")
+		var lobby_again: bool = _start_stack.has("LanLobby.apt") or _start_stack.has("OnlineShell.apt") # WOTR2 S-4075: online, the online screens
 		print("GAME WOTR NET STALL RESULT %s: left by itself %s, Continue shows %s" % ["ok" if left and lobby_again else "FAILED", str(left), str(_start_stack)])
 		get_tree().quit(0 if left and lobby_again else 1)
 		return

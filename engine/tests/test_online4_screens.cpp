@@ -1945,6 +1945,68 @@ TEST_CASE("wotr9 online strategic: the retail custom-match page opens with the s
 	CHECK_FALSE(p.hasNote("register-duplicate"));
 }
 
+TEST_CASE("wotr2 S-4075 retail: a player's running War of the Ring is never offered for a rejoin (RotWK has no reconnect): no Yes / No box, no REJOIN "
+		  "and no WATCH row on the strategic page; a running Open Play game still is")
+{
+	ONLINE4_REQUIRE_NODE();
+	OPENBFME_REQUIRE_START(s);
+	NodeLobby lobby("", "");
+	OnlinePlayer p(*s, lobby.port, 22, u"");
+	LivingWorldShellInfo war;
+	LivingWorldScenarioEntry scenario;
+	scenario.name = "WarScenario";
+	war.scenarios.push_back(scenario);
+	p.fx.environment.livingWorld = &war;
+	p.fx.environment.warOfTheRingOffered = true;
+	const std::string warId = "00000000000000aa", openId = "00000000000000bb";
+	const std::string common = "\"players\":2,\"openSlots\":0,\"password\":false,\"host\":\"Host\",\"map\":\"maps/strategic/strategic.map\",\"state\":\"started\"";
+	const std::string warRow = "{\"id\":\"" + warId + "\",\"name\":\"TheWar\"," + common + ",\"gameMode\":1,\"scenario\":\"WarScenario\",\"resume\":false";
+	bool withOpen = false;
+	// the lobby's own answers with the rows put first in "games" (every other field as the lobby sent it)
+	const auto prepend = [](std::string &body, const std::string &rows) {
+		const size_t at = body.find("\"games\":[");
+		if (at != std::string::npos)
+			body.insert(at + 9, rows + (body[at + 9] == ']' ? "" : ","));
+	};
+	p.tamper = [&](const OnlineLobbyClient::HttpRequest &r, HttpAnswer &a) {
+		const std::string openRow = "{\"id\":\"" + openId + "\",\"name\":\"TheSkirmish\"," + common;
+		if (a.status != 200 || r.method != "GET")
+			return;
+		if (r.path == "/v1/mine")
+			prepend(a.body, warRow + ",\"slot\":1}" + (withOpen ? "," + openRow + ",\"slot\":1}" : std::string()));
+		else if (r.path == "/v1/games" || r.path.rfind("/v1/games?", 0) == 0)
+			prepend(a.body, warRow + "}" + (withOpen ? "," + openRow + "}" : std::string()));
+	};
+	signInAndOpenPlay(p, u"Ann");
+	p.tick(30);
+	REQUIRE(runUntil({ &p }, [&] { return p.client.mine().size() == 1 && p.client.mine()[0].gameMode == 1; }));
+	p.tick(30);
+	CHECK(std::none_of(p.sh->boxesShown().begin(), p.sh->boxesShown().end(), [](const std::string &b) { return b.rfind("rejoin-offer", 0) == 0; }));
+	AptButtonInst *button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.Strategic"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineStrategic" && p.sh->openPlayState() == 2 && p.sh->gameList(); }), p.notes());
+	REQUIRE(runUntil({ &p }, [&] { return std::any_of(p.client.games().begin(), p.client.games().end(), [&](const OnlineLobbyClient::Listing &l) { return l.id == warId; }); }));
+	p.fx.wm->invokeCallback("AptOnline::CustomMatch::Refresh", "");
+	p.tick(30);
+	CHECK(std::find(p.sh->gameIds().begin(), p.sh->gameIds().end(), warId) == p.sh->gameIds().end());
+	CHECK(std::none_of(p.sh->gameRows().begin(), p.sh->gameRows().end(), [](const std::string &r) { return r.find("|rejoin") != std::string::npos || r.find("|watch") != std::string::npos; }));
+	// the same player's running Open Play game is still a REJOIN row there
+	withOpen = true;
+	button = starttest::firstButtonIn(p.at("Toggles.ButtonNav.OpenPlay"));
+	REQUIRE(button);
+	starttest::clickButton(p.fx, *button);
+	REQUIRE_MESSAGE(runUntil({ &p }, [&] { return p.sh->currentPage() == "OnlineOpenPlay" && p.sh->openPlayState() == 2; }), p.notes());
+	p.client.fetchMine();
+	REQUIRE(runUntil({ &p }, [&] { return p.client.mine().size() == 2; }));
+	p.fx.wm->invokeCallback("AptOnline::CustomMatch::Refresh", "");
+	p.tick(30);
+	const auto at = std::find(p.sh->gameIds().begin(), p.sh->gameIds().end(), openId);
+	REQUIRE(at != p.sh->gameIds().end());
+	CHECK(p.sh->gameRows()[(size_t)(at - p.sh->gameIds().begin())].find("|rejoin") != std::string::npos);
+	CHECK(std::find(p.sh->gameIds().begin(), p.sh->gameIds().end(), warId) == p.sh->gameIds().end());
+}
+
 TEST_CASE("wotr9 online strategic: a scenario changed in the staging room reaches the local lobby")
 {
 	ONLINE4_REQUIRE_NODE();

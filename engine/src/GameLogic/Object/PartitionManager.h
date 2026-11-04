@@ -304,6 +304,7 @@ private:
 	// skips the exact x87 arithmetic of a candidate it would reject anyway; never true for a NaN or a candidate near the boundary
 	bool surelyBeyond(DistanceCalculationType type, const Coord3D &center, const Entry &e, double radiusSqr) const;
 	const Geometry &entryGeometry(const Entry &e) const;
+	bool entryGeometryCurrent(const Entry &e) const; ///< entryGeometry would fill nothing (its own copy, or its template's, is current)
 	const Geometry &templateGeometryOf(const ThingTemplate *key) const;
 	std::vector<PartitionHit> takeBuffer() const;
 	friend class PartitionHits;
@@ -354,4 +355,6 @@ private:
 	mutable bool m_walkPreReject = true; ///< this walk's: off when the query rectangle is the whole grid (every candidate is near: the bound would only cost)
 	mutable PartitionFilter *m_walkPreFilter = nullptr; ///< lane UBER-3W: this range walk's beforeDistance filter (iterateObjectsInRange), else null
 	int m_mineBit = -1;
+	std::vector<Entry *> m_dirtyScan;        ///< update()'s scratch: the dirty list in order
+	std::vector<std::uint8_t> m_dirtyMoved;  ///< and whether each entry moved (tested on the job pool)
 };

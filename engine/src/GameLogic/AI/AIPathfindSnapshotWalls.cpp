@@ -528,6 +528,7 @@ void Pathfinder::applyWalls(WallState &w, bool loaded)
 	}
 	m_wallHeights = std::move(w.wallHeights);
 	m_wallPieces = std::move(w.wallPieces);
+	prepareRampPlanes(); // lane WALL-4: the planes are not saved; the loaded ramps' triangles make them again
 	m_anyRaised = w.anyRaised;
 	for (size_t l = 0; l < w.raised.size(); ++l)
 	{

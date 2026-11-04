@@ -260,6 +260,7 @@ include(cmake/Rules1.cmake)     # RULES-1: the Rules tab, the game rules, Legend
 include(cmake/Cheat1.cmake)        # CHEAT-1: the open Cheat Mode of custom games (appends to OPENBFME_SIM_SOURCES; OPENBFME_CHEAT1_TESTS)
 include(cmake/Gamemodes1.cmake) # GAMEMODES-1: the game modes' tests (OPENBFME_GAMEMODES1_TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
+include(cmake/PathRebuild.cmake) # PATH-REBUILD: the finish of a found path, RW 0x767B0E (appends to OPENBFME_SIM_SOURCES)
 include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
 include(cmake/Opts2.cmake)      # OPTS-2: the Options menu (OPENBFME_OPTS2_TESTS)
 include(cmake/Opts3.cmake)      # OPTS-3: the OpenBFME page of the Options screen (appends to OPENBFME_APT_SOURCES)
@@ -278,6 +279,7 @@ include(cmake/Summon1.cmake)    # SUMMON-1: the Thrall Master's summons, the OCL
 include(cmake/Backlog4.cmake)  # BACKLOG4: the teleport forms, the special power runtime, defection (OPENBFME_BACKLOG4_TESTS)
 include(cmake/Ship1.cmake)      # SHIP-1: ships and hover units (OPENBFME_SHIP1_TESTS)
 include(cmake/RenderWait1.cmake) # RENDERWAIT-1: the render never waits on the logic worker (OPENBFME_RENDERWAIT1_TESTS)
+include(cmake/PerfClient.cmake)  # PERF-CLIENT: the client job pool's size while the logic worker is behind (OPENBFME_PERFCLIENT_TESTS)
 include(cmake/Backlog2.cmake)   # BACKLOG2: castle / camp / construction ports (appends to OPENBFME_SIM_SOURCES; OPENBFME_BACKLOG2_TESTS)
 include(cmake/Contrib1.cmake)   # CONTRIB-1: the known RotWK 2.01 layouts, Data1.big by its entries (OPENBFME_CONTRIB1_TESTS)
 include(cmake/Netlag1.cmake)    # NETLAG-1: the command delay of a multiplayer game (OPENBFME_NETLAG1_TESTS)
@@ -286,6 +288,7 @@ include(cmake/Save4d.cmake)     # SAVE-4d: the script engine, victory, weather a
 include(cmake/Save4e.cmake)     # SAVE-4e: the snapshot load's test probe (appends to OPENBFME_SIM_SOURCES; OPENBFME_SAVE4E_TESTS)
 include(cmake/Platformicon1.cmake) # PLATFORMICON-1: each player's system beside the name (OPENBFME_PLATFORMICON1_TESTS)
 include(cmake/Ownerfix1.cmake)  # OWNERFIX-1: problems the owner hit playing (OPENBFME_OWNERFIX1_TESTS)
+include(cmake/B2spell1.cmake)  # B2SPELL-1: the BFME2 campaign spell book (OPENBFME_B2SPELL1_TESTS)
 include(cmake/Visual2.cmake)    # VISUAL-2: the owner's fog leak, tree sway and colouring (OPENBFME_VISUAL2_SOURCES / _TESTS)
 include(cmake/Ownerfix2.cmake)  # OWNERFIX-2: the owner's playtest of 2026-10-17 (OPENBFME_OWNERFIX2_CLIENT_SOURCES / _TESTS)
 include(cmake/Lumber1.cmake)    # LUMBER1: the evil lumber mills' harvesting workers (appends to OPENBFME_SIM_SOURCES; OPENBFME_LUMBER1_TESTS)
@@ -820,11 +823,13 @@ add_executable(openbfme_tests
     ${OPENBFME_TREES1_TESTS}
     ${OPENBFME_SHIP1_TESTS}
     ${OPENBFME_RENDERWAIT1_TESTS}
+    ${OPENBFME_PERFCLIENT_TESTS}
     ${OPENBFME_BACKLOG2_TESTS}
     ${OPENBFME_CONTRIB1_TESTS}
     ${OPENBFME_NETLAG1_TESTS}
     ${OPENBFME_PLATFORMICON1_TESTS}
     ${OPENBFME_OWNERFIX1_TESTS}
+    ${OPENBFME_B2SPELL1_TESTS}
     ${OPENBFME_VISUAL2_TESTS}
     ${OPENBFME_OWNERFIX2_TESTS}
     ${OPENBFME_WOTR1_TESTS}
@@ -926,6 +931,7 @@ add_executable(openbfme_tests
     tests/test_pathfind_retail_search.cpp
     tests/test_pathfind_move.cpp
     tests/test_pathfind_numerics.cpp
+    tests/test_locodist1.cpp
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp

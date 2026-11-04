@@ -26,6 +26,13 @@ UpdateSleepTime WeaponStatusHelper::update()
 	return UPDATE_SLEEP_NONE;
 }
 
+// lane PERF-WS: the scheduler computes the conditions on the logic job pool before the final list's pass (GameLogic::runModules) and applies
+// them in the pass with the same sleep, UPDATE_SLEEP_NONE, so the pass is update()'s
+ObjectWeapons *WeaponStatusHelper::weaponStatusWeapons() const
+{
+	return getObject()->getWeapons();
+}
+
 void WeaponStatusHelper::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);

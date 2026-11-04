@@ -232,9 +232,15 @@ def units(ctx: dict) -> list[dict]:
     """what the notes describe, in the merges' order: a change, or (owner 15:30Z: community pull requests credited one by one) each
     community pull request of a change that has no Release-note lines; id, need (needs(); 'all': text and steps, always shown), credits"""
     out = []
+    # NOTESDUP-1: a merge with Release-note lines is described by exactly those lines; a pull request they credit is not described a second
+    # time because another commit of the range names it too (11-01 evening: a credits fix whose subject named #132, #178 and #179 sent them
+    # to the model again), and no pull request is described twice
+    described = {p["pr"] for ch in ctx["changes"] if ch["notes"] and not ch["hidden"] for ln in ch["note_credits"] for p in ln}
     for ch in ctx["changes"]:
-        if ch["community"] and not ch["notes"] and not ch["hidden"]:
-            out += [{"id": f"{ch['sha']}:pr{p['pr']}", "change": ch, "need": "all", "credits": [p], "pr": p} for p in ch["community"]]
+        new = [p for p in ch["community"] if p["pr"] not in described]
+        if new and not ch["notes"] and not ch["hidden"]:
+            described |= {p["pr"] for p in new}
+            out += [{"id": f"{ch['sha']}:pr{p['pr']}", "change": ch, "need": "all", "credits": [p], "pr": p} for p in new]
         else:
             out.append({"id": ch["sha"], "change": ch, "need": needs(ch), "credits": union(ch["note_credits"]), "pr": None})
     return out

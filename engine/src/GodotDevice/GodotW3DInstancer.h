@@ -39,6 +39,7 @@
 #include <godot_cpp/variant/transform3d.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
@@ -50,6 +51,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
 
 namespace godot
 {
@@ -100,6 +102,10 @@ public:
 	// instance's pose. A negative delta never shares. Only with pose culling (set_pose_culling): the bone queries still answer the instance's own pose
 	void set_instance_pose_share(int64_t instance, float maxFrameDelta);
 	void set_pose_sharing(bool enabled) { PoseSharing = enabled; }
+	// lane PERF-CLIENT (C++ only): whether set_instance_pose_keyed with these clips would change only the instance itself (its clip memo answers both keys,
+	// its palette block is already in the animated pool): then the call may run on several threads at once, each for its own instances, as may
+	// set_instance_transform / _opacity / _fogged / _cast_shadow / _pose_share. Nothing else may run on this instancer meanwhile.
+	bool pose_request_is_local(int64_t instance, const std::string &clip0, const void *key0, const std::string &clip1, const void *key1) const;
 	// Hides sub objects of ONE instance by name (case-insensitive; the names the draw module runtime reports in W3DDrawFrame::hiddenSubObjects,
 	// i.e. what the retail BeginScript bodies hide): a hidden sub object is not written to its MultiMesh for that instance. An empty list shows
 	// everything again. Unknown names are an error (returns false, recorded). (Added by lane MAPOBJ-1.)
@@ -123,6 +129,10 @@ public:
 	// state: KBHall.tga -> KBHall_snow.tga): its meshes are built again, under a name that carries Texture_Swap_Suffix, with every texture A loaded as B.
 	// The add clears them.
 	void Set_Build_Texture_Swaps(const std::vector<std::pair<std::string, std::string>> &swaps) { PendingSwaps = swaps; }
+	// lane SELWALL-1 (C++ only): the next add_model / add_model_colored builds a wall top or bridge model (KINDOF_WALK_ON_TOP_OF_WALL): its meshes are built
+	// again under a name with "#sel", their opaque surfaces draw the selection decals (W3DShaderKey::SelectionDecals: the merge decals and, lane HERORING-1,
+	// the alpha decals). The add clears it
+	void Set_Build_Selection_Decals(bool on) { PendingSelectionDecals = on; }
 	// "#tex&a=b&c=d" (lower case, in the state's order): the part of a model's cache name that its texture swaps make; empty without swaps
 	static std::string Texture_Swap_Suffix(const std::vector<std::pair<std::string, std::string>> &swaps);
 	// RENDER-1 (stop S-390): the instance is lit by the map's infantry light set (KINDOF_INFANTRY drawables) instead of the objects set;
@@ -165,7 +175,7 @@ public:
 	Dictionary get_clip_info(int64_t model, const String &clip);
 
 	// Animation clock. set_global_time pins it (deterministic screenshots); the clock runs only while playing.
-	void set_global_time(double seconds) { GlobalTime = seconds; PoseDirty = true; }
+	void set_global_time(double seconds) { GlobalTime = seconds; note_pose_dirty(); }
 	double get_global_time() const { return GlobalTime; }
 	void set_playing(bool playing) { Playing = playing; }
 	bool is_playing() const { return Playing; }
@@ -267,7 +277,9 @@ private:
 		Dictionary Report;
 		// lane SMOOTH-1: per-frame work only where something changed
 		std::unordered_map<std::string, const HAnimClass *> Clips; // clip name as asked -> resolved clip (resolve_clip once per name)
-		bool BuffersDirty = true;        // instance records / palette bases / membership changed: all this model's draw buffers are rewritten
+		// instance records / palette bases / membership changed: all this model's draw buffers are rewritten (lane PERF-CLIENT: atomic, the per-instance
+		// setters may run on several threads; see pose_request_is_local)
+		std::atomic<bool> BuffersDirty{ true };
 		bool PoseEvaluated = false;      // this update evaluated a pose: the baseline would consume every live instance's cached Pose
 		bool HasSorted = false;          // a camera/node change was also a whole-model rewrite trigger in the baseline
 		std::vector<int> QueriedPoseIds; // deduplicated poses evaluated by bone queries, retained until a baseline model rewrite trigger
@@ -352,6 +364,7 @@ private:
 	std::map<std::string, std::shared_ptr<MeshGpu>> MeshCache;
 	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
 	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-5015: Set_Build_Texture_Swaps, taken by the next add_model
+	bool PendingSelectionDecals = false; // lane SELWALL-1: Set_Build_Selection_Decals, taken by the next add_model
 	std::vector<std::unique_ptr<Model>> Models;
 	std::vector<Instance> Instances;
 	bool ShadowReceiving = false;
@@ -371,7 +384,14 @@ private:
 	bool PaletteOnRd = false;
 	Ref<Image> PaletteImage;
 	bool LayoutDirty = true;
-	bool PoseDirty = true;
+	std::atomic<bool> PoseDirty{ true }; // lane PERF-CLIENT: atomic (see pose_request_is_local); set through note_pose_dirty
+	void note_pose_dirty()
+	{
+		if (!PoseDirty.load(std::memory_order_relaxed))
+		{
+			PoseDirty.store(true, std::memory_order_relaxed); // stored once: the setters on several threads then only read the line
+		}
+	}
 	// lane SMOOTH-1: the palette is allocated per instance (removed instances' blocks are reused by size) instead of relaid out on every add
 	int PaletteUsed = 0;                         // texels up to the high-water mark
 	std::map<int, std::vector<int>> PaletteFree; // static block size -> free offsets (a prop that starts animating returns its block here)

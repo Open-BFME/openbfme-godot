@@ -172,8 +172,10 @@ TEST_CASE("hudredraw1 retail: 300 frames closed and open, the Palantir draws aga
 	CHECK(open.full == 0);
 	CHECK(open.segments.size() == 2);
 	CHECK(open.segments[pal] == 29);
-	CHECK(open.redrawn[pal] == 302);
-	CHECK(open.paths[pal] == std::map<std::string, int>{ { button, 300 }, { resources, 2 } });
+	// 2 (was 302 before PR #185): with the powers screen open RotWK puts the highlight out (UpdatePlayerStats RW 0x6D5D14 -> RW 0x822A35 open
+	// -> RW 0x6D5D45 stores 0), so the powers button stops pulsing; the old pin was taken while the "0" argument was truthy and kept it lit
+	CHECK(open.redrawn[pal] == 2);
+	CHECK(open.paths[pal] == std::map<std::string, int>{ { resources, 2 } });
 	CHECK(open.segments[store] == 55);
 	CHECK(open.redrawn[store] == 879);
 	CHECK(open.paths[store] == activeArt); // the `_active` loop of each buyable power, nothing else of the store

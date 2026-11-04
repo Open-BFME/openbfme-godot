@@ -3,4 +3,5 @@
 set(OPENBFME_PERF1_TESTS
     tests/test_perf1_bench.cpp
     tests/test_perf1_caches.cpp
+    tests/test_perf1_notes.cpp
 )

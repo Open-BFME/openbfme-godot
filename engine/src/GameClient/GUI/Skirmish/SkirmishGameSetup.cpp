@@ -439,56 +439,29 @@ std::u16string SkirmishGameSetup::mapDescriptionFirstLine(const MapCacheEntry &m
 
 std::vector<int> SkirmishGameSetup::listedMaps() const
 {
-	// open-bfme-2 MapUtil.cpp populateMapListboxNoReset: for numPlayers = 0, 1, 2 ...: the maps with that player count, ordered by display name
-	// (a std::set of rts::less_than_nocase<UnicodeString>: equal names collapse to one entry, the map found last for a name wins); a map is
-	// listed when its key starts with the system map directory, its multiplayer flag matches (skirmish: true) and its display name is not
-	// empty.  Patch 1.03's two broken Generals maps are named by the donor; they are not in RotWK's cache.
+	// RW 0x846770 -> 0x8460B5 -> 0x703C2E(0x1B): every TheMapCache entry the filter RW 0x7017F4 passes: official or not (bits 1 | 2), multiplayer
+	// (bit 8 drops a map whose +0x24 is 0), not a scenario map (bit 0x10 drops +0x25). RotWK does not collapse maps that show the same name (the
+	// ZH populateMapListboxNoReset std::set did: with Edain, "map edain wor evendim" hid "map mp evendim"); entries without a display name never
+	// reach the cache (RW 0x93B9F0, IniSkirmishSetupSource::loadMapCache). Ordered by player count, then shown name (stable), as the list's
+	// default sort keys (RW 0x84606C) order the rows.
 	const std::vector<MapCacheEntry> &maps = m_source.maps();
-	std::vector<int> out;
-	int maxPlayers = 0;
-	for (const MapCacheEntry &m : maps)
+	std::vector<std::pair<std::u16string, int>> named;
+	for (int i = 0; i < (int)maps.size(); ++i)
 	{
-		maxPlayers = std::max(maxPlayers, (int)m.numPlayers);
+		const MapCacheEntry &m = maps[(std::size_t)i];
+		if (m.name.compare(0, 5, "maps/") == 0 && m.isMultiplayer && !m.isScenarioMP && !m.displayName.empty())
+		{
+			named.emplace_back(mapDisplayName(m, true), i);
+		}
 	}
-	for (int players = 0; players <= maxPlayers; ++players)
+	std::stable_sort(named.begin(), named.end(), [&](const auto &a, const auto &b) {
+		const int pa = maps[(std::size_t)a.second].numPlayers, pb = maps[(std::size_t)b.second].numPlayers;
+		return pa != pb ? pa < pb : lessNoCase(a.first, b.first);
+	});
+	std::vector<int> out;
+	for (const auto &entry : named)
 	{
-		std::vector<std::pair<std::u16string, int>> named;
-		for (int i = 0; i < (int)maps.size(); ++i)
-		{
-			const MapCacheEntry &m = maps[(std::size_t)i];
-			if (m.numPlayers != players)
-			{
-				continue;
-			}
-			if (m.displayName.empty())
-			{
-				continue;
-			}
-			const std::u16string shown = mapDisplayName(m, true);
-			bool replaced = false;
-			for (auto &entry : named)
-			{
-				if (!lessNoCase(entry.first, shown) && !lessNoCase(shown, entry.first))
-				{
-					entry.second = i; // filenameMap[displayName] = it->first: the last map with that name
-					replaced = true;
-					break;
-				}
-			}
-			if (!replaced)
-			{
-				named.emplace_back(shown, i);
-			}
-		}
-		std::stable_sort(named.begin(), named.end(), [](const auto &a, const auto &b) { return lessNoCase(a.first, b.first); });
-		for (const auto &entry : named)
-		{
-			const MapCacheEntry &m = maps[(std::size_t)entry.second];
-			if (m.name.compare(0, 5, "maps/") == 0 && m.isMultiplayer && !m.displayName.empty())
-			{
-				out.push_back(entry.second);
-			}
-		}
+		out.push_back(entry.second);
 	}
 	return out;
 }

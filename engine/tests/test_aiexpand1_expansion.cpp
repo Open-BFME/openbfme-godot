@@ -623,10 +623,13 @@ TEST_CASE("aiexpand1 expansion in a game: the Medium Men computer kept above 300
 	// second base at 2937 (2611)
 	CHECK(chosenFrame == 1519);
 	CHECK(tacticFrame == 1519);
-	CHECK(requestFrame == 2196);
-	CHECK(inProgressFrame == 2197);
-	CHECK(doneFrame == 2937);
-	CHECK(baseFrame == 2937);
+	// merge queue q35 (#132's ground-structure melee reach, measured once on the merged tree and at each merge point; SIMSMALL-1, #178 and #179 keep the archive's values): the same start is chosen at 1519, its request at 1894 (2196), in progress at 1895 (2197), complete with the second base at 2635 (2937)
+	// lane PATH-REBUILD (RW 0x767B0E: every found path bent from the unit's facing with its corners rounded; measured on the lane's tree, Windows MSVC): the same
+	// start is chosen at 1519, its request at 1569 (1894), in progress at 1570 (1895), complete with the second base at 2372 (2635)
+	CHECK(requestFrame == 1569);
+	CHECK(inProgressFrame == 1570);
+	CHECK(doneFrame == 2372);
+	CHECK(baseFrame == 2372);
 	MESSAGE("EXPANSION target on frame " << chosenFrame << " at (" << chosenAt.x << ", " << chosenAt.y << "); SimpleExpansion on frame " << tacticFrame
 		<< ", its request on " << requestFrame << " (last state " << lastState << ", in progress on " << inProgressFrame << ", complete on " << doneFrame
 		<< "), the second base on " << baseFrame << "; bases " << aiPtr->build.bases.size() << ", tactics started " << aiPtr->brain.tacticsStarted

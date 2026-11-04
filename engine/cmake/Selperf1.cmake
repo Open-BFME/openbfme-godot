@@ -2,4 +2,6 @@
 # lane's file list stays out of the shared list.
 set(OPENBFME_SELPERF1_TESTS
     tests/test_selperf1_merge_grid.cpp
+    tests/test_selwall1_decals.cpp # lane SELWALL-1: the selection decals on wall tops (client-only, synthetic)
+    tests/test_heroring1_decals.cpp # lane HERORING-1: the alpha selection decals (a hero's ring) in the shaders' grid (client-only, synthetic)
 )

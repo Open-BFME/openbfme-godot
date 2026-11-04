@@ -12,7 +12,7 @@
 //     field table RW 0xBF9468 (23 rows: ModelLOD + 0x00 .. MinParticleSkipPriority + 0x48; parseIndexList RW 0x42E956, parseInt RW 0x42EC5E, parseBool
 //     RW 0x42E558). Its index lists are NOT NULL terminated: each runs on through the neighbouring lists up to RW 0xD9E778 (kLODNameRun below), so
 //     ModelLOD = VeryLow is index 4.
-//   * the preset -> the nine Options.ini settings (RW 0x601BBD; decomp GameLODManagerRva00202244.cpp, tier A): 0 ModelLOD (+ 0x00), 1 AnimationLOD
+//   * the preset -> the nine Options.ini settings (RW 0x601BBD; decomp GameLOD.cpp, tier A): 0 ModelLOD (+ 0x00), 1 AnimationLOD
 //     (+ 0x34), 2 EffectsLOD (+ 0x04), 3 ShadowLOD (+ 0x10), 4 TerrainLOD (2 when UseTerrainNormalMap, else UseDistanceDependantTerrainTextures),
 //     5 WaterLOD (+ 0x18), 6 TextureQualityLOD (TextureReductionFactor 2 -> 0, 1 -> 1, else 2), 7 ShaderLOD (+ 0x38), 8 DecalLOD (+ 0x40).
 //   * the nine advanced options (RW 0xDA2228, 12-byte rows: key, choice names, count): ModelLOD 4, AnimationLOD 5, EffectsLOD 5, ShadowLOD 5,
@@ -130,7 +130,7 @@ public:
 	std::array<int, kAdvancedOptionCount> presetSettings(int level) const;
 
 	// ---- lane OPTS-2: the static level in effect ----
-	// RW 0x6019D1 (BFME2 decomp Rva00202058.cpp, tier A): the Custom record from Options.ini's nine advanced settings (GetEnumValue, default 0):
+	// RW 0x6019D1 (BFME2 decomp GameLOD.cpp, tier A): the Custom record from Options.ini's nine advanced settings (GetEnumValue, default 0):
 	// ModelLOD -> + 0x00; AnimationLOD -> + 0x34; EffectsLOD -> + 0x04, UseHeatEffects = EffectsLOD >= 2, and MaxParticleCount / the two particle
 	// priorities of the preset EffectsLOD names (0 .. 4, above 4 the UltraHigh one); ShadowLOD s -> + 0x10, UseShadowDecals = s in 1 .. 2,
 	// UseShadowVolumes = s == 2, UseShadowMapping = s >= 3; TerrainLOD t -> UseTerrainNormalMap = t >= 2, UseDistanceDependantTerrainTextures =
@@ -143,7 +143,7 @@ public:
 	bool setStaticLODLevel(int level, const OptionPreferences &prefs);
 	const StaticLODState &state() const { return m_state; }
 	int staticLevel() const { return m_state.level; }
-	// RW 0x602165 (GameLODManager::init, BFME2 decomp GameLODManagerInit.cpp, tier A) and RW 0x4465C3 .. 0x4465D8, the parts the port runs: the level of
+	// RW 0x602165 (GameLODManager::init, BFME2 decomp GameLOD.cpp, tier A) and RW 0x4465C3 .. 0x4465D8, the parts the port runs: the level of
 	// Options.ini's StaticGameLOD (getStaticGameDetail, default the current level -1); Custom fills the Custom record first (RW 0x6021F7); the level
 	// is applied (RW 0x60245F); still -1, the game engine applies findStaticLODLevel (RW 0x602C03): IdealStaticGameLOD when Options.ini has it, else
 	// the hardware detection and benchmark, NOT PORTED (stop S-2481): INFERENCE kDetectedLevel, and `stop` says so. Returns the level applied.

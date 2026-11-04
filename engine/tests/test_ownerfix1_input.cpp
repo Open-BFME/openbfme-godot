@@ -28,6 +28,7 @@
 #include "GameClient/MessageStream/LookAtXlat.h"
 #include "GameClient/TacticalCamera.h"
 #include "GameClient/CameraSettings.h"
+#include "GameClient/LinearCampaign.h"
 #include "GameClient/LiveGame.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/GameLogicDispatch.h"
@@ -903,12 +904,27 @@ struct CampaignHud
 	int disables = 0, enables = 0;
 	unsigned firstEnableFrame = 0;
 
-	explicit CampaignHud(SharedWorld &s) : sh(s), source(*s.mount->fs), assets(source)
+	// lane B2SPELL-1: `campaign` / `mission` load a LinearCampaign mission as the shell starts one (its map, the carry-over of a first mission:
+	// CampaignTestUtil.h's loadCampaignMission); without them MAP ANG Angmar as a bare campaign map
+	explicit CampaignHud(SharedWorld &s, const char *campaign = nullptr, int mission = 0) : sh(s), source(*s.mount->fs), assets(source)
 	{
 		game = std::make_unique<LiveGame>(*s.world, *s.mount->fs, assets, s.options);
 		LiveGame::Options o;
 		o.mapName = "map ang angmar";
 		o.campaign = true;
+		if (campaign)
+		{
+			const LinearCampaign *c = s.world->linearCampaigns().find(campaign);
+			REQUIRE_MESSAGE(c != nullptr, campaign);
+			REQUIRE((size_t)mission < c->missions.size()); // tolerance: a precondition (the mission exists), not a measured value
+			o.mapName = c->missions[(size_t)mission].map;
+			if (mission == 0)
+			{
+				o.campaignCarryover = true;
+				o.carryover = CampaignCarryover::beginCampaign(c->carryoverUnits);
+				o.carryoverDelayed = c->missions[0].delayCarryover;
+			}
+		}
 		std::string err;
 		REQUIRE_MESSAGE(game->load(o, &err), err);
 		view = PinholeView({ 0, -400, 500 }, { 0, 0, 0 }, 1024, 768, 0.7f);
@@ -1106,4 +1122,106 @@ TEST_CASE("ownerfix1 campaign powers played: the first Angmar mission's intro en
 	CHECK_FALSE(c.hud->spellBar().targeting());
 	CHECK(countTemplate(c.game->logic(), "SpellBookChillWind") == winds0 + 1);
 	CHECK(std::string(AptPalantir::spellStateName(p->spellSlotState(0))) == "_notReady");
+}
+
+// lane B2SPELL-1 (the owner, 10-30: "in the first mission for good campaign you cannot select the spellbook powers, they are blank"): the same flow in
+// BFME2's Good campaign. Retail facts, independent of the code under test: MAP GOOD Rivendell's human player PlyrElves is FactionElves, whose campaign
+// SpellBook is GoodSpellBook and PurchaseScienceCommandSet GoodSpellStoreCommandSet (data\ini\playertemplate.ini, RotWK and BFME2 alike): 16 powers,
+// the first four (Enshrouding Mist, Elven Gifts, Heal, Elven Wood) GOOD_RANK_1_COST 5 each (science.ini); rank 1 grants 5 points (Rank.ini). The store's
+// layout for a good campaign player is "_campaignGood" (RW 0x822DDE .. 0x822E1A: 0); each button's picture is its command button's ButtonImage
+// (SpellStore/Buttons/Spell%d, RW 0x822B23), e.g. Command_PurchaseSpellHeal's SBGood_Heal (data\ini\mappedimages\aptimages\spellbook.ini)
+TEST_CASE("b2spell1 campaign powers played: MAP GOOD Rivendell's Powers screen shows the Good campaign store's powers with their pictures, Heal is bought by clicks and the spell book shows it")
+{
+	if (!haveWorld("b2spell1 good campaign powers"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	CampaignHud c(s, "GOOD_CAMPAIGN", 0);
+	auto ctx = c.hud->enterContext();
+	Player *me = c.local();
+	REQUIRE(me);
+	CHECK(me->getPlayerName() == "PlyrElves");
+	PlayerScience &sc = me->science();
+	CHECK(sc.getRankLevel() == 1);
+	CHECK(sc.getSciencePurchasePoints() == 5);
+	for (int i = 0; i < 600 && c.disables > c.enables; ++i) // an intro that took the input gives it back first
+	{
+		c.frames(1);
+	}
+	c.frames(20);
+	MESSAGE("input taken " << c.disables << ", given back " << c.enables << " by frame " << c.game->logic().getFrame());
+	const int pal = c.hud->palantir()->level();
+	int x = 0, y = 0;
+	REQUIRE(hitPoint(*c.hud, pal, "PalantirButtons.Buttons.PlayerMagic", x, y));
+	c.clickAt(x, y);
+	c.frames(40);
+	AptSpellStore *st = c.hud->spellStore();
+	REQUIRE_MESSAGE(st, c.hud->spellStoreError());
+	const int lvl = st->level();
+	CHECK(st->layout() == 0); // "_campaignGood"
+	REQUIRE(c.hud->windows().aptText("APT:SpellStoreSpellPoints") != nullptr);
+	CHECK(*c.hud->windows().aptText("APT:SpellStoreSpellPoints") == "5");
+	REQUIRE(st->model().buttons().size() == 16u); // GoodSpellStoreCommandSet: 16 powers
+	for (int i = 0; i < 16; ++i)
+	{
+		const std::string clip = "SpellStore.Buttons.Spell" + std::to_string(i + 1);
+		const std::string state = AptSpellStore::stateName(st->buttonState(i));
+		MESSAGE(clip << " " << st->model().buttons()[(size_t)i].scienceName << " image '" << st->imageForClip(clip) << "' state " << state);
+		CHECK_FALSE(st->imageForClip(clip).empty());
+		CHECK(state == (i < 4 ? "_active" : "_disabled")); // tolerance: exact per slot; the < only picks the expected state (the first four powers are for sale)
+	}
+	CHECK(st->model().buttons()[2].scienceName == "SCIENCE_Heal");
+	CHECK(st->imageForClip("SpellStore.Buttons.Spell3") == "SBGood_Heal");
+	REQUIRE(hitPoint(*c.hud, lvl, "SpellStore.Buttons.Spell3", x, y));
+	c.clickAt(x, y);
+	c.frames(3);
+	CHECK(AptSpellStore::stateName(st->buttonState(2)) == std::string("_already_purchased"));
+	CHECK(*c.hud->windows().aptText("APT:SpellStoreSpellPoints") == "0");
+	REQUIRE(hitPoint(*c.hud, lvl, "SpellStore.Buttons.ButtonsMain.Accept", x, y));
+	c.clickAt(x, y);
+	c.frames(40);
+	CHECK(c.hud->spellStore() == nullptr);
+	CHECK(sc.hasScience(TheScienceStore->getScienceFromInternalName("SCIENCE_Heal")));
+	CHECK(sc.getSciencePurchasePoints() == 0);
+	AptPalantir *p = c.hud->palantir();
+	CHECK(std::string(AptPalantir::spellStateName(p->spellSlotState(0))) == "_up");
+	REQUIRE(c.hud->spellBar().buttons().size() > 0u); // tolerance: a precondition (the bar has its bought power), its exact contents are checked below
+}
+
+// lane B2SPELL-1: the Evil campaign's first mission (Darkness Rising) shows its store too. Its player's side is evil, so the layout is 1 and the store
+// sends SetLayout("_campaignEvil") (RW 0x822E43); EvilSpellStoreCommandSet's first power (Command_PurchaseSpellCaveBats) costs the rank 1 points
+TEST_CASE("b2spell1 campaign powers played: the Evil campaign's first mission's Powers screen shows its powers, and the first one is bought by a click")
+{
+	if (!haveWorld("b2spell1 evil campaign powers"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	CampaignHud c(s, "EVIL_CAMPAIGN", 0);
+	auto ctx = c.hud->enterContext();
+	Player *me = c.local();
+	REQUIRE(me);
+	for (int i = 0; i < 600 && c.disables > c.enables; ++i)
+	{
+		c.frames(1);
+	}
+	c.frames(20);
+	const int pal = c.hud->palantir()->level();
+	int x = 0, y = 0;
+	REQUIRE(hitPoint(*c.hud, pal, "PalantirButtons.Buttons.PlayerMagic", x, y));
+	c.clickAt(x, y);
+	c.frames(40);
+	AptSpellStore *st = c.hud->spellStore();
+	REQUIRE_MESSAGE(st, c.hud->spellStoreError());
+	CHECK(st->layout() == 1); // "_campaignEvil"
+	REQUIRE_FALSE(st->model().buttons().empty());
+	MESSAGE(me->getPlayerName() << ": " << st->model().buttons().size() << " powers, the first " << st->model().buttons()[0].scienceName << " for "
+								<< st->model().buttons()[0].cost << ", " << me->science().getSciencePurchasePoints() << " points");
+	CHECK_FALSE(st->imageForClip("SpellStore.Buttons.Spell1").empty());
+	REQUIRE(AptSpellStore::stateName(st->buttonState(0)) == std::string("_active"));
+	REQUIRE(hitPoint(*c.hud, st->level(), "SpellStore.Buttons.Spell1", x, y));
+	c.clickAt(x, y);
+	c.frames(3);
+	CHECK(AptSpellStore::stateName(st->buttonState(0)) == std::string("_already_purchased"));
 }

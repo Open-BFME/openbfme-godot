@@ -122,6 +122,7 @@
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
@@ -320,6 +321,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_placement_ghost", "template_name"), &GameWorld::get_placement_ghost);
 	ClassDB::bind_method(D_METHOD("create_object", "template_name", "player", "x", "y", "angle"), &GameWorld::create_object, DEFVAL(0.0));
 	ClassDB::bind_method(D_METHOD("get_ground_height", "x", "y"), &GameWorld::get_ground_height);
+	ClassDB::bind_method(D_METHOD("get_align_on_terrain_height", "x", "y", "z"), &GameWorld::get_align_on_terrain_height);
 	ClassDB::bind_method(D_METHOD("queue_unit", "player", "producer", "template_name", "secondary"), &GameWorld::queue_unit, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("cancel_unit", "player", "producer", "template_name", "all"), &GameWorld::cancel_unit, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("set_rally_point", "player", "producer", "x", "y"), &GameWorld::set_rally_point);
@@ -352,8 +354,11 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("build2_repair", "dozers", "target"), &GameWorld::build2_repair);
 	ClassDB::bind_method(D_METHOD("get_stats"), &GameWorld::get_stats);
 	ClassDB::bind_method(D_METHOD("get_frame_timings"), &GameWorld::get_frame_timings);
+	ClassDB::bind_method(D_METHOD("set_parallel_views", "enabled"), &GameWorld::set_parallel_views); // lane PERF-CLIENT: the A/B switch (tests)
 	ClassDB::bind_method(D_METHOD("get_logic_wait_sites"), &GameWorld::get_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("is_logic_held"), &GameWorld::is_logic_held);
+	ClassDB::bind_method(D_METHOD("logic_failure"), &GameWorld::logic_failure);
+	ClassDB::bind_method(D_METHOD("crash_test_logic"), &GameWorld::crash_test_logic);
 	ClassDB::bind_method(D_METHOD("get_client_window_stats"), &GameWorld::get_client_window_stats);
 	ClassDB::bind_method(D_METHOD("reset_logic_wait_sites"), &GameWorld::reset_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("set_render_interpolation", "enabled"), &GameWorld::set_render_interpolation);
@@ -550,6 +555,7 @@ GameWorld::~GameWorld()
 	m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 	m_spellBar.reset();
 	m_cahCameraOffsetValid = false;
+	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset();
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -603,6 +609,19 @@ bool GameWorld::is_logic_held() const
 	return !m_game || m_game->logicHeld();
 }
 
+String GameWorld::logic_failure() const
+{
+	return m_game ? toGodot(m_game->logicFailure()) : String();
+}
+
+void GameWorld::crash_test_logic()
+{
+	if (m_game && OS::get_singleton()->is_debug_build())
+	{
+		m_game->setWorkerFrameFailure("a deliberate failure (--crash-test-logic)");
+	}
+}
+
 Dictionary GameWorld::get_client_window_stats() const
 {
 	Dictionary d;
@@ -625,7 +644,7 @@ Dictionary GameWorld::get_client_window_stats() const
 
 void GameWorld::_process(double delta)
 {
-	if (m_autoAdvance)
+	if (m_autoAdvance && (!m_game || m_game->logicFailure().empty())) // lane WORKERFAIL-1: a stopped logic is not driven (game.gd ends the game)
 	{
 		advance(delta);
 	}
@@ -647,6 +666,7 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 		m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 		m_spellBar.reset();
 		m_cahCameraOffsetValid = false;
+		restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 		m_game.reset();
 		m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -763,6 +783,7 @@ void GameWorld::clear_scene()
 	m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 	m_spellBar.reset();
 	m_cahCameraOffsetValid = false;
+	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset(); // the objects (and through them the drawables) first
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -790,6 +811,15 @@ void GameWorld::clear_scene()
 }
 
 // lane GLOW-1 (S-5231): a model draw module's GlowEnabled / GlowEmissive (module data + 0x128 / + 0x129, RW 0x4C518B): 0 none, 1 glows, 2 glows emissive only
+// lane SELWALL-1: a drawable whose models receive the selection decals: KINDOF_WALK_ON_TOP_OF_WALL, the casters RotWK's decal projection collects
+// (W3DProjectedShadowManager RW 0x50C876 .. 0x50C8B1: iterateObjectsInRange with that bit; the retail maps' bridges are such objects, S-161). INFERENCE
+// (S-2522): every such model receives the decals over it, not RotWK's at most 16 objects within sqrt(sx^2 + sy^2) + 50 of the decal
+static bool selectionDecalReceiver(const Drawable *d)
+{
+	static const int bit = ObjectTemplateInfoBuilder::kindOfIndex("WALK_ON_TOP_OF_WALL");
+	return d && d->isKindOfIndex(bit);
+}
+
 static int staticGlowOf(const ModuleData *data)
 {
 	const W3DModelDrawModuleData *md = dynamic_cast<const W3DModelDrawModuleData *>(data);
@@ -1199,6 +1229,8 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	m_audio.reset(); // AUDIO-2: the audio side reads the game
 	m_cahCameraOffsetValid = false;
 	m_game.reset(new LiveGame(*m_world, *m_fs->archive_fs(), *m_assets, *m_options));
+	// lane WORKERFAIL-1: game.gd stops the game with this text (logic_failure); printed at once, on the worker, so the session log has it whatever happens next
+	m_game->setLogicFailureHandler([](const std::string &text) { UtilityFunctions::printerr(toGodot("GAME logic worker stopped " + text)); });
 	m_game->setRenderInterpolation(m_renderInterpolation);
 	// lane RENDERWAIT-1: a blocking wait on the logic worker names its script caller (the innermost GDScript frame: the C++ site of a bound query is
 	// the query itself, the script line says who asked)
@@ -1243,6 +1275,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 		m_spellBar.reset();
 		m_cahCameraOffsetValid = false;
+		restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 		m_game.reset();
 		return fail(error);
 	}
@@ -1610,12 +1643,558 @@ void GameWorld::remove_view(uint32_t drawableId)
 	m_views[drawableId] = DrawableView();
 }
 
+void GameWorld::prefetch_view(size_t id, size_t viewSlots) const
+{
+	const DrawableManager &dm = m_game->drawables();
+	// lane PERF-3: the blocks of the drawables ahead (the object, its entry array and draw module, the view's entries) are fetched while this one is
+	// worked on, in three steps so each step reads only what the previous one fetched (Common/Prefetch.h)
+	if (id + 12 < viewSlots)
+	{
+		if (const Drawable *a = dm.find((DrawableID)(id + 12)))
+		{
+			OPENBFME_PREFETCH(&a->entries());
+		}
+	}
+	if (id + 8 < viewSlots)
+	{
+		if (const Drawable *b = dm.find((DrawableID)(id + 8)))
+		{
+			const std::vector<DrawEntry> &en = b->entries();
+			if (!en.empty())
+			{
+				OPENBFME_PREFETCH(&en[0].kind);
+				OPENBFME_PREFETCH(&en[0].constructionOffsetZ);
+			}
+		}
+		if (!m_views[id + 8].entries.empty())
+		{
+			OPENBFME_PREFETCH(&m_views[id + 8].entries[0].instance);
+			OPENBFME_PREFETCH(&m_views[id + 8].entries[0].offsetZ);
+		}
+	}
+	if (id + 4 < viewSlots)
+	{
+		if (const Drawable *c = dm.find((DrawableID)(id + 4)))
+		{
+			const std::vector<DrawEntry> &en = c->entries();
+			if (!en.empty() && en[0].draw)
+			{
+				OPENBFME_PREFETCH(en[0].draw.get());
+			}
+		}
+	}
+}
+
+// lane PERF-CLIENT: whether refresh_view of this drawable changes only its own view and its instances' per-instance state (transform, opacity, fogged
+// light, shadow flag, pose request with a clip the instance's memo answers): it reads what refresh_view reads and decides as it does, conservatively
+// (any branch that makes, removes or rebuilds an instance, builds a model key, hides sub objects or spins bones is not local). It changes nothing.
+bool GameWorld::view_is_local(size_t id, const W3DInstancer &dyn, const LogicSnapshot *presented, W3DDrawPoseView &f) const
+{
+	const DrawableView &v = m_views[id];
+	if (!v.valid)
+	{
+		return true; // refresh_view returns at once
+	}
+	const Drawable *d = m_game->drawables().find((DrawableID)id);
+	if (!d)
+	{
+		return false; // remove_view
+	}
+	const bool fogHidden = d->presentedLook(presented, m_shroudDrawn).hidden;
+	const bool flagsChanged = d->getChangeCount() != v.seenChange || fogHidden != v.fogHidden;
+	const std::vector<DrawEntry> &entries = d->entries();
+	for (size_t k = 0; k < entries.size() && k < v.entries.size(); ++k)
+	{
+		const DrawEntry &e = entries[k];
+		const EntryView &ev = v.entries[k];
+		if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
+		{
+			if (ev.instance >= 0 && !(e.frontTireBones.empty() && e.rearTireBones.empty()) && !(ev.tireChanges == e.tireChanges && ev.tireInstance == ev.instance))
+			{
+				return false; // applyTires: set_instance_bone_spins_native
+			}
+			const bool animatedNow = e.animated && m_animations;
+			const bool colorsChanged = d->customColorRevision() != ev.colorsRevision;
+			if (!flagsChanged && !animatedNow && !colorsChanged && ev.posed)
+			{
+				continue; // transform, opacity, fogged light
+			}
+			e.draw->poseView(f);
+			const bool shown = f.model && !e.moduleHidden && !fogHidden;
+			const auto palette = Render_House_Color_Params(d->getHouseColor(), d->customColorKind(), d->customColors());
+			const bool keySame = ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
+				&& ev.animKeySwaps == (const void *)f.textureSwaps && ev.animKeyKind == palette.kind && ev.animKeyGlow == f.glow
+				&& ev.animKeyColors[0] == (std::uint32_t)palette.colors[0] && ev.animKeyColors[1] == (std::uint32_t)palette.colors[1]
+				&& ev.animKeyColors[2] == (std::uint32_t)palette.colors[2];
+			if (!keySame)
+			{
+				return false; // the model key is made again (a new model or instance may follow)
+			}
+			if (ev.instance >= 0)
+			{
+				if ((!ev.posed || animatedNow || flagsChanged) && !dyn.pose_request_is_local(ev.instance, *f.clip0, f.clipKey0, *f.clip1, f.clipKey1))
+				{
+					return false; // the clip is resolved through the model's cache, or the palette block moves to the animated pool
+				}
+				if (f.model != ev.hiddenModel || f.hiddenGeneration != ev.hiddenGeneration)
+				{
+					return false; // the hidden sub objects' names
+				}
+			}
+		}
+		else if (!e.staticModel.empty() && (e.conditionHidden || e.moduleHidden || fogHidden))
+		{
+			if (ev.instance >= 0)
+			{
+				return false; // remove_instance
+			}
+		}
+		else if (!e.staticModel.empty() && !e.moduleHidden)
+		{
+			const std::uint32_t owner = d->getHouseColor();
+			const int customKind = d->customColorKind();
+			const std::uint32_t *custom = d->customColors();
+			if (!ev.staticKeyValid || ev.staticKeySource != e.staticModel || ev.staticKeyData != e.data || ev.staticKeyKind != (int)e.kind ||
+				ev.staticKeyWeather != m_streakWeather || ev.staticKeyHouse != m_houseColors || ev.staticKeyOwner != owner ||
+				ev.staticKeyCustomKind != customKind || std::memcmp(ev.staticKeyCustom, custom, sizeof(ev.staticKeyCustom)) != 0)
+			{
+				return false; // the key is made again
+			}
+			if ((ev.model != ev.staticKey && ev.instance >= 0) || !ev.posed)
+			{
+				return false; // the instance is removed or made
+			}
+		}
+	}
+	return true;
+}
+
+// lane PERF-CLIENT: one drawable's view (its instances, transforms, poses): refresh_views runs it on the client job pool for the drawables
+// view_is_local accepts, then in slot order on this thread for the others (f: the caller's pose request scratch)
+void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *presented, W3DDrawPoseView &f, size_t &animated)
+{
+	DrawableView &v = m_views[id];
+	v.occlusionCalls.clear();
+	if (!v.valid)
+	{
+		return;
+	}
+	Drawable *d = m_game->drawables().find((DrawableID)id);
+	if (!d)
+	{
+		remove_view((uint32_t)id);
+		return;
+	}
+	const Coord3D shownAt = *d->getPosition();
+	const Transform3D xf = toTransform(d->getBasis(), shownAt, d->getInstanceScale());
+	const bool xfChanged = !v.haveXf || !(xf == v.lastXf);
+	// VIS-1 / STEALTH-1 / GARRISON-1 / lane VISUAL-2: what the presented snapshot leaves undrawn and the fogged ghost's light (Drawable::presentedLook,
+	// shared with the attached particle systems, the buffs and the streaks)
+	const Drawable::PresentedLook look = d->presentedLook(presented, m_shroudDrawn);
+	const bool fogHidden = look.hidden;
+	const bool fogLook = look.fogLook;
+	const ObjectSnapshot *stealthRec = nullptr;
+	if (presented)
+	{
+		bool synced = false;
+		stealthRec = d->syncedRecord(*presented, synced);
+		if (!synced)
+		{
+			stealthRec = presented->find(d->getObjectID());
+		}
+	}
+	v.occlusionRec = stealthRec; // lane OCCLUDE-1: what refresh_views' occlusion pass reads
+	v.occlusionEligible = stealthRec && !fogHidden ? stealthRec->occlusion : 0;
+	const bool fogChanged = fogHidden != v.fogHidden;
+	v.fogHidden = fogHidden;
+	const bool flagsChanged = d->getChangeCount() != v.seenChange || fogChanged;
+	std::vector<DrawEntry> &entries = d->entries();
+	for (size_t k = 0; k < entries.size() && k < v.entries.size(); ++k)
+	{
+		DrawEntry &e = entries[k];
+		EntryView &ev = v.entries[k];
+		// RENDER-2: a structure being built moves along its own Z by the draw's construction offset (RW 0x4B686D)
+		Transform3D entryXf = xf;
+		if (e.constructionOffsetZ != 0.0f)
+		{
+			entryXf = toTransform(d->getBasis(), d->entryPosition(e), d->getInstanceScale());
+		}
+		const bool entryXfChanged = xfChanged || e.constructionOffsetZ != ev.offsetZ;
+		ev.offsetZ = e.constructionOffsetZ;
+		if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
+		{
+			// lane COMBAT-4: a W3DTruckDraw's tires (Drawable::advanceTires, RW 0x4CBFFB): the front set and the mid / rear sets turn about their Y
+			auto applyTires = [&]() {
+				if (ev.instance < 0 || (e.frontTireBones.empty() && e.rearTireBones.empty()) || (ev.tireChanges == e.tireChanges && ev.tireInstance == ev.instance))
+				{
+					return;
+				}
+				std::vector<std::string> bones;
+				std::vector<float> angles;
+				for (const std::string &b : e.frontTireBones)
+				{
+					bones.push_back(b);
+					angles.push_back(e.tireFront);
+				}
+				for (const std::string &b : e.rearTireBones)
+				{
+					bones.push_back(b);
+					angles.push_back(e.tireRear);
+				}
+				dyn->set_instance_bone_spins_native(ev.instance, bones, angles);
+				ev.tireChanges = e.tireChanges;
+				ev.tireInstance = ev.instance;
+			};
+			// lane VISUAL-2: RW 0x46F48E (renderOneObject): an object fogged for the local player (its last sight) is lit by the fogged light environment,
+			// the lights and the ambient times FogAlpha / ClearAlpha (RW 0x46DFD0)
+			auto applyFogLook = [&]() {
+				if (ev.instance < 0 || (ev.fogLook == fogLook && ev.fogLookInstance == ev.instance))
+				{
+					return;
+				}
+				dyn->set_instance_fogged(ev.instance, fogLook);
+				ev.fogLook = fogLook;
+				ev.fogLookInstance = ev.instance;
+			};
+			const bool animatedNow = e.animated && m_animations;
+			animated += animatedNow ? 1 : 0;
+			// lane CAH-2: a new colour set (Drawable::setCustomColors, RW 0x6727B0) chooses another model below
+			const bool colorsChanged = d->customColorRevision() != ev.colorsRevision;
+			if (!flagsChanged && !animatedNow && !colorsChanged && ev.posed)
+			{
+				if (entryXfChanged && ev.instance >= 0)
+				{
+					dyn->set_instance_transform(ev.instance, entryXf);
+				}
+				if (ev.instance >= 0) // lane STEALTH-1: the pulse moves without a pose change, and a revealed object returns to its own opacity
+				{
+					const float pulse = StealthLook::drawOpacity(d->drawOpacity(), d->stealth()); // lane STEALTHLOOK-1: the drawable's stepped stealth opacity (+0xB4)
+					if (pulse != ev.opacity)
+					{
+						dyn->set_instance_opacity(ev.instance, pulse);
+						ev.opacity = pulse;
+					}
+				}
+				applyTires();
+				applyFogLook();
+				v.occlusionCalls.push_back((std::uint32_t)k); // lane OCCLUDE-1: listed after the passes, in drawable order
+				continue;
+			}
+			e.draw->poseView(f);
+			const bool shown = f.model && !e.moduleHidden && !fogHidden;
+			// Donor W3DModelDrawRva000B8FA1.cpp (BFME2 0x4B8FA1): ordinary
+			// owners use kind 1; hero custom palettes keep precedence. Bake before
+			// filtering, using the existing RW 0x531C77 texture recolour routine.
+			const auto palette = Render_House_Color_Params(d->getHouseColor(), d->customColorKind(), d->customColors());
+			ev.colorsRevision = d->customColorRevision();
+			// lane PERF-HD: the model key below (the lowered name, the house colour's "#..." suffix, the swap suffix) depends only on these inputs;
+			// while they hold the key is `ev.model` already, so the strings are not made and compared again (every animated troop, every frame)
+			const bool keySame = ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
+				&& ev.animKeySwaps == (const void *)f.textureSwaps && ev.animKeyKind == palette.kind && ev.animKeyGlow == f.glow
+				&& ev.animKeyColors[0] == (std::uint32_t)palette.colors[0] && ev.animKeyColors[1] == (std::uint32_t)palette.colors[1]
+				&& ev.animKeyColors[2] == (std::uint32_t)palette.colors[2];
+			if (!keySame)
+			{
+			if (shown && *f.modelName != ev.rawModel)
+			{
+				ev.rawModel = *f.modelName;
+				ev.rawLowered = AsciiStringUtil::lowered(*f.modelName);
+			}
+			static const std::string kNoModel;
+			std::string coloredModel;
+			if (shown && m_houseColors && palette.kind > 0)
+			{
+				char opt[96];
+				std::snprintf(opt, sizeof(opt), "#%d&%d&%d&%d", palette.kind, (int)palette.colors[0], (int)palette.colors[1], (int)palette.colors[2]);
+				coloredModel = "#" + ev.rawLowered + opt;
+			}
+			// stop S-5015: the state's `Texture = A B` swaps (a building's SNOW state on a snowy map) make another model variant, "<model>#tex&a=b"
+			std::string swappedModel;
+			if (shown && !f.textureSwaps->empty())
+			{
+				if (ev.swapSource != f.textureSwaps)
+				{
+					ev.swapSource = f.textureSwaps;
+					ev.swapSuffix = W3DInstancer::Texture_Swap_Suffix(*f.textureSwaps); // once per state change (Sol review r1: not every frame)
+				}
+				swappedModel = (!coloredModel.empty() ? coloredModel : ev.rawLowered) + ev.swapSuffix;
+			}
+			const std::string &plainModel = !swappedModel.empty() ? swappedModel : !coloredModel.empty() ? coloredModel : shown ? ev.rawLowered : kNoModel;
+			// lane GLOW-1 (S-5231): a draw module with GlowEnabled gets a model of its own (the glow layer is a property of the model's draws), so another
+			// drawable that shows the same W3D model without the flag does not glow
+			std::string glowModel;
+			if (shown && f.glow != 0)
+			{
+				glowModel = plainModel + (f.glow == 2 ? "|glow-emissive" : "|glow");
+			}
+			// lane SELWALL-1: a wall top or bridge (KINDOF_WALK_ON_TOP_OF_WALL) gets a model of its own whose surfaces draw the selection decals
+			std::string selModel;
+			if (shown && selectionDecalReceiver(d))
+			{
+				selModel = (glowModel.empty() ? plainModel : glowModel) + "|sel";
+			}
+			const std::string &model = !selModel.empty() ? selModel : glowModel.empty() ? plainModel : glowModel;
+			if (model != ev.model)
+			{
+				if (ev.instance >= 0)
+				{
+					dyn->remove_instance(ev.instance);
+					ev.instance = -1;
+				}
+				ev.model = model;
+				ev.posed = false;
+				ev.hidden.clear();
+				ev.hiddenModel = nullptr;
+				ev.opacity = 1.0f; // a new instance starts opaque
+				if (!model.empty())
+				{
+					auto it = m_dynamicModels.find(model);
+					int64_t mid;
+					if (it == m_dynamicModels.end())
+					{
+						const double tm = nowMs();
+						if (!swappedModel.empty())
+						{
+							dyn->Set_Build_Texture_Swaps(*f.textureSwaps); // taken by the add below (and add_model_colored's)
+						}
+						if (!selModel.empty())
+						{
+							dyn->Set_Build_Selection_Decals(true); // lane SELWALL-1: taken by the add below
+						}
+						if (!coloredModel.empty())
+						{
+							PackedInt64Array colors;
+							for (int i = 0; i < 3; ++i)
+							{
+								colors.push_back((int64_t)palette.colors[i]);
+							}
+							mid = dyn->add_model_colored(toGodot(*f.modelName), palette.kind, colors);
+						}
+						else
+						{
+							mid = dyn->add_model(toGodot(*f.modelName));
+						}
+						if (mid >= 0 && f.glow != 0)
+						{
+							dyn->set_model_glow(mid, f.glow == 2);
+						}
+						m_dynamicModels[model] = mid;
+						m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
+						++m_lastNewModels;
+					}
+					else
+					{
+						mid = it->second;
+					}
+					if (mid >= 0)
+					{
+						ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
+						if (ev.instance >= 0 && m_houseColors && d->getHouseColor() != 0 && coloredModel.empty())
+						{
+							dyn->set_instance_house_color(ev.instance, houseColorOf(d->getHouseColor()));
+						}
+						if (ev.instance >= 0 && d->isKindOfName("INFANTRY"))
+						{
+							dyn->set_instance_infantry_light(ev.instance, true); // RENDER-1: the infantry light set (S-390)
+						}
+					}
+				}
+			}
+			ev.animKeyValid = true;
+			ev.animKeyShown = shown;
+			ev.animKeyHouse = m_houseColors;
+			ev.animKeyName = f.modelName;
+			ev.animKeySwaps = f.textureSwaps;
+			ev.animKeyKind = palette.kind;
+			ev.animKeyGlow = f.glow;
+			for (int i = 0; i < 3; ++i)
+			{
+				ev.animKeyColors[i] = (std::uint32_t)palette.colors[i];
+			}
+			}
+			if (ev.instance >= 0)
+			{
+				if (entryXfChanged && ev.posed)
+				{
+					dyn->set_instance_transform(ev.instance, entryXf);
+				}
+				const ModelConditionInfo *shadowState = e.draw->currentModelState();
+				if (ev.shadowInstance != ev.instance || ev.shadowState != shadowState || ev.shadowData != e.data) // S-3304: not every frame
+				{
+					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR &&
+						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState));
+					ev.shadowState = shadowState;
+					ev.shadowData = e.data;
+					ev.shadowInstance = ev.instance;
+				}
+				if (!ev.posed || animatedNow || flagsChanged) // RENDER-2: a MANUAL track (the build-up) changes its frame without being "animated"
+				{
+					// SMOOTH-1: the native call (no Godot String round trip per animated drawable per frame; the instancer caches the clip lookups)
+					dyn->set_instance_pose_keyed(ev.instance, *f.clip0, f.clipKey0, f.frame0, *f.clip1, f.clipKey1, f.frame1, f.blendPercentage); // lane PERF-3: keyed
+					dyn->set_instance_pose_share(ev.instance, e.draw->poseShareDelta()); // lane PERF-HD: retail's horde pose sharing (the draw's frame delta)
+					ev.posed = true;
+				}
+				// the names frame() gives (the model's sub objects at the hidden indices, in index order), made when the draw's hidden set or the model changed
+				if (f.model != ev.hiddenModel || f.hiddenGeneration != ev.hiddenGeneration)
+				{
+					ev.hiddenModel = f.model;
+					ev.hiddenGeneration = f.hiddenGeneration;
+					std::vector<std::string> names;
+					if (f.model)
+					{
+						for (int i : *f.hiddenSubObjects)
+						{
+							names.push_back(f.model->SubObjects[(size_t)i].Name);
+						}
+					}
+					if (names != ev.hidden)
+					{
+						dyn->set_instance_hidden_subobjects(ev.instance, toPacked(names));
+						ev.hidden = std::move(names);
+					}
+				}
+				applyTires();
+				applyFogLook();
+				// PROJ-2: the drawable's fade (a launched stone hidden for its InvisibleFrames, then faded in: GameClient/DrawableFade)
+				const float opacity = StealthLook::drawOpacity(d->drawOpacity(), d->stealth()); // lane STEALTHLOOK-1: the friend's invisibility pulse (+0xB4)
+				if (opacity != ev.opacity)
+				{
+					dyn->set_instance_opacity(ev.instance, opacity);
+					ev.opacity = opacity;
+				}
+				v.occlusionCalls.push_back((std::uint32_t)k); // lane OCCLUDE-1: listed after the passes, in drawable order
+			}
+			else
+			{
+				ev.posed = true;
+			}
+		}
+		else if (!e.staticModel.empty() && (e.conditionHidden || e.moduleHidden || fogHidden))
+		{
+			// RENDER-2: a floor draw whose HideIfModelConditions hold (the foundation floor while the structure is built): not drawn until they clear;
+			// lane STEALTH-1: nor while the object is hidden for the local player (fogged, or an enemy's invisible object: the stealth gates have floor draws);
+			// lane BUILD-4: nor while a script hid the module (a wall segment's BeginScript hides its ModuleTag_DrawFloor while it is built)
+			if (ev.instance >= 0)
+			{
+				dyn->remove_instance(ev.instance);
+				ev.instance = -1;
+			}
+			ev.posed = false;
+			ev.model.clear();
+			ev.animKeyValid = false; // lane PERF-HD: the posed branch's key no longer describes `model`
+		}
+		else if (!e.staticModel.empty() && !e.moduleHidden)
+		{
+			ev.animKeyValid = false; // lane PERF-HD: this branch sets `model` itself
+			// lane HCKEY-1: the key and its palette / swaps are made again only when an input changed (not every frame)
+			const std::uint32_t owner = d->getHouseColor();
+			const int customKind = d->customColorKind();
+			const std::uint32_t *custom = d->customColors();
+			if (!ev.staticKeyValid || ev.staticKeySource != e.staticModel || ev.staticKeyData != e.data || ev.staticKeyKind != (int)e.kind ||
+				ev.staticKeyWeather != m_streakWeather || ev.staticKeyHouse != m_houseColors || ev.staticKeyOwner != owner ||
+				ev.staticKeyCustomKind != customKind || std::memcmp(ev.staticKeyCustom, custom, sizeof(ev.staticKeyCustom)) != 0)
+			{
+				ev.staticKeyPalette = Render_House_Color_Params(owner, customKind, custom);
+				ev.staticKeyColored = m_houseColors && ev.staticKeyPalette.kind > 0;
+				ev.staticKeySwaps = e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<std::pair<std::string, std::string>>();
+				ev.staticKey = AsciiStringUtil::lowered(e.staticModel) + W3DInstancer::Texture_Swap_Suffix(ev.staticKeySwaps);
+				ev.staticGlow = staticGlowOf(e.data); // lane GLOW-1 (S-5231): a glowing module's model is a copy of its own, as on the animated path
+				if (ev.staticGlow != 0)
+				{
+					ev.staticKey += ev.staticGlow == 2 ? "|glow-emissive" : "|glow";
+				}
+				if (selectionDecalReceiver(d))
+				{
+					ev.staticKey += "|sel"; // lane SELWALL-1: as on the animated path
+				}
+				if (ev.staticKeyColored)
+				{
+					const HouseColorParams &pp = ev.staticKeyPalette;
+					ev.staticKey += "#palette&" + std::to_string(pp.kind) + "&" + std::to_string(pp.colors[0]) + "&" + std::to_string(pp.colors[1]) + "&" + std::to_string(pp.colors[2]);
+				}
+				ev.staticKeySource = e.staticModel;
+				ev.staticKeyData = e.data;
+				ev.staticKeyKind = (int)e.kind;
+				ev.staticKeyWeather = m_streakWeather;
+				ev.staticKeyHouse = m_houseColors;
+				ev.staticKeyOwner = owner;
+				ev.staticKeyCustomKind = customKind;
+				std::memcpy(ev.staticKeyCustom, custom, sizeof(ev.staticKeyCustom));
+				ev.staticKeyValid = true;
+			}
+			const HouseColorParams &palette = ev.staticKeyPalette;
+			const bool colored = ev.staticKeyColored;
+			const std::vector<std::pair<std::string, std::string>> &swaps = ev.staticKeySwaps;
+			const std::string &model = ev.staticKey;
+			if(ev.model!=model && ev.instance>=0) {dyn->remove_instance(ev.instance);ev.instance=-1;ev.posed=false;}
+			if (!ev.posed)
+			{
+				ev.posed = true;
+				auto it = m_dynamicModels.find(model);
+				int64_t mid;
+				if (it == m_dynamicModels.end())
+				{
+					const double tm = nowMs();
+					dyn->Set_Build_Texture_Swaps(swaps);
+					dyn->Set_Build_Selection_Decals(selectionDecalReceiver(d)); // lane SELWALL-1
+					if(colored) {
+					 PackedInt64Array colors;for(auto color:palette.colors) colors.push_back((int64_t)color);
+					 mid=dyn->add_model_colored(toGodot(e.staticModel),palette.kind,colors);
+					} else mid = dyn->add_model(toGodot(e.staticModel));
+					if (mid >= 0 && ev.staticGlow != 0)
+					{
+						dyn->set_model_glow(mid, ev.staticGlow == 2);
+					}
+					m_dynamicModels[model] = mid;
+					m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
+					++m_lastNewModels;
+				}
+				else
+				{
+					mid = it->second;
+				}
+				if (mid >= 0)
+				{
+					ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
+					ev.model = model;
+					ev.opacity = 1.0f; // a new instance starts opaque
+					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR &&
+						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr));
+				}
+			}
+			else if (entryXfChanged && ev.instance >= 0)
+			{
+				dyn->set_instance_transform(ev.instance, entryXf);
+			}
+			if (ev.instance >= 0 && (ev.fogLook != fogLook || ev.fogLookInstance != ev.instance)) // lane VISUAL-2: the fogged light (as above)
+			{
+				dyn->set_instance_fogged(ev.instance, fogLook);
+				ev.fogLook = fogLook;
+				ev.fogLookInstance = ev.instance;
+			}
+			if (ev.instance >= 0) // lane STEALTH-1: a friend's invisible object pulses, a revealed one returns to full opacity (GameClient/StealthLook)
+			{
+				const float opacity = d->stealthOpacity(); // lane STEALTHLOOK-1: the drawable's stepped stealth opacity (+0xB4)
+				if (opacity != ev.opacity)
+				{
+					dyn->set_instance_opacity(ev.instance, opacity);
+					ev.opacity = opacity;
+				}
+			}
+		}
+	}
+	v.lastXf = xf;
+	v.haveXf = true;
+	v.seenChange = d->getChangeCount();
+}
+
 void GameWorld::refresh_views(double deltaMs)
 {
 	// lane STEALTHLOOK-1: the stealth pulse steps per client frame inside DrawableManager::advance (RW 0x673114), no clock needed here
 	W3DInstancer *dyn = instancerOf(m_dynamicId);
 	if (!m_game || !dyn)
 	{
+		m_lastViewsLocal = m_lastViewsSerial = 0;
 		return;
 	}
 	DrawableManager &dm = m_game->drawables();
@@ -1661,472 +2240,93 @@ void GameWorld::refresh_views(double deltaMs)
 		}
 	}
 	const size_t viewSlots = std::min(dm.slotCount(), m_views.size());
+	// lane PERF-CLIENT: the drawables whose view work stays inside their own instances (view_is_local: no instance made or removed, no model
+	// built, no clip or palette block looked up in the instancer's shared tables) are refreshed on the client job pool; the others follow on
+	// this thread in slot order. Each instancer call of the first pass changes only its own instance (and sets dirty flags), so the result is
+	// the serial loop's
+	const LogicSnapshot *presentedRaw = presented.get();
+	if (m_viewSerial.size() < viewSlots)
+	{
+		m_viewSerial.resize(viewSlots + viewSlots / 2);
+	}
+	std::atomic<size_t> animatedLocal{ 0 }, refreshedLocal{ 0 };
+	const bool parallel = m_parallelViews && viewSlots >= 512;
+	if (parallel)
+	{
+		JobSystem::client().parallelFor(viewSlots, 64, [&](size_t, size_t begin, size_t end) {
+			W3DDrawPoseView f;
+			size_t anim = 0, refreshed = 0;
+			for (size_t id = std::max<size_t>(begin, 1); id < end; ++id)
+			{
+				prefetch_view(id, viewSlots);
+				const bool local = view_is_local(id, *dyn, presentedRaw, f);
+				m_viewSerial[id] = local ? 0 : 1;
+				if (local)
+				{
+					refreshed += m_views[id].valid ? 1 : 0;
+					refresh_view(id, dyn, presentedRaw, f, anim);
+				}
+			}
+			animatedLocal.fetch_add(anim, std::memory_order_relaxed);
+			refreshedLocal.fetch_add(refreshed, std::memory_order_relaxed);
+		});
+	}
+	animated += animatedLocal; // the jobs are done (parallelFor returns after the last)
+	m_lastViewsLocal = refreshedLocal;
+	m_lastViewsSerial = 0;
 	for (size_t id = 1; id < viewSlots; ++id)
 	{
-		// lane PERF-3: the blocks of the drawables ahead (the object, its entry array and draw module, the view's entries) are fetched while this one is
-		// worked on, in three steps so each step reads only what the previous one fetched (Common/Prefetch.h)
-		if (id + 12 < viewSlots)
+		if (!parallel)
 		{
-			if (const Drawable *a = dm.find((DrawableID)(id + 12)))
-			{
-				OPENBFME_PREFETCH(&a->entries());
-			}
+			prefetch_view(id, viewSlots);
 		}
-		if (id + 8 < viewSlots)
+		if (!parallel || m_viewSerial[id])
 		{
-			if (const Drawable *b = dm.find((DrawableID)(id + 8)))
-			{
-				const std::vector<DrawEntry> &en = b->entries();
-				if (!en.empty())
-				{
-					OPENBFME_PREFETCH(&en[0].kind);
-					OPENBFME_PREFETCH(&en[0].constructionOffsetZ);
-				}
-			}
-			if (!m_views[id + 8].entries.empty())
-			{
-				OPENBFME_PREFETCH(&m_views[id + 8].entries[0].instance);
-				OPENBFME_PREFETCH(&m_views[id + 8].entries[0].offsetZ);
-			}
+			m_lastViewsSerial += m_views[id].valid ? 1 : 0;
+			refresh_view(id, dyn, presentedRaw, m_viewPose, animated);
 		}
-		if (id + 4 < viewSlots)
-		{
-			if (const Drawable *c = dm.find((DrawableID)(id + 4)))
-			{
-				const std::vector<DrawEntry> &en = c->entries();
-				if (!en.empty() && en[0].draw)
-				{
-					OPENBFME_PREFETCH(en[0].draw.get());
-				}
-			}
-		}
+	}
+	// lane OCCLUDE-1: each noted entry's render object in RTS3DScene::Visibility_Check's lists (RW 0x470D75 .. 0x470EC5), in drawable order after both
+	// passes (the budget admits in that order): translucent (the drawable's opacity below 1), an occluder, an occludee drawn in its controlling player's
+	// colour (slot = player index + 1) or plain
+	for (size_t id = 1; id < viewSlots; ++id)
+	{
 		DrawableView &v = m_views[id];
-		if (!v.valid)
+		if (!v.valid || v.occlusionCalls.empty())
 		{
 			continue;
 		}
-		Drawable *d = dm.find((DrawableID)id);
-		if (!d)
+		const ObjectSnapshot *stealthRec = v.occlusionRec;
+		for (const std::uint32_t k : v.occlusionCalls)
 		{
-			remove_view((uint32_t)id);
-			continue;
-		}
-		const Coord3D shownAt = *d->getPosition();
-		const Transform3D xf = toTransform(d->getBasis(), shownAt, d->getInstanceScale());
-		const bool xfChanged = !v.haveXf || !(xf == v.lastXf);
-		// VIS-1 / STEALTH-1 / GARRISON-1 / lane VISUAL-2: what the presented snapshot leaves undrawn and the fogged ghost's light (Drawable::presentedLook,
-		// shared with the attached particle systems, the buffs and the streaks)
-		const Drawable::PresentedLook look = d->presentedLook(presented.get(), m_shroudDrawn);
-		const bool fogHidden = look.hidden;
-		const bool fogLook = look.fogLook;
-		const ObjectSnapshot *stealthRec = nullptr;
-		if (presented)
-		{
-			bool synced = false;
-			stealthRec = d->syncedRecord(*presented, synced);
-			if (!synced)
-			{
-				stealthRec = presented->find(d->getObjectID());
-			}
-		}
-		const std::uint8_t occlusionEligible = stealthRec && !fogHidden ? stealthRec->occlusion : 0; // lane OCCLUDE-1
-		const bool fogChanged = fogHidden != v.fogHidden;
-		v.fogHidden = fogHidden;
-		const bool flagsChanged = d->getChangeCount() != v.seenChange || fogChanged;
-		std::vector<DrawEntry> &entries = d->entries();
-		for (size_t k = 0; k < entries.size() && k < v.entries.size(); ++k)
-		{
-			DrawEntry &e = entries[k];
 			EntryView &ev = v.entries[k];
-			// RENDER-2: a structure being built moves along its own Z by the draw's construction offset (RW 0x4B686D)
-			Transform3D entryXf = xf;
-			if (e.constructionOffsetZ != 0.0f)
+			if (ev.instance < 0)
 			{
-				entryXf = toTransform(d->getBasis(), d->entryPosition(e), d->getInstanceScale());
+				continue;
 			}
-			const bool entryXfChanged = xfChanged || e.constructionOffsetZ != ev.offsetZ;
-			ev.offsetZ = e.constructionOffsetZ;
-			if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
+			const RTS3DSceneOcclusion::Role role = dyn->instance_outside(ev.instance, occlusionFrustum) ? RTS3DSceneOcclusion::ROLE_NONE
+				: occlusionBudget.admit(v.occlusionEligible, ev.opacity < 1.0f);
+			int code = 0;
+			if (role == RTS3DSceneOcclusion::ROLE_OCCLUDER)
 			{
-				// lane COMBAT-4: a W3DTruckDraw's tires (Drawable::advanceTires, RW 0x4CBFFB): the front set and the mid / rear sets turn about their Y
-				auto applyTires = [&]() {
-					if (ev.instance < 0 || (e.frontTireBones.empty() && e.rearTireBones.empty()) || (ev.tireChanges == e.tireChanges && ev.tireInstance == ev.instance))
-					{
-						return;
-					}
-					std::vector<std::string> bones;
-					std::vector<float> angles;
-					for (const std::string &b : e.frontTireBones)
-					{
-						bones.push_back(b);
-						angles.push_back(e.tireFront);
-					}
-					for (const std::string &b : e.rearTireBones)
-					{
-						bones.push_back(b);
-						angles.push_back(e.tireRear);
-					}
-					dyn->set_instance_bone_spins_native(ev.instance, bones, angles);
-					ev.tireChanges = e.tireChanges;
-					ev.tireInstance = ev.instance;
-				};
-				// lane VISUAL-2: RW 0x46F48E (renderOneObject): an object fogged for the local player (its last sight) is lit by the fogged light environment,
-				// the lights and the ambient times FogAlpha / ClearAlpha (RW 0x46DFD0)
-				auto applyFogLook = [&]() {
-					if (ev.instance < 0 || (ev.fogLook == fogLook && ev.fogLookInstance == ev.instance))
-					{
-						return;
-					}
-					dyn->set_instance_fogged(ev.instance, fogLook);
-					ev.fogLook = fogLook;
-					ev.fogLookInstance = ev.instance;
-				};
-				// lane OCCLUDE-1: the entry's render object in RTS3DScene::Visibility_Check's lists (RW 0x470D75 .. 0x470EC5): translucent (the drawable's opacity
-				// below 1), an occluder, an occludee drawn in its controlling player's colour (slot = player index + 1) or plain
-				auto applyOcclusion = [&]() {
-					if (ev.instance < 0)
-					{
-						return;
-					}
-					const RTS3DSceneOcclusion::Role role = dyn->instance_outside(ev.instance, occlusionFrustum) ? RTS3DSceneOcclusion::ROLE_NONE
-						: occlusionBudget.admit(occlusionEligible, ev.opacity < 1.0f);
-					int code = 0;
-					if (role == RTS3DSceneOcclusion::ROLE_OCCLUDER)
-					{
-						code = 0x100;
-					}
-					else if (role == RTS3DSceneOcclusion::ROLE_OCCLUDEE && stealthRec->ownerIndex >= 0 && stealthRec->ownerIndex + 1 < W3D_OCCLUSION_SLOTS)
-					{
-						code = stealthRec->ownerIndex + 1;
-						if (occlusionTable[code] == 0)
-						{
-							occlusionTable[code] = RTS3DSceneOcclusion::occludedColor(stealthRec->ownerColor, occludedLuminanceScale);
-						}
-					}
-					if (code == ev.occlusion && ev.occlusionInstance == ev.instance)
-					{
-						return;
-					}
-					dyn->set_instance_occlusion(ev.instance, (code & 0x100) != 0, code & 0xFF);
-					ev.occlusion = code;
-					ev.occlusionInstance = ev.instance;
-				};
-				const bool animatedNow = e.animated && m_animations;
-				animated += animatedNow ? 1 : 0;
-				// lane CAH-2: a new colour set (Drawable::setCustomColors, RW 0x6727B0) chooses another model below
-				const bool colorsChanged = d->customColorRevision() != ev.colorsRevision;
-				if (!flagsChanged && !animatedNow && !colorsChanged && ev.posed)
+				code = 0x100;
+			}
+			else if (role == RTS3DSceneOcclusion::ROLE_OCCLUDEE && stealthRec->ownerIndex >= 0 && stealthRec->ownerIndex + 1 < W3D_OCCLUSION_SLOTS)
+			{
+				code = stealthRec->ownerIndex + 1;
+				if (occlusionTable[code] == 0)
 				{
-					if (entryXfChanged && ev.instance >= 0)
-					{
-						dyn->set_instance_transform(ev.instance, entryXf);
-					}
-					if (ev.instance >= 0) // lane STEALTH-1: the pulse moves without a pose change, and a revealed object returns to its own opacity
-					{
-						const float pulse = StealthLook::drawOpacity(d->drawOpacity(), d->stealth()); // lane STEALTHLOOK-1: the drawable's stepped stealth opacity (+0xB4)
-						if (pulse != ev.opacity)
-						{
-							dyn->set_instance_opacity(ev.instance, pulse);
-							ev.opacity = pulse;
-						}
-					}
-					applyTires();
-					applyFogLook();
-					applyOcclusion();
-					continue;
-				}
-				W3DDrawPoseView &f = m_viewPose; // lane PERF-3: the frame's pose request and model by reference (frame() copied every name of the module)
-				e.draw->poseView(f);
-				const bool shown = f.model && !e.moduleHidden && !fogHidden;
-				// Donor W3DModelDrawRva000B8FA1.cpp (BFME2 0x4B8FA1): ordinary
-				// owners use kind 1; hero custom palettes keep precedence. Bake before
-				// filtering, using the existing RW 0x531C77 texture recolour routine.
-				const auto palette = Render_House_Color_Params(d->getHouseColor(), d->customColorKind(), d->customColors());
-				ev.colorsRevision = d->customColorRevision();
-				// lane PERF-HD: the model key below (the lowered name, the house colour's "#..." suffix, the swap suffix) depends only on these inputs;
-				// while they hold the key is `ev.model` already, so the strings are not made and compared again (every animated troop, every frame)
-				const bool keySame = ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
-					&& ev.animKeySwaps == (const void *)f.textureSwaps && ev.animKeyKind == palette.kind && ev.animKeyGlow == f.glow
-					&& ev.animKeyColors[0] == (std::uint32_t)palette.colors[0] && ev.animKeyColors[1] == (std::uint32_t)palette.colors[1]
-					&& ev.animKeyColors[2] == (std::uint32_t)palette.colors[2];
-				if (!keySame)
-				{
-				if (shown && *f.modelName != ev.rawModel)
-				{
-					ev.rawModel = *f.modelName;
-					ev.rawLowered = AsciiStringUtil::lowered(*f.modelName);
-				}
-				static const std::string kNoModel;
-				std::string coloredModel;
-				if (shown && m_houseColors && palette.kind > 0)
-				{
-					char opt[96];
-					std::snprintf(opt, sizeof(opt), "#%d&%d&%d&%d", palette.kind, (int)palette.colors[0], (int)palette.colors[1], (int)palette.colors[2]);
-					coloredModel = "#" + ev.rawLowered + opt;
-				}
-				// stop S-5015: the state's `Texture = A B` swaps (a building's SNOW state on a snowy map) make another model variant, "<model>#tex&a=b"
-				std::string swappedModel;
-				if (shown && !f.textureSwaps->empty())
-				{
-					if (ev.swapSource != f.textureSwaps)
-					{
-						ev.swapSource = f.textureSwaps;
-						ev.swapSuffix = W3DInstancer::Texture_Swap_Suffix(*f.textureSwaps); // once per state change (Sol review r1: not every frame)
-					}
-					swappedModel = (!coloredModel.empty() ? coloredModel : ev.rawLowered) + ev.swapSuffix;
-				}
-				const std::string &plainModel = !swappedModel.empty() ? swappedModel : !coloredModel.empty() ? coloredModel : shown ? ev.rawLowered : kNoModel;
-				// lane GLOW-1 (S-5231): a draw module with GlowEnabled gets a model of its own (the glow layer is a property of the model's draws), so another
-				// drawable that shows the same W3D model without the flag does not glow
-				std::string glowModel;
-				if (shown && f.glow != 0)
-				{
-					glowModel = plainModel + (f.glow == 2 ? "|glow-emissive" : "|glow");
-				}
-				const std::string &model = glowModel.empty() ? plainModel : glowModel;
-				if (model != ev.model)
-				{
-					if (ev.instance >= 0)
-					{
-						dyn->remove_instance(ev.instance);
-						ev.instance = -1;
-					}
-					ev.model = model;
-					ev.posed = false;
-					ev.hidden.clear();
-					ev.hiddenModel = nullptr;
-					ev.opacity = 1.0f; // a new instance starts opaque
-					if (!model.empty())
-					{
-						auto it = m_dynamicModels.find(model);
-						int64_t mid;
-						if (it == m_dynamicModels.end())
-						{
-							const double tm = nowMs();
-							if (!swappedModel.empty())
-							{
-								dyn->Set_Build_Texture_Swaps(*f.textureSwaps); // taken by the add below (and add_model_colored's)
-							}
-							if (!coloredModel.empty())
-							{
-								PackedInt64Array colors;
-								for (int i = 0; i < 3; ++i)
-								{
-									colors.push_back((int64_t)palette.colors[i]);
-								}
-								mid = dyn->add_model_colored(toGodot(*f.modelName), palette.kind, colors);
-							}
-							else
-							{
-								mid = dyn->add_model(toGodot(*f.modelName));
-							}
-							if (mid >= 0 && f.glow != 0)
-							{
-								dyn->set_model_glow(mid, f.glow == 2);
-							}
-							m_dynamicModels[model] = mid;
-							m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
-							++m_lastNewModels;
-						}
-						else
-						{
-							mid = it->second;
-						}
-						if (mid >= 0)
-						{
-							ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
-							if (ev.instance >= 0 && m_houseColors && d->getHouseColor() != 0 && coloredModel.empty())
-							{
-								dyn->set_instance_house_color(ev.instance, houseColorOf(d->getHouseColor()));
-							}
-							if (ev.instance >= 0 && d->isKindOfName("INFANTRY"))
-							{
-								dyn->set_instance_infantry_light(ev.instance, true); // RENDER-1: the infantry light set (S-390)
-							}
-						}
-					}
-				}
-				ev.animKeyValid = true;
-				ev.animKeyShown = shown;
-				ev.animKeyHouse = m_houseColors;
-				ev.animKeyName = f.modelName;
-				ev.animKeySwaps = f.textureSwaps;
-				ev.animKeyKind = palette.kind;
-				ev.animKeyGlow = f.glow;
-				for (int i = 0; i < 3; ++i)
-				{
-					ev.animKeyColors[i] = (std::uint32_t)palette.colors[i];
-				}
-				}
-				if (ev.instance >= 0)
-				{
-					if (entryXfChanged && ev.posed)
-					{
-						dyn->set_instance_transform(ev.instance, entryXf);
-					}
-					const ModelConditionInfo *shadowState = e.draw->currentModelState();
-					if (ev.shadowInstance != ev.instance || ev.shadowState != shadowState || ev.shadowData != e.data) // S-3304: not every frame
-					{
-						dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR &&
-							ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState));
-						ev.shadowState = shadowState;
-						ev.shadowData = e.data;
-						ev.shadowInstance = ev.instance;
-					}
-					if (!ev.posed || animatedNow || flagsChanged) // RENDER-2: a MANUAL track (the build-up) changes its frame without being "animated"
-					{
-						// SMOOTH-1: the native call (no Godot String round trip per animated drawable per frame; the instancer caches the clip lookups)
-						dyn->set_instance_pose_keyed(ev.instance, *f.clip0, f.clipKey0, f.frame0, *f.clip1, f.clipKey1, f.frame1, f.blendPercentage); // lane PERF-3: keyed
-						dyn->set_instance_pose_share(ev.instance, e.draw->poseShareDelta()); // lane PERF-HD: retail's horde pose sharing (the draw's frame delta)
-						ev.posed = true;
-					}
-					// the names frame() gives (the model's sub objects at the hidden indices, in index order), made when the draw's hidden set or the model changed
-					if (f.model != ev.hiddenModel || f.hiddenGeneration != ev.hiddenGeneration)
-					{
-						ev.hiddenModel = f.model;
-						ev.hiddenGeneration = f.hiddenGeneration;
-						std::vector<std::string> names;
-						if (f.model)
-						{
-							for (int i : *f.hiddenSubObjects)
-							{
-								names.push_back(f.model->SubObjects[(size_t)i].Name);
-							}
-						}
-						if (names != ev.hidden)
-						{
-							dyn->set_instance_hidden_subobjects(ev.instance, toPacked(names));
-							ev.hidden = std::move(names);
-						}
-					}
-					applyTires();
-					applyFogLook();
-					// PROJ-2: the drawable's fade (a launched stone hidden for its InvisibleFrames, then faded in: GameClient/DrawableFade)
-					const float opacity = StealthLook::drawOpacity(d->drawOpacity(), d->stealth()); // lane STEALTHLOOK-1: the friend's invisibility pulse (+0xB4)
-					if (opacity != ev.opacity)
-					{
-						dyn->set_instance_opacity(ev.instance, opacity);
-						ev.opacity = opacity;
-					}
-					applyOcclusion();
-				}
-				else
-				{
-					ev.posed = true;
+					occlusionTable[code] = RTS3DSceneOcclusion::occludedColor(stealthRec->ownerColor, occludedLuminanceScale);
 				}
 			}
-			else if (!e.staticModel.empty() && (e.conditionHidden || e.moduleHidden || fogHidden))
+			if (code == ev.occlusion && ev.occlusionInstance == ev.instance)
 			{
-				// RENDER-2: a floor draw whose HideIfModelConditions hold (the foundation floor while the structure is built): not drawn until they clear;
-				// lane STEALTH-1: nor while the object is hidden for the local player (fogged, or an enemy's invisible object: the stealth gates have floor draws);
-				// lane BUILD-4: nor while a script hid the module (a wall segment's BeginScript hides its ModuleTag_DrawFloor while it is built)
-				if (ev.instance >= 0)
-				{
-					dyn->remove_instance(ev.instance);
-					ev.instance = -1;
-				}
-				ev.posed = false;
-				ev.model.clear();
-				ev.animKeyValid = false; // lane PERF-HD: the posed branch's key no longer describes `model`
+				continue;
 			}
-			else if (!e.staticModel.empty() && !e.moduleHidden)
-			{
-				ev.animKeyValid = false; // lane PERF-HD: this branch sets `model` itself
-				// lane HCKEY-1: the key and its palette / swaps are made again only when an input changed (not every frame)
-				const std::uint32_t owner = d->getHouseColor();
-				const int customKind = d->customColorKind();
-				const std::uint32_t *custom = d->customColors();
-				if (!ev.staticKeyValid || ev.staticKeySource != e.staticModel || ev.staticKeyData != e.data || ev.staticKeyKind != (int)e.kind ||
-					ev.staticKeyWeather != m_streakWeather || ev.staticKeyHouse != m_houseColors || ev.staticKeyOwner != owner ||
-					ev.staticKeyCustomKind != customKind || std::memcmp(ev.staticKeyCustom, custom, sizeof(ev.staticKeyCustom)) != 0)
-				{
-					ev.staticKeyPalette = Render_House_Color_Params(owner, customKind, custom);
-					ev.staticKeyColored = m_houseColors && ev.staticKeyPalette.kind > 0;
-					ev.staticKeySwaps = e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<std::pair<std::string, std::string>>();
-					ev.staticKey = AsciiStringUtil::lowered(e.staticModel) + W3DInstancer::Texture_Swap_Suffix(ev.staticKeySwaps);
-					ev.staticGlow = staticGlowOf(e.data); // lane GLOW-1 (S-5231): a glowing module's model is a copy of its own, as on the animated path
-					if (ev.staticGlow != 0)
-					{
-						ev.staticKey += ev.staticGlow == 2 ? "|glow-emissive" : "|glow";
-					}
-					if (ev.staticKeyColored)
-					{
-						const HouseColorParams &pp = ev.staticKeyPalette;
-						ev.staticKey += "#palette&" + std::to_string(pp.kind) + "&" + std::to_string(pp.colors[0]) + "&" + std::to_string(pp.colors[1]) + "&" + std::to_string(pp.colors[2]);
-					}
-					ev.staticKeySource = e.staticModel;
-					ev.staticKeyData = e.data;
-					ev.staticKeyKind = (int)e.kind;
-					ev.staticKeyWeather = m_streakWeather;
-					ev.staticKeyHouse = m_houseColors;
-					ev.staticKeyOwner = owner;
-					ev.staticKeyCustomKind = customKind;
-					std::memcpy(ev.staticKeyCustom, custom, sizeof(ev.staticKeyCustom));
-					ev.staticKeyValid = true;
-				}
-				const HouseColorParams &palette = ev.staticKeyPalette;
-				const bool colored = ev.staticKeyColored;
-				const std::vector<std::pair<std::string, std::string>> &swaps = ev.staticKeySwaps;
-				const std::string &model = ev.staticKey;
-				if(ev.model!=model && ev.instance>=0) {dyn->remove_instance(ev.instance);ev.instance=-1;ev.posed=false;}
-				if (!ev.posed)
-				{
-					ev.posed = true;
-					auto it = m_dynamicModels.find(model);
-					int64_t mid;
-					if (it == m_dynamicModels.end())
-					{
-						const double tm = nowMs();
-						dyn->Set_Build_Texture_Swaps(swaps);
-						if(colored) {
-						 PackedInt64Array colors;for(auto color:palette.colors) colors.push_back((int64_t)color);
-						 mid=dyn->add_model_colored(toGodot(e.staticModel),palette.kind,colors);
-						} else mid = dyn->add_model(toGodot(e.staticModel));
-						if (mid >= 0 && ev.staticGlow != 0)
-						{
-							dyn->set_model_glow(mid, ev.staticGlow == 2);
-						}
-						m_dynamicModels[model] = mid;
-						m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
-						++m_lastNewModels;
-					}
-					else
-					{
-						mid = it->second;
-					}
-					if (mid >= 0)
-					{
-						ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
-						ev.model = model;
-						ev.opacity = 1.0f; // a new instance starts opaque
-						dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR &&
-							ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr));
-					}
-				}
-				else if (entryXfChanged && ev.instance >= 0)
-				{
-					dyn->set_instance_transform(ev.instance, entryXf);
-				}
-				if (ev.instance >= 0 && (ev.fogLook != fogLook || ev.fogLookInstance != ev.instance)) // lane VISUAL-2: the fogged light (as above)
-				{
-					dyn->set_instance_fogged(ev.instance, fogLook);
-					ev.fogLook = fogLook;
-					ev.fogLookInstance = ev.instance;
-				}
-				if (ev.instance >= 0) // lane STEALTH-1: a friend's invisible object pulses, a revealed one returns to full opacity (GameClient/StealthLook)
-				{
-					const float opacity = d->stealthOpacity(); // lane STEALTHLOOK-1: the drawable's stepped stealth opacity (+0xB4)
-					if (opacity != ev.opacity)
-					{
-						dyn->set_instance_opacity(ev.instance, opacity);
-						ev.opacity = opacity;
-					}
-				}
-			}
+			dyn->set_instance_occlusion(ev.instance, (code & 0x100) != 0, code & 0xFF);
+			ev.occlusion = code;
+			ev.occlusionInstance = ev.instance;
 		}
-		v.lastXf = xf;
-		v.haveXf = true;
-		v.seenChange = d->getChangeCount();
 	}
 	m_animatedDrawables = animated;
 	// lane OCCLUDE-1: the colours are drawn while GameData UseBehindBuildingMarker (+ 0x68) and TheGameLogic + 0x99 are set (RW 0x470744 / 0x4707B6; the
@@ -2181,6 +2381,10 @@ void GameWorld::advance(double delta)
 	if (m_paused)
 	{
 		// the simulation and the animations stand still; the streak ribbons still face the camera of this frame (the camera moves while paused)
+		if (m_clientPool)
+		{
+			m_clientPool->restore(); // lane PERF-CLIENT: no logic frame runs while paused, so the paused view has every thread
+		}
 		if (m_netSession)
 		{
 			// SMOOTH-1 (review r4): a network game keeps its transport and protocol pumped while paused (a presentation-only advance: no batch runs)
@@ -2264,6 +2468,7 @@ void GameWorld::advance(double delta)
 	// Single-threaded, the frames run inside advance and this work follows them, as before.
 	const bool threaded = m_game->logicThread();
 	m_fxPendingDt = timing::sumMs(m_fxPendingDt, dt); // seconds: a plain sum through the timing facade (the audited file's float rule)
+	adaptClientPool(threaded); // lane PERF-CLIENT: between dispatches (the main thread's)
 	if (threaded)
 	{
 		heldClientWork();
@@ -2648,6 +2853,11 @@ Dictionary GameWorld::get_combat_report() const
 	d["collapses_begun"] = (int64_t)c.counters().collapsesBegun;
 	d["collapses_done"] = (int64_t)c.counters().collapsesDone;
 	d["delayed_deaths"] = (int64_t)c.counters().delayedDeaths;
+	// lane WARG-1: the crush / trample counters (S-580), for the cavalry viewers
+	d["crushes"] = (int64_t)c.counters().crushes;
+	d["crush_weapon_shots"] = (int64_t)c.counters().crushWeaponShots;
+	d["crush_knockbacks"] = (int64_t)c.counters().crushKnockbacks;
+	d["crush_bumps"] = (int64_t)c.counters().crushBumps;
 	// every castle breach (hashed); the client plays the EVA for those whose owner is its local player
 	Array breaches;
 	for (const CombatState::CastleBreach &b : c.castleBreaches())
@@ -3415,6 +3625,11 @@ double GameWorld::get_ground_height(double x, double y) const
 	return m_game ? (double)m_game->logic().getGroundHeight((float)x, (float)y) : 0.0;
 }
 
+double GameWorld::get_align_on_terrain_height(double x, double y, double z) const
+{
+	return m_game ? (double)m_game->logic().getAlignOnTerrainHeight((float)x, (float)y, (float)z) : 0.0;
+}
+
 void GameWorld::queue_unit(int64_t player, int64_t producer, const String &template_name, bool secondary)
 {
 	const auto worldContext = m_world ? m_world->enterContext() : nullptr; // this world's stores and audio validator while it runs (several worlds may live)
@@ -3938,6 +4153,10 @@ Dictionary GameWorld::get_frame_timings() const
 	t["advance_ms"] = m_lastAdvanceMs;
 	t["shroud_ms"] = m_lastShroudMs; // lane PERF-1: the parts of sync_ms and the first-use work of the frame
 	t["views_ms"] = m_lastViewsMs;
+	t["views_local"] = (int64_t)m_lastViewsLocal;   // lane PERF-CLIENT: the drawables the last refresh_views refreshed on the client job pool
+	t["views_serial"] = (int64_t)m_lastViewsSerial; // and on the main thread
+	t["client_threads"] = (int64_t)JobSystem::client().threadCount(); // the client job pool's threads now (lane PERF-CLIENT may have shrunk it), the
+	                                                                  // caller included (1: everything inline)
 	t["fx_ms"] = m_lastFxMs;
 	t["new_models"] = (int64_t)m_lastNewModels;
 	t["new_model_ms"] = m_lastNewModelMs;
@@ -3949,6 +4168,9 @@ Dictionary GameWorld::get_frame_timings() const
 	{
 		t["presented_alpha"] = m_game->presentedAlpha();       // SMOOTH-1: after the presentation delay and the late-frame hold
 		t["worker_frame_ms"] = m_game->lastWorkerFrameMs();     // the logic worker's last frame
+		// lane PERF-CLIENT: the logic worker is behind its clock (the pool is shrunk for it unless its shrunk size is the full one, or another world's
+		// sizer restored it)
+		t["client_pool_behind"] = m_game->workerBehind();
 		t["held_presentations"] = (int64_t)m_game->heldPresentations();
 		t["logic_waits"] = (int64_t)m_game->blockingWaits();     // lane PATHPERF-1: render-side waits that blocked on the worker (cumulative)
 		const std::shared_ptr<const LogicSnapshot> shown = m_game->presentedSnapshot();
@@ -4011,6 +4233,37 @@ void GameWorld::set_render_interpolation(bool enabled)
 bool GameWorld::get_render_interpolation() const
 {
 	return m_renderInterpolation;
+}
+
+// lane PERF-CLIENT: while the logic worker is behind its clock (its frames over the logic frame's budget, counted by the worker itself), the client job pool keeps a
+// quarter of the hardware threads (at least 2) so the worker's single-threaded passes are not competing with the client's slices for the
+// cores; it grows back once the worker is well under its clock again, and while the game is paused (ClientPoolPolicy.h has the rule and
+// the numbers). The full size is the hardware's:
+// the rule is off whenever OPENBFME_CLIENT_THREADS names another. The pool is resized between dispatches, on this thread, which owns every
+// client dispatch. Nothing of the simulation changes: the pool's size only decides which thread runs a slice
+void GameWorld::adaptClientPool(bool threaded)
+{
+	if (!m_clientPoolAdapt)
+	{
+		return;
+	}
+	if (!m_clientPool)
+	{
+		const int full = JobSystem::defaultThreadCount();
+		m_clientPool = std::make_unique<ClientPoolSizer>(JobSystem::client(), full, ClientPoolPolicy::behindThreadsFor(full));
+	}
+	if (!threaded)
+	{
+		m_clientPool->restore(); // the frames run inside advance: no worker to make room for
+		return;
+	}
+	m_clientPool->apply(m_game->workerBehind());
+}
+
+// the game is gone (or about to be): the pool has its full size for the menu and the next load, whose parallel loaders run on it
+void GameWorld::restoreClientPool()
+{
+	m_clientPool.reset();
 }
 
 void GameWorld::set_perf3_client(bool enabled)
@@ -4476,14 +4729,15 @@ Dictionary GameWorld::lan_strategic_begin(Object *living_world, const Array &slo
 	}
 	if (m_netStart.online && m_netStart.rejoinGeneration > 0)
 	{
-		r["error"] = "an online War of the Ring cannot rejoin a running strategic map without its relay command log";
+		// WOTR2 S-4075: RotWK has no reconnect (LobbyStart::holdsForRejoin); the lobby refuses a war's rejoin ticket, this is the client's own guard
+		r["error"] = "a War of the Ring cannot be rejoined: RotWK has no reconnect and the war's state cannot be caught up [S-4075]";
 		return r;
 	}
 	NetworkConfig config;
 	config.localSlot = m_netStart.localSlot;
 	config.runAhead = m_netStart.runAhead;
 	config.crcInterval = m_netStart.crcInterval;
-	config.holdForRejoin = m_netStart.online; // ONLINE-3: the relay holds a silent slot, unlike LAN's immediate hand-over
+	config.holdForRejoin = m_netStart.holdsForRejoin(); // WOTR2 S-4075: false: a war's drop is retail's immediate hand-over, online as on a LAN
 	std::string error;
 	if (!m_fs.is_valid() || !NetworkSettings::load(*m_fs->archive_fs(), config.settings, &error))
 	{

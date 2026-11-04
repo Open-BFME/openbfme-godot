@@ -12,4 +12,5 @@ set(OPENBFME_PERF2_TESTS
     tests/test_perf2_bench.cpp
     tests/test_perf2_client.cpp
     tests/test_perf2_loading.cpp
+    tests/test_perf2_snapshot.cpp
 )

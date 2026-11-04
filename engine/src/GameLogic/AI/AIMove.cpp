@@ -23,12 +23,12 @@ const char *const kStopPortalMineshaft = kStopSpecialLayer;
 const char *const kStopUpdate =
 	"S-166 the movement-complete block of AIUpdateInterface::update (RW 0x6695EF) skips the object goal refresh (0x68B411, 0x6EF225, 0x68B3BD), the status bit clears and the turret update; the state machine's sleep comes from the host";
 const char *const kStopExplicit =
-	"S-166 doLocomotor goal types 2 and 4 (RW 0x669A01-0x669B95): the validation of a straight move (RW 0x6F1B3E) is approximated by the PATH-1 line test or a passable "
-	"target cell, and the fallback path of a blocked straight move (RW 0x6F74D0) by a pathfinder search (the two bodies were not fully read)";
-const char *const kStopDistance =
-	"S-166 getLocomotorDistanceToGoal (RW 0x664127) is the ZH body (path remaining distance, at least the straight distance to the last node), the retail body was not read";
+	"S-166 doLocomotor goal types 2 and 4 (RW 0x669A01-0x669B95): the cell test of a straight move's validation (RW 0x6F1B3E) is approximated by the PATH-1 line test "
+	"or a passable target cell on the target's layer (its layer test is ported, lane WALL-4), and the fallback path of a blocked straight move (RW 0x6F74D0) by a "
+	"pathfinder search (its body was not fully read)";
 const char *const kStopRequests =
-	"S-166 the approach request (RW 0x6638FC), melee approach request (RW 0x6639CF), safe request (RW 0x663C6B) and findClosestPath are not ported (the attack request "
+	"S-166 the approach request (RW 0x6638FC), melee approach request (RW 0x6639CF) and safe request (RW 0x663C6B) are not ported (lane WARG-1 ported FindClosestPath "
+	"RW 0x6FB869; the attack request "
 	"RW 0x663802 and allied clearing RW 0x6F503B are lane PHYS-1's, S-784 / S-785)";
 const char *const kStopGroup =
 	"S-166 blockedBy skips the group / formation sort key (obj+0x42C / +0x430, unresolved)";
@@ -41,13 +41,13 @@ inline float hypot2(float x, float y)
 
 std::vector<std::string> AIMover::allStops()
 {
-	return { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
+	return { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopRequests, kStopGroup };
 }
 
 void AIMover::note(const char *stop)
 {
 	// the movers note these on every frame of a move: a known stop is compared by its text only the first time (a bit per stop)
-	static const char *const kKnown[] = { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
+	static const char *const kKnown[] = { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopRequests, kStopGroup };
 	for (unsigned i = 0; i < sizeof(kKnown) / sizeof(kKnown[0]); ++i)
 	{
 		if (kKnown[i] == stop)
@@ -197,41 +197,67 @@ void AIMover::setMoveCondition(const char *name, bool on)
 
 float AIMover::locomotorDistanceToGoal() const
 {
+	// RW 0x664127 getLocomotorDistanceToGoal (lane LOCODIST-1; BFME2 0x66435E, decomp Object/Update/AIUpdateInterfaceLocomotorDistanceToGoal.cpp, tier A:
+	// the same body in both editions). Constants: 100 RW 0xBD88D8, 10 RW 0xBD83D8, 0 RW 0xC1B594
+	const Coord3D pos = m_host.pathfindObject().getPosition();
 	switch (m_goalType)
 	{
-	case AIGOAL_NONE:
-		return 0.0f;
+	case AIGOAL_EXPLICIT:
+	case AIGOAL_EXPLICIT_WITH_PATH:
+	{
+		// RW 0x664155: the goal (AI + 0x200) minus the position, then Coord3D::length (RW 0x403111)
+		const float dx = SimMath::subf32(m_goal.x, pos.x), dy = SimMath::subf32(m_goal.y, pos.y), dz = SimMath::subf32(m_goal.z, pos.z);
+		return SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, dz)));
+	}
 	case AIGOAL_ON_PATH:
 	{
-		if (m_path == nullptr || (m_path->currentNode() == nullptr && m_path->getFirstNode() != m_path->getLastNode()))
+		if (m_path == nullptr)
 		{
-			return 100.0f; // RW 0x664127: no path
+			return 100.0f; // RW 0x6641A3
 		}
-		// lane BUILD-3: a ONE-node path (a goal adjusted into the unit's own cell while it stands on the cell centre: prependCells adds no start node) has no segment,
-		// so no closest node: it is measured as 0 plus the straight line to its node (RW returns 100 only without a path, RW 0x6641A3, and measures a path from its
-		// head, RW 0x765B12 / 0x765972: 0 without a next node), so the move arrives; the port returned 100 and such a unit stayed "moving" forever (QA-1 U17's
-		// Porter at (980.5, 930.5)). INFERENCE (S-1282): a longer path without a closest node keeps the port's 100 (the movement code depends on it)
-		const_cast<AIMover *>(this)->note(kStopDistance);
-		const Coord3D pos = m_host.pathfindObject().getPosition();
-		float dist = m_path->currentNode() ? m_path->remainingFrom(m_path->currentNode(), pos) : 0.0f;
-		const PathNode *last = m_path->getLastNode();
-		if (last)
+		Locomotor *loco = m_host.locomotor(); // AI + 0x1F0
+		if (loco == nullptr)
 		{
-			const float dx = SimMath::subf32(last->getPosition()->x, pos.x);
-			const float dy = SimMath::subf32(last->getPosition()->y, pos.y);
-			const float straight = hypot2(dx, dy);
-			if (straight > dist)
-			{
-				dist = straight;
-			}
+			return 0.0f; // RW 0x6641B6
 		}
-		return dist;
+		const PathNode *tail = m_path->getLastNode(); // Path + 8
+		if ((loco->flags() & LOCOMOTOR_FLAG_CLOSE_ENOUGH_DIST_3D) || m_host.isProjectile())
+		{
+			// RW 0x6642CB: the machine's goal, else the path's last node; RW 0x5E3BE4 (x87 at PC24, the object minus the point, (dz^2 + dy^2) + dx^2)
+			// and the CRT sqrt (RW 0xA3CF96)
+			const Coord3D g = tail ? *tail->getPosition() : m_host.machineGoalPosition();
+			const double ex = SimMath::pc24SubW((double)pos.x, (double)g.x), ey = SimMath::pc24SubW((double)pos.y, (double)g.y), ez = SimMath::pc24SubW((double)pos.z, (double)g.z);
+			const double sq = SimMath::pc24AddW(SimMath::pc24AddW(SimMath::pc24MulW(ez, ez), SimMath::pc24MulW(ey, ey)), SimMath::pc24MulW(ex, ex));
+			return SimMath::fstpDword(SimMath::sqrtPC24(sq));
+		}
+		if (loco->getTemplate().m_appearance == LOCO_GIANT_BIRD)
+		{
+			return 0.0f; // RW 0x6641E1: template + 0x74 == 5 (RotWK's Appearance list: GIANT_BIRD)
+		}
+		const bool aircraft = m_host.treatAsAircraftForLocoDistToGoal(); // AI vslot 0x25C
+		Coord3D goalPos{};
+		float dist;
+		if (aircraft)
+		{
+			dist = m_path->computeFlightDistToGoal(pos, goalPos); // RW 0x765B12
+		}
+		else
+		{
+			dist = m_path->remainingFromPointAhead(loco->speed()); // RW 0x766173 (the locomotor's speed, RW 0x5E36F7), RW 0x765972
+		}
+		if (tail)
+		{
+			goalPos = *tail->getPosition();
+		}
+		// RW 0x664254: the squared 2D straight distance to the tail (SSE, dy^2 + dx^2)
+		const float sx = SimMath::subf32(goalPos.x, pos.x), sy = SimMath::subf32(goalPos.y, pos.y);
+		const float straightSq = SimMath::sumSquares2(sx, sy);
+		const float distSq = SimMath::mulf32(dist, dist);
+		const bool straight = aircraft ? distSq > straightSq : (10.0f > dist || straightSq > distSq); // comiss: a NaN keeps `dist`
+		return straight ? SimMath::fstpDword(SimMath::sqrtPC24((double)straightSq)) : dist;
 	}
 	default:
-	{
-		const Coord3D pos = m_host.pathfindObject().getPosition();
-		return hypot2(SimMath::subf32(m_goal.x, pos.x), SimMath::subf32(m_goal.y, pos.y));
-	}
+		return 0.0f; // RW 0x664316: AIGOAL_NONE, AIGOAL_ANGLE
 	}
 }
 
@@ -434,10 +460,10 @@ bool AIMover::computeAttackPath()
 				destroyPath();
 				Coord3D adjusted = pos;
 				m_pf.adjustDestination(obj, info, &adjusted, nullptr);
-				// lane PATHPERF-1: RW calls pathfinder slot +4 here (RW 0x666E51 -> FindClosestPath RW 0x6FB869, not ported: S-166), not findPath (slot 0, RW 0x6FE7CB):
-				// the stand-in is the search without findPath's hierarchical corridor and goal step-back
+				// RW 0x666E3D .. 0x666E51: pathfinder slot + 4, FindClosestPath (RW 0x6FB869, lane WARG-1), not findPath (slot 0, RW 0x6FE7CB): not blocked, the cost
+				// multiplier 0.2 (RW 0xBDAD78), moveAllies 1
 				m_pf.restartUberSearchCount(); // lane PERF-HD (Uber only): its own cap, not what findAttackPath left
-				m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &adjusted, nullptr);
+				m_path = m_pf.findClosestPath(&obj, info, &pos, &adjusted, false, 0.200000003f, true);
 				if (m_path == nullptr)
 				{
 					m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
@@ -526,8 +552,9 @@ void AIMover::doPathfind()
 		const PathfindLocomotorInfo info = m_host.locomotorInfo();
 		const Coord3D pos = obj.getPosition();
 		destroyPath();
-		// lane PATHPERF-1: slot +4 is FindClosestPath (RW 0x6FB869, not ported: S-166), not findPath: the search without findPath's corridor stands in for it
-		m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &m_attackPos, nullptr);
+		// RW 0x6692E9 .. 0x669319: slot + 4 is FindClosestPath (RW 0x6FB869, lane WARG-1): blocked when the AI has blocked frames (+ 0x16C > 0), the cost
+		// multiplier 0.05 (RW 0xBDD760), moveAllies 0
+		m_path = m_pf.findClosestPath(&obj, info, &pos, &m_attackPos, m_blockedFrames > 0, 0.0500000007f, false);
 		if (m_path && m_path->getLastNode() && isDoingGroundMovement())
 		{
 			const PathNode *end = m_path->getLastNode();
@@ -572,12 +599,14 @@ bool AIMover::computeQuickPath(const Coord3D &dest)
 		delete m_path;
 		m_path = nullptr;
 	}
-	Path *p = new Path();
+	Path *p = new Path(m_pf.uberLimits()); // lane UBER-PATH
 	Coord3D from = obj.getPosition();
 	from.z = dest.z;
 	p->prependNode(&dest, m_pf.getLayerAt(dest.x, dest.y, dest.z)); // lane WALL-1: the destination's layer (the ground on a map without walls)
 	p->prependNode(&from, obj.getLayer());
-	p->optimize(m_pf, &obj, m_host.locomotorInfo().validSurfaces, false, nullptr);
+	const PathfindLocomotorInfo info = m_host.locomotorInfo();
+	p->optimize(m_pf, &obj, info.validSurfaces, false, nullptr);
+	p->rebuild(m_pf, &obj, info, m_host.unitDirectionOf(obj), info.validSurfaces, false); // RW 0x665BF5 (lane PATH-REBUILD)
 	m_path = p;
 	m_pathTimestamp = m_host.frame();
 	setGoalOnPath();
@@ -669,11 +698,10 @@ bool AIMover::computePath(const Coord3D &destIn)
 	}
 	if (np == nullptr && m_path == nullptr && tryClosest)
 	{
-		// FindClosestPath (RW 0x6FB869) is not ported (S-166): as for its other callers the search without findPath's corridor stands in for it; its
-		// `blocked`, cost multiplier 0 and its adjustment of the destination are not modelled
+		// RW 0x6664EA .. 0x66650C: FindClosestPath (pathfinder slot + 4, RW 0x6FB869, lane WARG-1) with blocked = the AI's blocked frames > 0, the cost multiplier 0
+		// and moveAllies 0
 		const Coord3D pos = obj.getPosition();
-		note(kStopRequests);
-		np = m_pf.findPathWithoutCorridor(&obj, info, &pos, &dest, nullptr);
+		np = m_pf.findClosestPath(&obj, info, &pos, &dest, m_blockedFrames > 0, 0.0f, false);
 		m_retryPath = true;
 	}
 	if (np)
@@ -728,15 +756,14 @@ bool AIMover::needToRotate()
 }
 
 // RW 0x6EF865 (the first test of RW 0x6F1B3E): the step's end and the goal are in the same pathfinder cell, the cells measured as RW 0x6ECFC5 / 0x6E8CE6 do for the
-// unit: an odd footprint floors x / 10, an even one adds the half-cell offset (review r2)
+// unit: an odd footprint floors x / 10, an even one adds the half-cell offset (review r2). Lane WARG-1: RW 0x6E8CE6 does not clamp to the grid; the port's
+// clamped worldToCell put two different off-map points on the same edge cell
 bool AIMover::stepEndsInGoalCell(const Coord3D &now)
 {
 	PathfindObject &obj = m_host.pathfindObject();
 	const bool center = (m_pf.footprintSize(&obj) & 1) != 0;
-	ICoord2D nowCell{ 0, 0 }, goalCell{ -1, -1 };
-	Coord3D at = now, goalPos = m_goal;
-	m_pf.worldToCell(&at, center, &nowCell);
-	m_pf.worldToCell(&goalPos, center, &goalCell);
+	const ICoord2D nowCell = Pathfinder::worldToCellUnclamped(&now, center);
+	const ICoord2D goalCell = Pathfinder::worldToCellUnclamped(&m_goal, center);
 	return nowCell.x == goalCell.x && nowCell.y == goalCell.y;
 }
 
@@ -772,9 +799,22 @@ bool AIMover::stepValid(const Coord3D &from, const Coord3D &to)
 	m_pf.setIgnoreObstacleID(m_ignoreObstacleId); // a unit leaving its factory ignores the footprint it stands in
 	// lane HORDE-2: RW 0x6F1B3E first asks RW 0x6EF865(unit, new position, goal): a step that ends in the GOAL's cell is valid (the path is then deleted,
 	// RW 0x669B14) whatever the cell holds; without it a member whose slot cell is occupied kept its fallback path for good (S-532)
+	// performance (every profile, the same answers): the three tests only read, so their OR is asked cheapest first; the line walk (the costly one, it reads
+	// every unit on the line's footprints) only runs for a step whose end cell the terrain refuses (RW asks the goal cell, the line, then the terrain)
 	Coord3D at = to;
-	const bool valid = stepEndsInGoalCell(at) || m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true) ||
-		m_pf.validMovementPosition(&obj, info, obj.getLayer(), &at);
+	bool valid = stepEndsInGoalCell(at);
+	if (!valid)
+	{
+		// lane WALL-4: RW 0x6F1B3E tests the step's end on the layer RW 0x680A75 names there (a wall top, a ramp, a walkway), then its layer change
+		// (Pathfinder::straightStepKeepsLayer). The end's test keeps S-166's form (the terrain or the line); a map without wall pieces asks the unit's layer, as before
+		const bool walls = m_pf.hasWallPieces() && m_pf.isMapReady();
+		const PathfindLayerEnum toLayer = walls ? m_pf.getLayerAt(obj, to) : obj.getLayer();
+		valid = m_pf.validMovementPosition(&obj, info, toLayer, &at) || m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true);
+		if (valid && walls)
+		{
+			valid = m_pf.straightStepKeepsLayer(obj, from, to, toLayer);
+		}
+	}
 	m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
 	return valid;
 }
@@ -814,7 +854,15 @@ void AIMover::refreshLayer()
 	{
 		return;
 	}
-	PathfindLayerEnum layer = m_pf.settleLayer(obj);
+	// lane WALL-4: RotWK's doLocomotor sets no layer before its goal's branch (the branches do: UpdateLayer on a path, RW 0x680A75 after an explicit goal's
+	// step). The port keeps two rules of its own here (INFERENCE, S-4840 and S-1750): a unit whose wall top, walkway or ramp went away stands on the ground;
+	// and AdjustLayer (RW 0x6F0741) on every unit, because the port's wall tops are a cell wider than RotWK's (no edge pass, S-4840): a unit at a wall's foot
+	// can stand on a wall-top cell, and the search refuses that cell to a ground unit; AdjustLayer puts it on the wall only when the top is more than 10 above
+	PathfindLayerEnum layer = m_pf.layerAfterSurfaceLoss(obj);
+	if (layer == obj.getLayer())
+	{
+		layer = m_pf.adjustLayer(obj, layer);
+	}
 	if (layer != obj.getLayer())
 	{
 		m_host.setLayer(layer);
@@ -833,32 +881,6 @@ void AIMover::refreshLayer()
 			{
 				p.z = z;
 				m_host.setPosition(p);
-			}
-		}
-	}
-	// lane WALL-2: a path goal (type 1) takes RotWK's layer update in doLocomotor itself (RW 0x669D3D .. 0x669D66: the point ahead's layer); a type 4 goal with a
-	// path (the horde member update) keeps lane WALL-1's (INFERENCE, S-4840)
-	if (m_path && m_goalType == AIGOAL_EXPLICIT_WITH_PATH)
-	{
-		// the path node nearest the unit: the current segment's start or its end (BFME2 doLocomotor 0x66A3A0 asks gd_00364521)
-		const PathNode *node = m_path->currentNode() ? m_path->currentNode() : m_path->getFirstNode();
-		if (node && node->getNext())
-		{
-			const Coord3D &p = obj.getPosition();
-			const Coord3D *a = node->getPosition(), *b = node->getNext()->getPosition();
-			const float da = SimMath::sumSquares2(SimMath::subf32(a->x, p.x), SimMath::subf32(a->y, p.y));
-			const float db = SimMath::sumSquares2(SimMath::subf32(b->x, p.x), SimMath::subf32(b->y, p.y));
-			if (db < da)
-			{
-				node = node->getNext();
-			}
-		}
-		if (node)
-		{
-			layer = m_pf.updateLayer(obj, node->getLayer());
-			if (layer != obj.getLayer())
-			{
-				m_host.setLayer(layer);
 			}
 		}
 	}
@@ -1022,6 +1044,17 @@ unsigned AIMover::doLocomotor()
 				const float rem = SimMath::addf32(m_path->remainingDistanceFrom(pt), m_pathExtra);
 				loco->locomotorMoveTowardsPosition(lh, pt.position, rem, speed);
 				m_path->updateClosestSegment(obj.getPosition());
+			}
+			// lane WALL-4, RW 0x669B95 .. 0x669BA8 (BFME2 doLocomotor 0x66A3A0, decomp AIUpdateInterface_doLocomotor.cpp:462-506): both explicit goals end with the
+			// layer RW 0x680A75 names where the unit now stands, stored straight into the object (RW 0x68BBF4: obj + 0x428, not Object::setLayer RW 0x68BB9D)
+			if (m_pf.isMapReady())
+			{
+				const Coord3D now = obj.getPosition();
+				const PathfindLayerEnum here = m_pf.getLayerAt(obj, now);
+				if (here != obj.getLayer())
+				{
+					m_host.setLayer(here);
+				}
 			}
 			m_doFinalPosition = false;
 			break;

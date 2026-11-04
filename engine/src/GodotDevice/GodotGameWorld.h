@@ -27,6 +27,7 @@
 #include "GameClient/CommandLogLoad.h" // lane SAVE-2: m_saveLoad (complete for the unique_ptr)
 #include "Common/System/SaveGame/SaveGameFile.h"
 #include "GameClient/ScriptCameraDirector.h"
+#include "GameClient/ClientPoolPolicy.h" // lane PERF-CLIENT: m_clientPool
 #include "GameClient/LiveGame.h"
 #include "GameClient/LiveGameAudio.h"
 #include "GameClient/MapCache.h"
@@ -50,6 +51,7 @@
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <memory>
@@ -223,6 +225,9 @@ public:
 	// player commands, appended to the lockstep command list; they run in the next logic frame (advance). `queue_unit` selects `producer` and issues
 	// MSG_QUEUE_UNIT_CREATE (secondary = the second production queue), `cancel_unit` MSG_CANCEL_UNIT_CREATE, `set_rally_point` MSG_SET_RALLY_POINT.
 	double get_ground_height(double x, double y) const;
+	// lane WALL-3: the height a move hint at SAGE (x, y, z) stands at (TerrainLogic::alignOnTerrain RW 0x6819D9: GameLogic::getAlignOnTerrainHeight); reads the
+	// live logic like get_ground_height
+	double get_align_on_terrain_height(double x, double y, double z) const;
 	void queue_unit(int64_t player, int64_t producer, const String &template_name, bool secondary);
 	void cancel_unit(int64_t player, int64_t producer, const String &template_name, bool all);
 	void set_rally_point(int64_t player, int64_t producer, double x, double y);
@@ -500,12 +505,16 @@ public:
 	// lane SMOOTH-1: the cheap per-frame numbers of the frame-time benchmark (no state hash, unlike get_stats): { logic_ms, sync_ms, streak_ms, advance_ms,
 	// logic_frames (run by the last advance), alpha, dyn_pose_ms, dyn_upload_ms, dyn_mapper_ms, static_mapper_ms }
 	Dictionary get_frame_timings() const;
+	// lane PERF-CLIENT: refresh_views' job pool pass on or off at run time (OPENBFME_SERIAL_VIEWS sets it at start); a test compares the two passes' results
+	void set_parallel_views(bool enabled) { m_parallelViews = enabled; }
 	// lane RENDERWAIT-1: the wait log of this game (LiveGame::logicWaitSites): [{site, count, total_ms, worst_ms}], worst total first; and its reset
 	Array get_logic_wait_sites() const;
 	void reset_logic_wait_sites();
 	// lane RENDERWAIT-1: the live logic may be read now without waiting (the client window is open, or the worker is idle): per-frame scripts skip their
 	// live reads otherwise; the client windows' counts and their cost to the logic (LiveGame::ClientWindowStats)
 	bool is_logic_held() const;
+	String logic_failure() const;
+	void crash_test_logic();
 	Dictionary get_client_window_stats() const;
 	void beginClientWindow(); // SceneTree process_frame
 	void endClientWindow();   // RenderingServer frame_pre_draw
@@ -782,12 +791,23 @@ private:
 		bool haveXf = false;
 		bool fogHidden = false; ///< VIS-1: the local player cannot see the object (RW 0xB4E890 SHROUDED)
 		std::vector<EntryView> entries;
+		// lane OCCLUDE-1: this frame's entries for the occlusion lists, noted by refresh_view and listed by refresh_views in drawable order
+		std::vector<std::uint32_t> occlusionCalls;
+		const ObjectSnapshot *occlusionRec = nullptr;
+		std::uint8_t occlusionEligible = 0;
 	};
 
 	Array m_commandErrors;
 	void clear_scene();
 	void build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &report, Array &errors, Array &stops);
 	void refresh_views(double deltaMs);
+	// lane PERF-CLIENT: refresh_views' parts (one drawable's view; whether it may run on the job pool; the prefetch of the drawables ahead)
+	void refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *presented, W3DDrawPoseView &f, size_t &animated);
+	bool view_is_local(size_t id, const W3DInstancer &dyn, const LogicSnapshot *presented, W3DDrawPoseView &f) const;
+	void prefetch_view(size_t id, size_t viewSlots) const;
+	std::vector<std::uint8_t> m_viewSerial; ///< per slot: refreshed by the serial pass (view_is_local said no)
+	bool m_parallelViews = std::getenv("OPENBFME_SERIAL_VIEWS") == nullptr; ///< OPENBFME_SERIAL_VIEWS set (any value): the job pool pass is off (A/B)
+	size_t m_lastViewsLocal = 0, m_lastViewsSerial = 0; ///< the last refresh_views' drawables refreshed by the job pool pass and by the serial pass
 	// VIS-1: the local player's shroud as a cell texture on the terrain materials (S-567)
 	void refresh_shroud(bool force, double dtMs = 0.0);
 	void loadWeather(const String &map_name, Dictionary &report); // lane WEATHER-1: errors under report["weather_errors"]
@@ -947,6 +967,20 @@ private:
 	double m_lastShroudMs = 0.0, m_lastViewsMs = 0.0, m_lastFxMs = 0.0, m_lastNewModelMs = 0.0;
 	int m_lastNewModels = 0, m_lastNewStreakMaterials = 0;
 	double m_mainCpuAtAdvance = -1.0, m_lastMainCpuMs = 0.0; ///< lane PERF-1: the main thread's CPU time between two advances (one render frame of work)
+	// lane PERF-CLIENT: the client job pool gives up most of its threads while the logic worker is behind its clock (ClientPoolPolicy.h); the sizer
+	// restores the full pool when the game ends. Off with OPENBFME_CLIENT_THREADS set (the pool is the caller's size) or OPENBFME_CLIENT_POOL_FIXED
+	// set (any value: the A/B). Several live worlds in one process (a parity test's, the living world's) share the pool, and a sizer touches it
+	// only when the size it wants changes: the sizer whose want changed last decides, so one world's recovery (or its game's end) restores the
+	// full pool while another is still behind, which keeps it shrunk only when its own want changes again
+	void adaptClientPool(bool threaded);
+	void restoreClientPool();
+	std::unique_ptr<ClientPoolSizer> m_clientPool;
+	bool m_clientPoolAdapt = !envSet("OPENBFME_CLIENT_THREADS") && std::getenv("OPENBFME_CLIENT_POOL_FIXED") == nullptr; // the switch: any value, even none
+	static bool envSet(const char *name) // set and not empty: an empty OPENBFME_CLIENT_THREADS is unset to JobSystem too (its envThreads)
+	{
+		const char *v = std::getenv(name);
+		return v && *v;
+	}
 	int m_lastLogicFrames = 0;
 	bool m_renderInterpolation = true; ///< SMOOTH-1: handed to every LiveGame this world makes
 	bool m_logicThreadDefault = true;  ///< SMOOTH-1: the logic worker of the next load (option logic_thread)

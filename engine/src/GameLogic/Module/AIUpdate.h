@@ -130,7 +130,7 @@ public:
 	// B1 aiAttackObject (AIUpdate.cpp privateAttackObject): clears the machine and enters AI_ATTACK_OBJECT with the victim as the goal; false when this object cannot attack it
 	// `maxShotsToFire`: the command's shot limit (AICommandParms m_intValue, RW 0x66C536), set on the current weapon once the state is entered
 	bool aiAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire = 0x7FFFFFFF);
-	bool aiForceAttackObject(Object *victim, CommandSourceType source);
+	bool aiForceAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire = 0x7FFFFFFF); // retail callers pass NO_MAX_SHOTS_LIMIT or forward one
 	// lane PLAY-2: aiAttackPosition (RW 0x6961F1, AICommandType 0xE) -> privateAttackPosition (RW 0x66DE02; BFME2 decomp
 	// AIUpdateInterfacePrivateCommands.cpp:AIUpdateInterface::privateAttackPosition, tier B "edited": the RotWK differences are offsets and branch targets).
 	// The unit attacks the ground at `pos` (state AI_ATTACK_POSITION) firing at most `maxShotsToFire` shots; a weapon with a ContinueAttackRange first looks
@@ -238,6 +238,8 @@ public:
 	// lane SCRIPT-3: AI commands 6 / 7 / 0x32 / 0x33 (RW 0x770FA8 / 0x771072 / 0x77100D / 0x7710D7): the waypoint path states from `waypointId`
 	// (AIWaypointPath.cpp); false when nothing changed
 	bool aiFollowWaypointPath(int waypointId, CommandSourceType source, bool asTeam, bool exact);
+	// lane WARG-1: AI commands 0x10 / 0x11 (RW 0x754A3C / 0x754AAA -> RW 0x66C1C9): the attack-follow state 0x22 / 0x23 from the waypoint (AIWaypointPath.h)
+	bool aiAttackFollowWaypointPath(int waypointId, int maxShotsToFire, CommandSourceType source, bool asTeam);
 	// RW 0x664CD6: a HORDE_MEMBER (status 0x26) reads its horde's AI (RW 0x693A1A(0), the horde's AI + 0x260), up the chain
 	int attitude() const;
 	// RW 0x664D7E: 0 without a machine or a controlling player; 1 (MM_Controller_Player) for a human player (+ 0x5C == 0); else 2 (MM_Controller_AI) |
@@ -427,8 +429,10 @@ public:
 	float groundHeightAt(float x, float y) const override;
 	// lane WALL-1: TheTerrainLogic->getLayerHeight(x, y, the object's layer): the terrain on the ground, a wall top's or a ramp's height on theirs
 	float layerHeightAt(float x, float y) const;
-	// lane WALL-1: after the object was put somewhere directly (a horde member snapped onto its slot, a member put on its goal): its layer settles to the cell
-	// under it (Pathfinder::settleLayer) and, off the ground, it stands on that layer's surface. Nothing for a ground unit that stays on the ground
+	// lane WALL-4: the object's layer is the ramp's or a raised walkway's (RW 0x5E77C2 .. 0x5E77D0)
+	bool isOnRampOrRaisedLayer() const;
+	// lane WALL-1 / WALL-4: after the object was put somewhere directly, outside RotWK's movers (the tests' placements; no game code calls it): AdjustLayer (RW 0x6F0741: a
+	// surface more than 10 above it, a walkway within 10) and, off the ground, it stands on that layer's surface. Nothing for a ground unit that stays on the ground
 	void settleOnLayer();
 	void setLayer(PathfindLayerEnum layer) override;
 	bool isImmobile() const override;
@@ -448,6 +452,9 @@ public:
 	float wanderFactor() const override;
 	float closeEnoughDist() const override;
 	float locomotorSpeed() const override;
+	bool isProjectile() const override;
+	bool treatAsAircraftForLocoDistToGoal() const override; // RW 0x6629D3; GiantBirdAIUpdate overrides it
+	Coord3D machineGoalPosition() const override;
 	bool movingBackwards() const override;
 	bool setModelCondition(const char *name, bool on) override;
 	void revealDisguiseOnClimb() override; // lane WALL-2: RW 0x66A143 (a Climb portal)

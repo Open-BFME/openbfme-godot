@@ -75,7 +75,7 @@ private:
 	bool m_initialized = false;
 	bool m_closing = false;
 	bool m_backgroundHidden = true; // + 0x2A3 (lane INGAMEBG-1): the in-game background is not shown by this screen (the constructor shows it)
-	int m_layout = -1;
+	int m_layout = 0; // + 0x2A4: the constructor's and OnInitialized's 0 (RW 0x82288A)
 	int m_points = -1;
 	int m_help = -1;
 	bool m_helpShown = false;

@@ -33,6 +33,7 @@
 #include "GameLogic/WeaponNugget.h"
 #include "GameLogic/WeaponState.h"
 
+#include <optional>
 #include <vector>
 
 namespace
@@ -768,6 +769,14 @@ Object *findClosestEnemy(Object &me, const Coord3D &pos, float range, unsigned q
 	                                           : logic.partition().iterateAllObjects(PartitionFilterList(links, count)); // RW 0xA39340 / 0xA39420
 	const ObjectWeapons *myWeapons = me.getWeapons();
 	const Weapon *weapon = myWeapons ? myWeapons->currentWeapon() : nullptr; // RW 0x68B58C(0), once
+	// performance (the same answers): every candidate's approach test asks the portal graph from this unit's zone; the answers per zone pair are kept for
+	// the search
+	AIUpdateInterface *myAi = me.getAIUpdateInterface();
+	std::optional<Pathfinder::PortalMemoScope> portalMemo;
+	if (myAi)
+	{
+		portalMemo.emplace(&myAi->adapter());
+	}
 	const float modifier = logic.settings().attackPriorityDistanceModifier;     // AIData + 0x54
 	Object *best = nullptr;
 	float bestScore = 0.0f, bestP = 0.0f;

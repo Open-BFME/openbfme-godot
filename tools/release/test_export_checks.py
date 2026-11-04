@@ -13,6 +13,8 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 VERSION = "v9.9.9-preview.1"
@@ -22,6 +24,17 @@ FAKE = r"""#!/bin/bash
 noise() { seq 1 "$1" | sed 's/^/GAME some line /'; }
 case " $* " in
   *" --version "*) echo "4.7.2.stable.official.fake"; exit 0 ;;
+  *" --game=bfme1 "*)
+    echo "OpenBFME __VERSION__ (2026-10-10)"
+    echo "GAME object world: ok=${FAKE_BFME1_WORLD:-true}, 2686 templates, 4 playable factions"
+    [ "${FAKE_BFME1_MENU:-1}" = 1 ] && echo "GAME screen: MainMenu.apt"
+    [ "${FAKE_BFME1_FATAL:-0}" = 1 ] && echo "GAME FATAL: campaign parse failed"
+    exit "${FAKE_BFME1_EXIT:-0}" ;;
+  *" res://tests/bfme1_test.gd "*)
+    [ "${FAKE_BFME1_SMOKE:-pass}" = pass ] && echo "BFME1 PASS"
+    [ "${FAKE_BFME1_SMOKE:-pass}" = skip ] && echo "BFME1 SKIP: set BFME1_INSTALL"
+    [ "${FAKE_BFME1_SCRIPT_ERROR:-0}" = 1 ] && echo "SCRIPT ERROR: failed assertion"
+    exit "${FAKE_BFME1_SMOKE_EXIT:-0}" ;;
   *" --script "*) noise 50000; [ "${FAKE_SMOKE_MARKER:-1}" = 1 ] && echo "SMOKE PASS (stand-in)"; noise 20000; exit 0 ;;
   *" --auto "*) echo "OpenBFME __VERSION__ (2026-10-10)"; noise 50000; echo "GAME ran 5 frames"; noise 20000; exit 0 ;;
 esac
@@ -45,13 +58,24 @@ def package(tmp: Path) -> tuple[Path, Path]:
     return archive, godot
 
 
-def run_export(tmp: Path, **env: str) -> subprocess.CompletedProcess:
+def run_export(tmp: Path, **env: str | None) -> subprocess.CompletedProcess:
     archive, godot = package(tmp)
     home = tmp / "home"
     home.mkdir(exist_ok=True)
+    bfme1 = tmp / "bfme1"
+    bfme1.mkdir()
     e = {**os.environ, "ROTWK_INSTALL": str(tmp / "no-rotwk"), "BFME2_INSTALL": str(tmp / "no-bfme2"), "HOME": str(home),
-         "TMPDIR": str(tmp), "TEST_EXPORT_LOGS": str(tmp / "logs"), **env}
-    return subprocess.run(["bash", str(HERE / "test_export.sh"), str(archive), "--godot", str(godot)], env=e, capture_output=True,
+         "BFME1_INSTALL": str(bfme1), "TMPDIR": str(tmp), "TEST_EXPORT_LOGS": str(tmp / "logs"), **env}
+    e = {key: value for key, value in e.items() if value is not None}
+    # Isolate the start/smoke verdicts from the unrelated crash and discovery
+    # checks: those helpers require a real game rather than this stand-in.
+    harness = tmp / "harness" / "tools" / "release"
+    harness.mkdir(parents=True)
+    script = harness / "test_export.sh"
+    script.write_text((HERE / "test_export.sh").read_text())
+    for helper in ("crash_test.py", "fresh_user_test.py"):
+        (harness / helper).write_text("raise SystemExit(0)\n")
+    return subprocess.run(["bash", str(script), str(archive), "--godot", str(godot)], env=e, capture_output=True,
                           text=True, timeout=600)
 
 
@@ -59,8 +83,11 @@ def test_markers_are_found_before_long_output(tmp_path):
     """the markers with 20000 lines after them: the old `echo | grep -q` under pipefail missed them every time"""
     for i in range(2):
         r = run_export(tmp_path / str(i))
+        assert r.returncode == 0, r.stdout[-3000:] + r.stderr
         assert "RESULT start: PASS (GAME ran 5 frames)" in r.stdout, r.stdout[-3000:]
         assert "RESULT smoke: PASS (70001 lines of output)" in r.stdout, r.stdout[-3000:]
+        assert "RESULT bfme1-start: PASS (packaged BFME1 MainMenu.apt)" in r.stdout
+        assert "RESULT bfme1-smoke: PASS (packaged BFME1 menu, lobby and skirmish)" in r.stdout
         # the full output is kept for the operator
         logs = tmp_path / str(i) / "logs"
         assert "SMOKE PASS (stand-in)" in (logs / "smoke.log").read_text()
@@ -69,10 +96,51 @@ def test_markers_are_found_before_long_output(tmp_path):
 
 def test_a_missing_marker_fails_and_shows_the_output(tmp_path):
     r = run_export(tmp_path, FAKE_SMOKE_MARKER="0")
-    assert "RESULT smoke: FAIL exit 0" in r.stdout and "--- the last 30 lines of smoke.log (70000 lines)" in r.stdout, r.stdout[-3000:]
+    assert "RESULT smoke: FAIL exit 0" in r.stdout, r.stdout[-3000:]
+    assert re.search(r"--- the last 30 lines of smoke.log \(\s*70000 lines\)", r.stdout), r.stdout[-3000:]
     assert "GAME some line 20000" in r.stdout
     assert "SMOKE PASS" not in (tmp_path / "logs" / "smoke.log").read_text()
     assert r.returncode != 0
+
+
+@pytest.mark.parametrize("install", [None, ""])
+def test_unconfigured_bfme1_is_skipped_without_failing_other_release_checks(tmp_path, install):
+    r = run_export(tmp_path, BFME1_INSTALL=install, FAKE_BFME1_EXIT="1", FAKE_BFME1_SMOKE_EXIT="1")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr
+    assert "RESULT bfme1-start: SKIP BFME1_INSTALL is not set" in r.stdout
+    assert "RESULT bfme1-smoke: SKIP BFME1_INSTALL is not set" in r.stdout
+    assert "RESULT bfme1-start: PASS" not in r.stdout
+    assert "RESULT bfme1-smoke: PASS" not in r.stdout
+    assert not (tmp_path / "logs" / "bfme1-start.log").exists()
+    assert not (tmp_path / "logs" / "bfme1-smoke.log").exists()
+    for stage in ("start", "smoke", "crash", "fresh-user"):
+        assert f"RESULT {stage}: PASS" in r.stdout
+    assert f"EXPORT TESTS PASS {VERSION}" in r.stdout
+
+
+def test_configured_bfme1_install_must_exist(tmp_path):
+    r = run_export(tmp_path, BFME1_INSTALL=str(tmp_path / "missing-bfme1"))
+    assert r.returncode == 1
+    assert "RESULT bfme1-start: FAIL BFME1_INSTALL is not an installed BFME1 directory" in r.stdout
+    assert "EXPORT TESTS PASS" not in r.stdout
+
+
+@pytest.mark.parametrize("env,stage", [
+    ({"FAKE_BFME1_WORLD": "false"}, "start"),
+    ({"FAKE_BFME1_MENU": "0"}, "start"),
+    ({"FAKE_BFME1_EXIT": "124"}, "start"),
+    ({"FAKE_BFME1_FATAL": "1"}, "start"),
+    ({"FAKE_BFME1_SMOKE": "skip"}, "smoke"),
+    ({"FAKE_BFME1_SMOKE": "missing"}, "smoke"),
+    ({"FAKE_BFME1_SMOKE_EXIT": "1"}, "smoke"),
+    ({"FAKE_BFME1_SCRIPT_ERROR": "1"}, "smoke"),
+])
+def test_bfme1_failures_cannot_pass_the_release_gate(tmp_path, env, stage):
+    r = run_export(tmp_path, **env)
+    assert r.returncode == 1
+    assert f"RESULT bfme1-{stage}: FAIL" in r.stdout
+    assert f"RESULT bfme1-{stage}: PASS" not in r.stdout
+    assert "EXPORT TESTS PASS" not in r.stdout
 
 
 PIPED_QUIET_GREP = re.compile(r"\b(echo|printf|cat)\b[^|#]*\|\s*grep\s+(-[a-zA-Z]*q[a-zA-Z]*\b|--quiet)")

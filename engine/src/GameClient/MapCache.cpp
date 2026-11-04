@@ -266,4 +266,19 @@ bool validateStartPositions(const MapCacheEntry &map, std::string *error)
 	return true;
 }
 
+bool addStartWaypoint(MapCacheEntry &map, const std::string &name, const Coord3D &location, std::string *error)
+{
+	for (int i = 1; i <= map.numPlayers && i <= MAX_SLOTS; ++i)
+	{
+		if (name != "Player_" + std::to_string(i) + "_Start") continue;
+		if (!map.startPositions.emplace(i, location).second)
+		{
+			if (error) *error = "duplicate start waypoint '" + name + "'";
+			return false;
+		}
+		return true;
+	}
+	return true;
+}
+
 } // namespace MapCache

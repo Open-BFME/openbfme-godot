@@ -47,6 +47,7 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 namespace
 {
@@ -292,12 +293,77 @@ bool Pathfinder::waypointAllows(const PathfindWaypoint &w, const PathfindObject 
 // ---------------------------------------------------------------------------------------------------------
 // RW 0x6F5547: is there a portal chain from one zone to another
 // ---------------------------------------------------------------------------------------------------------
+namespace
+{
+struct PortalMemo
+{
+	const PathfindObject *obj = nullptr; // null: no scope open on this thread
+	PathfindLocomotorInfo loco;
+	bool locoSet = false;
+	std::unordered_map<std::uint64_t, bool> answers;
+};
+PortalMemo &threadPortalMemo()
+{
+	static thread_local PortalMemo memo;
+	return memo;
+}
+} // namespace
+
+Pathfinder::PortalMemoScope::PortalMemoScope(const PathfindObject *obj) : m_outer(threadPortalMemo().obj == nullptr)
+{
+	if (m_outer && obj)
+	{
+		PortalMemo &m = threadPortalMemo();
+		m.obj = obj;
+		m.locoSet = false;
+		m.answers.clear();
+	}
+}
+
+Pathfinder::PortalMemoScope::~PortalMemoScope()
+{
+	if (m_outer)
+	{
+		threadPortalMemo().obj = nullptr;
+	}
+}
+
 bool Pathfinder::portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const
 {
 	if (m_waypointIds.empty() || obj == nullptr)
 	{
 		return false; // nothing to cross (RW walks the terrain's list and files nothing)
 	}
+	PortalMemo &memo = threadPortalMemo();
+	bool *known = nullptr;
+	if (memo.obj == obj)
+	{
+		if (!memo.locoSet)
+		{
+			memo.loco = loco;
+			memo.locoSet = true;
+		}
+		if (memo.loco.validSurfaces == loco.validSurfaces && memo.loco.downhillOnly == loco.downhillOnly && memo.loco.crusher == loco.crusher)
+		{
+			const std::uint64_t key = (std::uint64_t)from << 32 | (std::uint64_t)to;
+			const auto it = memo.answers.find(key);
+			if (it != memo.answers.end())
+			{
+				return it->second;
+			}
+			known = &memo.answers[key];
+		}
+	}
+	const bool answer = portalPathExistsUncached(obj, loco, from, to);
+	if (known)
+	{
+		*known = answer;
+	}
+	return answer;
+}
+
+bool Pathfinder::portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const
+{
 	if (obj->refusesPortals() || !obj->hasAI())
 	{
 		return false; // RW 0x6F555F (Object + 0x4AC) and 0x6F5568 (no AI and no locomotor set given)

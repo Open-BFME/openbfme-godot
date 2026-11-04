@@ -38,13 +38,14 @@ TEST_CASE("siege1 attack retail: Isengard's battering ram breaks Helm's Deep's m
 	CHECK(r.slotAtHit == 1); // IsengardBatteringRamGate (AttackRange 58)
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, gives the siege engine and the AI defender other routes at Helm's Deep;
 	// measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): first damage 269 -> 237, death 359 -> 322
-	CHECK(r.firstHit == 237); // the drive round to the causeway, then the PreAttackDelay
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; a WHEELS_FOUR unit's first leg bent from its facing or reversed, RW 0x766F7F / 0x767800; the AI defender and the random stream move with every unit's lines; measured twice on the lane's tree): first damage 237 -> 273, death 322 -> 355
+	CHECK(r.firstHit == 273); // the drive round to the causeway, then the PreAttackDelay
 	CHECK(r.healthAfterFirst == 3000.0f); // ISENGARD_BATTERINGRAM_DAMAGE 1000, the gate's armour full
 	// merge queue q27: death 335 -> 366, GATEPUSH-1 (the gate repels the units colliding with it when it opens or closes, RepelCollidingUnits; measured
 	// at each merge point)
 	// merge queue q31 (#68's ambient wanderers draw from the game's random numbers; measured at each merge point): death 366 -> 364
 	// merge queue q32 (#159's ramp cells (RW 0x93527F: Helm's Deep's ramps meet the ground and the wall tops only at their two ends) move the AI defender and the random stream; measured once on the merged tree, the change appears at #159's merge point): death 364 -> 359
-	CHECK(r.deathFrame == 322);
+	CHECK(r.deathFrame == 355);
 	CHECK(r.dead);
 }
 
@@ -56,7 +57,7 @@ TEST_CASE("siege1 attack retail: the battering ram hits a Helm's Deep wall with 
 	CHECK(r.ordered);
 	CHECK(r.target == "HelmsDeepGatehouseRight");
 	CHECK(r.slotAtHit == 2); // IsengardBatteringRamWall (the PRIMARY ram's DamageScalar is 0% against the Helm's Deep pieces)
-	CHECK(r.firstHit == 47);
+	CHECK(r.firstHit == 48); // lane WARG-1 (FindClosestPath RW 0x6FB869 at the attack path's adjust RW 0x666E51 and computePath's fallback, the unclamped cells RW 0x6E8CE6; measured once on the lane's tree after the archive merge, a CI host): 47 -> 48
 	CHECK(r.healthAfterFirst == 5750.0f); // 1000 x SIEGE 25%
 	CHECK(r.healthAfter == 1.0f);
 	CHECK_FALSE(r.dead);
@@ -78,10 +79,14 @@ TEST_CASE("siege1 attack retail: Gondor's trebuchet hits a Helm's Deep wall from
 	// merge queue q32 (#159's ramp cells (RW 0x93527F: Helm's Deep's ramps meet the ground and the wall tops only at their two ends) move the AI defender and the random stream; measured once on the merged tree, the change appears at #159's merge point): 5557.54834 -> 5565.90918
 	// merge queue q33 (measured once on the merged tree and at each merge point): the archive's values hold through every item (MODCOMPAT-MOD1's own pair
 	// was measured on its older base)
-	CHECK(r.healthAfterFirst == 5929.73486f); // the stone's damage (its scatter and splash: PROJ-2)
+	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps it): 5929.73486 -> 5959.89404
+	CHECK(r.healthAfterFirst == 5959.89404f); // the stone's damage (its scatter and splash: PROJ-2)
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, gives the siege engine and the AI defender other routes at Helm's Deep;
 	// measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): 5565.90918 -> 5530.59473
-	CHECK(r.healthAfter == 5530.59473f);
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; a WHEELS_FOUR unit's first leg bent from its facing or reversed, RW 0x766F7F / 0x767800; the AI defender and the random stream move with every unit's lines; measured twice on the lane's tree): 5530.59473 -> 5581.5; with the optimiser's layer rule (RW 0x766532: the causeway's ramp keeps its anchors) 5596.86768
+	// merge queue q37 (#187's rebuilt paths on top of WARG-1's FindClosestPath; measured once on the merged tree, ATKRESET-1 keeps it): 5547.61523 -> 5577.25928
+	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps it): 5577.25928 -> 5587.55957
+	CHECK(r.healthAfter == 5587.55957f); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 5596.86768 -> 5547.61523
 }
 
 TEST_CASE("siege1 attack retail: Grond breaks Minas Tirith's gate with its ram (PRIMARY MordorGrondRam, OnlyAgainst BLOCKING_GATE): one blow")
@@ -107,7 +112,8 @@ TEST_CASE("siege1 attack retail: Mordor's catapult made inside its MinimumAttack
 	// merge queue q32 (#159's ramp cells (RW 0x93527F: Helm's Deep's ramps meet the ground and the wall tops only at their two ends) move the AI defender and the random stream; measured once on the merged tree, the change appears at #159's merge point): first damage 48 -> 49
 	// merge queue q33 (MODCOMPAT-MOD1's modules move the AI defender and the random stream; measured at each merge point): 49 -> 59, at the end 2869.34985 ->
 	// 2935.85986
-	CHECK(r.firstHit == 59); // merge queue q26: 47 -> 63; lane MODCOMPAT-MOD1 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244): 63 -> 66
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; a WHEELS_FOUR unit's first leg bent from its facing or reversed, RW 0x766F7F / 0x767800; the AI defender and the random stream move with every unit's lines; measured twice on the lane's tree): 59 -> 57, at the end 2935.87988 -> 2935.84985; with the optimiser's layer rule (RW 0x766532) 56 and 2869.33984
+	CHECK(r.firstHit == 56); // merge queue q26: 47 -> 63; lane MODCOMPAT-MOD1 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244): 63 -> 66
 	CHECK(r.distAtHit > 150.0f); // tolerance: it fired from outside its minimum range (the drive ends where the attack state's approach puts it: 243.2)
 	// merge queue q26 (the archive's pair rule, SIEGE-1 / test_siege1_gate.cpp): from its backed-off spot most stones are caught before the gate; at frame 600
 	// the gate still stands at 2935.86 (a follow-up: test_siege1_gate.cpp's back-off case)
@@ -116,7 +122,9 @@ TEST_CASE("siege1 attack retail: Mordor's catapult made inside its MinimumAttack
 	// merge queue q32 (#159's ramp cells (RW 0x93527F: Helm's Deep's ramps meet the ground and the wall tops only at their two ends) move the AI defender and the random stream; measured once on the merged tree, the change appears at #159's merge point): 2869.33984 -> 2869.34985
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, gives the siege engine and the AI defender other routes at Helm's Deep;
 	// measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): 2935.85986 -> 2935.87988
-	CHECK(r.healthAfter == 2935.87988f); // lane FBSIM-1 (the AI defender's phantom sites move the random stream): 2935.85986 -> 2935.87988
+	// merge queue q37 (measured once on the merged tree): 2869.35986 -> 2869.32983
+	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps it): 2869.32983 -> 2869.34985
+	CHECK(r.healthAfter == 2869.34985f); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 2869.33984 -> 2869.35986; lane FBSIM-1 (the AI defender's phantom sites move the random stream): 2935.85986 -> 2935.87988
 }
 
 TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's Deep's main gate; Mordor's catapult from 500 toward Player_2_Start hits the flanking tower")
@@ -133,10 +141,15 @@ TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, gives the siege engine and the AI defender other routes at Helm's Deep;
 	// measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): first damage 196 -> 140, death 407 -> 374 (#160's own 3996.25 graze was
 	// measured on its base; on the archive's tree the graze stays 3998.5)
-	CHECK(m.firstHit == 140);
-	CHECK(m.healthAfterFirst == 3998.5f);
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; a WHEELS_FOUR unit's first leg bent from its facing or reversed, RW 0x766F7F / 0x767800; the AI defender and the random stream move with every unit's lines; measured twice on the lane's tree): the mumak's first damage 140 -> 134 (3998.5 -> 3997.75), death 374 -> 366; the demolisher's first damage 216 -> 241, death 283 -> 307;
+	// with the optimiser's layer rule (RW 0x766532): the mumak's graze 3999.25, the demolisher's first damage 239, death 305; with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): the graze
+	// 3997, the demolisher's first damage 243, death 309
+	// merge queue q37 (measured once on the merged tree): the mumak's graze 3997 -> 3997.75
+	CHECK(m.firstHit == 134);
+	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps it): the mumak's graze 3997.75 -> 3997
+	CHECK(m.healthAfterFirst == 3997.0f);
 	// merge queue q33 (#133's straight production exits move the scene's computer players; measured at each merge point): death 423 -> 407
-	CHECK(m.deathFrame == 374);
+	CHECK(m.deathFrame == 366);
 	const AttackResult d = siegeAttack(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", false, 250.0f, 600, true);
 	print("DwarvenDemolisher", d);
 	CHECK(d.slotAtHit == 1); // DwarvenBatteringRamGate
@@ -146,9 +159,11 @@ TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's
 	// merge queue q32 (#159's ramp cells (RW 0x93527F: Helm's Deep's ramps meet the ground and the wall tops only at their two ends) move the AI defender and the random stream; measured once on the merged tree, the change appears at #159's merge point): first damage 317 -> 313, death 383 -> 379
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, gives the siege engine and the AI defender other routes at Helm's Deep;
 	// measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): first damage 313 -> 209, death 379 -> 275
-	CHECK(d.firstHit == 209);
+	// merge queue q35 (#132's ground-structure melee reach, measured once on the merged tree and at each merge point; SIMSMALL-1, #178 and #179 keep the archive's values): first damage 209 -> 216, death 275 -> 283
+	// merge queue q37 (measured once on the merged tree): first damage 243 -> 245, death 309 -> 312
+	CHECK(d.firstHit == 245);
 	CHECK(d.healthAfterFirst == 3000.0f);
-	CHECK(d.deathFrame == 275);
+	CHECK(d.deathFrame == 312);
 	const AttackResult c = siegeAttack(*s, kHelmsDeep, "Main Gate", "MordorCatapult", false, 500.0f, 600, true);
 	print("MordorCatapult", c);
 	// on the archive (SIEGE-1, test_siege1_gate.cpp): from 500 toward Player_2_Start the catapult's stones meet HelmsDeepGatehouseRight in their line of fire,

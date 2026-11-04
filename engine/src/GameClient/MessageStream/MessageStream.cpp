@@ -80,6 +80,12 @@ ClientMessage &MessageStream::append(int type)
 	return *m_messages.back();
 }
 
+ClientMessage &MessageStream::prepend(int type)
+{
+	m_messages.push_front(std::make_unique<ClientMessage>(type));
+	return *m_messages.front();
+}
+
 ClientMessage &MessageStream::insertAfter(int type, const ClientMessage &after)
 {
 	for (auto it = m_messages.begin(); it != m_messages.end(); ++it)
