@@ -372,6 +372,7 @@ TEST_CASE("online3 spectators (DEVPORT-1, Sol): a finished log whose rename fail
 	const std::vector<std::uint8_t> after = readLog(relay, at(20), now);
 	std::ifstream in(part, std::ios::binary);
 	const std::vector<std::uint8_t> onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	in.close();
 	REQUIRE(after.size() == onDisk.size()); // the whole retained .part, END record included, not nothing
 	CHECK(after == onDisk);
 	REQUIRE(before.size() < after.size()); // tolerance: the END record was written after the first read; its size is the log's own
@@ -380,6 +381,7 @@ TEST_CASE("online3 spectators (DEVPORT-1, Sol): a finished log whose rename fail
 	std::string error;
 	REQUIRE_MESSAGE(RelayLogFile::parse(after, f, &error), error);
 	CHECK(f.complete);
+	relay.shutdown(now); // Windows cannot delete an open file: this closes the game logs
 	std::filesystem::remove_all(dir);
 }
 
