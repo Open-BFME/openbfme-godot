@@ -726,12 +726,14 @@ TEST_CASE("aidata1 retail: knights running down a fleeing troll hit within Chase
 	const Hit none = firstHit(true, 0.0f);
 	// #160 (a horde's move or turn no longer carries its members, they walk to their slots, RW 0x871536) measured 60 -> 74 on its own base; on the archive's
 	// tree with #160 it stays 62 (merge queue q34)
-	CHECK(none.frame == 62);
+	// the attack aim's half-turn success rule (RW 0x75232F, RW 0x5E372D; measured on this tree): 62 -> 60
+	CHECK(none.frame == 60);
 	CHECK_FALSE(none.runningDown);
 	const Hit standRetail = firstHit(false, 50.0f);
 	const Hit standNone = firstHit(false, 0.0f);
 	// merge queue q34 (measured once on the merged tree and at each merge point): 50 -> 52 from #160's merge point on (the members walk to their slots, RW 0x871536)
-	CHECK(standRetail.frame == 52);
+	// the attack aim's half-turn success rule (RW 0x75232F, RW 0x5E372D; measured on this tree): 52 -> 20
+	CHECK(standRetail.frame == 20);
 	CHECK_FALSE(standRetail.runningDown);
 	CHECK(standNone.frame == standRetail.frame);
 }

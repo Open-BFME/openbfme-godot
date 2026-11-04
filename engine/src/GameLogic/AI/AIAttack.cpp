@@ -611,6 +611,15 @@ StateReturnType AIAttackAimState::update()
 		aimDelta = kRelativeAngleThreshold;
 	}
 	const float absAngle = relAngle < 0.0f ? SimMath::subf32(0.0f, relAngle) : relAngle;
+	// RW 0x75232F (BFME2 0x3508C5): the aim succeeds when the residual angle is inside the weapon's aim delta OR inside HALF the current locomotor's turn
+	// rate (RW 0x5E372D). The second test ends an aim turn the body can make: a horde member's body is snapped to the goal angle by the member update
+	// (RW 0x66C960 -> RW 0x70C31E), so the next frame's residual is only what the target moved, and a target drifting less than half a turn per frame is
+	// already aimed at. Without it a member tracking a moving target turns in place for as long as the target moves and keeps MOVING (RW 0x66C9ED)
+	float turnRate = 0.0f;
+	if (Locomotor *loco = a.curLocomotor())
+	{
+		turnRate = loco->getMaxTurnRate(a.locomotorHost()); // RW 0x5E372D
+	}
 	if (m_canTurnInPlace)
 	{
 		if (absAngle > aimDelta)
@@ -623,7 +632,7 @@ StateReturnType AIAttackAimState::update()
 	{
 		a.setLocomotorGoalPositionExplicit(target);
 	}
-	if (absAngle < aimDelta)
+	if (absAngle < aimDelta || absAngle < SimMath::mulf32(turnRate, 0.5f))
 	{
 		return STATE_SUCCESS;
 	}
