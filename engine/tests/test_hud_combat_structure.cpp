@@ -100,13 +100,15 @@ const StructRow kRows[] = {
 	// 60 -> 58, 96 -> 110, 390 -> 388. Engine pins
 	// Merge queue q26 (community #73's slot tables centred on their hordes and #74's spiral with BANNER-1 and the rest, measured once on the merged tree):
 	// 388 -> 406, 330 -> 422, 604 -> 660, 426 -> 404, 58 -> 72, 110 -> 122, 388 -> 406. Engine pins
-	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 396 },
-	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 410 }, // no BountyValue line; 422 -> 432 (see below)
-	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 602 }, // 660 -> 612: fix/horde-contain-no-follow: a horde's move or turn no longer carries its members, they walk to their slots (RW 0x871536)
-	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 370 },
-	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 64 }, // 74 -> 64: lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E: the horde walks other lines); the hits are unchanged
-	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 104 },
-	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 396 },
+	// The attack aim's half-turn success rule (AIAttackAimState, RW 0x75232F / RW 0x5E372D; measured on the merged tree): 396 -> 474, 410 -> 400,
+	// 602 -> 668, 370 -> 406, 64 -> 62, 104 -> 112, 396 -> 474; the hit counts are unchanged. Engine pins
+	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 474 },
+	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 400 }, // no BountyValue line; 422 -> 432 (see below)
+	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 668 }, // 660 -> 612: fix/horde-contain-no-follow: a horde's move or turn no longer carries its members, they walk to their slots (RW 0x871536)
+	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 406 },
+	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 62 }, // 74 -> 64: lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E: the horde walks other lines); the hits are unchanged
+	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 112 },
+	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 474 },
 };
 
 // n * (n - 1) / 2 * 1.28 >= H, the first n

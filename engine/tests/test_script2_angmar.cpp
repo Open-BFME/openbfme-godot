@@ -129,8 +129,10 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		}
 		// merge queue q37 (measured once on the merged tree; the table at #187's merge point differs again, ATKRESET-1's attack orders move it): wolf rider
 		// hits 1033 -> 1006, banner carrier hits 101 -> 83, the last sling hit takes 955 (1017)
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 83 }, { "AngmarTrollSling dealt 1350 taken 955", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 1006 } };
+		// The attack aim's half-turn success rule (RW 0x75232F / 0x5E372D; measured on the merged tree): the citadel's melee hits from the banner carrier
+		// and the riders rise (83 -> 138 and 1006 -> 972), so the sling's last 1350 takes 726. Engine pins, not retail values.
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 138 }, { "AngmarTrollSling dealt 1350 taken 726", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 972 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)

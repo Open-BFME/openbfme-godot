@@ -405,9 +405,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// per-tick goal publication move QueueProductionExitUpdate's Moria goblin
 				// spawns (RW 0x8A3DD5 -> 0x87C9B8 -> state 7); the flying heroes themselves
 				// never enter state 7. Upstream q29 also leaves Drogoth passive here.
-				CHECK(own.shots == 0u);
-				CHECK(own.lost == 0.0f);
-				CHECK(own.membersKilled == 0u);
+				// The attack aim's half-turn success rule (RW 0x75232F / 0x5E372D; measured on the merged tree): Drogoth's own fight now gets one strike in
+				// (1, 900 health, 12 of 20 killed; 0 before), while the other three still strike nothing. Engine pins, not retail values.
+				CHECK(own.shots == (drogoth ? 1u : 0u));
+				CHECK(own.lost == (drogoth ? 900.0f : 0.0f));
+				CHECK(own.membersKilled == (drogoth ? 12u : 0u));
 				// lane BACKLOG4: 3 strikes (4 before): the hero's creation uses the teleport form (RW 0x7814CF: RW 0x696E63(pos, 0)), which idles the new
 				// hero's AI and wakes it; the fight's damage and kills are unchanged (measured with and without that call)
 				// lane STEALTHFLY1: 2 strikes (3 before): recruited from the fortress, Drogoth leaves along its production exit path in the bird's own follow
@@ -450,9 +452,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			// slots, RW 0x871536), 7 of 20 (525 health) with #161 (the block search's block zones move the scene's creeps and computer opponent)
 			// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; measured twice on the lane's tree): Haldir still fights the
 			// horde: 18 of 20 killed (1350 health) with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree)
+			// The attack aim's half-turn success rule (RW 0x75232F / 0x5E372D; measured on the merged tree): Haldir still fights the horde, 12 of 20 killed
+			// (900 health instead of 1350). Engine pin, not a retail value.
 			if (hero == "ElvenHaldir")
 			{
-				CHECK(own.lost == 1350.0f);
+				CHECK(own.lost == 900.0f);
 			}
 			else
 			{
@@ -613,8 +617,12 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 	// pins, not retail values. With the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree) the Witch-king
 	// holds and the Mouth of Sauron takes 7 shots, 7 killed (75 in the crush run), 6 swings (75 / 450), nearest 2.96156, with CRUSHER_LEVEL -1 5 swings
 	// taking 375 from 69.5376.
-	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 18u, 0.0f, { 800.0f, 112.0f }, 4u, 450.0f, 1350.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 5u, 1500.0f, 22.4116f, 7.89051f },
-			 Case{ "FactionMordor", "MordorMouthOfSauron", 7u, 7u, 75.0f, { 640.0f, 320.0f }, 6u, 75.0f, 450.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 5u, 375.0f, 69.5376f, 2.96156f } })
+	// The attack aim's half-turn success rule (RW 0x75232F / 0x5E372D; measured on the merged tree): the Witch-king 17 killed (18), 1275 outside the run
+	// (1350), nearest 21.8081 (7.89051); the Mouth of Sauron 6 shots (7), 6 killed (7), 5 swings (6), 375 outside the run (450), nearest 14.5006 (2.96156),
+	// with CRUSHER_LEVEL -1 6 swings taking 450 from 10.5129 (5 / 375 / 69.5376). The hit sizes, the duels and the blocking are unchanged. Engine pins,
+	// not retail values.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 17u, 0.0f, { 800.0f, 112.0f }, 4u, 450.0f, 1275.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 5u, 1500.0f, 22.4116f, 21.8081f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 6u, 6u, 75.0f, { 640.0f, 320.0f }, 5u, 75.0f, 375.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 6u, 450.0f, 10.5129f, 14.5006f } })
 	{
 		INFO(std::string(c.hero));
 		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);

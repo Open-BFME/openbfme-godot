@@ -175,11 +175,13 @@ TEST_CASE("siege1 gate: #64's catapult made inside its MinimumAttackRange of Hel
 	// merge queue q33 (MODCOMPAT-MOD1's modules move the stones' scatter; measured at each merge point and named with a contact log): two contacts while the
 	// gate stands, both the gatehouse in the line of fire (HelmsDeepGatehouseLeft at frame 259, HelmsDeepGatehouseCenter at 294), first hit 48, death 319
 	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): no contact while the gate stands (two), first hit 53 (48), death 393 (319)
-	CHECK(r.contactsWhileStanding == 0);
+	// The attack aim's half-turn success rule (RW 0x75232F / 0x5E372D; measured on the merged tree): one contact while the gate stands (0), first hit 52 (53),
+	// death 290 (223)
+	CHECK(r.contactsWhileStanding == 1);
 	// lane MODCOMPAT-MOD1 (GeometryUpgrade: every object reads its own GeometryInfo, RW Object + 0xA8, for its combat circle and sphere (+ 0xB8 / + 0xBC), partition cells and pathfinder footprint, and the gate's open / closed switch runs the full refresh RW 0x68B244; measured at its commit, a CI host):
 	// first hit 49 -> 48, the gate's death 287 -> 252
-	CHECK(r.firstHit == 53);
-	CHECK(r.deathFrame == 223); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 393 -> 223
+	CHECK(r.firstHit == 52);
+	CHECK(r.deathFrame == 290); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 393 -> 223; the attack aim's half-turn rule: 223 -> 290
 }
 
 TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's gate break it; the arch takes no stone meant for the gate")
@@ -229,11 +231,12 @@ TEST_CASE("siege1 gate: Mordor's catapult and Gondor's trebuchet in front of Min
 	// merge queue q28 (measured once on the merged tree and at each merge point): the catapult's stones no longer meet MinisGate1 while the gate stands
 	// (1 -> 0) and the first hit is at 20 (21); the trebuchet breaks the gate at 158 (203)
 	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): the catapult one contact while the gate stands (0), first hit 23 (21), death 125 (123); the trebuchet holds
+	// The attack aim's half-turn success rule (RW 0x75232F / 0x5E372D; measured on the merged tree): first hit 22 (23), death 124 (125); the trebuchet holds
 	CHECK(c.contactsWhileStanding == 1);
 	// With map creeps removed, both first-hit engine pins are frame 21.
 	// Contact limits and the original gate-death pins remain unchanged.
-	CHECK(c.firstHit == 23);
-	CHECK(c.deathFrame == 125);
+	CHECK(c.firstHit == 22);
+	CHECK(c.deathFrame == 124);
 	const GateRun t = pinnedRun(*s, kMinasTirith, "Gate", "GondorTrebuchet", 400.0f, 600);
 	CHECK(t.contactsWhileStanding == 0);
 	CHECK(t.firstHit == 21);
