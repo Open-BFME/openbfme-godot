@@ -1127,6 +1127,10 @@ public:
 	PathfindLayerEnum getLayerAt(float x, float y, float z) const;
 	// lane WALL-4: the same for the object at `pos`, as RotWK's callers ask it (RW 0x6EE600 moves the point by 5 for an even footprint)
 	PathfindLayerEnum getLayerAt(const PathfindObject &obj, const Coord3D &pos) const;
+	// lane WALLHORDE-1: RW 0x6EE600 (BFME2 0x6ED236), the object's layer at `pos` without RW 0x680A75's ramp test: the point moved by 5 for an even footprint,
+	// the first raised walkway whose cell there is passable and whose height is less than 25 above z, else the ground grid cell's own layer (a wall top's, the
+	// ramp's or the ground). RW first answers the ground for an object whose byte + 0x4AC is set (RW 0x68C053; not identified, S-4840)
+	PathfindLayerEnum objectLayerAt(const PathfindObject &obj, const Coord3D &pos) const;
 	// Pathfinder::IsPointOnRamp: (x, y) is on a ramp's surface; `z` its height there
 	bool isPointOnRamp(float x, float y, float *z = nullptr) const;
 	// Pathfinder::IsPointOnWall (BFME2 0x6E940F): the ground cell under `pos` has a wall layer (and is CLEAR when `requireClear`)
