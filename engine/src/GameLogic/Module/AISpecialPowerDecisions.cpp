@@ -757,3 +757,164 @@ bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)
 	}
 	return false;
 }
+
+// ---- SOUL_FREEZE: the team's special-power registry (lane RAI-POW) ------------------------------------------------------------------------------------------
+
+bool AISpecialPowerUpdate::decideSoulFreeze(Object &obj)
+{
+	// RW 0x9E9B37: the caster's team (Object + 0x31C) and the decision's power template (+ 0x8) are looked up in the team's registry (RW 0x7A3EF5,
+	// null object); a record of another caster answers no. Then the ALLIES and ENEMIES (relationship mask 6) within the range (+ 0x14), near to far,
+	// that are alive and not STRUCTURE / IGNORES_SELECT_ALL but CAN_ATTACK or HERO; no hit answers no. A disabled caster (Object + 0x1C8, RW 0x9325B4)
+	// skips every hit's accounting, which leaves the enemy total 0.
+	Team *team = obj.getTeam();
+	const Player *player = obj.getControllingPlayer();
+	if (!team || !m_decision->powerTemplate || !player)
+	{
+		return false;
+	}
+	Object *registered = team->findSpecialPowerRecord(m_decision->powerTemplate, nullptr, obj.logic());
+	if (registered && registered != &obj)
+	{
+		return false;
+	}
+	static const int kCanAttack = kind("CAN_ATTACK"), kHero = kind("HERO"), kStructure = kind("STRUCTURE"), kIgnoresSelectAll = kind("IGNORES_SELECT_ALL");
+	const float radius = m_decision->range;
+	PartitionFilterFn relation([&](Object &o) { return relationIn(player, o, 6u); });
+	PartitionFilterFn anyOf([&](Object &o) { return hasKind(o, kCanAttack) || hasKind(o, kHero); });
+	PartitionFilterFn noneOf([&](Object &o) { return !(hasKind(o, kStructure) || hasKind(o, kIgnoresSelectAll)); });
+	PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
+	const PartitionHits hits = obj.logic().partition().iterateObjectsInRange(*obj.getPosition(), radius, FROM_CENTER_2D, { &relation, &anyOf, &noneOf, &alive },
+	                                                                       ITER_SORTED_NEAR_TO_FAR);
+	if (hits.empty() || obj.getDisabledMask() != 0)
+	{
+		return false;
+	}
+	// the cell width: __ftol2(x87(radius * the double 2/3, RW 0xC8E360)), not a float32 2/3
+	const int width = (int)SimMath::ftol2(SimMath::pc24MulW((double)radius, 2.0 / 3.0));
+	if (width == 0)
+	{
+		throw std::logic_error("AISpecialPowerUpdate SOUL_FREEZE (RW 0x9E9B37): the range " + std::to_string(radius) + " gives a zero cell width (retail divides by zero)");
+	}
+	const Coord3D origin{ SimMath::subf32(obj.getPosition()->x, radius), SimMath::subf32(obj.getPosition()->y, radius), obj.getPosition()->z };
+	// retail's two 3x3 grids are 0x24 bytes apart and index x * 3 + y without a bound: a hit at the far edge bins x == 3, so the enemies' indexes 9 ..
+	// 11 land in the allies' cells 0 .. 2 (RW 0x9E9D79); the allies' own 9 .. 11 land in the partition iterator's dead alive filter, so they are
+	// dropped here. Both max searches read only cells 0 .. 8 of each grid.
+	int otherCell[9] = {};
+	int alliedCell[9] = {};
+	unsigned alliedTotal = 0, otherTotal = 0;
+	float metric = 0.0f; // the allies' summed body ratio, never averaged
+	for (const PartitionHit &hit : hits)
+	{
+		Object &o = *hit.object;
+		const Coord3D &p = *o.getPosition();
+		const int gx = SimMath::cvttss2si(SimMath::subf32(p.x, origin.x)) / width;
+		const int gy = SimMath::cvttss2si(SimMath::subf32(p.y, origin.y)) / width;
+		const int index = gx * 3 + gy;
+		if (index < 0 || index > 11)
+		{
+			throw std::logic_error("AISpecialPowerUpdate SOUL_FREEZE (RW 0x9E9B37): a hit bins outside retail's " + std::to_string(index) + " (the scan's boundary)");
+		}
+		const unsigned cost = (unsigned)BuildAssistant::calcCostToBuild(*o.getTemplate(), nullptr, nullptr, -1); // RW 0x73C25F(template, 0, 0, -1): the unsigned short BuildCost
+		const bool support = hasKind(o, kind("SUPPORT")); // template + 0x123 bit 2
+		if (player->getRelationship(o.getTeam()) == ALLIES) // Player::getRelationship(Object*) RW 0x6ADC43
+		{
+			metric = SimMath::fstpDword(SimMath::pc24AddW(bodyRatioWide(o), (double)metric));
+			if (index < 9)
+			{
+				alliedCell[index] = (int)((unsigned)alliedCell[index] + cost);
+			}
+			if (support)
+			{
+				alliedTotal = (std::uint32_t)SimMath::ftol2Low32(SimMath::pc24AddW(SimMath::pc24MulW((double)(int)cost, 0.5), SimMath::fildU32(alliedTotal)));
+			}
+			else
+			{
+				alliedTotal += cost;
+			}
+		}
+		else
+		{
+			if (index < 9)
+			{
+				otherCell[index] = (int)((unsigned)otherCell[index] + cost);
+			}
+			else
+			{
+				alliedCell[index - 9] = (int)((unsigned)alliedCell[index - 9] + cost); // retail's spill over the grid boundary
+			}
+			if (support)
+			{
+				otherTotal = (std::uint32_t)SimMath::ftol2Low32(SimMath::pc24AddW(SimMath::pc24MulW((double)(int)cost, 0.5), SimMath::fildU32(otherTotal)));
+			}
+			else
+			{
+				otherTotal += cost;
+			}
+		}
+	}
+	if (otherTotal == 0)
+	{
+		return false;
+	}
+	// RW 0x9E9E55: the enemy total above twice the ally total (x87, unsigned fild), or the caster has a current victim
+	bool useDifference = SimMath::fildU32(otherTotal) > SimMath::pc24AddW(SimMath::fildU32(alliedTotal), SimMath::fildU32(alliedTotal));
+	if (!useDifference)
+	{
+		useDifference = goalObject(obj) != nullptr; // RW 0x9930A3
+	}
+	int x = 1, y = 1;
+	if (useDifference)
+	{
+		// RW 0x9E9E91: the largest (enemies - allies) cost, x outer then y, strict >, the centre when none
+		int best = 0;
+		for (int i = 0; i < 3; ++i)
+		{
+			for (int j = 0; j < 3; ++j)
+			{
+				const int d = otherCell[i * 3 + j] - alliedCell[i * 3 + j];
+				if (d > best)
+				{
+					best = d;
+					x = i;
+					y = j;
+				}
+			}
+		}
+		// RW 0x9E9ED7: the winner counts when its enemies are at least twice its allies (cvtsi2ss, mulss 2.0, comiss)
+		const float enemies = SimMath::sseFromInt32(otherCell[x * 3 + y]);
+		const float allies = SimMath::mulf32(SimMath::sseFromInt32(alliedCell[x * 3 + y]), 2.0f); // RW 0xC8E338
+		useDifference = !(enemies < allies);
+	}
+	if (!useDifference)
+	{
+		// RW 0x9E9F68: the allies' summed ratio below 0.65 (RW 0xC8E33C, ordered: a NaN metric fails), then the largest (enemies + allies) cost
+		if (!(metric < 0.65f))
+		{
+			return false;
+		}
+		int best = 0;
+		for (int i = 0; i < 3; ++i)
+		{
+			for (int j = 0; j < 3; ++j)
+			{
+				const int s = otherCell[i * 3 + j] + alliedCell[i * 3 + j];
+				if (s > best)
+				{
+					best = s;
+					x = i;
+					y = j;
+				}
+			}
+		}
+	}
+	// RW 0x9E9F68: the point at the cell's index times the RANGE (not the bin width) from the origin (cvtsi2ss, mulss, addss per axis)
+	const Coord3D target{ SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(x), radius), origin.x),
+		                  SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(y), radius), origin.y), origin.z };
+	if (!setLocationIfValid(obj, target))
+	{
+		return false;
+	}
+	// RW 0x9EA028: the five-word record joins the team's registry after the location was accepted
+	team->addSpecialPowerRecord(m_decision->powerTemplate, obj.logic().getFrame(), obj.getID());
+	return true;
+}

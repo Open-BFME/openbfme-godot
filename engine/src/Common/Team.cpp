@@ -6,8 +6,10 @@
 #include <algorithm>
 
 #include "Common/Player.h"
+#include "Common/SpecialPower.h"
 #include "Common/StateHash.h"
 #include "Common/Xfer.h"
+#include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
 
 #include <stdexcept>
@@ -123,6 +125,34 @@ void Team::friend_removeMember(Object *obj)
 	--m_count;
 }
 
+// RW 0x7A3EF5
+Object *Team::findSpecialPowerRecord(const SpecialPowerTemplate *power, const Object *caster, GameLogic &logic) const
+{
+	for (const SpecialPowerRecord &r : m_specialPowers)
+	{
+		if (r.power != power)
+		{
+			continue;
+		}
+		if (!caster)
+		{
+			return logic.findObjectByID(r.caster); // the first matching record only, even when its caster is gone
+		}
+		if (r.caster == caster->getID())
+		{
+			return const_cast<Object *>(caster);
+		}
+		// retail loops forever on this path (RW 0x7A3F1B skips its only advance); both retail callers pass null
+	}
+	return nullptr;
+}
+
+// RW 0x7A5582: the record joins the end of the team's list
+void Team::addSpecialPowerRecord(const SpecialPowerTemplate *power, std::uint32_t frame, ObjectID caster)
+{
+	m_specialPowers.push_back(SpecialPowerRecord{ power, frame, caster });
+}
+
 void Team::crc(StateHasher &h) const
 {
 	h.addU32(m_id);
@@ -182,6 +212,17 @@ void Team::crc(StateHasher &h) const
 	{
 		h.addU32(0x6Cu);
 		h.addI32(m_currentWaypoint);
+	}
+	if (!m_specialPowers.empty()) // lane RAI-POW: + 0x140, hashed once a power registered (games that never cast it keep their hash)
+	{
+		h.addU32(0x140u);
+		h.addU32((std::uint32_t)m_specialPowers.size());
+		for (const SpecialPowerRecord &r : m_specialPowers)
+		{
+			h.addString(r.power ? r.power->getName() : std::string());
+			h.addU32(r.frame);
+			h.addU32(r.caster);
+		}
 	}
 }
 
@@ -381,7 +422,8 @@ void TeamFactory::crc(StateHasher &h) const
 // relation maps are retail's sub-records (xferRelationMaps). Members are ids (ZH Team::xfer saves the member ids and Team::loadPostProcess finds them).
 void Team::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	// version 2 (lane RAI-POW): the special-power registry (+ 0x140), written only when a power registered (every other snapshot is version 1's)
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || !m_specialPowers.empty() ? 2 : 1) };
 	x.xferVersion(v);
 	xferRelationMaps(x, m_teamRelations, m_playerRelations);
 	x.xferAsciiString(&m_state);
@@ -438,6 +480,49 @@ void Team::xfer(Xfer &x)
 	if (x.isLoading())
 	{
 		m_loadedMembers = members;
+	}
+	if (v.current < 2)
+	{
+		if (x.isLoading())
+		{
+			m_specialPowers.clear(); // a version 1 snapshot has no registry
+		}
+	}
+	else
+	{
+		std::uint32_t count = (std::uint32_t)m_specialPowers.size();
+		x.xferCount(&count, 1, sizeof(std::string) + 12);
+		if (x.isLoading())
+		{
+			m_specialPowers.clear();
+			for (std::uint32_t i = 0; i < count; ++i)
+			{
+				std::string name;
+				x.xferAsciiString(&name);
+				std::uint32_t frame = 0;
+				ObjectID caster = INVALID_ID;
+				x.xferUnsignedInt(&frame);
+				x.xferObjectID(&caster);
+				const SpecialPowerTemplate *t = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(name) : nullptr;
+				if (!t)
+				{
+					throw XferException("a team's special-power record names \"" + name + "\", which this game does not have");
+				}
+				m_specialPowers.push_back(SpecialPowerRecord{ t, frame, caster });
+			}
+		}
+		else
+		{
+			for (const SpecialPowerRecord &r : m_specialPowers)
+			{
+				std::string name = r.power ? r.power->getName() : std::string();
+				x.xferAsciiString(&name);
+				std::uint32_t frame = r.frame;
+				ObjectID caster = r.caster;
+				x.xferUnsignedInt(&frame);
+				x.xferObjectID(&caster);
+			}
+		}
 	}
 }
 

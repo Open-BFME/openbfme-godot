@@ -50,7 +50,12 @@
 //       TOGGLE_MOUNTED (9, RW 0x9EBE42): the object's team is not its player's default team; the team's members not inside a HORDE are counted as
 //         CAVALRY (the template's AIKindOf + 0x530 == 3) or not; MOUNTED (model condition 214): yes when the others outnumber the cavalry; else when the cavalry
 //         outnumbers the others.
-//   The other 39 types are stop S-1421 (their decision answers no, each call counted).
+//       SOUL_FREEZE (44, RW 0x9E9B37, lane RAI-POW, AISpecialPowerDecisions.cpp): the team's special-power registry (Team + 0x140, RW 0x7A3EF5 /
+//         0x7A5582) gated the caster; the alive ALLIES / ENEMIES (mask 6) that are CAN_ATTACK or HERO and neither STRUCTURE nor IGNORES_SELECT_ALL
+//         within the range + 0x14 are binned into retail's two 3x3 cost grids (cell width __ftol2(range * 2/3)); the enemy total alone decides when it
+//         is above twice the ally total or the caster has a victim, the allies' summed ratio below 0.65 otherwise; then RW 0xA0229F at the cell's
+//         index times the range, and the registry record.
+//   The other 38 types are stop S-1421 (their decision answers no, each call counted).
 //
 // INFERENCE / NOT PORTED (stop S-1421, stopLines()): SpecialPowerAIType left unset by the data constructor is -1 here (every retail declaration sets it);
 // the behaviour interface slot 0xB4 call (RW 0x8B7554: init again, from Object RW 0x694692 with the map object's properties) is the first update's init;
@@ -106,7 +111,8 @@ struct AISpecialPowerDecision
 	};
 	int type = -1;
 	int kind = KIND_SELF;                 ///< + 0x04
-	int powerType = 0;                    ///< + 0x08
+	int powerType = 0;                    ///< + 0x08 in retail is the power template pointer; the port keeps its type beside it
+	const SpecialPowerTemplate *powerTemplate = nullptr; ///< + 0x08 (the team registry of SOUL_FREEZE is keyed by it)
 	const CommandButton *button = nullptr; ///< + 0x0C
 	unsigned counter = 0;                 ///< + 0x10
 	float range = 0.0f;                   ///< + 0x14
@@ -193,6 +199,7 @@ private:
 	bool decideEnshroudingMist(Object &obj);                    // RW 0x9E7869
 	bool decideCallTheHorde(Object &obj);                       // RW 0x9E71B0
 	bool decideBuffEconomy(Object &obj);                        // RW 0x9E7671
+	bool decideSoulFreeze(Object &obj);                         // RW 0x9E9B37 (the team's power registry, RW 0x7A3EF5 / 0x7A5582)
 	// the location base (RW 0xA01C6B): RW 0xA021D8 (the ActionManager's test and SpellMakesAStructure), RW 0xA0229F (that test at the location, else with
 	// RandomizeTargetLocation at 15, 30, .. 150 along one random direction, RW 0xA01C9C); the first that passes becomes the location (+ 0x20)
 	bool locationValid(Object &obj, const Coord3D &loc);

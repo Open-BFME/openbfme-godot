@@ -34,6 +34,9 @@
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "Common/Money.h"
+#include "Common/Team.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponSetToggle.h"
@@ -493,10 +496,10 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("42 of the 53 decisions run") != std::string::npos);
-	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
+	CHECK(ai[0].find("43 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("SOUL_FREEZE") == std::string::npos); // lane RAI-POW ported it
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 9 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
+	// the decisions still unported: ATTACK_HEAL_AOE and the 9 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
 	// TREE_KILLER, CITADEL, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING)
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
@@ -505,10 +508,10 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 		{
 			++unported;
 			const bool spellBook = std::string(TheAISpecialPowerTypeNames[t]).rfind("AI_SPELLBOOK_", 0) == 0;
-			CHECK_MESSAGE((spellBook || t == 44 || t == 49), TheAISpecialPowerTypeNames[t]);
+			CHECK_MESSAGE((spellBook || t == 49), TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 11);
+	CHECK(unported == 10);
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -986,4 +989,205 @@ TEST_CASE("AIPOW-1 r2: the Elves' BUFFTERRAIN (Elven Wood, RW 0x9E77EE) and ENSH
 	CHECK(distance2D(mist->decidedLocation(), *mine->getPosition()) <= 150.0f);
 	MESSAGE("BUFFTERRAIN " << distance2D(terrain->decidedLocation(), *mine->getPosition()) << ", ENSHROUDINGMIST "
 	                       << distance2D(mist->decidedLocation(), *mine->getPosition()) << " from the unit");
+}
+
+// ---- lane RAI-POW: SOUL_FREEZE (RW 0x9E9B37) and the team's special-power registry (RW 0x7A3EF5 / 0x7A5582) ----------------------------------------------
+
+TEST_CASE("RAI-POW: SOUL_FREEZE (RW 0x9E9B37) bins the enemies into retail's 3x3 cost grid and returns a cell of the caster's range")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("RAI-POW SOUL_FREEZE binary facts (set RW_GAME_DAT)");
+	}
+	else
+	{
+		CHECK(pe->u32At(0xC8E340u + 0x1Cu) == 0x9E9B37u); // the decision (vtable RW 0xC8E340, slot 0x1C)
+		CHECK(AISpecialPowerDecision::decisionPorted(44));
+		CHECK(floatAt(*pe, 0xC8E338) == 2.0f);    // the second difference test's factor
+		CHECK(floatAt(*pe, 0xC8E33C) == 0.65f);   // the fallback's allied-ratio bound
+		CHECK(pe->u32At(0xC8E360u) == 0x55555555u); // the double 2/3: its low word .. and its high word
+		CHECK(pe->u32At(0xC8E364u) == 0x3FE55555u);
+	}
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5201, &err), err);
+	// the target's shroud must be CLEAR (SPECIAL_ARROW_STORM's final location test, RW 0x82E913 type 0x2F): reveal the map for both players
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *necro = a.make("AngmarNecromancerHorde", a.human, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf = aiPowerOfType(*necro, 44);
+	REQUIRE(sf);
+	a.advance(1);
+	REQUIRE(sf->decision());
+	CHECK(sf->data()->m_commandButtonName == "Command_NecromancerSoulFreeze");
+	CHECK(sf->decision()->powerTemplate == TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze"));
+	CHECK(sf->decision()->range == 300.0f); // ANGMAR_NECRO_SOUL_FREEZE_START_RANGE through SpecialPowerRange
+	const Coord3D at = *necro->getPosition();
+	// no enemy in the scan -> no
+	CHECK(sf->decideNow() == false);
+	// a disabled caster skips every hit's accounting (Object + 0x1C8, RW 0x9325B4), so the enemy total stays 0
+	Object *far = a.make("GondorFighterHorde", a.ai, 400.0f, 0.0f);
+	CHECK(sf->decideNow() == false); // outside the 300 range
+	a.logic->destroyObject(far);
+	Object *enemy = a.make("GondorFighterHorde", a.ai, 290.0f, 0.0f);
+	necro->setDisabled(DISABLED_HELD, a.logic->getFrame() + 1000);
+	CHECK(sf->decideNow() == false);
+	necro->clearDisabled(DISABLED_HELD);
+	// the enemy bins x = 2, y = 1 ((caster - 300 + 590) / 200, (caster - 300 + 300) / 200); the target is x * RANGE from the origin
+	REQUIRE(sf->decideNow() == true);
+	// the exact retail arithmetic (RW 0x9E9F68): origin = position - range (SSE), target = index * range + origin (SSE)
+	const float ox = SimMath::subf32(at.x, 300.0f), oy = SimMath::subf32(at.y, 300.0f);
+	CHECK(sf->decidedLocation().x == SimMath::addf32(SimMath::mulf32(2.0f, 300.0f), ox));
+	CHECK(sf->decidedLocation().y == SimMath::addf32(SimMath::mulf32(1.0f, 300.0f), oy));
+	CHECK(sf->decidedLocation().z == at.z);
+	// a tie keeps the first cell in x-major order: an enemy at x = 0, y = 1 comes before the one at x = 2, y = 1
+	a.logic->destroyObject(enemy);
+	// a second caster on the computer's team (its registry is still empty) for the tie
+	Object *necro2 = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 600.0f);
+	AISpecialPowerUpdate *sf2 = aiPowerOfType(*necro2, 44);
+	REQUIRE(sf2);
+	a.advance(1);
+	// both enemies in the x = 2 column (cells (2, 0) and (2, 2)); the tie keeps (2, 0), the first in x-major order
+	a.make("GondorFighterHorde", a.human, 200.0f, 400.0f);
+	a.make("GondorFighterHorde", a.human, 200.0f, 800.0f);
+	REQUIRE(sf2->decideNow() == true);
+	const float o2x = SimMath::subf32(necro2->getPosition()->x, 300.0f), o2y = SimMath::subf32(necro2->getPosition()->y, 300.0f);
+	CHECK(sf2->decidedLocation().x == SimMath::addf32(SimMath::mulf32(2.0f, 300.0f), o2x));
+	CHECK(sf2->decidedLocation().y == SimMath::addf32(SimMath::mulf32(0.0f, 300.0f), o2y)); // cell y = 0
+}
+
+TEST_CASE("RAI-POW: the team's special-power registry (RW 0x7A3EF5 / 0x7A5582): a computer's Necromancer registers Soul Freeze and another caster of the team is refused")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5202, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *necro = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf = aiPowerOfType(*necro, 44);
+	REQUIRE(sf);
+	a.make("GondorFighterHorde", a.human, 100.0f, 0.0f);
+	a.advance(1);
+	REQUIRE(sf->decision());
+	Team *team = necro->getTeam();
+	REQUIRE(team);
+	REQUIRE(team->specialPowerRecords().empty());
+	REQUIRE(sf->decideNow() == true);
+	REQUIRE(team->specialPowerRecords().size() == 1);
+	CHECK(team->specialPowerRecords()[0].power == sf->decision()->powerTemplate);
+	CHECK(team->specialPowerRecords()[0].frame == a.logic->getFrame());
+	CHECK(team->specialPowerRecords()[0].caster == necro->getID());
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerTemplate, nullptr, *a.logic) == necro);
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerTemplate, necro, *a.logic) == necro);
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerTemplate, nullptr, *a.logic)->getID() == necro->getID());
+	// the same caster passes the gate again (retail compares the record's id with the caster), a second unit of the team does not
+	CHECK(sf->decideNow() == true);
+	Object *other = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf2 = aiPowerOfType(*other, 44);
+	REQUIRE(sf2);
+	a.advance(1);
+	CHECK(sf2->decideNow() == false);
+}
+
+TEST_CASE("RAI-POW end to end: a Hard computer's Angmar Necromancer runs Soul Freeze on its own and writes the team's registry")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5203, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *necro = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf = aiPowerOfType(*necro, 44);
+	REQUIRE(sf);
+	a.make("GondorFighterHorde", a.human, 100.0f, 0.0f);
+	a.make("GondorFighterHorde", a.human, 110.0f, 0.0f);
+	// the retail module's starter is StartsPaused (data\ini\object\evilfaction\hordes\angmar\angmarhordes.ini); a script's
+	// unpause (pauseCountdown) is what the AI waits for, so lift it here to exercise the framework's readiness gate
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze");
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(*necro, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(a.logic->getFrame());
+	REQUIRE(sp->isReady());
+	a.advance(1);
+	REQUIRE(sf->decision());
+	AISpecialPowerUpdate::stats() = AISpecialPowerUpdate::Stats{};
+	int frame = -1;
+	for (int i = 0; i < 400 && frame < 0; ++i)
+	{
+		a.advance(1);
+		if (AISpecialPowerUpdate::stats().executedByType[44] != 0)
+		{
+			frame = i;
+		}
+	}
+	MESSAGE("Soul Freeze ran after " << frame << " frames");
+	// engine pin (seed 5203): the module's 25-frame counter (RW 0x99302D) from its first update and the roll above Hard's chance pass on this frame
+	CHECK(frame == 26);
+	CHECK(AISpecialPowerUpdate::stats().executedByType[44] == 1);
+	REQUIRE(necro->getTeam());
+	const std::vector<Team::SpecialPowerRecord> &records = necro->getTeam()->specialPowerRecords();
+	REQUIRE(!records.empty());
+	CHECK(records[0].power == sf->decision()->powerTemplate);
+	CHECK(records[0].caster == necro->getID());
+	for (const Team::SpecialPowerRecord &r : records)
+	{
+		CHECK(r.caster == necro->getID());
+	}
+	// one record per successful decision: the next call appends exactly one
+	const size_t before = records.size();
+	REQUIRE(sf->decideNow() == true);
+	CHECK(records.size() == before + 1);
+}
+
+TEST_CASE("RAI-POW: the team special-power registry round-trips through a snapshot and an old snapshot stays version 1")
+{
+	OPENBFME_REQUIRE_START(s);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze");
+	REQUIRE(t);
+	TeamFactory f;
+	TeamPrototype *proto = f.initTeam("RAI-POW registry", nullptr, false, nullptr);
+	REQUIRE(proto);
+	Team *saved = f.createTeam(proto);
+	REQUIRE(saved);
+	saved->addSpecialPowerRecord(t, 7, 42);
+	XferSave save;
+	saved->xfer(save);
+	REQUIRE(!save.data().empty());
+	CHECK(save.data()[0] == 2); // the block's version
+	Team *loaded = f.createTeam(proto);
+	REQUIRE(loaded);
+	XferLoad load(save.data());
+	loaded->xfer(load);
+	REQUIRE(loaded->specialPowerRecords().size() == 1);
+	CHECK(loaded->specialPowerRecords()[0].power == t);
+	CHECK(loaded->specialPowerRecords()[0].frame == 7);
+	CHECK(loaded->specialPowerRecords()[0].caster == 42);
+	// a team with no record writes version 1, and a version 1 load clears a record the target team already had
+	Team *empty = f.createTeam(proto);
+	REQUIRE(empty);
+	XferSave save1;
+	empty->xfer(save1);
+	REQUIRE(!save1.data().empty());
+	CHECK(save1.data()[0] == 1);
+	Team *loaded1 = f.createTeam(proto);
+	REQUIRE(loaded1);
+	loaded1->addSpecialPowerRecord(t, 9, 43);
+	XferLoad load1(save1.data());
+	loaded1->xfer(load1);
+	CHECK(loaded1->specialPowerRecords().empty());
 }
