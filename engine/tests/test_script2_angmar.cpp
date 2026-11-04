@@ -129,11 +129,13 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		}
 		// merge queue q37 (measured once on the merged tree; the table at #187's merge point differs again, ATKRESET-1's attack orders move it): wolf rider
 		// hits 1033 -> 1006, banner carrier hits 101 -> 83, the last sling hit takes 955 (1017)
-		// BannerCarrierDestroyHordeOnDeath (RW 0x871915; measured on the merged tree): the Angmar wolf-rider hordes lose their members with their banner
-		// carrier, so their melee hits on the citadel fall (1006 -> 552 and 83 -> 57) and the slings do the rest: four full 1350 hits instead of three, five
-		// 50s instead of four, and the last 1350 takes 669. Engine pins, not retail values.
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 57 }, { "AngmarTrollSling dealt 1350 taken 669", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 552 } };
+		// merge queue q38 (measured once on the merged tree and at each merge point; LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves it,
+		// #172 keeps it): wolf rider hits 1006 -> 1016, banner carrier hits 83 -> 88, the last sling hit takes 1111 (955)
+		// merge of main be3856ac (2026-11-04; on top of q38): BannerCarrierDestroyHordeOnDeath (RW 0x871915; measured on the merged tree) kills the Angmar
+		// wolf-rider hordes' members with their banner carrier, so their melee hits on the citadel fall (1016 -> 447 and 88 -> 48) and the slings do the rest:
+		// four full 1350 hits instead of three, five 50s instead of four, and the last 1350 takes 894. Engine pins, not retail values.
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 48 }, { "AngmarTrollSling dealt 1350 taken 894", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 447 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)

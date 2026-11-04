@@ -26,8 +26,6 @@ const char *const kStopExplicit =
 	"S-166 doLocomotor goal types 2 and 4 (RW 0x669A01-0x669B95): the cell test of a straight move's validation (RW 0x6F1B3E) is approximated by the PATH-1 line test "
 	"or a passable target cell on the target's layer (its layer test is ported, lane WALL-4), and the fallback path of a blocked straight move (RW 0x6F74D0) by a "
 	"pathfinder search (its body was not fully read)";
-const char *const kStopDistance =
-	"S-166 getLocomotorDistanceToGoal (RW 0x664127) is the ZH body (path remaining distance, at least the straight distance to the last node), the retail body was not read";
 const char *const kStopRequests =
 	"S-166 the approach request (RW 0x6638FC), melee approach request (RW 0x6639CF) and safe request (RW 0x663C6B) are not ported (lane WARG-1 ported FindClosestPath "
 	"RW 0x6FB869; the attack request "
@@ -43,13 +41,13 @@ inline float hypot2(float x, float y)
 
 std::vector<std::string> AIMover::allStops()
 {
-	return { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
+	return { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopRequests, kStopGroup };
 }
 
 void AIMover::note(const char *stop)
 {
 	// the movers note these on every frame of a move: a known stop is compared by its text only the first time (a bit per stop)
-	static const char *const kKnown[] = { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopDistance, kStopRequests, kStopGroup };
+	static const char *const kKnown[] = { kStopSpecialLayer, kStopUpdate, kStopExplicit, kStopRequests, kStopGroup };
 	for (unsigned i = 0; i < sizeof(kKnown) / sizeof(kKnown[0]); ++i)
 	{
 		if (kKnown[i] == stop)
@@ -199,41 +197,67 @@ void AIMover::setMoveCondition(const char *name, bool on)
 
 float AIMover::locomotorDistanceToGoal() const
 {
+	// RW 0x664127 getLocomotorDistanceToGoal (lane LOCODIST-1; BFME2 0x66435E, decomp Object/Update/AIUpdateInterfaceLocomotorDistanceToGoal.cpp, tier A:
+	// the same body in both editions). Constants: 100 RW 0xBD88D8, 10 RW 0xBD83D8, 0 RW 0xC1B594
+	const Coord3D pos = m_host.pathfindObject().getPosition();
 	switch (m_goalType)
 	{
-	case AIGOAL_NONE:
-		return 0.0f;
+	case AIGOAL_EXPLICIT:
+	case AIGOAL_EXPLICIT_WITH_PATH:
+	{
+		// RW 0x664155: the goal (AI + 0x200) minus the position, then Coord3D::length (RW 0x403111)
+		const float dx = SimMath::subf32(m_goal.x, pos.x), dy = SimMath::subf32(m_goal.y, pos.y), dz = SimMath::subf32(m_goal.z, pos.z);
+		return SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, dz)));
+	}
 	case AIGOAL_ON_PATH:
 	{
-		if (m_path == nullptr || (m_path->currentNode() == nullptr && m_path->getFirstNode() != m_path->getLastNode()))
+		if (m_path == nullptr)
 		{
-			return 100.0f; // RW 0x664127: no path
+			return 100.0f; // RW 0x6641A3
 		}
-		// lane BUILD-3: a ONE-node path (a goal adjusted into the unit's own cell while it stands on the cell centre: prependCells adds no start node) has no segment,
-		// so no closest node: it is measured as 0 plus the straight line to its node (RW returns 100 only without a path, RW 0x6641A3, and measures a path from its
-		// head, RW 0x765B12 / 0x765972: 0 without a next node), so the move arrives; the port returned 100 and such a unit stayed "moving" forever (QA-1 U17's
-		// Porter at (980.5, 930.5)). INFERENCE (S-1282): a longer path without a closest node keeps the port's 100 (the movement code depends on it)
-		const_cast<AIMover *>(this)->note(kStopDistance);
-		const Coord3D pos = m_host.pathfindObject().getPosition();
-		float dist = m_path->currentNode() ? m_path->remainingFrom(m_path->currentNode(), pos) : 0.0f;
-		const PathNode *last = m_path->getLastNode();
-		if (last)
+		Locomotor *loco = m_host.locomotor(); // AI + 0x1F0
+		if (loco == nullptr)
 		{
-			const float dx = SimMath::subf32(last->getPosition()->x, pos.x);
-			const float dy = SimMath::subf32(last->getPosition()->y, pos.y);
-			const float straight = hypot2(dx, dy);
-			if (straight > dist)
-			{
-				dist = straight;
-			}
+			return 0.0f; // RW 0x6641B6
 		}
-		return dist;
+		const PathNode *tail = m_path->getLastNode(); // Path + 8
+		if ((loco->flags() & LOCOMOTOR_FLAG_CLOSE_ENOUGH_DIST_3D) || m_host.isProjectile())
+		{
+			// RW 0x6642CB: the machine's goal, else the path's last node; RW 0x5E3BE4 (x87 at PC24, the object minus the point, (dz^2 + dy^2) + dx^2)
+			// and the CRT sqrt (RW 0xA3CF96)
+			const Coord3D g = tail ? *tail->getPosition() : m_host.machineGoalPosition();
+			const double ex = SimMath::pc24SubW((double)pos.x, (double)g.x), ey = SimMath::pc24SubW((double)pos.y, (double)g.y), ez = SimMath::pc24SubW((double)pos.z, (double)g.z);
+			const double sq = SimMath::pc24AddW(SimMath::pc24AddW(SimMath::pc24MulW(ez, ez), SimMath::pc24MulW(ey, ey)), SimMath::pc24MulW(ex, ex));
+			return SimMath::fstpDword(SimMath::sqrtPC24(sq));
+		}
+		if (loco->getTemplate().m_appearance == LOCO_GIANT_BIRD)
+		{
+			return 0.0f; // RW 0x6641E1: template + 0x74 == 5 (RotWK's Appearance list: GIANT_BIRD)
+		}
+		const bool aircraft = m_host.treatAsAircraftForLocoDistToGoal(); // AI vslot 0x25C
+		Coord3D goalPos{};
+		float dist;
+		if (aircraft)
+		{
+			dist = m_path->computeFlightDistToGoal(pos, goalPos); // RW 0x765B12
+		}
+		else
+		{
+			dist = m_path->remainingFromPointAhead(loco->speed()); // RW 0x766173 (the locomotor's speed, RW 0x5E36F7), RW 0x765972
+		}
+		if (tail)
+		{
+			goalPos = *tail->getPosition();
+		}
+		// RW 0x664254: the squared 2D straight distance to the tail (SSE, dy^2 + dx^2)
+		const float sx = SimMath::subf32(goalPos.x, pos.x), sy = SimMath::subf32(goalPos.y, pos.y);
+		const float straightSq = SimMath::sumSquares2(sx, sy);
+		const float distSq = SimMath::mulf32(dist, dist);
+		const bool straight = aircraft ? distSq > straightSq : (10.0f > dist || straightSq > distSq); // comiss: a NaN keeps `dist`
+		return straight ? SimMath::fstpDword(SimMath::sqrtPC24((double)straightSq)) : dist;
 	}
 	default:
-	{
-		const Coord3D pos = m_host.pathfindObject().getPosition();
-		return hypot2(SimMath::subf32(m_goal.x, pos.x), SimMath::subf32(m_goal.y, pos.y));
-	}
+		return 0.0f; // RW 0x664316: AIGOAL_NONE, AIGOAL_ANGLE
 	}
 }
 

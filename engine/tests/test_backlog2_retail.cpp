@@ -249,9 +249,11 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	// stops at x 1144266752 (10 / 1143611392), y unchanged
 	// lane PATH-REBUILD (RW 0x767B0E: the found path's first segment bent from his facing and its corners rounded): he walks the same 8 frames and stops at
 	// (1144758272, 1167090688) (was 1144266752, 1167193088)
-	CHECK(walked == 8);
-	CHECK(bitsOf(boromir->getPosition()->x) == 1144758272u);
-	CHECK(bitsOf(boromir->getPosition()->y) == 1167090688u);
+	// merge queue q38 (LOCODIST-1: the locomotor distance to the goal follows RW 0x664127, the path length left instead of the 2D line; measured once on the
+	// merged tree and at its merge point): he walks 15 frames (8) and stops at (1144266752, 1167152128)
+	CHECK(walked == 15);
+	CHECK(bitsOf(boromir->getPosition()->x) == 1144266752u);
+	CHECK(bitsOf(boromir->getPosition()->y) == 1167152128u);
 	CHECK(bitsOf(start.x) == 1144391642u);
 }
 
@@ -730,7 +732,9 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// (the block search's block flags, RW 0x6F49BC, and the corridors)
 	// lane PATH-REBUILD (measured on the lane's tree, Windows MSVC; goals unchanged, Boromir's position above): 0x24ADB575 -> 0xE4523180 (every path's node chain is
 	// in the mover hash)
-	CHECK(a.hashes.back() == 0xE4523180U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// merge queue q38 (measured once on the merged tree and at LOCODIST-1's merge point; goals unchanged): 0xE4523180 -> 0x45726314 (the retail locomotor
+	// distance to the goal, RW 0x664127, moves when the units arrive)
+	CHECK(a.hashes.back() == 0x45726314U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);
