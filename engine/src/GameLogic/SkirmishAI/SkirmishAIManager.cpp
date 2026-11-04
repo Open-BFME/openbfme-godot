@@ -291,11 +291,56 @@ void SkirmishAIManager::updateGroup(AISkirmishGroup &g)
 		return;
 	}
 	g.lastLiveCount = live;
-	// RW 0x8ED6DC (manager + 0xA74, before), every AI by player index, RW 0x8EDB2C (the group's tasks), RW 0x8ED726 (after): the + 0xA74 object and the
-	// tasks are not ported (S-412)
+	// RW 0x8ED6DC (manager + 0xA74, before), every AI by player index, RW 0x8EDB2C (the group's tasks), RW 0x8ED726 (after): the + 0xA74 object is not
+	// ported (S-412); the group's tasks (+ 0x18) run here after the AIs (RW 0x8EDB2C)
 	for (auto &kv : g.players)
 	{
 		updateAI(*kv.second, g);
+	}
+	updateTasks(g);
+}
+
+// RW 0x8EDB2C: the group's task vector (+ 0x18) in order. A finished entry (RW 0x8EDA5E: state 2 or 3) is deleted; an active one runs its tick (RW 0x99EEF4).
+void SkirmishAIManager::updateTasks(AISkirmishGroup &g)
+{
+	for (auto it = g.tasks.begin(); it != g.tasks.end();)
+	{
+		AIGroupTask &task = *it;
+		if (task.state == AIGroupTask::TASK_DONE || task.state == AIGroupTask::TASK_FAILED)
+		{
+			it = g.tasks.erase(it);
+			continue;
+		}
+		if (task.state == AIGroupTask::TASK_ACTIVE)
+		{
+			// RW 0x99EEF4: the money transfer: a missing player fails the task (state 3); the payer's cash, the per-update cap and what is left bound the
+			// payment; 0 pays nothing and leaves the task active; the last payment completes it (state 2)
+			Player *from = m_logic.players().getNthPlayer(task.fromPlayer);
+			Player *to = m_logic.players().getNthPlayer(task.toPlayer);
+			if (!from || !to)
+			{
+				task.state = AIGroupTask::TASK_FAILED;
+			}
+			else
+			{
+				std::uint32_t amount = std::min(from->getMoney()->countMoney(), task.perUpdate);
+				if (amount != 0)
+				{
+					amount = std::min(amount, task.remaining);
+					if (amount != 0)
+					{
+						from->getMoney()->withdraw(amount, &from->getScoreKeeper(), true); // RW 0x7B17EF
+						to->getMoney()->deposit(amount, &to->getScoreKeeper(), true);      // RW 0x7B18B8
+						task.remaining -= amount;
+					}
+					if (task.remaining == 0)
+					{
+						task.state = AIGroupTask::TASK_DONE;
+					}
+				}
+			}
+		}
+		++it;
 	}
 }
 
@@ -628,6 +673,19 @@ void SkirmishAIManager::crc(StateHasher &h) const
 		{
 			h.addI32(m);
 		}
+		// only a non-empty list is hashed: retail's AI code never fills it, so a live game's hash is the same as before this port
+		if (!g->tasks.empty())
+		{
+			h.addU32((std::uint32_t)g->tasks.size());
+			for (const AIGroupTask &t : g->tasks)
+			{
+				h.addI32(t.state);
+				h.addI32(t.fromPlayer);
+				h.addI32(t.toPlayer);
+				h.addU32(t.remaining);
+				h.addU32(t.perUpdate);
+			}
+		}
 		for (const auto &kv : g->players)
 		{
 			const AISkirmishPlayer &ai = *kv.second;
@@ -655,7 +713,8 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"tables have no terminating row, so an unknown field crashes retail where the port reports it; a CombatChainDefinition without Unit writes "
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
-		"0x6C7946); the bodies they call are not: the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
+		"0x6C7946); the group's tasks (+ 0x18, RW 0x8EDB2C: the money task RW 0x99EEF4 with the finished test RW 0x8EDA5E, a missing player fails it, the payer's "
+		"cash / the per-update cap / what is left bound each payment) are ported; the bodies they call are not: the manager object + 0xA74, "
 		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the wall builder (RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419), attacks with its tactic teams (S-417) and (lane AI5) buys its units' and structures' upgrades and its plots' expansions "
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "
@@ -669,7 +728,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"FeintAttack RW 0x9B398D / 0x9B3A5A / 0x9B3AE4) are ported; lane BACKLOG6: AIGroup's stealth delay draw RW 0x774CEB is ported for the groups the formation "
 		"manager does not take (S-895); not ported: the siege bodies, the end's merge into a nearby AI team with its draw RW 0x8F1F08 (the units are released), "
 		"the DEFENSIVE heuristic and tactics (RW 0x90C436) (only the One Ring OPPORTUNITY heuristic is "
-		"ported; the tech-building OPPORTUNITY heuristic remains unported), the targetless tactics other than FarmKillSquad and FlagCaptureSquad, RW 0x90CCCB, the AI team objects; "
+		"ported; the tech-building OPPORTUNITY heuristic remains unported), the targetless tactics other than FarmKillSquad and FlagCaptureSquad, the AI team objects; RW 0x90CCCB is not a teardown: the brain update (RW 0x6C7506) calls it to refresh the FlagCaptureSquad prototypes (RW 0x90CC23 adds one per capture flag, then each prototype's slot 0 RW 0x9BC5D6 runs), and the port's single FlagCaptureSquad prototype reads the live capture registry (S-893); "
 		"lane AIEXPAND-1 ported the EXPANSION heuristic (RW 0x97D035 / 0x97D191: the nearest free Player_N_Start as a position target; its frame "
 		"counter is per game, retail's runs on across a process's games) and the EXPANSION tactic (RW 0x90C50C, SimpleExpansion RW 0x9B5190 / 0x9B52BD: "
 		"a MenFortress request at the target, then a second base, RW 0x9B5020); "

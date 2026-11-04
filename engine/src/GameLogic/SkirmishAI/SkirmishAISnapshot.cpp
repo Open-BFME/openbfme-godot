@@ -446,9 +446,10 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 {
 	// version 2 (lane AI5): the upgrade / expansion requests and the unit upgrader / upgrade builder states. Version 3 (community #113) adds the capture-flag
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
-	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
-	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 3, 4 };
+	// counter, SimpleExpansion's request and plain structure requests. Version 5 (lane RAI-SMALL): the groups' task vectors (RW 0x8EDB2C). A version 3
+	// snapshot comes from a build without the heuristic: it loads with 0, the count at a game's start (its first expansion check then comes 301 checks after
+	// the load); a version 4 one has no tasks (retail's group task list is never filled by the AI code, so a live game has none either)
+	XferVersion v{ 3, 5 };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
@@ -658,6 +659,38 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 				ai->groupFirst = first;
 			}
 		}
+		// version 5 (lane RAI-SMALL): the group's tasks (+ 0x18), RW 0x8EDB2C
+		if (v.current >= 5)
+		{
+			std::uint32_t tasks = (std::uint32_t)g->tasks.size();
+			x.xferCount(&tasks, 1024, sizeof(AIGroupTask)); // a live game has none (no caller fills the list); a save keeps them
+			if (loading)
+			{
+				g->tasks.clear();
+				for (std::uint32_t i = 0; i < tasks; ++i)
+				{
+					AIGroupTask task;
+					x.xferInt(&task.state);
+					x.xferInt(&task.fromPlayer);
+					x.xferInt(&task.toPlayer);
+					x.xferUnsignedInt(&task.remaining);
+					x.xferUnsignedInt(&task.perUpdate);
+					AIXfer::inRange(task.state, AIGroupTask::TASK_ACTIVE, AIGroupTask::TASK_FAILED, "skirmish ai: a group task's state");
+					g->tasks.push_back(task);
+				}
+			}
+			else
+			{
+				for (AIGroupTask &task : g->tasks)
+				{
+					x.xferInt(&task.state);
+					x.xferInt(&task.fromPlayer);
+					x.xferInt(&task.toPlayer);
+					x.xferUnsignedInt(&task.remaining);
+					x.xferUnsignedInt(&task.perUpdate);
+				}
+			}
+		}
 	}
 	AIXfer::strings(x, m_errors);
 	for (unsigned long long *c : { &m_counters.managerUpdates, &m_counters.gatedUpdates, &m_counters.playerInfoUpdates, &m_counters.groupUpdates,
@@ -731,6 +764,11 @@ void SkirmishAIManager::checkLoaded() const
 		if (!g->players.empty() && firsts != 1)
 		{
 			throw XferException("skirmish ai: a group has " + std::to_string(firsts) + " first AIs");
+		}
+		for (const AIGroupTask &t : g->tasks)
+		{
+			player(t.fromPlayer, "skirmish ai: a group task's payer");
+			player(t.toPlayer, "skirmish ai: a group task's payee");
 		}
 	}
 	for (const auto &kv : ais)
