@@ -62,7 +62,7 @@ bool isAboveTerrain(const Object &obj)
 // ---- CrateCollide --------------------------------------------------------------------------------------------------------------------------------------------
 
 // RW 0x8C066C: BehaviorModule (RW 0x8BF84B), + 0x14 = 0
-CrateCollide::CrateCollide(Thing *thing, const SalvageCrateCollideModuleData *data)
+CrateCollide::CrateCollide(Thing *thing, const CrateCollideModuleData *data)
 	: BehaviorModule(thing, data)
 	, m_crateData(data)
 {
@@ -121,7 +121,7 @@ bool CrateCollide::isValidToExecute(const Object *other) const
 		return false;
 	}
 	static const int kStructure = kindOfBit("STRUCTURE"), kCreep = kindOfBit("CREEP");
-	const SalvageCrateCollideModuleData *d = m_crateData;
+	const CrateCollideModuleData *d = m_crateData;
 	const bool validBuildingAttempt = d->m_buildingPickup && kStructure >= 0 && other->isKindOf((unsigned)kStructure); // + 0x41, template + 0x108 bit 7
 	if (!other->getAIUpdateInterface() && !validBuildingAttempt) // Object + 0x260
 	{
@@ -183,6 +183,7 @@ void CrateCollide::xferCrateCollide(Xfer &x)
 // RW 0x8C12C2
 SalvageCrateCollide::SalvageCrateCollide(Thing *thing, const SalvageCrateCollideModuleData *data)
 	: CrateCollide(thing, data)
+	, m_salvageData(data)
 {
 }
 
@@ -197,17 +198,17 @@ bool SalvageCrateCollide::isValidToExecute(const Object *other) const
 int SalvageCrateCollide::pickOutcome()
 {
 	const float r = getObject()->logic().random().getValueReal(0.0f, 1.0f, kFile, 0x45); // RW 0x6D332C
-	if (crateData()->m_levelUpChance > r)                                                  // fld + 0x64; fcomip; jbe
+	if (salvageData()->m_levelUpChance > r)                                                  // fld + 0x64; fcomip; jbe
 	{
 		return OUTCOME_LEVEL_UP;
 	}
-	return crateData()->m_upgrade.empty() ? OUTCOME_MONEY : OUTCOME_UPGRADE; // + 0x78: the length word > 0 -> 4
+	return salvageData()->m_upgrade.empty() ? OUTCOME_MONEY : OUTCOME_UPGRADE; // + 0x78: the length word > 0 -> 4
 }
 
 // RW 0x8C158B
 bool SalvageCrateCollide::executeCrateBehavior(Object &other)
 {
-	const SalvageCrateCollideModuleData *d = crateData();
+	const SalvageCrateCollideModuleData *d = salvageData();
 	if (!d->m_allowAIPickup) // + 0x7C
 	{
 		const Player *p = other.getControllingPlayer(); // RW 0x68B678
@@ -250,7 +251,7 @@ bool SalvageCrateCollide::executeCrateBehavior(Object &other)
 // RW 0x8C148B
 void SalvageCrateCollide::doMoney(Object &other)
 {
-	const SalvageCrateCollideModuleData *d = crateData();
+	const SalvageCrateCollideModuleData *d = salvageData();
 	Object *crate = getObject();
 	GameLogic &logic = crate->logic();
 	int amount = d->m_minResource; // + 0x70

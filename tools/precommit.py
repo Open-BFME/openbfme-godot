@@ -19,6 +19,11 @@
      the archive brought every line the archive gained as "added", those of commits made before this rule among them).
   6. no conflict-marker lines in staged text: lines starting with seven '<' or '>', or consisting of exactly seven '='.
      Binary blobs (containing NUL) are skipped by this check. No paths are exempt, including documentation and test fixtures.
+  7. no unexplained golden pin: a staged change that adds lines to a file matching engine/tests/data/**/*.hashes needs an added line, in a
+     staged C++ file under engine/tests/, that holds the comment `// pin: <reason>` (non-empty reason). A comment already in the tree or the
+     same text in a string literal does not count.
+     Lines are judged as in check 5 (in a merge, a line counts as added only when it is new against both parents), so a merge that takes
+     one parent's pin is not flagged; removing pin lines or renaming a pin file adds none.
 
 Pure renames are checked too. Staged blobs are read through one cat-file process. The legacy
 gate lives at archive/tools/fleet/precommit.py. Exit non-zero blocks the commit.
@@ -294,16 +299,71 @@ def tolerance_problems(rel: str, text: str, added: set[int]) -> list[str]:
     return problems
 
 
+PIN_FIX = (
+    "a re-measured pin needs the change that explains it: stage the gameplay change and add `// pin: <reason>` (what changed and why the "
+    "hashes move) to a C++ test under engine/tests/ in the same commit; a comment already in the tree does not count")
+_PIN_JUSTIFIED = re.compile(r"//\s*pin:\s*\S")
+# whichever starts first wins, so a raw string's opening inside a comment or string is not one; a ' after a hex digit is a digit separator
+_CPP_TOKEN = re.compile(r"""//[^\n]*|/\*.*?\*/|(?<!\w)(?:u8|[uUL])?R"([^()\\\s]*)\(.*?\)\1"|"(?:\\.|[^"\\\n])*"|(?<![0-9A-Fa-f])'(?:\\.|[^'\\\n])*'""", re.S)
+
+
+def is_pin_file(rel: str) -> bool:
+    """A golden hash pin: engine/tests/data/**/*.hashes."""
+    return rel.startswith("engine/tests/data/") and rel.lower().endswith(".hashes")
+
+
+def _cpp_without_strings(text: str) -> str:
+    """`text` with its string and character literals and block comments emptied, line numbers kept; line comments stay."""
+    return _CPP_TOKEN.sub(lambda m: m.group(0) if m.group(0).startswith("//") else "\n" * m.group(0).count("\n") + '""', text)
+
+
+def has_pin_reason(rel: str, text: str, added: set[int]) -> bool:
+    """True when the staged C++ test `rel` under engine/tests/ has a `// pin: <reason>` line comment among its `added` (1-based) lines. Text
+    inside a string, a multi-line raw string or a block comment does not count."""
+    if not (rel.startswith("engine/tests/") and Path(rel).suffix.lower() in CPP_SUFFIXES):
+        return False
+    lines = _cpp_without_strings(text).split("\n")
+    return any(1 <= number <= len(lines) and _PIN_JUSTIFIED.search(lines[number - 1]) for number in added)
+
+
+def pin_problems(pins: list[str], justified: bool) -> list[str]:
+    """One problem per changed pin file when no staged C++ test adds a `// pin: <reason>` comment."""
+    if justified:
+        return []
+    return [f"{rel}: golden hash pin changed without a `// pin: <reason>` comment added to a staged C++ test under engine/tests/: {PIN_FIX}"
+            for rel in pins]
+
+
+_C_ESCAPES = {b"a": b"\a", b"b": b"\b", b"t": b"\t", b"n": b"\n", b"v": b"\v", b"f": b"\f", b"r": b"\r"}
+
+
+def diff_new_path(header: str) -> str:
+    """The path of a `+++ ` diff header, '' for /dev/null: Git C-quotes a name with special characters, writing raw bytes as octal escapes, and
+    ends a name holding whitespace with a tab."""
+    name = header[4:]
+    quoted = re.match(r'"((?:\\.|[^"\\])*)"', name)
+    if quoted:
+        name = re.sub(rb"\\([0-3][0-7]{2}|.)", lambda m: bytes([int(m.group(1), 8)]) if len(m.group(1)) == 3 else _C_ESCAPES.get(m.group(1), m.group(1)),
+                      quoted.group(1).encode("utf-8")).decode("utf-8", "replace")
+    else:
+        name = name.split("\t", 1)[0]
+    return "" if name == "/dev/null" else name.removeprefix("b/")
+
+
 def added_lines_against(*base: str) -> dict[str, set[int]]:
     """{path: new line numbers} the staged diff against `base` (HEAD when empty) adds under the test roots (a pure rename adds none)."""
     out = git("-c", "core.quotepath=false", "diff", "--cached", "-U0", "-M", "--no-color", "--diff-filter=ACMR", *base, "--",
               *TEST_ROOTS).stdout.decode("utf-8", "replace")
     result: dict[str, set[int]] = {}
     path = ""
+    in_header = False  # an added line "++ x" prints as "+++ x": only the lines before a file's first hunk are headers
     for line in out.splitlines():
-        if line.startswith("+++ "):
-            path = line[4:].removeprefix("b/") if line != "+++ /dev/null" else ""
+        if line.startswith("diff --git "):
+            path, in_header = "", True
+        elif in_header and line.startswith("+++ "):
+            path = diff_new_path(line)
         elif line.startswith("@@") and path:
+            in_header = False
             match = re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
             if match:
                 start, count = int(match.group(1)), int(match.group(2) if match.group(2) is not None else 1)
@@ -327,13 +387,18 @@ def main() -> int:
     try:
         files = staged()
         added = added_lines()
+        pins, pin_reason = [], False
         for rel, data in staged_blobs(files):
             if rel in added:
                 problems += tolerance_problems(rel, data.decode("utf-8", "replace"), added[rel])
+                pin_reason = pin_reason or has_pin_reason(rel, data.decode("utf-8", "replace"), added[rel])
+                if added[rel] and is_pin_file(rel):
+                    pins.append(rel)
             problems += conflict_problems(rel, data)
             problem = check_file(rel) or commit_only_checks(rel, data) or check_file(rel, data)
             if problem:
                 problems.append(problem)
+        problems += pin_problems(pins, pin_reason)
     except (subprocess.CalledProcessError, ValueError, OSError) as exc:
         problems.append(f"cannot check staged files: {exc}")
     if problems:

@@ -95,6 +95,7 @@ struct KindBits
 	int cavalry = ObjectTemplateInfoBuilder::kindOfIndex("CAVALRY");
 	int horde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
 	int siegeTower = ObjectTemplateInfoBuilder::kindOfIndex("SIEGE_TOWER");
+	int projectile = ObjectTemplateInfoBuilder::kindOfIndex("PROJECTILE"); // RW template + 0x10B bit 1 (lane LOCODIST-1)
 };
 const KindBits &kindBits()
 {
@@ -1296,6 +1297,38 @@ bool AIUpdateInterface::isAircraftThatAdjustsDestination() const
 	}
 	const int a = m_curLocomotor->getTemplate().m_appearance;
 	return a == LOCO_HOVER || a == LOCO_WINGS;
+}
+
+// AI vslot 0x25C getTreatAsAircraftForLocoDistToGoal, RW 0x6629D3 (lane LOCODIST-1; every RotWK AI vtable holds it, GiantBirdAIUpdate through the thunk
+// RW 0x769F9F): not doing ground movement (vslot 0x224), or a path extra distance (AI + 0x168) above 1.0 (RW 0xBD1908, comiss), or a HOVER locomotor
+// (template + 0x74 == 2)
+bool AIUpdateInterface::treatAsAircraftForLocoDistToGoal() const
+{
+	bool r = !isDoingGroundMovement();
+	if (m_mover->pathExtraDistance() > 1.0f)
+	{
+		r = true;
+	}
+	if (m_curLocomotor && m_curLocomotor->getTemplate().m_appearance == LOCO_HOVER)
+	{
+		r = true;
+	}
+	return r;
+}
+
+bool AIUpdateInterface::isProjectile() const
+{
+	return hasKind(*getObject(), kindBits().projectile);
+}
+
+Coord3D AIUpdateInterface::machineGoalPosition() const
+{
+	// RW 0x6642CB: AI + 0x30, machine + 0x24 (RW dereferences the machine unchecked)
+	if (!m_machine)
+	{
+		throw std::logic_error("AIUpdateInterface::machineGoalPosition: no state machine");
+	}
+	return m_machine->goalPosition();
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------

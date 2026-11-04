@@ -73,6 +73,11 @@ public:
 	virtual float closeEnoughDist() const = 0;      // locomotor +0x3C
 	virtual float locomotorSpeed() const = 0;       // locomotor +0x40 (RW getter 0x5E36F7), per frame
 	virtual bool movingBackwards() const = 0;       // locomotor flags bit 7
+	// lane LOCODIST-1, getLocomotorDistanceToGoal (RW 0x664127): the object's template KindOf PROJECTILE (RW template + 0x10B bit 1), AI vslot 0x25C
+	// getTreatAsAircraftForLocoDistToGoal (RW 0x6629D3) and the state machine's goal position (AI + 0x30, machine + 0x24)
+	virtual bool isProjectile() const = 0;
+	virtual bool treatAsAircraftForLocoDistToGoal() const = 0;
+	virtual Coord3D machineGoalPosition() const = 0;
 	virtual bool setModelCondition(const char *name, bool on) = 0; // MOVING, CLIMBING, RAPPELLING, BACKING_UP
 	virtual float relativeAngleTo(const Coord3D &p) const = 0;     // RW relAngle2D(obj, p)
 	virtual bool isCellTypeTwo(const Coord3D &p, PathfindLayerEnum layer) const { (void)p; (void)layer; return false; } // RW 0x6EAD0E

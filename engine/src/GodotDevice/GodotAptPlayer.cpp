@@ -2780,8 +2780,10 @@ Dictionary AptMenuPlayer::openbfme_page_state() const
 		rd["value"] = row.value;
 		rd["enabled"] = row.enabled;
 		rd["items"] = (int)row.items.size();
-		static const char *const kKinds[] = { "section", "choice", "check", "slider", "text", "entry" };
-		rd["kind"] = kKinds[(int)row.kind]; // lane OPTS-6
+		// lane OPTS-6: every OpenBFMEPageRow::Kind has its name (a page with a button row read past the table: an out-of-bounds read, a crash on Windows)
+		static const char *const kKinds[] = { "section", "choice", "check", "slider", "text", "entry", "button" };
+		static_assert(sizeof(kKinds) / sizeof(kKinds[0]) == (std::size_t)OpenBFMEPageRow::Kind::Button + 1, "a name for every row kind");
+		rd["kind"] = kKinds[(int)row.kind];
 		rd["min"] = row.minValue;
 		rd["max"] = row.maxValue;
 		// lane OPTS-5: the label's text and room, the help line and the value text (the checks measure the label, read the help)

@@ -117,6 +117,8 @@ public:
 	void xferAIStateBody(class Xfer &x) override; // lane SAVE-4c (GiantBirdAIUpdate.cpp)
 	OBFME_MODULE_XFER(GiantBirdAIUpdate) // lane SAVE-4e: its version and AIUpdateInterface's (its state: xferAIStateBody)
 	bool isIdle() const override;      // RW 0x769E8F: not while + 0x57C bit 0 is set
+	// AI vslot 0x25C: RW 0x769F9F jumps to RW 0x6629D3, whose vslot 0x224 is this class's RW 0x9188EB (false): always true (lane LOCODIST-1)
+	bool treatAsAircraftForLocoDistToGoal() const override { return true; }
 
 	// AI commands 0x47 / 0x48 (SpecialAbilityUpdate's approach, RW 0x852D59 / 0x852DC5) -> RW 0x76A04A: GiantBirdNormalFlightState 0x400 to `pos`
 	bool aiAbilityMoveTo(const Coord3D &pos, CommandSourceType source);
