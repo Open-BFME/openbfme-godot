@@ -42,6 +42,7 @@ jobs:
       CCACHE_MAXSIZE: 2G
       CCACHE_NOHASHDIR: "1"
       FLAGS: ${{ matrix.flags }}
+      OPENBFME_AUDIO_FIXTURES: ${{ github.workspace }}/workspace/audio_fixtures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -50,8 +51,10 @@ jobs:
         # the address space layout the thread sanitizer of Clang 18 can map
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends ninja-build ccache clang-18 libclang-rt-18-dev
+          sudo apt-get install -y -q --no-install-recommends ninja-build ccache clang-18 libclang-rt-18-dev lame mpg123
           sudo sysctl vm.mmap_rnd_bits=28
+      - name: Generate the reference MP3 streams
+        run: python3 tools/audio/gen_mp3_fixtures.py --out workspace/audio_fixtures
       - name: Restore the compiler cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -75,12 +78,11 @@ jobs:
         with:
           path: .ccache
           key: ccache-${{ matrix.key }}-${{ github.sha }}
-      - name: Unit tests (the tests that need the game skip, and those that need the MP3 fixtures)
+      - name: Unit tests (the tests that need the game skip)
         # die_after_fork=0: the console filter tests start a thread in a forked child, which this sanitizer refuses by default
         # the first report ends the run; halt_on_error=0 lists them all, as the build allows it (-fsanitize-recover=address)
         env:
           ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           TSAN_OPTIONS: die_after_fork=0
-        run: |
-          engine/build/openbfme_tests -tce="audio decode: MP3*,audio decode: corrupted MP3*"
+        run: engine/build/openbfme_tests
