@@ -79,11 +79,14 @@ retail-dependent skips are not evidence that the retail scenarios passed.
 - Release ARM64 native extension and test runner built successfully.
 - Synthetic script/shroud/save/command suite: 162 cases, 4,713 assertions passed;
   mounted-data cases explicitly skipped in that run.
-- With BFME2 1.06 and RotWK 2.01 archives present: 161 of 162 cases passed,
-  36,188 of 36,189 assertions passed. The unchanged script4
-  PLAYER_HAS_SCIENCEPURCHASEPOINTS assertion failed in the combined run, but
-  its isolated case passed all 36 assertions. Suite-order investigation is
-  still required; the broad suite is not claimed green.
+- With BFME2 1.06 and RotWK 2.01 archives present: all 162 cases and 36,195
+  assertions passed. The earlier suite-order failure came from the synthetic
+  script4 fixture inheriting a preceding retail world's rank store: Rank 1
+  grants spell points there. The test now owns isolated spell/rank stores
+  before constructing players and restores the prior owner afterward.
+  Zero/one-point checks remain; three/four-point boundary checks were added.
+  The isolated case passes all 42 assertions. This is test isolation only;
+  no edition's gameplay behavior changed.
 - BFME2 edition setting: three focused regional-reveal/shroud/save cases,
   52 assertions passed with mounted data.
 - Both Basic tutorial porters constructed and completed their authored towers.
