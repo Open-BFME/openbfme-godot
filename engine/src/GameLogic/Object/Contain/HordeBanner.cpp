@@ -550,6 +550,31 @@ unsigned HordeContain::payloadCount() const
 	return (unsigned)(m_members.size() + m_garrisonEntering.size()) - (m_bannerCarrier != 0 ? 1u : 0u);
 }
 
+Object *HordeContain::firstMemberNotKindOf(unsigned kindOfBit) const
+{
+	for (Object *member : m_members) // RW 0x8705BC: the contained list (slot 0x118)
+	{
+		if (!member->isKindOf(kindOfBit)) // RW 0x444FA2: template + 0x108
+		{
+			return member;
+		}
+	}
+	if (!m_members.empty())
+	{
+		return m_members.front(); // RW 0x8705E9
+	}
+	GameLogic &logic = getObject()->logic();
+	for (ObjectID id : m_garrisonEntering) // RW 0x8705F3 .. 0x87062C
+	{
+		Object *member = logic.findObjectByID(id);
+		if (member && !member->isKindOf(kindOfBit))
+		{
+			return member;
+		}
+	}
+	return m_garrisonEntering.empty() ? nullptr : logic.findObjectByID(*m_garrisonEntering.begin()); // RW 0x87062E .. 0x87064C
+}
+
 unsigned HordeContain::lastMemberDamageFrame() const
 {
 	unsigned last = 0xFFFFFFFFu;

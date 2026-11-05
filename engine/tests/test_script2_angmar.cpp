@@ -131,13 +131,15 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		// hits 1033 -> 1006, banner carrier hits 101 -> 83, the last sling hit takes 955 (1017)
 		// merge queue q38 (measured once on the merged tree and at each merge point; LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves it,
 		// #172 keeps it): wolf rider hits 1006 -> 1016, banner carrier hits 83 -> 88, the last sling hit takes 1111 (955)
-		// pin: lane RAI-THREAT (old -> new on this tree): the Angmar map's four ThreatFinderUpdate markers are now the retail-awake update modules
-		// (RW 0x7EDDB6 returns 1 every frame, RW 0x7EDDF6), not the never-waking UnportedUpdateModule. Their registration changes the phase 3/4 split of
-		// updates[0] (GameLogic::runModules' size / 2), reordering the counterattack's AI updates and their RNG draws: banner 88 -> 58, the last sling
-		// hit 1111 -> a full 1350 (4 x 1350), wolf riders 1016 -> 948, plus one rider hit that takes 2. Measured with the retail module.
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 58 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 4 },
-			{ "AngmarWolfRider dealt 5 taken 2", 1 }, { "AngmarWolfRider dealt 5 taken 5", 948 } };
+		// merge queue q41 (measured once on the merged tree and at its merge point; DECOMPFIX-1104B's aim and give-way rules, AIMAIM-1 RW 0x75232F and BUMP-1,
+		// move it, NECRODIE-1 keeps it): wolf rider hits 1016 -> 982, banner carrier hits 88 -> 97, the last sling hit takes 1285 (1111)
+		// lane RAI-THREAT on the #217 / #214 main (measured on the merged tree): the Angmar map's four ThreatFinderUpdate markers are the retail-awake update
+		// modules (RW 0x7EDDB6 returns 1 every frame, RW 0x7EDDF6), not the never-waking UnportedUpdateModule; their registration changes the phase 3/4
+		// split of updates[0], reordering the counterattack's AI updates and their RNG draws: wolf rider hits 982 -> 930, banner carrier hits 97 -> 105,
+		// the last sling hit takes 1098 (1285), three full 1350 hits and four 50s. Engine pins, not retail values.
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 105 },
+			{ "AngmarTrollSling dealt 1350 taken 1098", 1 }, { "AngmarTrollSling dealt 1350 taken 1350", 3 },
+			{ "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 930 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)

@@ -273,6 +273,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 | `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
 | `godot/tests/map_water_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `water.ini` over a retail map. |
+| `godot/tests/macos_trackpad_test.gd` | Manual retail | Pan, pinch, rotation adapter, HUD/input guards and simulation hash; windowed macOS also checks native monitor installation. See `docs/MACOS_TRACKPAD.md`. |
 | `godot/tests/map_weather_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `weather.ini` over a retail map. |
 
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |

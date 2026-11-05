@@ -653,6 +653,12 @@ add_library(openbfme SHARED
     ${OPENBFME_WEATHER1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
 target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    enable_language(OBJCXX)
+    target_sources(openbfme PRIVATE src/GodotDevice/MacOSTrackpad.mm)
+    target_compile_options(openbfme PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>) # ARC for the Objective-C++ trackpad monitor only, no per-file list
+    target_link_libraries(openbfme PRIVATE "-framework AppKit")
+endif()
 if(UNIX AND NOT APPLE)
     # The extension links libstdc++ statically; without this its exported locale facet ids collide with the system runtime that Mesa loads into a
     # windowed Godot, and the first stream integer extraction (std::istream >> int) dispatches into the wrong codecvt and crashes (PROD-1 review r1).
