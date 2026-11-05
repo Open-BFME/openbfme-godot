@@ -9,7 +9,7 @@ and for every function the RotWK -> BFME2 -> decomp map (tools/re, rw_map.csv) n
 it reads from the code:
 
   - the (earliest, current) version window: the two bytes stored into the Version local whose
-    address is handed to slot 0x28 (XferVersionTransfer.cpp in the Open-BFME-2 decomp: data[0]
+    address is handed to slot 0x28 (Xfer.cpp in the Open-BFME-2 decomp: data[0]
     earliest, data[1] current; the loader throws below earliest or above current);
   - the transfer sequence in code order: every Xfer virtual called on the function's Xfer
     argument (slot table below, from the RotWK Xfer vtable at RW 0xBD1940 and the decomp's

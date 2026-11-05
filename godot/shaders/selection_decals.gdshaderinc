@@ -99,6 +99,27 @@ vec4 sel_merge_at(vec3 w, bool wall) {
 	return (drawn && !covered) ? best : vec4(0.0);
 }
 
+// lane PLACEDECAL-1: a vertex mask's alpha (0 .. 255) at the SAGE point `w`: bilinear between the four map vertices around it (10 apart), clamped to the
+// mask (header texel: vx0, vy0, w, h; then a texel a vertex, the alpha in x)
+float sel_mask_at(int header, vec2 w) {
+	vec4 h = sel_texel(header);
+	int mw = int(h.z);
+	int mh = int(h.w);
+	float fx = clamp(w.x / 10.0 - h.x, 0.0, float(mw - 1));
+	float fy = clamp(w.y / 10.0 - h.y, 0.0, float(mh - 1));
+	int x0 = min(int(fx), mw - 1);
+	int y0 = min(int(fy), mh - 1);
+	int x1 = min(x0 + 1, mw - 1);
+	int y1 = min(y0 + 1, mh - 1);
+	float tx = fx - float(x0);
+	float ty = fy - float(y0);
+	float a00 = sel_texel(header + 1 + y0 * mw + x0).x;
+	float a10 = sel_texel(header + 1 + y0 * mw + x1).x;
+	float a01 = sel_texel(header + 1 + y1 * mw + x0).x;
+	float a11 = sel_texel(header + 1 + y1 * mw + x1).x;
+	return (a00 * (1.0 - tx) + a10 * tx) * (1.0 - ty) + (a01 * (1.0 - tx) + a11 * tx) * ty;
+}
+
 // lane HERORING-1: the alpha decals (a hero's ring, SHADOW_ALPHA_DECAL) at the SAGE point `w` of a surface, blended in their list order as RotWK's
 // flushDecals draws them before the merge list (RW 0x509A1F: ShaderClass 0x1198B3, SRC_ALPHA / ONE_MINUS_SRC_ALPHA, no alpha test; texture x diffuse,
 // MODULATE RW 0x5373FC; the diffuse is the colour with the opacity as alpha, RW 0x73228B): over a surface colour C each one gives C (1 - a) + c a with
@@ -128,18 +149,22 @@ vec4 sel_alpha_at(vec3 w, bool wall) {
 		}
 		int di = int(e.w < 0.0 ? -e.w - 1.0 : e.w) * 4;
 		vec4 rec1 = sel_texel(di + 1); // r, g, b, z
-		if (wall && !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT)) {
+		vec4 rec3 = sel_texel(di + 3); // the turn's cosine and sine, the y size, -1 terrain only / the vertex mask's texel (lane PLACEDECAL-1)
+		if (wall && (rec3.w != 0.0 || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT))) {
 			continue;
 		}
-		vec4 rec3 = sel_texel(di + 3); // the turn's cosine and sine
+		vec4 rec0 = sel_texel(di); // x, y, size, opacity
 		float co = rec3.x;
 		float si = rec3.y;
-		vec2 uv = vec2((d.x * co + d.y * si) / e.z + 0.5, (d.x * si - d.y * co) / e.z + 0.5);
+		vec2 uv = vec2((d.x * co + d.y * si) / rec0.z + 0.5, (d.x * si - d.y * co) / rec3.z + 0.5);
 		if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
 			continue;
 		}
 		vec4 s = sel_bilinear(sel_texel(di + 2), uv);
-		float a = s.a * sel_texel(di).w / 255.0;
+		float a = s.a * rec0.w / 255.0;
+		if (rec3.w > 0.0) {
+			a *= sel_mask_at(int(rec3.w), w.xy) / 255.0;
+		}
 		cd = cd * (1.0 - a) + s.rgb * rec1.rgb / 255.0 * a;
 		keep *= 1.0 - a;
 	}

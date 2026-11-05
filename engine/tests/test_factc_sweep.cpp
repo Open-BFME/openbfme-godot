@@ -132,10 +132,7 @@ const std::map<std::string, std::string> &knownAbilityGaps()
 	static const std::map<std::string, std::string> gaps = {
 		// (lane MODCOMPAT-MOD1: GrabPassengerSpecialPower is ported, the cave troll's tree grab reaches its ability: the S-140 pin went)
 		// (lane FLY-1: Drogoth flies, his WingBlast and Incinerate reach their point: the S-084 pins went)
-		// the Necromancer horde is destroyed while these two powers are awaited, so no recharge starts: the sweep reads only a living caster's modules (a destroyed
-		// object's modules are freed), and the cause of the death is not known yet
-		{ "AngmarNecromancerHorde Command_NecromancerFellStrength", "the Necromancer horde is destroyed while its power is awaited|the caster was destroyed" },
-		{ "AngmarNecromancerHorde Command_NecromancerWellOfSouls", "the Necromancer horde is destroyed while its power is awaited|the caster was destroyed" },
+		// (lane NECRODIE-1: the sweep aims the Necromancer's enemy-only powers at its enemy, both fire and the horde lives: the two Necromancer entries went)
 	};
 	return gaps;
 }
@@ -365,13 +362,23 @@ AbilityResult runAbility(HudRig &h, const Offer &offer, const Coord3D &spot)
 			const Coord3D near{ spot.x + 60.0f, spot.y - 90.0f, logic.getGroundHeight(spot.x + 60.0f, spot.y - 90.0f) };
 			if (pw && !ActionManager::canDoSpecialPowerAtLocation(*o, at, pw, opt))
 			{
-				if ((pw->getFinalOverride()->getFlags() & SPF_NEEDS_OBJECT_FILTER) && !ActionManager::canDoSpecialPowerAtLocation(*o, near, pw, opt))
+				// lane NECRODIE-1: a NEEDS_OBJECT_FILTER power whose filter takes enemies (the Necromancer's Fell Strength and Well of Souls) is aimed at the
+				// enemy, as a player aims it; a soldier of the caster's serves the others
+				const Coord3D foe{ enemy->getPosition()->x, enemy->getPosition()->y, logic.getGroundHeight(enemy->getPosition()->x, enemy->getPosition()->y) };
+				if ((pw->getFinalOverride()->getFlags() & SPF_NEEDS_OBJECT_FILTER) && ActionManager::canDoSpecialPowerAtLocation(*o, foe, pw, opt))
 				{
-					Object *soldier = h.rig.make("GondorFighter", near.x, near.y);
-					made.push_back(soldier->getID());
-					h.frames(2);
+					at = foe;
 				}
-				at = near;
+				else
+				{
+					if ((pw->getFinalOverride()->getFlags() & SPF_NEEDS_OBJECT_FILTER) && !ActionManager::canDoSpecialPowerAtLocation(*o, near, pw, opt))
+					{
+						Object *soldier = h.rig.make("GondorFighter", near.x, near.y);
+						made.push_back(soldier->getID());
+						h.frames(2);
+					}
+					at = near;
+				}
 			}
 		}
 		at.z += 8.0f;
@@ -397,7 +404,7 @@ AbilityResult runAbility(HudRig &h, const Offer &offer, const Coord3D &spot)
 	for (int i = 0; i < 300 && !fired; ++i)
 	{
 		h.frames(1);
-		// a caster may die while its power is awaited (the Necromancer horde does, see knownAbilityGaps): the modules read below belong to objects, and a
+		// a caster may die while its power is awaited: the modules read below belong to objects, and a
 		// destroyed object's modules are freed, so only the live caster's modules are compared
 		Object *caster = logic.findObjectByID(casterId);
 		if (!caster || caster->isDestroyed())

@@ -22,6 +22,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/LiveGame.h"
+#include "GameClient/SelectionDecals.h"
 #include "GameClient/TerrainResourceFeedback.h"
 #include "GameLogic/Economy.h"
 #include "GameLogic/Module/TerrainResourceBehavior.h"
@@ -36,6 +37,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -411,10 +413,36 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 	CHECK(fb.placement().decalSize == radius * 2.0f);
 	CHECK(std::fmod(fb.placement().decalCenter.x, grid.cellSize()) == 0.0f);
 	CHECK(fb.placement().decalOpacity == 0x80);
-	// every vertex of free ground has the full opacity (weight 12)
+	// every vertex of free ground has the full weight 12: the alpha of the decal's diffuse, 0xFF (lane PLACEDECAL-1: setOpacity RW 0x73228B leaves a type
+	// 0x2000 decal's diffuse 0xFFFFFFFF)
 	for (std::uint8_t a : fb.placement().maskAlpha)
 	{
-		CHECK(a == 0x80);
+		CHECK(a == 0xFF);
+	}
+	{
+		// lane PLACEDECAL-1: the decal the HUD draws: SHADOW_DECAL_TERRAIN_CLAIM, its diffuse white, on the terrain only (+ 0x64), the mask's alphas
+		std::vector<SelectionDecal> decals;
+		fb.appendDecals("TerrainResourceClaimDecal", "PlaceTerrainResourceClaimantDecal", decals);
+		REQUIRE(decals.size() == 1);
+		CHECK(decals[0].style == 0x2000u);
+		CHECK(decals[0].color == 0xFFFFFFFFu);
+		CHECK(decals[0].terrainOnly);
+		CHECK(decals[0].texture == "PlaceTerrainResourceClaimantDecal");
+		CHECK(decals[0].size == radius * 2.0f);
+		CHECK(decals[0].sizeY == 0.0f);
+		CHECK(decals[0].position.x == fb.placement().decalCenter.x);
+		CHECK(decals[0].position.y == fb.placement().decalCenter.y);
+		CHECK(decals[0].maskVx0 == fb.placement().maskVx0);
+		CHECK(decals[0].maskVy0 == fb.placement().maskVy0);
+		CHECK(decals[0].maskW == fb.placement().maskW);
+		CHECK(decals[0].maskH == fb.placement().maskH);
+		CHECK(decals[0].maskAlpha == fb.placement().maskAlpha);
+		// the mask covers the decal's square: from the vertex at or below its corner to the one at or above the opposite corner
+		const float sp = TerrainResourceFeedback::kVertexSpacing;
+		CHECK(decals[0].maskVx0 == (int)std::floor((decals[0].position.x - radius) / sp));
+		CHECK(decals[0].maskVy0 == (int)std::floor((decals[0].position.y - radius) / sp));
+		CHECK(decals[0].maskVx0 + decals[0].maskW - 1 == (int)std::ceil((decals[0].position.x + radius) / sp));
+		CHECK(decals[0].maskVy0 + decals[0].maskH - 1 == (int)std::ceil((decals[0].position.y + radius) / sp));
 	}
 	// the local player's finished farm there: its disc is owned by a visible object of the player: nothing claimable at the same spot, half way it shares
 	Object *farm = make(logic, "GondorFarm", *human, px, py);
@@ -441,7 +469,7 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 		// its 13 cells one by one; half over the farm's ground the mask holds partial weights
 		fb.updatePlacement(logic, me, farmT, Coord3D{ px + radius, py, 0.0f }, u"%d%%");
 		const ResourcePlacementFeedback &pl = fb.placement();
-		const std::uint32_t base = ((std::uint32_t)pl.decalOpacity << 24) | (pl.color & 0xFFFFFFu);
+		const std::uint32_t base = 0xFFFFFFFFu; // lane PLACEDECAL-1: the decal's diffuse
 		int mismatches = 0, partialVertices = 0, vertices = 0;
 		for (int j = 0; j < pl.maskH; ++j)
 		{
@@ -450,7 +478,7 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 				const std::uint8_t want = (std::uint8_t)(TerrainResourceClaimView::vertexColor(logic, base, pl.maskVx0 + i, pl.maskVy0 + j, me) >> 24);
 				const std::uint8_t got = pl.maskAlpha[(size_t)j * (size_t)pl.maskW + (size_t)i];
 				mismatches += got != want ? 1 : 0;
-				partialVertices += (want != 0 && want != pl.decalOpacity) ? 1 : 0;
+				partialVertices += (want != 0 && want != 0xFF) ? 1 : 0;
 				++vertices;
 			}
 		}
@@ -515,6 +543,23 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 		}
 	}
 	CHECK(sawFarm);
+	{
+		// lane PLACEDECAL-1: the claims as the HUD draws them: SHADOW_ALPHA_DECAL, the diffuse 0x806464C8 (setColor, then setOpacity 0x80), terrain only
+		std::vector<SelectionDecal> decals;
+		fb.updatePlacement(logic, me, nullptr, Coord3D{ px, py, 0.0f }, u"%d%%");
+		fb.appendDecals("TerrainResourceClaimDecal", "PlaceTerrainResourceClaimantDecal", decals);
+		REQUIRE(decals.size() == fb.claimedDecals().size());
+		for (size_t i = 0; i < decals.size(); ++i)
+		{
+			CHECK(decals[i].object == fb.claimedDecals()[i].id);
+			CHECK(decals[i].style == 0x20u);
+			CHECK(decals[i].color == 0x806464C8u);
+			CHECK(decals[i].terrainOnly);
+			CHECK(decals[i].texture == "TerrainResourceClaimDecal");
+			CHECK(decals[i].size == fb.claimedDecals()[i].size);
+			CHECK(decals[i].maskW == 0);
+		}
+	}
 	fb.updateSelection(logic, me, 0);
 	CHECK(fb.claimedDecals().empty());
 	// a template without a TerrainResourceBehavior (a barracks), or none: no placement feedback
@@ -538,6 +583,78 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 	{
 		MESSAGE("the enemy farm is in the local player's sight (status " << (int)sh.getStatusAt(me, efx, efy) << "): the fog clause is not reached here");
 	}
+}
+
+#include "Common/ModelState.h"
+#include "GameClient/ControlBarCommands.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
+
+TEST_CASE("placedecal1 retail: every decal shadow a building's placement ghost shows is an alpha decal (the grid's 0x20 / 0x400) at Peak 0xFF, no offset")
+{
+	// lane PLACEDECAL-1: the placement ghost's decal shadow is drawn in the selection decals' grid, which refuses the additive types (0x40 / 0x800): the
+	// retail data gives no ghost one. The ghost shows the state its draw module picks for BUILD_PLACEMENT_CURSOR (findBestInfo, RW 0x4B4379), which may be
+	// a state without the flag (the default); every DOZER_CONSTRUCT template's is surveyed (not a wall span's pieces, nor the other flags a ghost may
+	// carry). The diffuse is white at Peak (S-5032)
+	OPENBFME_REQUIRE_START(s);
+	ModelConditionFlags flags;
+	const int bit = ModelCondition::indexOf("BUILD_PLACEMENT_CURSOR");
+	REQUIRE(bit == 0x6C); // RW 0x69C708 -> RW 0x679512 (GameClient/PlacementGhost.h)
+	flags.set((size_t)bit, true);
+	// the ghosts: the templates of every command set's DOZER_CONSTRUCT buttons
+	std::set<std::string> ghosts;
+	REQUIRE(TheCommandStore);
+	for (const ThingTemplate *tt : s->world->things().templates())
+	{
+		const FieldValue *v = tt->findField("CommandSet");
+		const std::string *setName = v ? std::get_if<std::string>(v) : nullptr;
+		const CommandSet *set = setName ? TheCommandStore->findCommandSet(*setName) : nullptr;
+		for (int i = 0; set && i < CommandSet::MAX_BUTTONS; ++i)
+		{
+			const CommandButton *b = set->getCommandButton(i);
+			if (b && b->m_command == GUI_COMMAND_DOZER_CONSTRUCT && !b->m_objectName.empty())
+			{
+				ghosts.insert(b->m_objectName);
+			}
+		}
+	}
+	CHECK(ghosts.size() > 50); // tolerance: every faction's buildings (their count is the data's)
+	int shadows = 0, alpha = 0, peak = 0, lod = 0, offset = 0;
+	std::set<std::string> textures;
+	for (const std::string &name : ghosts)
+	{
+		const ThingTemplate *tt = s->world->things().findTemplate(name);
+		if (!tt)
+		{
+			continue;
+		}
+		for (const ThingTemplate::Nugget &n : tt->getFinalOverride()->drawModules().nuggets())
+		{
+			const W3DModelDrawModuleData *data = dynamic_cast<const W3DModelDrawModuleData *>(n.data.get());
+			const ModelConditionInfo *info = data ? data->findBestInfo(flags) : nullptr;
+			if (!info || !info->hasShadow || !(info->shadow.type & 0x10C60) || info->shadow.texture.empty())
+			{
+				continue;
+			}
+			++shadows;
+			alpha += (info->shadow.type & 0x10C60) == 0x20 || (info->shadow.type & 0x10C60) == 0x400 ? 1 : 0;
+			peak += info->shadowOpacityPeak == 0xFFu ? 1 : 0;          // RW 0x4C30A8's default: the diffuse white
+			lod += info->shadow.overrideLODVisibility ? 1 : 0;         // addShadow's gate passes whatever the LOD (RW 0x50BF7B)
+			offset += info->shadow.offsetX != 0.0f || info->shadow.offsetY != 0.0f ? 1 : 0; // DecalShadowCentre's axes are not exercised by the data
+			char line[256];
+			std::snprintf(line, sizeof line, "%s: %s %g x %g, type 0x%X", tt->getName().c_str(), info->shadow.texture.c_str(), info->shadow.sizeX,
+				info->shadow.sizeY, (unsigned)info->shadow.type);
+			textures.insert(line);
+		}
+	}
+	for (const std::string &x : textures)
+	{
+		MESSAGE("placedecal1: " << x);
+	}
+	CHECK(shadows > 0); // tolerance: the well and the statues (their count is the data's)
+	CHECK(alpha == shadows);
+	CHECK(peak == shadows);
+	CHECK(lod == shadows);
+	CHECK(offset == 0);
 }
 
 #include "GameClient/DrawableIconUI.h"

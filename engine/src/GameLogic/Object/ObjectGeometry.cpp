@@ -5,6 +5,7 @@
 
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Module/BehaviorModule.h"
+#include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 #include "Common/INI/HostRealText.h"
@@ -311,10 +312,17 @@ std::vector<ObjectGeometry::ContactPoint> ObjectGeometry::contactPointsOf(const 
 bool ObjectGeometry::getBestContactPoint(const std::vector<Shape> &shapes, const std::vector<ContactPoint> &points, const Coord3D &callerPos, const std::string &label,
                                          bool preferred, Coord3D &out)
 {
-	if (!preferred)
-	{
-		throw std::logic_error("GeometryInfo::getBestContactPoint (RW 0xAD30E0): the overlap test of a call without `preferred` is not ported [S-1281]");
-	}
+	// lane AIMAIM-1: without `preferred` a point counts only when the geometry, at the origin unturned (the zeroed static RW 0xDF1E98), overlaps the static
+	// sphere RW 0xDF1EA8 (built at RW 0xBCBED0: GeometryInfo(SPHERE, small, height / major / minor 2.0), RW 0x450429) at the point, unturned: RW 0xAD3415 ..
+	// 0xAD3431 -> RW 0xAD2CE0
+	static const std::vector<Shape> kProbe = [] {
+		Shape probe;
+		probe.type = SHAPE_SPHERE;
+		probe.height = 2.0f;
+		probe.majorRadius = 2.0f;
+		probe.minorRadius = 2.0f;
+		return std::vector<Shape>{ probe };
+	}();
 	const float height = maxHeightAbovePosition(shapes);
 	float best = 3.4028235e38f; // RW 0x7F7FFFFF
 	size_t winner = points.size();
@@ -329,6 +337,10 @@ bool ObjectGeometry::getBestContactPoint(const std::vector<Shape> &shapes, const
 		if (height < z) // RW 0xAD33F2: fcomp, the height replaces z when it is below it
 		{
 			z = height;
+		}
+		if (!preferred && !NotifyCrushModules::geometriesOverlap(shapes, Coord3D{ 0.0f, 0.0f, 0.0f }, 0.0f, kProbe, Coord3D{ p.x, p.y, z }, 0.0f))
+		{
+			continue;
 		}
 		// RW 0xAD3437: x87 PC24, the differences, then (dy^2 + dx^2) + dz^2 kept in the register, compared with the stored best (fcom: strictly below)
 		const double dx = SimMath::pc24SubW((double)p.x, (double)callerPos.x);
