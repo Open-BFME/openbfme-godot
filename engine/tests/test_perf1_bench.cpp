@@ -577,6 +577,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: lane RAI-POW-4 re-measured the 4-player skirmish (OPENBFME_PERF1_REGEN=1 on its tree): the team threat order (Team + 0x13C, written by the team's
 // vslot 0x14 RW 0x7A59CB) is simulation state hashed once an order exists, so the skirmish differs from frame 713; the big battle and the allied blob
 // do not move (their teams never write an order in these scenarios).
+// The #217 / #214 main re-recorded the vectors; measured again here on the merged tree: the skirmish still differs from frame 713
+// (0x544c0108 first, last 0x2b7337e7 -> 0xfde4d294); the big battle and the allied blob keep main's vectors.
+// pin: re-measured on the merged #217 / #214 main: the team threat order still moves the 4-player skirmish from frame 713
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

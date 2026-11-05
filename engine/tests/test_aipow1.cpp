@@ -1137,7 +1137,8 @@ TEST_CASE("RAI-POW end to end: a Hard computer's Angmar Necromancer runs Soul Fr
 	}
 	MESSAGE("Soul Freeze ran after " << frame << " frames");
 	// engine pin (seed 5203): the module's 25-frame counter (RW 0x99302D) from its first update and the roll above Hard's chance pass on this frame
-	CHECK(frame == 26);
+	// re-measured on the #217 / #214 main: the aim turn rate and the factc sweep start the AI's first update 3 frames earlier (26 -> 23)
+	CHECK(frame == 23);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[44] == 1);
 	REQUIRE(necro->getTeam());
 	const std::vector<Team::SpecialPowerRecord> &records = necro->getTeam()->specialPowerRecords();

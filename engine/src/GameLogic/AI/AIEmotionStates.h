@@ -33,7 +33,7 @@
 //     0.035 (RW 0xC2A1BC) -> SUCCESS; a unit that cannot turn walks at the goal (AI vslot 0x210, explicit goal); one that can: its horde (mode 2) faces the point
 //     (slot 0x210 RW 0x86C1C6), else the locomotor goal angle (vslot 0x21C); mode 2 then runs AIIdleState::update (RW 0x7553AB). onExit RW 0x743DA9: the horde's face
 //     point is dropped (slot 0x214).
-//   * relAngle (RW 0x4B3D8D): the unit vector to the point (float32, the root of the float32 sum of squares) against the object's facing (RW 0x70B9E0), the acos of the
+//   * relAngle (RW 0x4B3D8D): the unit vector to the point (float32, the root of the float32 sum of squares) against the object's facing (RW 0x70B9E0: fcos / fsin of the orientation, not the transform's X axis), the acos of the
 //     dot clamped to [-1, 1], negative when the cross product is.
 // INFERENCE (S-1027): the acos is the deterministic double arc cosine (SimMath::acosDet; RW calls the CRT acos through its float wrapper); state 42 for IDLE is the port's
 // AIBusyState; the horde of RW 0x694BF8 is the object's own horde contain (the emotions run on the horde object).

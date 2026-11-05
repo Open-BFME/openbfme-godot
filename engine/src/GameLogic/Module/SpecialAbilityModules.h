@@ -241,6 +241,9 @@ public:
 	unsigned abilitiesTriggered() const { return m_abilitiesTriggered; } // effects run (a test counter, hashed)
 	unsigned long long unported() const { return m_unported; }
 	unsigned captures() const { return m_captures; } // lane HERO-2: buildings captured (hashed)
+	// lane STARTRANGE-1: tests only
+	bool withinStartAbilityRangeForTest() { return withinStartAbilityRange(); }
+	bool withinAbortRangeForTest() const { return withinAbortRange(); }
 
 	// RW 0x8530BA (slot 0x34): the ability ends (aborted: the abort paralysis; ownerDying: the special objects die with the owner)
 	virtual void finishAbility(bool ownerDying, bool aborted);
@@ -258,6 +261,9 @@ protected:
 
 	Object *target() const;
 	SpecialPowerModule *mySpecialPowerModule() const; // RW 0x851362
+	// lane NECRODIE-1: RW 0x85521F .. 0x855321 (and its copy RW 0x85507A .. 0x85513F): the power's UnitCost (+ 0x80) is paid by the horde before the trigger;
+	// false when the horde has fewer members than the cost (the caller ends the ability)
+	bool payUnitCost();
 	bool withinStartAbilityRange();                // RW 0x85207A
 	bool withinAbortRange() const;                 // RW 0x8522E3
 	bool captureTarget(SpecialPowerModule *spm);   // RW 0x8544F2 (lane HERO-2)

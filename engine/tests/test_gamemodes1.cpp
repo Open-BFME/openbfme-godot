@@ -19,6 +19,7 @@
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
 #include "GameClient/LiveGame.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/Economy.h"
 #include "GameLogic/NewGame/NewGame.h"
@@ -492,10 +493,14 @@ int killAll(GameLogic &logic, const Player &p, bool structures)
 			victims.push_back(o);
 		}
 	}
+	static const int kInvulnerable = CombatNames::modelCondition("INVULNERABLE");
 	for (Object *o : victims)
 	{
 		if (!o->isEffectivelyDead() && !o->isDestroyed())
 		{
+			// INVUL-1: a castle keeps the INVULNERABLE its build completion gives it (RW 0x798238) and attemptDamage ignores even this kill (RW 0x8C3FE7); these tests are
+			// about the victory rules, so the scripted kill lifts the condition first
+			o->setModelConditionState(kInvulnerable, false);
 			o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 		}
 	}

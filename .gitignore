@@ -99,6 +99,8 @@ workspace/agents/
 
 # Rebuild: engine build tree, Godot import cache, built GDExtension binaries
 /engine/build/
+# Per-platform CMake/Xcode output trees, including iOS device and simulator builds.
+/engine/build-*/
 /godot/.godot/
 /godot/bin/
 /launcher/.godot/
@@ -113,3 +115,7 @@ workspace/agents/
 # lane CRASHACT-1: the crash service key script tools/release/crash_key.py writes into a package stage (never committed)
 godot/scripts/crash_client_key.gd
 launcher/scripts/crash_client_key.gd
+
+# Online service compiler output and local runtime state.
+/services/online/.build/
+/services/online/.state/
