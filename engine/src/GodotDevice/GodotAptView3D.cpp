@@ -2,6 +2,7 @@
 // See GodotDevice/GodotAptView3D.h.
 
 #include "GodotDevice/GodotAptView3D.h"
+#include "GodotDevice/GodotShaderBudget.h"
 
 #include "GodotDevice/GodotGammaComposite.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
@@ -147,7 +148,7 @@ bool AptView3DViewers::create(Slot &slot, const AptCanvasOp &op)
 	if (m_shader.is_null())
 	{
 		m_shader.instantiate();
-		m_shader->set_code(kView3DShader);
+		SetShaderCode(m_shader.ptr(), kView3DShader, "Apt View3D composite");
 	}
 	slot.black = memnew(SubViewport);
 	slot.black->set_use_own_world_3d(true);

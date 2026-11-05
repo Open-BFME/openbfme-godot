@@ -104,3 +104,37 @@ def test_gate_refuses_a_staged_include_that_pushes_a_shader_over(repo):
     bad = gate(repo, {"godot/shaders/c.gdshaderinc": "varying vec2 one;\nvarying vec2 two;\n"})
     assert bad.returncode == 1
     assert "godot/shaders/t.gdshader: 30 varyings" in bad.stdout
+
+
+def test_gdscript_inline_shader_over_budget_is_a_problem():
+    code = 'extends Node\nvar shader := Shader.new()\nvar code := """' + spatial(15) + '"""\nshader.code = code\n'
+    found = csv.inline_problems({"scripts/a.gd": code}, lambda _: "")
+    assert len(found) == 1
+    assert "scripts/a.gd:3 (inline shader): 30 varyings" in found[0]
+
+
+def test_gdscript_inline_shader_at_the_budget_passes():
+    code = 'var code := """' + spatial(14) + '"""\n'
+    assert csv.inline_problems({"scripts/a.gd": code}, lambda _: "") == []
+
+
+def test_gdscript_comment_and_ordinary_string_mentioning_shader_type_are_not_shaders():
+    code = 'extends Node\n# shader_type spatial;\nvar text := "shader_type spatial;"\n'
+    assert csv.inline_problems({"scripts/a.gd": code}, lambda _: "") == []
+
+
+def test_gdscript_inline_shader_includes_count():
+    code = 'var code := """shader_type spatial;\n' + "\n".join(f"varying vec4 v{i};" for i in range(13)) + \
+        '\n#include "res://shaders/inc.gdshaderinc"\n"""\n'
+    found = csv.inline_problems({"scripts/a.gd": code}, lambda rel: "varying vec2 one;\nvarying vec2 two;\n" if rel == "shaders/inc.gdshaderinc" else "")
+    assert len(found) == 1
+    assert "scripts/a.gd:1 (inline shader): 30 varyings" in found[0]
+
+
+def test_gate_refuses_a_staged_gdscript_inline_shader_over_budget(repo):
+    ok = gate(repo, {"godot/scripts/a.gd": 'var code := """shader_type canvas_item;\nvoid fragment() {}\n"""\n'})
+    assert ok.returncode == 0, ok.stdout
+    git(repo, "commit", "-q", "--no-verify", "-m", "base")
+    bad = gate(repo, {"godot/scripts/a.gd": 'var code := """' + spatial(15) + '"""\n'})
+    assert bad.returncode == 1
+    assert "godot/scripts/a.gd" in bad.stdout and "30 varyings" in bad.stdout

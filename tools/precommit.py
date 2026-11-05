@@ -383,14 +383,19 @@ def added_lines() -> dict[str, set[int]]:
 
 
 def shader_problems(files: list[tuple[str, str]]) -> list[str]:
-    """Every Godot shader the index holds must fit Intel's varying budget once a shader file is staged (check_shader_varyings.py)."""
-    if not any(rel.startswith("godot/") and rel.endswith((".gdshader", ".gdshaderinc")) for rel, _ in files):
+    """Every Godot shader the index holds must fit Intel's varying budget once a shader file or a GDScript file with an inline shader is staged
+    (check_shader_varyings.py)."""
+    if not any(rel.startswith("godot/") and rel.endswith((".gdshader", ".gdshaderinc", ".gd")) for rel, _ in files):
         return []
     sys.path.insert(0, str(REPO / "tools"))
     import check_shader_varyings  # noqa: PLC0415 - only commits that touch a shader need it
 
-    listed = git("ls-files", "-z", "--", "godot/*.gdshader").stdout.split(b"\0")
-    shaders = [os.fsdecode(p).removeprefix("godot/") for p in listed if p]
+    def indexed(pattern: str) -> list[str]:
+        listed = git("ls-files", "-z", "--", pattern).stdout.split(b"\0")
+        return [os.fsdecode(p).removeprefix("godot/") for p in listed if p]
+
+    shaders = indexed("godot/*.gdshader")
+    scripts = indexed("godot/*.gd")
 
     def load(rel: str) -> str:
         out = git("show", f":godot/{rel}")
@@ -398,7 +403,8 @@ def shader_problems(files: list[tuple[str, str]]) -> list[str]:
             raise OSError(f"godot/{rel} is not in the index")
         return out.stdout.decode("utf-8", "replace")
 
-    return [f"godot/{line}" for line in check_shader_varyings.problems(shaders, load)]
+    loaded = {rel: load(rel) for rel in scripts}
+    return [f"godot/{line}" for line in check_shader_varyings.problems(shaders, load) + check_shader_varyings.inline_problems(loaded, load)]
 
 
 def main() -> int:
