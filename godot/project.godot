@@ -32,6 +32,8 @@ window/size/viewport_height=720
 [rendering]
 
 textures/vram_compression/import_etc2_astc=true
+; 16 values per W3D draw node (w3dshadergen.h): 16384 nodes. The default of 65536 ran out in a 2026-11-01 Minas Tirith game
+limits/global_shader_variables/buffer_size=262144
 
 [openbfme]
 

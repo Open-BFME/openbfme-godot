@@ -16,6 +16,16 @@ constexpr int W3D_PALETTE_WIDTH_LOG2 = 10;
 constexpr int W3D_PALETTE_WIDTH = 1 << W3D_PALETTE_WIDTH_LOG2;
 constexpr int W3D_PALETTE_TEXELS_PER_PIVOT = 3;
 
+// Godot gives every node that draws a shader with instance uniforms (w3d_tint, w3d_receive_shadows) this many values of the global shader buffer
+// (ShaderLanguage::MAX_INSTANCE_UNIFORM_INDICES; project setting rendering/limits/global_shader_variables/buffer_size). A node past the end gets no slot.
+constexpr long long W3D_INSTANCE_SLOT_VALUES = 16;
+// The log names the slots in use each time a new peak reaches a multiple of this.
+constexpr long long W3D_INSTANCE_SLOT_REPORT_STEP = 500;
+constexpr bool W3D_Instance_Slot_Report_Due(long long peak, long long inUse)
+{
+	return inUse > peak && inUse % W3D_INSTANCE_SLOT_REPORT_STEP == 0;
+}
+
 // The compile-time shape of one material. Equal keys share one Shader.
 struct W3DShaderKey
 {

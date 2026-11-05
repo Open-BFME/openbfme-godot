@@ -24,6 +24,7 @@
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/geometry_instance3d.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/aabb.hpp>
@@ -377,10 +378,12 @@ W3DInstancer::W3DInstancer()
 W3DInstancer::~W3DInstancer()
 {
 	release_palette_rd();
+	SlotsInUse -= SlotsHeld;
 }
 
 void W3DInstancer::_bind_methods()
 {
+	ClassDB::bind_static_method("W3DInstancer", D_METHOD("instance_slots_in_use"), &W3DInstancer::instance_slots_in_use);
 	ClassDB::bind_method(D_METHOD("setup", "fs"), &W3DInstancer::setup);
 	ClassDB::bind_method(D_METHOD("add_model", "model_name"), &W3DInstancer::add_model);
 	ClassDB::bind_method(D_METHOD("get_model_report", "model"), &W3DInstancer::get_model_report);
@@ -1064,6 +1067,7 @@ int64_t W3DInstancer::build_model(const String &model_name)
 			item.Node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 			item.Node->set_instance_shader_parameter("w3d_receive_shadows", ShadowReceiving);
 			add_child(item.Node);
+			note_slot_holder(item.Node->get_name());
 			model->Draws.push_back(std::move(item));
 		}
 		subs.push_back(s);
@@ -2167,6 +2171,7 @@ void W3DInstancer::write_buffers()
 				shadow->set_multimesh(d.ShadowMM);
 				shadow->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
 				add_child(shadow);
+				note_slot_holder(shadow->get_name());
 			}
 			if (d.ShadowMM.is_valid())
 			{
@@ -2815,6 +2820,19 @@ void W3DInstancer::warn(const std::string &message)
 	{
 		Warnings.push_back(message);
 		UtilityFunctions::print("W3DInstancer: ", toGodot(message));
+	}
+}
+
+void W3DInstancer::note_slot_holder(const String &part)
+{
+	++SlotsHeld;
+	++SlotsInUse;
+	const bool report = W3D_Instance_Slot_Report_Due(SlotsPeak, SlotsInUse);
+	SlotsPeak = std::max(SlotsPeak, SlotsInUse);
+	if (report)
+	{
+		const int64_t limit = (int64_t)ProjectSettings::get_singleton()->get_setting("rendering/limits/global_shader_variables/buffer_size") / W3D_INSTANCE_SLOT_VALUES;
+		UtilityFunctions::print("W3DInstancer: ", SlotsInUse, " of about ", limit, " instance slots in use (", get_name(), " holds ", SlotsHeld, ", latest ", part, ")");
 	}
 }
 
