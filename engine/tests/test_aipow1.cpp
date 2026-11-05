@@ -25,6 +25,7 @@
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/System/ShroudManager.h"
 #include "GameLogic/Object/Object.h"
@@ -496,8 +497,8 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	CHECK(ai[0].find("42 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 9 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
-	// TREE_KILLER, CITADEL, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING)
+	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 8 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
+	// CITADEL, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING); TREE_KILLER is ported by lane RAI-POW-3
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
 	{
@@ -508,7 +509,7 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 			CHECK_MESSAGE((spellBook || t == 44 || t == 49), TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 11);
+	CHECK(unported == 10); // RAI-POW-3 moved this from 11: TREE_KILLER is ported
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -986,4 +987,165 @@ TEST_CASE("AIPOW-1 r2: the Elves' BUFFTERRAIN (Elven Wood, RW 0x9E77EE) and ENSH
 	CHECK(distance2D(mist->decidedLocation(), *mine->getPosition()) <= 150.0f);
 	MESSAGE("BUFFTERRAIN " << distance2D(terrain->decidedLocation(), *mine->getPosition()) << ", ENSHROUDINGMIST "
 	                       << distance2D(mist->decidedLocation(), *mine->getPosition()) << " from the unit");
+}
+
+// ---- lane RAI-POW-3: TREE_KILLER (Devastation, RW 0x9E70B6) and the terrain's tree-cluster index (TerrainTrees + 0x584) -----------------------
+
+namespace
+{
+// the spell book's module of `type`: the book's own active module, or (when the faction's command set does not reach the button) a module
+// initialised as if it did (RW 0x8B714F's test hook, as CALLTHEHORDE's test)
+AISpecialPowerUpdate *spellBookModuleForTest(Object &book, int type, std::unique_ptr<AISpecialPowerUpdate> &fresh)
+{
+	AISpecialPowerUpdate *found = aiPowerOfType(book, type);
+	REQUIRE(found);
+	if (found->active())
+	{
+		return found;
+	}
+	fresh = std::make_unique<AISpecialPowerUpdate>(&book, found->data());
+	fresh->initAsIfInCommandSetForTest();
+	return fresh.get();
+}
+
+// the spell book's power of the module's button made ready (RW 0x8B708B asks isReady)
+void readySpellPowerForTest(Object &book, AISpecialPowerUpdate &module, std::uint32_t frame)
+{
+	REQUIRE(module.decision());
+	const CommandButton *button = module.decision()->button;
+	REQUIRE(button);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName);
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(book, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(frame);
+	REQUIRE(sp->isReady());
+}
+} // namespace
+
+TEST_CASE("RAI-POW-3: TREE_KILLER (Devastation, RW 0x9E70B6) is ported and the computer's spell book decides it")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionIsengard", 6101, &err), err);
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i); // RW 0xB4D9A0 == 2 skips a cluster; the test sees every tree
+	}
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	REQUIRE(!a.logic->trees().records().empty()); // Evendim's map has trees
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *killer = spellBookModuleForTest(*book, 35, fresh);
+	REQUIRE(killer);
+	CHECK(AISpecialPowerDecision::decisionPorted(35)); // red before the port: false
+	REQUIRE(killer->decision());
+	CHECK(killer->decision()->kind == AISpecialPowerDecision::KIND_LOCATION);
+	CHECK(killer->data()->m_commandButtonName == "Command_SpellBookDevastation");
+	readySpellPowerForTest(*book, *killer, a.logic->getFrame());
+	CHECK(killer->decideNow() == true); // red before the port: false (the decision answers no and counts it)
+}
+
+TEST_CASE("RAI-POW-3: the tree-cluster index (TerrainTrees + 0x584) groups the map's trees at 100 and the decision burns the largest")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionIsengard", 6102, &err), err);
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	TerrainTrees &trees = a.logic->trees();
+	const std::vector<TerrainTrees::Record> &records = trees.records();
+	REQUIRE(!records.empty());
+	CHECK(TerrainTrees::kClusterPadding == 100.0f); // RW 0xBD88D8, RW 0x8E4042's padding argument at RW 0x684876
+
+	// every tree record is in exactly one cluster (RW 0x683C2D adds each record as the map makes it; RW 0x67D3C2's clear does not unlink)
+	std::vector<int> membership(records.size(), 0);
+	for (const TerrainTrees::Cluster &c : trees.clusters())
+	{
+		CHECK(!c.members.empty());
+		CHECK(c.radius >= TerrainTrees::kClusterPadding); // tolerance: the empty group's radius is the padding and it only grows (RW 0x8E40A4 / 0x8E4082)
+		for (int m : c.members)
+		{
+			REQUIRE(m >= 0); // tolerance: a member is a record index the map's add wrote
+			REQUIRE((size_t)m < records.size()); // tolerance: the index must name one of the map's records
+			++membership[(size_t)m];
+		}
+	}
+	for (int n : membership)
+	{
+		CHECK(n == 1);
+	}
+	// the expected pick: the cluster with the most members (strictly, in cluster order), none used and none SHROUDED (the map is revealed)
+	std::vector<TerrainTrees::Cluster> &clusters = trees.clusters();
+	size_t expected = clusters.size();
+	for (size_t i = 0; i < clusters.size(); ++i)
+	{
+		if (clusters[i].used || (expected != clusters.size() && clusters[i].members.size() <= clusters[expected].members.size()))
+		{
+			continue;
+		}
+		expected = i;
+	}
+	REQUIRE(expected != clusters.size());
+	const Coord3D expectedCenter = clusters[expected].center;
+
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *killer = spellBookModuleForTest(*book, 35, fresh);
+	REQUIRE(killer);
+	readySpellPowerForTest(*book, *killer, a.logic->getFrame());
+
+	// a snapshot taken before the cast has version 1's tree block (no used cluster)
+	std::vector<std::uint8_t> before;
+	REQUIRE_MESSAGE(a.logic->saveSnapshot(before, &err), err);
+	CHECK(killer->decideNow() == true);
+	CHECK(killer->decidedLocation().x == expectedCenter.x);
+	CHECK(killer->decidedLocation().y == expectedCenter.y);
+	CHECK(killer->decidedLocation().z == expectedCenter.z);
+	CHECK(clusters[expected].used); // RW 0x9E7095
+	MESSAGE("TREE_KILLER picked cluster " << expected << " of " << clusters.size() << " with " << clusters[expected].members.size() << " trees");
+
+	// a second decision skips the burnt cluster: it picks the next-largest unused one (or answers no when none is left)
+	size_t second = clusters.size();
+	for (size_t i = 0; i < clusters.size(); ++i)
+	{
+		if (clusters[i].used || (second != clusters.size() && clusters[i].members.size() <= clusters[second].members.size()))
+		{
+			continue;
+		}
+		second = i;
+	}
+	const bool again = killer->decideNow();
+	if (second == clusters.size())
+	{
+		CHECK(again == false);
+	}
+	else
+	{
+		CHECK(again == true);
+		CHECK(killer->decidedLocation().x == clusters[second].center.x);
+		CHECK(killer->decidedLocation().y == clusters[second].center.y);
+		CHECK(clusters[second].used);
+	}
+
+	// the used bytes round-trip in the TerrainTrees block (version 2, written only now that one is set)
+	std::vector<std::uint8_t> used;
+	REQUIRE_MESSAGE(a.logic->saveSnapshot(used, &err), err);
+	REQUIRE(used != before);
+	REQUIRE_MESSAGE(a.g.live->loadSnapshot(used, &err), err);
+	CHECK(trees.anyClusterUsed());
+	CHECK(trees.clusters()[expected].used);
+	// ... and the earlier version 1 snapshot loads into a game whose clusters were never used
+	REQUIRE_MESSAGE(a.g.live->loadSnapshot(before, &err), err);
+	CHECK(!trees.anyClusterUsed());
 }

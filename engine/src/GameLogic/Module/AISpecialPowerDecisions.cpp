@@ -22,6 +22,7 @@
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Economy.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
@@ -756,4 +757,48 @@ bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)
 		}
 	}
 	return false;
+}
+
+// RW 0x9E70B6: the terrain's tree clusters (TheTerrainLogic + 0x584, see TerrainTrees::clusters): in cluster order the first cluster whose
+// "used" byte (RW 0x9E70A6, + 0x18) is clear and whose member count (RW 0x97D700) is above the best so far (strictly) and whose centre
+// (RW 0x9E7071, + 0x08) the caster's player does not see SHROUDED (RW 0xB4D9A0 == 2) wins. On success the used byte is set (RW 0x9E7095)
+// BEFORE RW 0xA0229F accepts the centre, so a refused location still burns the cluster; the decision answers RW 0xA0229F's answer.
+bool AISpecialPowerUpdate::decideTreeKiller(Object &obj)
+{
+	GameLogic &logic = obj.logic();
+	const Player *viewer = obj.getControllingPlayer();
+	if (!viewer || !logic.shroud())
+	{
+		return false; // INFERENCE: retail reads through the shroud pointer unchecked; every game has one
+	}
+	std::vector<TerrainTrees::Cluster> &clusters = logic.trees().clusters();
+	unsigned best = 0;
+	size_t bestCluster = clusters.size();
+	Coord3D bestPosition{};
+	for (size_t i = 0; i < clusters.size(); ++i)
+	{
+		const TerrainTrees::Cluster &cluster = clusters[i];
+		if (cluster.used)
+		{
+			continue;
+		}
+		const unsigned count = (unsigned)cluster.members.size();
+		if (count <= best)
+		{
+			continue;
+		}
+		if ((int)logic.shroud()->getStatusAt(viewer->getPlayerIndex(), cluster.center.x, cluster.center.y) == CELLSHROUD_SHROUDED)
+		{
+			continue;
+		}
+		best = count;
+		bestCluster = i;
+		bestPosition = cluster.center;
+	}
+	if (bestCluster == clusters.size())
+	{
+		return false;
+	}
+	clusters[bestCluster].used = true; // RW 0x9E7095, before the location base runs
+	return setLocationIfValid(obj, bestPosition); // RW 0xA0229F
 }
