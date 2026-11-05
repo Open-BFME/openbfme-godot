@@ -483,7 +483,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	{
 		AptArchiveFileSource source(Fs);
 		bool paired = false;
-		image = loadPackedTexture(source, res.Path.substr(0, res.Path.size() - 4), &paired);
+		image = loadPackedTexture(source, res.Path.substr(0, res.Path.size() - 4), &paired, &buffer);
 		err = image.is_valid() ? OK : ERR_FILE_CORRUPT;
 		if (paired)
 		{
@@ -545,7 +545,7 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 	Error err;
 	if (res.Path.size()>=4 && res.Path.substr(res.Path.size()-4)==".jpg") {
 	 AptArchiveFileSource source(Fs);bool paired=false;
-	 image=loadPackedTexture(source,res.Path.substr(0,res.Path.size()-4),&paired);
+	 image=loadPackedTexture(source,res.Path.substr(0,res.Path.size()-4),&paired,&buffer);
 	 err=image.is_valid() ? OK : ERR_FILE_CORRUPT;
 	 if (paired) {
 	  const std::string note = "[S-1482] house texture " + res.Path + ": packed PNG colour multiplication and alpha replacement are inferred; the loader merge was not read";
