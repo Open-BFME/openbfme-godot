@@ -199,6 +199,7 @@ private:
 	bool decideEnshroudingMist(Object &obj);                    // RW 0x9E7869
 	bool decideCallTheHorde(Object &obj);                       // RW 0x9E71B0
 	bool decideBuffEconomy(Object &obj);                        // RW 0x9E7671
+	bool decideAttackHealAoe(Object &obj);                      // RW 0x9E691D (lane RAI-POW-4: consumes the team's threat order, Team + 0x13C)
 	bool decideSoulFreeze(Object &obj);                         // RW 0x9E9B37 (the team's power registry, RW 0x7A3EF5 / 0x7A5582)
 	// the location base (RW 0xA01C6B): RW 0xA021D8 (the ActionManager's test and SpellMakesAStructure), RW 0xA0229F (that test at the location, else with
 	// RandomizeTargetLocation at 15, 30, .. 150 along one random direction, RW 0xA01C9C); the first that passes becomes the location (+ 0x20)

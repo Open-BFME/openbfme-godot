@@ -59,8 +59,9 @@ namespace
 {
 const char *const kStop =
 	"[S-1421] AISpecialPowerUpdate (lanes MOD-4, AIPOW-1, RAI-POW): the module (RW 0x8B73B7 / 0x8B714F / 0x8B708B), the decision framework (RW 0x993055 / "
-	"0x993307 / 0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 43 of the 53 decisions run; not ported "
-	"(they answer no, counted): ATTACK_HEAL_AOE (RW 0x9E691D: the team's order list Team + 0x13C, RW 0x7A1C5E, not ported; its registry gate is); spell book "
+	"0x993307 / 0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 44 of the 53 decisions run "
+	"(ATTACK_HEAL_AOE RW 0x9E691D consumes the team's threat order, Team + 0x13C, written by the team's vslot 0x14 RW 0x7A59CB and erased RW 0x7A1C5E); not ported "
+	"(they answer no, counted): spell book "
 	"HEAL (RW 0x9E85C6: the ZH AIPlayer's list, Player + 0x2FC -> + 0x4, entries of type 0x1A); ARMY_BREAKER (RW 0x9E92CA: the brain's army trackers, "
 	"AI + 0x164 -> + 0x20); STRUCTURE_BREAKER, its _PREF_WALLS and _BASEKILL, CITADEL (RW 0x9E7A98 / 0x9E7942 / 0x9E6EF4 / 0x9E6CCB: the enemy record's "
 	"structure cluster table, record + 0x10, RW 0x8E4042 / 0xA024DA); DEBUFFECONOMYBUILDING / DEBUFFPRODUCTIONBUILDING (RW 0x9E74B7 / 0x9E726A: the ZH "
@@ -148,6 +149,7 @@ bool AISpecialPowerDecision::decisionPorted(int type)
 	case AISP_SPELLBOOK_SHROUD_REVEAL: case AISP_SPELLBOOK_ASSIST_BATTLE_BUFF: case AISP_SPELLBOOK_ASSIST_BATTLE_DEBUFF: case AISP_SPELLBOOK_BUFFTERRAIN:
 	case AISP_SPELLBOOK_REBUILD: case AISP_SPELLBOOK_ENSHROUDINGMIST: case AISP_SPELLBOOK_CALLTHEHORDE: case AISP_SPELLBOOK_BUFFECONOMYBUILDING:
 	case AISP_SOUL_FREEZE:
+	case AISP_ATTACK_HEAL_AOE:
 	case AISP_BASIC_SELF_BUFF: case AISP_CAPTURE_BUILDING: case AISP_ENEMY_TYPE_KILLER: case AISP_ENEMY_TYPE_KILLER_RANGED: case AISP_ENEMY_TYPE_KILLER_STRUCTURES: case AISP_TOGGLE_MOUNTED:
 	case AISP_STANCEBATTLE: case AISP_STANCEAGGRESSIVE: case AISP_STANCEHOLDGROUND: case AISP_BASIC_SELF_DEBUFF: case AISP_MORGUL_BLADE: case AISP_GOBLIN_POISON:
 		return true;
@@ -546,6 +548,8 @@ bool AISpecialPowerUpdate::decide(Object &obj)
 		return decideCallTheHorde(obj);
 	case AISP_SPELLBOOK_BUFFECONOMYBUILDING:
 		return decideBuffEconomy(obj);
+	case AISP_ATTACK_HEAL_AOE:
+		return decideAttackHealAoe(obj);
 	case AISP_SOUL_FREEZE:
 		return decideSoulFreeze(obj);
 	case AISP_HEAL_AOE:

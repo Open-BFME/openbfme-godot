@@ -1,6 +1,8 @@
 // OpenBFME unit tests. GPL-3.0.
 // Lane UBER-1: the Uber performance mode (docs/UBER.md): the simulation profile in the game setup, the wire, the replay, the profile identity and the
 // state hash; mismatches refused; the Uber simulation identical across runs and logic thread counts.
+// pin: lane RAI-POW-4 re-measured the Uber pin (OPENBFME_UBER1_REGEN=1): the team threat order (Team + 0x13C, writer RW 0x7A59CB) is hashed once it has an
+// order, so the battle differs from frame 12.
 
 #include "doctest.h"
 
