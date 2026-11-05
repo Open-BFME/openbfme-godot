@@ -32,6 +32,25 @@ func check(ok: bool, message: String) -> bool:
 func modes(expected: int, selected: Array[SubViewport], message: String) -> void:
 	check(not selected.is_empty() and selected.all(func(v): return v.render_target_update_mode == expected), message)
 
+func current_membership(candidates: Array[SubViewport]) -> Array[SubViewport]:
+	# APT retained-slot membership is independent of each viewport's actual update mode.
+	# The black viewport owns the instancer; its white partner shares the same World3D.
+	var frames: Dictionary = player.get_backdrop_state().model_animation_frames
+	var names := frames.keys().map(func(path): return str(path).get_slice("|", 1).to_lower())
+	var worlds := []
+	for view in candidates:
+		for child in view.get_children():
+			if child.is_class("W3DInstancer"):
+				var name: String = child.get_model_report(0).get("name", "")
+				if names.has(name.to_lower()):
+					worlds.append(view.find_world_3d())
+	var selected: Array[SubViewport] = []
+	for view in candidates:
+		if worlds.has(view.find_world_3d()):
+			selected.append(view)
+	check(selected.size() == frames.size() * 2, "each current APT slot resolves to exactly two viewports")
+	return selected
+
 func matches_apt_pose(inst: Node) -> bool:
 	# Compare the uploaded palette with an explicit reference at the APT clock's exposed frame.
 	# Capture first: evaluating the reference must not repair the result being checked.
@@ -109,8 +128,7 @@ func run() -> void:
 	for child in player.get_children():
 		if child is SubViewport:
 			views.append(child)
-			if child.render_target_update_mode == SubViewport.UPDATE_ALWAYS:
-				active.append(child)
+	active = current_membership(views)
 	# tolerance: the number of real View3D clips varies with the privately mounted presentation data.
 	if not check(active.size() >= 2 and active.size() % 2 == 0, "real paired active View3D viewports: " + str(player.get_backdrop_state())):
 		finish()
@@ -232,6 +250,7 @@ func run() -> void:
 	var reveal_instances := palettes.keys().filter(func(node):
 		var name: String = node.get_model_report(0).get("name", "")
 		return reveal_frames.keys().any(func(path): return str(path).to_lower().ends_with("|" + name.to_lower())))
+	# tolerance: retail presentation data determines how many animated View3D instances remain on reveal.
 	check(not reveal_instances.is_empty() and reveal_instances.all(func(node): return matches_apt_pose(node)), "late sibling reveal uploads current APT poses before first rendered frame")
 	late.queue_free()
 	player.auto_process = true
@@ -240,11 +259,8 @@ func run() -> void:
 	# tolerance: at least one real animated clip must upload its progressed pose after reveal.
 	check(palettes.keys().any(func(node): return node.get_instance_palette(0) != palettes[node]), "visible ordinary player processing resumes pose uploads")
 	# Ordinary processing advances retail movies: some old background clips may have left the canvas.
-	# Snapshot current membership for subsequent retained redraw/reentry checks on every display backend.
-	active.clear()
-	for view in views:
-		if view.render_target_update_mode == SubViewport.UPDATE_ALWAYS:
-			active.append(view)
+	# Derive expected membership from retained APT slots, never from the modes being tested.
+	active = current_membership(views)
 	modes(SubViewport.UPDATE_ALWAYS, active, "ordinary player reveal resumes retained viewports")
 
 	# Change one retained native clip without removing its level: the real partial-canvas path.
@@ -260,7 +276,8 @@ func run() -> void:
 	# Removing a whole level requires a full canvas rebuild; its old slots must stop while others remain.
 	player.set_level_visible(top, false)
 	player.render(true)
-	var retained := views.filter(func(v): return v.render_target_update_mode == SubViewport.UPDATE_ALWAYS)
+	var retained := current_membership(views)
+	modes(SubViewport.UPDATE_ALWAYS, retained, "remaining APT slots keep both viewport partners enabled")
 	# tolerance: data-dependent clip count; at least one background pair stays while the ring pair stops.
 	check(not retained.is_empty() and retained.size() < active.size(), "removed level stops ring views and keeps background")
 	for view in active:
