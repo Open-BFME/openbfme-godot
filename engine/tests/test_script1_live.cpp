@@ -22,6 +22,7 @@
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
@@ -314,11 +315,75 @@ TEST_CASE("script live: the opening of the first Angmar mission (MAP ANG Angmar)
 			CHECK((m->getBodyModule() && m->getBodyModule()->isIndestructible()));
 		}
 	}
+	// The mission's opening keeps Rogash and his attackers (and their horde members) indestructible until a local-player unit is inside
+	// "AT - Rogash Becomes Vulnerable". That used to be sampled at a fixed frame 200, which tied the test to the phase-5 update-vector order:
+	// PR229-R measured retail's ThreatFinderUpdate awake in the phase-5 vector 2 (the UpdateModule constructor at RW 0x653114 writes 0 to the
+	// next-call frame at + 0x14, getUpdatePhase at RW 0x64DFDA returns PHASE_NORMAL 2, and update at RW 0x7EDDB6 makes no calls and returns 1
+	// at 0x7EDDF6), which changes the order in which the phase-5 modules draw from the shared logic RNG. The Witch King's guard scan then walks
+	// him into the area at frame 171, the script clears the four Indestructible flags, and "Rogash Attacker 2" dies at frame 196. Check the
+	// script's own condition every frame instead: while no local-player unit is in the area (SKIRMISH_PLAYER_HAS_UNITS_IN_AREA, RW 0x7E83FE),
+	// all four flagged objects must exist and be indestructible; once the condition is first true at frame F, the flags may be cleared at or after
+	// F, never before.
+	ScriptCondition inArea;
+	inArea.resolved = 96; // SKIRMISH_PLAYER_HAS_UNITS_IN_AREA, RW 0x7E83FE (the map's "Rogash Becomes Vulnerable" condition)
+	inArea.params.resize(2);
+	inArea.params[0].stringValue = "<Local Player>";
+	inArea.params[1].stringValue = "AT - Rogash Becomes Vulnerable";
+	const char *flagged[] = { "Rogash", "Rogash Attacker 1", "Rogash Attacker 2", "Surrender Monkeys" };
+	int firstInAreaFrame = -1;
+	int firstClearedFrame = -1;
 	double now = 0.0;
 	for (int f = 0; f < 200; ++f)
 	{
 		now += 200.0;
 		g.step(now);
+		const unsigned frame = logic.getFrame();
+		if (firstInAreaFrame < 0 && ScriptConditions::evaluate(logic.scriptEngine(), inArea))
+		{
+			firstInAreaFrame = (int)frame;
+			MESSAGE("SKIRMISH_PLAYER_HAS_UNITS_IN_AREA is first true at frame " << frame);
+		}
+		if (firstInAreaFrame < 0)
+		{
+			for (const char *n : flagged)
+			{
+				const Object *o = e.getUnitNamed(n);
+				REQUIRE_MESSAGE(o != nullptr, "frame " << frame << ": " << n);
+				CHECK_MESSAGE((o->getBodyModule() && o->getBodyModule()->isIndestructible()), "frame " << frame << ": " << n);
+				if (o->getContain() != nullptr) // Rogash is alone; the attackers' hordes list their members (RW 0x86A104)
+				{
+					for (const Object *m : *o->getContain()->getContainedItemsList())
+					{
+						CHECK_MESSAGE((m->getBodyModule() && m->getBodyModule()->isIndestructible()), "frame " << frame << ": " << n);
+					}
+				}
+			}
+		}
+		else if (firstClearedFrame < 0)
+		{
+			bool cleared = true;
+			for (const char *n : flagged)
+			{
+				const Object *o = e.getUnitNamed(n);
+				cleared = cleared && o != nullptr && o->getBodyModule() && !o->getBodyModule()->isIndestructible();
+			}
+			if (cleared)
+			{
+				firstClearedFrame = (int)frame;
+				MESSAGE("the four Indestructible flags are cleared at frame " << frame);
+			}
+		}
+	}
+	if (firstInAreaFrame >= 0)
+	{
+		// This is an existence bound, not a measured frame: after the condition fires the mission's script must clear all four flags within the
+		// 200 stepped frames; the exact frame follows from the mission's own timing (171 here) and is recorded in the MESSAGE above.
+		// tolerance: existence bound (a clear must be observed within the 200 frames), not a measured frame.
+		REQUIRE(firstClearedFrame >= 0);
+		// This is the required ordering (cleared at or after the first in-area frame), not a measured frame: the script evaluates the condition
+		// during the frame, so the first post-frame observation can precede the clear by one frame.
+		// tolerance: the required ordering, clear at or after the first in-area frame, not a measured frame.
+		CHECK(firstClearedFrame >= firstInAreaFrame);
 	}
 	// the timer chain: part 2 at frame 1 + 10, part 3 50 frames later, part 4 75 later, part 5 45 later (the countdown decrements before the scripts
 	// run, TIMER_EXPIRED is value < 1)
@@ -348,13 +413,18 @@ TEST_CASE("script live: the opening of the first Angmar mission (MAP ANG Angmar)
 	CHECK_FALSE(d.moving());
 	CHECK(d.target().x == move->position.x);
 	CHECK(d.target().y == move->position.y);
-	// lane SCRIPT-2: the map makes Rogash's attackers indestructible (objectIndestructible) until the player reaches "AT - Rogash Becomes Vulnerable";
-	// "Rogash Saved" (Objective 3: the three attackers destroyed) has not fired
-	for (const char *n : { "Rogash Attacker 1", "Rogash Attacker 2", "Surrender Monkeys" })
+	// lane SCRIPT-2: the map makes Rogash's attackers indestructible (objectIndestructible) until the player reaches "AT - Rogash Becomes Vulnerable".
+	// While no local-player unit reached it through frame 200 they are still alive (as on plain main, where the Witch King never walks in); once
+	// the condition fired the mission's own script cleared the flags, so combat may destroy one (PR229-R: Attacker 2 at frame 196 on this branch).
+	// "Rogash Saved" (Objective 3: the three attackers destroyed) has not fired either way.
+	if (firstInAreaFrame < 0)
 	{
-		const Object *o = e.getUnitNamed(n);
-		REQUIRE_MESSAGE(o != nullptr, n);
-		CHECK_MESSAGE(!o->isEffectivelyDead(), n);
+		for (const char *n : { "Rogash Attacker 1", "Rogash Attacker 2", "Surrender Monkeys" })
+		{
+			const Object *o = e.getUnitNamed(n);
+			REQUIRE_MESSAGE(o != nullptr, n);
+			CHECK_MESSAGE(!o->isEffectivelyDead(), n);
+		}
 	}
 	{
 		ScriptEngine &me = logic.scriptEngine();
