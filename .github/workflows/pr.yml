@@ -309,11 +309,11 @@ jobs:
           key: ccache-msvc-${{ github.sha }}
           restore-keys: ccache-msvc-
       - name: Build (build.bat)
-        shell: cmd
+        shell: pwsh
         run: |
           ccache -z
-          call build.bat
-          if errorlevel 1 exit /b 1
+          ./build.bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ccache -s
       - name: Save the compiler cache (pushes only)
         # a push to main saves the cache pull requests restore; a ci/** branch's cache is visible to that branch only
