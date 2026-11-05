@@ -240,8 +240,7 @@ std::vector<std::string> HeroSystem::stopLines()
 		"[S-852] hero records: not ported: the campaign / WotR saved heroes (RW 0x6B1771), the record "
 		"fields Object + 0x47C / + 0x480 / + 0x488 / + 0x458 bit 4 and the tracker's leveled byte, GameLogic + 0x98, RW 0x68C7E9, forced drawable model-condition refresh on creation (RW 0x70E013 / 0x67449C(true)), RW 0x68B934; "
 		"the rank of a purchase record is 1 (RW 0x73CE2A's create module vslot is not identified)",
-		"[S-854] RespawnUpdate details: the producer's exit slot 9 call of the revive (RW 0x8B38D8) is not made, the AI idle test before the exit (AI vslot 0x1B8 or RW "
-		"0x660AC1 == 16) is AIUpdateInterface::isIdle, a respawn health "
+		"[S-854] RespawnUpdate details: the producer's exit slot 9 call of the revive (RW 0x8B38D8) is not made, a respawn health "
 		"above 100% (the max health growth of RW 0x8C47F6) is not ported",
 		"[S-855] hero production: a revive or purchase entry pays at queue time like a unit; a hero entry whose record cannot start (RW 0x7812B2 false) keeps the money "
 		"(retail's order: the withdrawal comes first); the Brutal AI discount of hero cost and time (AI data + 0x95C / + 0x960) is S-204's; a hero template with a BuildFadeInOnCreateTime holds its "

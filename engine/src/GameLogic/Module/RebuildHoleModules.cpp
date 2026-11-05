@@ -146,15 +146,9 @@ void RebuildHoleExposeDie::onDie(const DieModuleInterface::Event &event)
 {
 	Object *us = getObject();
 	GameLogic &logic = us->logic();
-	bool angle = false;
-	if (!m_data->m_dieMux.isDieApplicable(*us, event, &angle)) // RW 0x85FED5
+	if (!m_data->m_dieMux.isDieApplicable(*us, event)) // RW 0x85FED5
 	{
 		return;
-	}
-	if (angle)
-	{
-		logic.noteStop("[S-980] RebuildHoleExposeDie of " + us->getTemplate()->getName() +
-			": MinKillerAngle / MaxKillerAngle are not ported (the die applies as if the killer were in the window)");
 	}
 	Player *player = us->getControllingPlayer(); // RW 0x68B678 (read unchecked by RW)
 	if (!player || player == logic.players().getNeutralPlayer() || player->isObserver() || player->isDefeated() || us->isUnderConstruction()) // RW 0x6AAC52
