@@ -8,7 +8,9 @@
 //   * the object (0x24 bytes, ctor RW 0x8E4042): + 0 the vtable RW 0xC78294, + 4 the registration list (a vector of ObjectIDs in registration
 //     order), + 0x10 the groups (a vector of group pointers), + 0x1C the padding (DefenseTreeNodeRadius, manager + 0x984 = data + 0x974), + 0x20
 //     the manager; the vtable's slot 0 (RW 0x8E4082's call at RW 0x8E4319) returns the padding.
-//   * a group (0x28 bytes, ctor RW 0x68223E with the padding): + 0 a "selected" byte, + 4 the centre, + 0x14 the radius, + 0x1C the members.
+//   * a group (0x28 bytes, ctor RW 0x68223E with the padding): + 0 a "selected" byte, + 4 the grown radius (RW 0x8E4082 writes its weight there),
+//     + 8 the centre, + 0x14 the group's copy of the padding, + 0x18 a "used" byte (set / read only by RW 0x9E7095 / 0x9E70A6, not by the decisions this
+//     class serves), + 0x1C the members (the Group's fields below in memory order: the grown radius first, then the centre).
 //   * insert RW 0x8E42C8: every group is marked unselected; RW 0x8E41EB selects each group that has a member within 2 * padding^2 of the new
 //     object (squared 3D, RW 0x8E3DD6) and appends the object to the first selected group (RW 0x8E4082); if none was selected a new group is
 //     made; every other selected group is then appended to the first and destroyed (RW 0x8E4376).
