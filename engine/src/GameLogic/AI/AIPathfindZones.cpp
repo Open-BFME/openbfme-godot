@@ -14,7 +14,9 @@
 //     equivalences, built from the adjacent zone pairs (0x938E42): kind 0 joins adjacent zones of equal type, kind 1 {0,2},
 //     kind 2 {0,1,7}, kind 3 {0,3}, kind 4 {1,7}, kind 5 {2}, kind 6 {0,3} and type 4 when the zone has bit 22 (0x9380BC); a zone
 //     blocked by the profile (bit 17 for b4, bit 18 for b5; RW 0x938085) joins nothing.
-// INFERRED: the terrain variant (flag 1, "the building does not split the terrain") treats obstacle zones as ground when joining;
+// INFERRED: the terrain variant (flag 1, "the building does not split the terrain") treats obstacle zones as ground when joining. Lane QPATH-1 read the
+// zone update (RW 0x93A530 / 0x938E42): retail's flag-1 (odd) tables join with the same type rules as the block-local even ones, and the obstacle merge is a
+// table of its own (RW 0x938939, getTerrainZone); QuickDoesPathExist uses those, the other users of the terrain variant are to re-read (S-162);
 // the layer compatibility of RW 0x9380BC is applied to every kind; zone ids are not capped (retail's allocator holds 24000, INFERRED).
 // The zone tables are rebuilt lazily from the adjacency list instead of being kept in retail's incremental structures; the
 // partition they describe is the same.
@@ -441,7 +443,9 @@ const std::vector<zoneStorageType> &PathfindZoneManager::table(int profile, int 
 			const zoneStorageType ra = findRoot(parent, pair.first), rb = findRoot(parent, pair.second);
 			if (ra != rb)
 			{
-				if (ra < rb) parent[rb] = ra; else parent[ra] = rb;
+				// lane QPATH-1: RW 0x938B3B, the union: the lower root's parent becomes the higher root, so a class's root is its highest zone id.
+				// QuickDoesPathExist (RW 0x6F5BB0) looks the terrain zone of that root up, so the root has to be retail's
+				if (ra < rb) parent[ra] = rb; else parent[rb] = ra;
 			}
 		}
 	}
@@ -474,6 +478,46 @@ zoneStorageType PathfindZoneManager::getEffectiveZone(const PathfindMovement &mv
 	const int e = (mv.i8 >= 0 ? mv.i8 + 1 : 0) + (mv.b4 ? 1 : 0) + (mv.b5 ? 2 : 0);
 	const int profile = 2 * e + (terrainVariant ? 1 : 0);
 	return table(profile, kind, terrainVariant)[zone];
+}
+
+zoneStorageType PathfindZoneManager::getTerrainZone(zoneStorageType zone) const
+{
+	// lane QPATH-1. TARGET RW 0x938939 (BFME2 0x931FD4, decomp PathfinderRva00531FD4.cpp, tier A): the find (RW 0x938430) in the union table at zone
+	// manager + 0x1B9F4, the slot after the 8 x 7 movement tables (RW 0x93894B: (count * 7 + kind + 0x15E1) * 0x14). Only the zone update fills it
+	// (RW 0x93A530's last pass, and RW 0x938E42 -> 0x938DBF in a full rebuild): two adjacent zones join when their descriptors (RW 0x937AFB) agree on the
+	// layer (bits 3 .. 8, mask 0x1F8) and both types are CLEAR (0) or OBSTACLE (4). No movement, no profile filter. The union is RW 0x938B3B's (the
+	// highest id is the root)
+	if (zone >= m_zones.size() || zone == UNINITIALIZED_ZONE)
+	{
+		return 0; // as getEffectiveZone (the port keeps zone 0 for "no zone")
+	}
+	const int key = -1; // the movement tables' keys are >= 0
+	auto it = m_tables.find(key);
+	if (it == m_tables.end())
+	{
+		std::vector<zoneStorageType> parent(m_zones.size());
+		std::iota(parent.begin(), parent.end(), (zoneStorageType)0);
+		auto terrainType = [](const ZoneInfo &z) { return z.type == PathfindCell::CELL_CLEAR || z.type == PathfindCell::CELL_OBSTACLE; };
+		for (const auto &pair : m_adjacent)
+		{
+			const ZoneInfo &a = m_zones[pair.first], &b = m_zones[pair.second];
+			if (a.layer != b.layer || !terrainType(a) || !terrainType(b))
+			{
+				continue;
+			}
+			const zoneStorageType ra = findRoot(parent, pair.first), rb = findRoot(parent, pair.second);
+			if (ra != rb)
+			{
+				if (ra < rb) parent[ra] = rb; else parent[rb] = ra;
+			}
+		}
+		for (size_t z = 0; z < parent.size(); ++z)
+		{
+			parent[z] = findRoot(parent, (zoneStorageType)z);
+		}
+		it = m_tables.emplace(key, std::move(parent)).first;
+	}
+	return it->second[zone];
 }
 
 bool PathfindZoneManager::zonesJoin(const PathfindMovement &mv, zoneStorageType a, zoneStorageType b) const

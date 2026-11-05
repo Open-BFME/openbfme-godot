@@ -134,8 +134,8 @@ DENYLIST = {
                     "manual: needs a private BFME1 installation"),
     **dict.fromkeys(scripts("""
         audio_stress backlog3_focus bfme2camp1 buildperf cah_awards_display camp2 campsave1 floating_money_text
-        hero_radius_cursor hudredraw menustyle_native menustyle net_uber netlag1 occlude1 opts4 opts5
-        packed_model_texture pathperf1_render perf3_cull perfclient_views play3 player_house_color player_message_log
+        hero_radius_cursor hudredraw hud_globe_visibility menustyle_native menustyle net_uber netlag1 occlude1 opts4 opts5
+        macos_trackpad packed_model_texture pathperf1_render perf3_cull perfclient_views play3 player_house_color player_message_log
         pose_buffer pose_buffer_cull_query pose_buffer_query_trigger
         renderwait1_teardown road_shading selperf shellfix1 spellbook_reload terrain_lighting uberjoin1 ui4_resize
         controller_main_menu formation_placement mixed_formation_placement online16_fix_bridge p16_ui_dictionary

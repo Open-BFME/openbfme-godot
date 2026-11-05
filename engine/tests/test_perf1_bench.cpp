@@ -576,6 +576,8 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // moves the big battle and the skirmish, and ATKRESET-1 (attack orders end the FiringDuration lock) moves both again; the allied blob keeps #187's vector.
 // Lane GROUP-SPEED re-measured the skirmish on the merged tree (OPENBFME_PERF1_REGEN=1): the group speed cap and leader bands (RW 0x77005F) move it from
 // frame 332; the big battle, the allied blob and the Uber battle keep their vectors.
+// pin: re-measured on the #217 / #214 main: the group speed match still moves the 4-player skirmish from frame 332 (0x544c0108 first,
+// last 0x2b7337e7 -> 0x7ce2b6bb); the other three vectors keep main's values.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

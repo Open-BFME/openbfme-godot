@@ -2780,8 +2780,10 @@ Dictionary AptMenuPlayer::openbfme_page_state() const
 		rd["value"] = row.value;
 		rd["enabled"] = row.enabled;
 		rd["items"] = (int)row.items.size();
-		static const char *const kKinds[] = { "section", "choice", "check", "slider", "text", "entry" };
-		rd["kind"] = kKinds[(int)row.kind]; // lane OPTS-6
+		// lane OPTS-6: every OpenBFMEPageRow::Kind has its name (a page with a button row read past the table: an out-of-bounds read, a crash on Windows)
+		static const char *const kKinds[] = { "section", "choice", "check", "slider", "text", "entry", "button" };
+		static_assert(sizeof(kKinds) / sizeof(kKinds[0]) == (std::size_t)OpenBFMEPageRow::Kind::Button + 1, "a name for every row kind");
+		rd["kind"] = kKinds[(int)row.kind];
 		rd["min"] = row.minValue;
 		rd["max"] = row.maxValue;
 		// lane OPTS-5: the label's text and room, the help line and the value text (the checks measure the label, read the help)
@@ -4026,6 +4028,11 @@ Vector2 AptMenuPlayer::get_stage_size() const
 
 void AptMenuPlayer::clearCanvas()
 {
+	if (m->nativeHook)
+	{
+		m->nativeHook->beginCanvas();
+		m->nativeHook->endCanvas(); // no retained placeholder uses the hook's offscreen resources now
+	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!rs)
 	{
@@ -4212,6 +4219,10 @@ void AptMenuPlayer::render(bool force)
 		plan = AptCanvasPlanRedraw(m->list, segments, m->drawnList, drawn);
 		sameShape = !plan.full;
 	}
+	if (m->nativeHook)
+	{
+		m->nativeHook->beginCanvas();
+	}
 	const bool unchanged = sameShape && segments.size() == m->segments.size() &&
 		std::all_of(plan.same.begin(), plan.same.end(), [](bool same) { return same; });
 	if (unchanged)
@@ -4248,6 +4259,10 @@ void AptMenuPlayer::render(bool force)
 		all.old.assign(m->segments.size(), -1);
 		all.same.assign(m->segments.size(), false);
 		countLevels(all);
+	}
+	if (m->nativeHook)
+	{
+		m->nativeHook->endCanvas();
 	}
 	std::uint64_t t3 = time->get_ticks_usec();
 	m->listUs += t1 - t0;

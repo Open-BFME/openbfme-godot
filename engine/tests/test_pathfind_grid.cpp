@@ -455,7 +455,7 @@ TEST_CASE("pathfind stops: what a build and a search report is registered, every
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &inside, &partial);
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &far, &partial);
 	const std::vector<std::string> all = Pathfinder::allStops();
-	REQUIRE(all.size() == 26); // S-4840's vertical ramp plane (review of #159) joined the 25
+	REQUIRE(all.size() == 28); // S-4840's vertical ramp plane (review of #159) joined the 25; lane WALLFOOT-1: S-164's ground type filter and the wall flag's drawable queries
 	std::set<std::string> registered(all.begin(), all.end());
 	CHECK(registered.size() == all.size());
 	std::set<int> rows;
