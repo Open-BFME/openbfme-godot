@@ -14,7 +14,9 @@
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Module/GateModules.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/SkirmishAIEditionRules.h"
@@ -57,7 +59,8 @@ constexpr float kAttackedAtMergeSq = 360000.0f;  // RW 0xC16784
 struct Kinds
 {
 	int unattackable, immobile, structure, ship, canAttack, hero, support, dozer, expansionPad, notAutoAcquirable, rebuildHole, economyStructure, linkedToFlag,
-		baseSite, ignoresSelectAll, dozerFactory, walkOnTopOfWall, defensiveWall, wallUpgrade, ignoreForVictory, wallGate, baseFoundation, wallHub, wallSegment;
+		baseSite, ignoresSelectAll, dozerFactory, walkOnTopOfWall, defensiveWall, wallUpgrade, ignoreForVictory, wallGate, baseFoundation, wallHub, wallSegment,
+		blockingGate;
 };
 
 const Kinds &kinds()
@@ -68,7 +71,7 @@ const Kinds &kinds()
 		KindOfTokens::indexOf("ECONOMY_STRUCTURE"), KindOfTokens::indexOf("LINKED_TO_FLAG"), KindOfTokens::indexOf("BASE_SITE"),
 		KindOfTokens::indexOf("IGNORES_SELECT_ALL"), KindOfTokens::indexOf("DOZER_FACTORY"), KindOfTokens::indexOf("WALK_ON_TOP_OF_WALL"),
 		KindOfTokens::indexOf("DEFENSIVE_WALL"), KindOfTokens::indexOf("WALL_UPGRADE"), KindOfTokens::indexOf("IGNORE_FOR_VICTORY"), KindOfTokens::indexOf("WALL_GATE"),
-		KindOfTokens::indexOf("BASE_FOUNDATION"), KindOfTokens::indexOf("WALL_HUB"), KindOfTokens::indexOf("WALL_SEGMENT") };
+		KindOfTokens::indexOf("BASE_FOUNDATION"), KindOfTokens::indexOf("WALL_HUB"), KindOfTokens::indexOf("WALL_SEGMENT"), KindOfTokens::indexOf("BLOCKING_GATE") };
 	return k;
 }
 
@@ -1915,9 +1918,326 @@ void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, 
 	endAnyTactic(logic, ai, b, tac, owner, true);
 }
 
+// ---- lane RAI-TL: FarmKillSquad's farm and production target choice (RW 0x9BBA51 / 0x9BB5E4) ------------------------------------------------
+// RW 0x9BB2A7 (Coord3D::length RW 0x403111): the 3D distance, the sum (x*x + y*y) + z*z in float and the correctly rounded sqrt of its double
+float distance3d(const Coord3D &a, const Coord3D &b)
+{
+	return (float)SimMath::length3d(SimMath::subf32(a.x, b.x), SimMath::subf32(a.y, b.y), SimMath::subf32(a.z, b.z));
+}
+
+// RW 0x9BB2EA: the distance from p to the infinite line through a and b (not a clamped segment): t = ((b - a) . (p - a)) / |b - a|^2, the
+// projection a + t * (b - a), and the 3D distance from p to it. The dot sums z + y first, then x (RW 0x9BB338 .. 0x9BB350).
+float lineDistance3d(const Coord3D &p, const Coord3D &a, const Coord3D &b)
+{
+	const float dx = SimMath::subf32(b.x, a.x), dy = SimMath::subf32(b.y, a.y), dz = SimMath::subf32(b.z, a.z);
+	const float px = SimMath::subf32(p.x, a.x), py = SimMath::subf32(p.y, a.y), pz = SimMath::subf32(p.z, a.z);
+	const float dot = SimMath::addf32(SimMath::addf32(SimMath::mulf32(pz, dz), SimMath::mulf32(py, dy)), SimMath::mulf32(px, dx));
+	const float len = distance3d(a, b);
+	const float lenSq = SimMath::mulf32(len, len);
+	const float t = SimMath::divf32(dot, lenSq);
+	const Coord3D q{ SimMath::addf32(a.x, SimMath::mulf32(dx, t)), SimMath::addf32(a.y, SimMath::mulf32(dy, t)), SimMath::addf32(a.z, SimMath::mulf32(dz, t)) };
+	return distance3d(p, q);
+}
+
+// RW 0x9BB578: the squad's object (+ 0x5C; this port never stores one) or the first living CAN_ATTACK member of team 0
+Object *farmFinder(GameLogic &logic, const AITactic &tac)
+{
+	if (tac.teams.empty())
+	{
+		return nullptr;
+	}
+	const int canAttack = kinds().canAttack;
+	for (ObjectID id : tac.teams[0].members)
+	{
+		Object *o = logic.findObjectByID(id);
+		if (alive(o) && is(*o, canAttack))
+		{
+			return o;
+		}
+	}
+	return nullptr;
+}
+
+// RW 0x9B58BF: the first DOZER_FACTORY of the enemy's structure list (record + 8 -> + 4); neither the status nor a dead flag is read
+Object *findEnemyFortress(GameLogic &logic, int enemyIndex)
+{
+	const int dozerFactory = kinds().dozerFactory;
+	for (ObjectID id : AITacticalAI::recordOf(logic, enemyIndex).structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (o && is(*o, dozerFactory))
+		{
+			return o;
+		}
+	}
+	return nullptr;
+}
+
+// The candidate filter both selectors share (RW 0x9BB6FB .. 0x9BB7AC / 0x9BBB68 .. 0x9BBBC0): a linked-to-flag, destroyed or dead object is skipped.
+// RW 0x9BB5E4 adds two more: a BLOCKING_GATE whose GateOpenAndCloseBehavior is open (vslot 0x18), and a WALL_SEGMENT that cannot attack.
+bool farmChoiceCandidate(const Object *o, bool production)
+{
+	if (!o || is(*o, kinds().linkedToFlag) || o->isDestroyed() || o->isEffectivelyDead())
+	{
+		return false;
+	}
+	if (production)
+	{
+		if (is(*o, kinds().blockingGate))
+		{
+			const GateOpenAndCloseBehavior *gate = GateOpenAndCloseBehavior::findGate(*o);
+			if (gate && gate->isOpen())
+			{
+				return false;
+			}
+		}
+		if (is(*o, kinds().wallSegment) && !is(*o, kinds().canAttack))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// The weighted choice both selectors share (RW 0x9BB918 .. 0x9BB9C9 / 0x9BB8E0 .. 0x9BB996): an empty map answers null; a draw of 0 among 0 .. 3
+// draws 0 .. total and returns the first key whose cumulative weight passes it, else (and for any other first draw) the highest weight.
+// Equal weights keep the first inserted object and still add to the total (std::map::insert, RW 0x77532D).
+Object *weighedChoice(GameLogic &logic, std::map<int, Object *> &choices, std::uint32_t total, int firstLine, int drawLine)
+{
+	if (choices.empty())
+	{
+		return nullptr;
+	}
+	if (logic.random().getValue(0, 3, kFarmKillFile, firstLine) == 0)
+	{
+		const std::uint32_t draw = (std::uint32_t)logic.random().getValue(0, (int)total, kFarmKillFile, drawLine);
+		std::uint32_t cumulative = 0;
+		for (const auto &choice : choices)
+		{
+			cumulative += (std::uint32_t)choice.first;
+			if (draw < cumulative)
+			{
+				return choice.second;
+			}
+		}
+	}
+	return (--choices.end())->second;
+}
+
+// RW 0x9BBA51: the farm target among the enemy's economy list (record + 0xC -> + 4). Without a fortress the first branch draws up to three ids and
+// returns the last object even when it is invalid (RW 0x9BBE37); with one, every candidate is scored and the weighted choice runs.
+Object *selectFarmTarget(GameLogic &logic, const AITactic &tac, int enemyIndex)
+{
+	Player *enemy = playerOf(logic, enemyIndex);
+	if (!enemy)
+	{
+		return nullptr;
+	}
+	const AIStatCollector &record = AITacticalAI::recordOf(logic, enemyIndex);
+	if (tac.teams.empty())
+	{
+		return nullptr;
+	}
+	Coord3D centre{ 0.0f, 0.0f, 0.0f };
+	teamCentre(logic, tac.teams[0], centre);
+	std::vector<ObjectID> ids = record.economy();
+	Object *fortress = findEnemyFortress(logic, enemyIndex);
+	if (!fortress)
+	{
+		// RW 0x9BBDC3 .. 0x9BBE43: no reachability test in this branch
+		if (ids.empty())
+		{
+			return nullptr;
+		}
+		Object *result = nullptr;
+		for (int attempt = 0; attempt < 3; ++attempt)
+		{
+			const int i = logic.random().getValue(0, (int)ids.size() - 1, kFarmKillFile, 0x21D);
+			result = logic.findObjectByID(ids[(size_t)i]);
+			if (farmChoiceCandidate(result, false))
+			{
+				break;
+			}
+		}
+		return result;
+	}
+	const Coord3D base = *fortress->getPosition();
+	const float distance = distance3d(centre, base);
+	const Coord3D direction{ SimMath::subf32(base.x, centre.x), SimMath::subf32(base.y, centre.y), SimMath::subf32(base.z, centre.z) };
+	const int baseline = SimMath::truncToInt32(distance < 5000.0f ? 5000.0f : distance); // RW 0xC8A1D8
+	Object *finder = farmFinder(logic, tac);
+	AIWorld *world = logic.aiWorld();
+	AIUpdateInterface *unit = finder ? finder->getAIUpdateInterface() : nullptr;
+	std::map<int, Object *> choices;
+	std::uint32_t total = 0;
+	for (ObjectID id : ids)
+	{
+		Object *farm = logic.findObjectByID(id);
+		if (!farmChoiceCandidate(farm, false))
+		{
+			continue;
+		}
+		if (!unit || !world)
+		{
+			continue; // RW 0x6F5F65 answers no without a unit AI / locomotor set
+		}
+		const PathfindLocomotorInfo loco = unit->locomotorInfo();
+		if (!world->pathfinder().pathToObject(unit->adapter(), loco, *finder->getPosition(), world->adapterFor(*farm)))
+		{
+			continue;
+		}
+		const Coord3D *p = farm->getPosition();
+		const float toBase = distance3d(*p, base);
+		if (!(toBase > 275.0f)) // RW 0xC8A1D0
+		{
+			continue;
+		}
+		const float toTeam = distance3d(*p, centre);
+		const float dot = SimMath::addf32(
+			SimMath::addf32(SimMath::mulf32(SimMath::subf32(p->z, centre.z), direction.z), SimMath::mulf32(SimMath::subf32(p->y, centre.y), direction.y)),
+			SimMath::mulf32(SimMath::subf32(p->x, centre.x), direction.x));
+		float attribute = 1.0f;
+		farm->attributeModifierProduct(ATTRIBUTE_PRODUCTION, nullptr, true, attribute); // RW 0x68C82D
+		const float factor = attribute > 2.0f ? SimMath::mulf32(attribute, 0.5f) : 1.0f; // RW 0xBD889C / 0xBD869C
+		const float projection = SimMath::divf32(dot, SimMath::mulf32(distance, distance));
+		if (!(projection < 1.0f) && lineDistance3d(*p, centre, base) < 275.0f)
+		{
+			continue;
+		}
+		float score = SimMath::subf32(SimMath::addf32((float)baseline, toBase), toTeam);
+		score = SimMath::mulf32(score, factor);
+		score = SimMath::mulf32(score, 0.01f); // RW 0xBE5600
+		int weight = SimMath::truncToInt32(score);
+		if (weight < 5)
+		{
+			weight = 5;
+		}
+		if (weight > 0)
+		{
+			choices.insert(std::make_pair(weight, farm));
+			total += (std::uint32_t)weight;
+		}
+	}
+	return weighedChoice(logic, choices, total, 0x203, 0x20A);
+}
+
+// RW 0x9BB5E4: the production target among the enemy's structure list (record + 8 -> + 4); the same score and weighted choice as the farm one.
+Object *selectProductionTarget(GameLogic &logic, const AITactic &tac, int enemyIndex)
+{
+	Player *enemy = playerOf(logic, enemyIndex);
+	if (!enemy)
+	{
+		return nullptr;
+	}
+	const AIStatCollector &record = AITacticalAI::recordOf(logic, enemyIndex);
+	if (tac.teams.empty())
+	{
+		return nullptr;
+	}
+	Coord3D centre{ 0.0f, 0.0f, 0.0f };
+	teamCentre(logic, tac.teams[0], centre);
+	std::vector<ObjectID> ids = record.structures();
+	Object *fortress = findEnemyFortress(logic, enemyIndex);
+	if (!fortress)
+	{
+		// RW 0x9BB9CC .. 0x9BBA4C: the same three-draw branch as the farm selector (line 0x1A0), without the two extra filters
+		if (ids.empty())
+		{
+			return nullptr;
+		}
+		Object *result = nullptr;
+		for (int attempt = 0; attempt < 3; ++attempt)
+		{
+			const int i = logic.random().getValue(0, (int)ids.size() - 1, kFarmKillFile, 0x1A0);
+			result = logic.findObjectByID(ids[(size_t)i]);
+			if (farmChoiceCandidate(result, false))
+			{
+				break;
+			}
+		}
+		return result;
+	}
+	const Coord3D base = *fortress->getPosition();
+	const float distance = distance3d(centre, base);
+	const Coord3D direction{ SimMath::subf32(base.x, centre.x), SimMath::subf32(base.y, centre.y), SimMath::subf32(base.z, centre.z) };
+	const int baseline = SimMath::truncToInt32(distance < 5000.0f ? 5000.0f : distance);
+	Object *finder = farmFinder(logic, tac);
+	AIWorld *world = logic.aiWorld();
+	AIUpdateInterface *unit = finder ? finder->getAIUpdateInterface() : nullptr;
+	std::map<int, Object *> choices;
+	std::uint32_t total = 0;
+	for (ObjectID id : ids)
+	{
+		Object *structure = logic.findObjectByID(id);
+		if (!farmChoiceCandidate(structure, true))
+		{
+			continue;
+		}
+		if (!unit || !world)
+		{
+			continue;
+		}
+		const PathfindLocomotorInfo loco = unit->locomotorInfo();
+		if (!world->pathfinder().pathToObject(unit->adapter(), loco, *finder->getPosition(), world->adapterFor(*structure)))
+		{
+			continue;
+		}
+		const Coord3D *p = structure->getPosition();
+		const float toBase = distance3d(*p, base);
+		if (!(toBase > 275.0f))
+		{
+			continue;
+		}
+		const float toTeam = distance3d(*p, centre);
+		const float dot = SimMath::addf32(
+			SimMath::addf32(SimMath::mulf32(SimMath::subf32(p->z, centre.z), direction.z), SimMath::mulf32(SimMath::subf32(p->y, centre.y), direction.y)),
+			SimMath::mulf32(SimMath::subf32(p->x, centre.x), direction.x));
+		float attribute = 1.0f;
+		structure->attributeModifierProduct(ATTRIBUTE_PRODUCTION, nullptr, true, attribute);
+		const float factor = attribute > 2.0f ? SimMath::mulf32(attribute, 0.5f) : 1.0f;
+		const float projection = SimMath::divf32(dot, SimMath::mulf32(distance, distance));
+		if (!(projection < 1.0f) && lineDistance3d(*p, centre, base) < 275.0f)
+		{
+			continue;
+		}
+		float score = SimMath::subf32(SimMath::addf32((float)baseline, toBase), toTeam);
+		score = SimMath::mulf32(score, factor);
+		score = SimMath::mulf32(score, 0.01f);
+		int weight = SimMath::truncToInt32(score);
+		if (weight < 5)
+		{
+			weight = 5;
+		}
+		if (weight > 0)
+		{
+			choices.insert(std::make_pair(weight, structure));
+			total += (std::uint32_t)weight;
+		}
+	}
+	return weighedChoice(logic, choices, total, 0x186, 0x18D);
+}
+
+// RW 0x9BBF4C .. 0x9BBF9E: the farm choice first; the production choice replaces it one time in five (GetGameLogicRandomValue(0, 4), line 0x8B), and
+// without a farm only the production choice can answer. Null: the tactic ends.
+Object *chooseFarmKillTarget(GameLogic &logic, const AITactic &tac, int enemy)
+{
+	Object *target = selectFarmTarget(logic, tac, enemy);
+	if (target)
+	{
+		if (logic.random().getValue(0, 4, kFarmKillFile, 0x8B) == 0)
+		{
+			if (Object *production = selectProductionTarget(logic, tac, enemy))
+			{
+				target = production;
+			}
+		}
+		return target;
+	}
+	return selectProductionTarget(logic, tac, enemy);
+}
+
 void updateFarmKill(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
-	static const int canAttack = KindOfTokens::indexOf("CAN_ATTACK"), economy = KindOfTokens::indexOf("ECONOMY_STRUCTURE");
 	// RW 0x9BB27E: no team with index 0 (RW 0x8F128B(0)) ends it (0, 0)
 	if (tac.teams.empty())
 	{
@@ -1926,55 +2246,37 @@ void updateFarmKill(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AIT
 	}
 	if (tac.squadTarget != INVALID_ID && !allTeamsDone(ai, tac))
 	{
-		// RW 0x9BBE8B ..: a gone, DESTROYED or dead target is dropped; a BLOCKING_GATE target is also dropped when its GateOpenAndCloseBehavior (vslot 0x18) says so (the
-		// gate behaviour is not ported: a gate is kept, S-893)
+		// RW 0x9BBE8B .. 0x9BBF18: a gone, DESTROYED or dead target is dropped; a BLOCKING_GATE target is also dropped when its GateOpenAndCloseBehavior
+		// (vslot 0x18, isOpen RW 0x8DC9AB) says it is open
 		const Object *t = logic.findObjectByID(tac.squadTarget);
 		if (!alive(t))
 		{
 			tac.squadTarget = INVALID_ID;
 		}
+		else if (is(*t, kinds().blockingGate))
+		{
+			const GateOpenAndCloseBehavior *gate = GateOpenAndCloseBehavior::findGate(*t);
+			if (gate && gate->isOpen())
+			{
+				tac.squadTarget = INVALID_ID;
+			}
+		}
 		return;
 	}
 	// RW 0x9BB578: the squad's object (+ 0x5C) or the first living CAN_ATTACK member of team 0
-	const Object *unit = nullptr;
-	for (ObjectID id : tac.teams[0].members)
-	{
-		const Object *o = logic.findObjectByID(id);
-		if (alive(o) && is(*o, canAttack))
-		{
-			unit = o;
-			break;
-		}
-	}
+	const Object *unit = farmFinder(logic, tac);
 	const int enemy = enemyOfGroup(ai);
 	if (!unit || enemy < 0)
 	{
 		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9BBFB8 / 0x9BBFBA: (1, 0)
 		return;
 	}
-	// RW 0x9BBF4C ..: the farm choice RW 0x9BBA51 (a weighted pick among the enemy's farms by path and distance, draws AIFarmKillSquad.cpp 0x203 / 0x20A / 0x21D),
-	// GetGameLogicRandomValue(0, 4) (line 0x8B) between it and RW 0x9BB5E4 (draws 0x186 / 0x18D / 0x1A0) is NOT ported (S-893). Stand-in: the enemy's living
-	// ECONOMY_STRUCTURE nearest to the squad's unit (2D, object list order on ties); no draw
-	const Player *them = playerOf(logic, enemy);
-	Object *target = nullptr;
-	float best = 0.0f;
-	for (Object *o = logic.getFirstObject(); o && them; o = o->getNextObject())
-	{
-		if (o->getControllingPlayer() != them || !alive(o) || !is(*o, economy))
-		{
-			continue;
-		}
-		const float dx = SimMath::subf32(o->getPosition()->x, unit->getPosition()->x), dy = SimMath::subf32(o->getPosition()->y, unit->getPosition()->y);
-		const float d = SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
-		if (!target || d < best)
-		{
-			target = o;
-			best = d;
-		}
-	}
+	// RW 0x9BBF4C .. 0x9BBF9E: the farm choice RW 0x9BBA51; a farm takes it unless GetGameLogicRandomValue(0, 4) (AIFarmKillSquad.cpp line 0x8B) draws 0,
+	// when RW 0x9BB5E4 (the production choice) may replace it; without a farm only the production choice can answer
+	Object *target = chooseFarmKillTarget(logic, tac, enemy);
 	if (!target)
 	{
-		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9BBF94: (1, 0)
+		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9BBFB4 .. 0x9BBFBD: (1, 0)
 		return;
 	}
 	tac.squadTarget = target->getID();
@@ -2670,6 +2972,21 @@ bool AITacticalAI::offensiveAppliesForTest(GameLogic &logic, const AISkirmishPla
 		}
 	}
 	throw std::logic_error(std::string("AITacticalAI: no offensive prototype named ") + kind);
+}
+
+Object *AITacticalAI::farmTargetForTest(GameLogic &logic, const AITactic &tac, int enemy)
+{
+	return selectFarmTarget(logic, tac, enemy);
+}
+
+Object *AITacticalAI::productionTargetForTest(GameLogic &logic, const AITactic &tac, int enemy)
+{
+	return selectProductionTarget(logic, tac, enemy);
+}
+
+Object *AITacticalAI::farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy)
+{
+	return chooseFarmKillTarget(logic, tac, enemy);
 }
 
 const AIStatCollector &AITacticalAI::recordOf(GameLogic &logic, int playerIndex)

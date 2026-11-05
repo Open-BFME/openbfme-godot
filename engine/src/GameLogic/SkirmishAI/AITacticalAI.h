@@ -95,6 +95,7 @@
 class GameLogic;
 class AIStatCollector;
 struct AIBuildRequest;
+class Object;
 class Player;
 class StateHasher;
 struct AISkirmishPlayer;
@@ -231,4 +232,9 @@ void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget 
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
 // test hook (lane RAI-SIEGE): an offensive prototype's vslot 1 applicability by its name, RW 0x9EF9AF's common path-to-object check included
 bool offensiveAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const char *kind, const AITarget &target);
+// test hooks (lane RAI-TL): FarmKillSquad's farm / production target choice (RW 0x9BBA51 / 0x9BB5E4), and the whole choice with its line-0x8B draw;
+// `enemy` is a player index
+Object *farmTargetForTest(GameLogic &logic, const AITactic &tac, int enemy);
+Object *productionTargetForTest(GameLogic &logic, const AITactic &tac, int enemy);
+Object *farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy);
 } // namespace AITacticalAI
