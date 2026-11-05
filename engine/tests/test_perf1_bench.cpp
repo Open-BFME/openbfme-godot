@@ -574,6 +574,8 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // the mover hash covers the path's node chain, so the big battle and the allied blob differ from frame 0, the skirmish from frame 2.
 // Merge queue q37 re-measured once on the merged tree (OPENBFME_PERF1_REGEN=1), compared at each merge point: #187 on top of WARG-1's FindClosestPath
 // moves the big battle and the skirmish, and ATKRESET-1 (attack orders end the FiringDuration lock) moves both again; the allied blob keeps #187's vector.
+// pin: FarmKillSquad chooses its raid target with the RotWK selector (RW 0x9BBA51 / 0x9BB5E4): its new draws move the 4-player skirmish from frame 601
+// on (last hash df1b71f2 -> eb9a6b77), re-recorded with OPENBFME_PERF1_REGEN=1 on this tree; the big battle and the allied blob are unchanged.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,
