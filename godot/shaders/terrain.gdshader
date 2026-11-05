@@ -16,6 +16,7 @@ render_mode ambient_light_disabled, specular_disabled, cull_back;
 
 varying vec2 v_sage_xy; // lane SELPERF-1: the world point of the pixel (SAGE x, y) for the selection's merge decals
 varying vec4 v_weather_vcol; // lane WEATHER-1: the vertex colour relit with the cloud effect's darkening (weather_relit)
+varying vec3 v_shadow_over; // lane HERORING-1: the alpha decals' premultiplied colour, added over the shadowed ground in light() (gamma)
 
 void vertex() {
 	vec3 lts;
@@ -45,6 +46,10 @@ void fragment() {
 	ALBEDO = terrain_output(UV, weather_relit ? v_weather_vcol : COLOR);
 	vec3 ground = ALBEDO;
 	float ground_weight = 1.0;
+	// lane HERORING-1: the ground the object shadows darken (gamma) and the alpha decals' colour over it: light() draws them over the shadowed ground,
+	// as the merge decals and the radius cursor stay above the shadows (docs/OBJECT_SHADOWS.md)
+	vec3 shadow_gamma = shadow_to_gamma(ground);
+	vec3 shadow_over = vec3(0.0);
 	// lane SELPERF-1: the selection's merge decals over the terrain, as RotWK's stencil passes draw them after it (selection_decals.gdshaderinc)
 	// lane HERORING-1: the alpha decals (a hero's ring) first, blended in retail's gamma space (the terrain's output decoded back, shadow_to_gamma is
 	// retail_output's inverse), then the merge decals over them (RotWK draws the merge list after the alpha list, RW 0x50DE6C after RW 0x50D9EB .. 0x50DA6A); the terrain's colour saturated first, as D3D9's
@@ -52,8 +57,10 @@ void fragment() {
 	vec4 sela = sel_alpha_at(vec3(v_sage_xy, 0.0), false);
 	if (sela.a > 0.0) {
 		vec3 gamma = clamp(output_gamma == 1.0 ? ALBEDO : shadow_to_gamma(ALBEDO), 0.0, 1.0);
-		ALBEDO = retail_output(gamma * (1.0 - sela.a) + sela.rgb);
-		ground_weight *= 1.0 - sela.a;
+		shadow_gamma = gamma * (1.0 - sela.a);
+		shadow_over = sela.rgb;
+		ALBEDO = retail_output(shadow_gamma + shadow_over);
+		ground = ALBEDO; // the ring's pixel is the ground the shadow split takes apart (light() puts the ring back over the shadowed share)
 	}
 	vec4 sel = sel_merge(v_sage_xy);
 	if (sel.a > 0.0) {
@@ -69,12 +76,14 @@ void fragment() {
 		ALBEDO += retail_output(cursor.rgb) * cursor.a;
 	}
 	// Keep selection and placement overlays above shadows, as before.
-	v_shadow_color = shadow_to_gamma(ground);
+	v_shadow_color = shadow_gamma;
+	v_shadow_over = shadow_over;
 	float enabled = debug_mode == 0 ? w3d_shadow.w : 0.0;
 	EMISSION = ALBEDO - ground * ground_weight * enabled;
 	ALBEDO = vec3(ground_weight * enabled);
 }
 
 void light() {
-	if (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += object_shadow_light(ATTENUATION);
+	// object_shadow_light with the alpha decals over the shadowed ground (lane HERORING-1: the split's two shares in one colour space)
+	if (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += shadow_to_linear(v_shadow_color * mix(w3d_shadow.rgb, vec3(1.0), ATTENUATION) + v_shadow_over);
 }
