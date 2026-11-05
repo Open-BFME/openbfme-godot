@@ -585,9 +585,7 @@ TEST_CASE("skirmish ai base: an AI past the Rush phase rebuilds its lost fortres
 		// (RW 0x9B51E9's "MenFortress" whatever the side: Mordor's request never passes canMakeUnit). Engine pins: Evendim, seed 1234
 		// merge queue q29 (AIEXPAND-1 after nine simulation items, measured on the merged tree, a CI host): no expansion fortress of the Men stands within this
 		// run (it ends 400 frames after the Rush phase) any more; the expansion itself is test_aiexpand1_expansion.cpp's
-		// The attack aim's half-turn success rule moves the AI's play: the Men computer's SimpleExpansion builds its expansion fortress in this control run
-		// again (away from the base, no rebuild task); it is AIEXPAND-1's own fortress, so at most one is allowed here
-		CHECK(control.elsewhere.size() <= 1u); // tolerance: at most the one expansion fortress AIEXPAND-1 builds
+		CHECK(control.elsewhere.size() == 0u);
 		// the fortress falls 300 frames before the Rush phase ends (killing its DOZER_FACTORY, the citadel, takes the whole castle)
 		const FortressRun lost = runFortressGame(*s, faction, true);
 		CHECK_FALSE(lost.defeated);            // the AI still has structures: it plays on

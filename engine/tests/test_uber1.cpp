@@ -143,9 +143,6 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // and the mover hash covers the path's node chain, from frame 0.
 // Merge queue q37 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: #187 on top of WARG-1 and #182 moves it,
 // and ATKRESET-1 (attack orders end the FiringDuration lock) moves it again.
-// Merge of main be3856ac (2026-11-04) re-measured it on the merged tree (OPENBFME_UBER1_REGEN=1), from frame 1.
-// pin: the attack aim's half-turn success rule (AIAttackAimState, RW 0x75232F / 0x5E372D) ends an aim a unit can already make, so the Uber battle's
-// units act sooner and the vector moves from frame 1.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

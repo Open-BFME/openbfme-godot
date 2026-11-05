@@ -454,11 +454,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			// horde: 18 of 20 killed (1350 health) with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree)
 			// Merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the scene's creeps and computer opponent; measured once on
 			// the merged tree and at each merge point, #172 keeps it): Haldir's 4 strikes on his own take nothing from the horde (the creep first, as in q28)
-			// Merge of main be3856ac (2026-11-04; the attack aim's half-turn success rule, RW 0x75232F / RW 0x5E372D, ends his aim sooner): Haldir's strikes on
-			// his own take 70 health from the horde; every other hero's result is unchanged
 			if (hero == "ElvenHaldir")
 			{
-				CHECK(own.lost == 70.0f);
+				// Merge queue q41 (DECOMPFIX-1104B's aim and give-way rules move the scene's creeps and computer opponent; measured once on the merged tree and at
+				// its merge point, NECRODIE-1 keeps it): Haldir's 3 strikes on his own take 50 from the horde, none killed
+				CHECK(own.lost == 50.0f);
 			}
 			else
 			{
@@ -624,11 +624,13 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 	// nothing in a crush run), 17 killed, nearest 1.8156, with CRUSHER_LEVEL -1 3 swings taking 1350 from 4.09441; the Mouth of Sauron 5 shots, 5 killed
 	// (150 in the crush run), 3 swings (75 / 225), nearest 8.67229, with CRUSHER_LEVEL -1 4 swings taking 300 from 47.8748. The duels, the hit sizes and the
 	// blocking are unchanged. Engine pins, not retail values.
-	// Merge of main be3856ac (2026-11-04; the attack aim's half-turn success rule, RW 0x75232F / RW 0x5E372D, ends an aim sooner): the Witch-king's result is
-	// unchanged; the Mouth of Sauron 9 shots, 9 killed (225 in the crush run), 6 swings (75 / 450), nearest 8.27471, with CRUSHER_LEVEL -1 5 swings taking
-	// 375 from 47.8748. The duels, the hit sizes and the blocking are unchanged. Engine pins, not retail values.
-	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 3u, 17u, 0.0f, { 800.0f, 112.0f }, 3u, 525.0f, 1275.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 3u, 1350.0f, 4.09441f, 1.8156f },
-			 Case{ "FactionMordor", "MordorMouthOfSauron", 9u, 9u, 225.0f, { 640.0f, 320.0f }, 6u, 75.0f, 450.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 5u, 375.0f, 47.8748f, 8.27471f } })
+	// Merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range, so the heroes strike
+	// and the scene's units stop elsewhere; measured once on the merged tree and at its merge point, NECRODIE-1 keeps them): the Witch-king 4 shots, all swings
+	// of his mace (the first took 525, 1500 outside the run, nothing in a crush run), 20 killed, nearest 9.03435, with CRUSHER_LEVEL -1 4 swings taking 1500
+	// from 9.12575; the Mouth of Sauron 10 shots, 10 killed (225 in the crush run), 7 swings (75 / 525), nearest 8.26407, with CRUSHER_LEVEL -1 5 swings
+	// taking 375 from 47.8748. The duels, the hit sizes and the blocking are unchanged. Engine pins, not retail values.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 20u, 0.0f, { 800.0f, 112.0f }, 4u, 525.0f, 1500.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 4u, 1500.0f, 9.12575f, 9.03435f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 10u, 10u, 225.0f, { 640.0f, 320.0f }, 7u, 75.0f, 525.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 5u, 375.0f, 47.8748f, 8.26407f } })
 	{
 		INFO(std::string(c.hero));
 		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);

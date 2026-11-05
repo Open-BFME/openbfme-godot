@@ -132,14 +132,14 @@ bool FindPosition::tryPosition(GameLogic &logic, const Coord3D &center, float di
 	}
 	if (const Object *source = options.sourceToPathToDest)
 	{
-		// RW 0x6F5BB0 (S-1280: the port's quick path test with the source's locomotor)
+		// RW 0x6854D6: RW 0x6F5BB0(source, its position, pos, set), Pathfinder::quickDoesPathExist (lane QPATH-1) with the source's locomotor set
 		AIUpdateInterface *ai = source->getAIUpdateInterface();
 		if (!ai)
 		{
 			throw std::logic_error("TryPosition (RW 0x6F5BB0): the path source has no AI to path with");
 		}
 		const PathfindLocomotorInfo loco = ai->locomotorInfo();
-		if (!logic.aiWorld()->pathfinder().clientSafeQuickDoesPathExist(loco, source->getPosition(), &pos, &ai->adapter())) // lane WALL-2: with the unit, its portals
+		if (!logic.aiWorld()->pathfinder().quickDoesPathExist(ai->adapter(), source->getPosition(), &pos, &loco))
 		{
 			return false;
 		}
@@ -195,6 +195,5 @@ bool FindPosition::findPositionAround(GameLogic &logic, const Coord3D &center, c
 std::vector<std::string> FindPosition::stopLines()
 {
 	return { "[S-1280] TerrainLogic::FindPositionAround / TryPosition (RW 0x68592D / 0x6851F1) are ported; INFERENCE: the overlap test uses the template's shape list "
-	         "(retail: the object's own GeometryInfo, S-1020), the path test of a sourceToPathToDest is the port's clientSafeQuickDoesPathExist with the source's "
-	         "locomotor (RW 0x6F5BB0), fcos / fsin are the deterministic sinCosDet (S-167); FPF_USE_HIGHEST_LAYER (lane SUMMON-1) takes the ground layer as the spot's layer (RW 0x680B70: S-161)" };
+	         "(retail: the object's own GeometryInfo, S-1020), fcos / fsin are the deterministic sinCosDet (S-167); FPF_USE_HIGHEST_LAYER (lane SUMMON-1) takes the ground layer as the spot's layer (RW 0x680B70: S-161)" };
 }

@@ -617,10 +617,11 @@ TEST_CASE("wall2 raised: a piece added at the walkway's left end (its layer rebu
 	delete p;
 }
 
-// review of #161: a walkway piece removed where no other raised piece is near rebuilds its layer, which resets the wall connect cells, and re-stamps
-// only the ramps it meets (none): the live layer has no connect cells left, though the ramps on the map would make them. The snapshot (walls version 2)
-// saves them as they are, as RW's layer xfer (RW 0x7683B8) does, so the loaded game searches as the saved one
-TEST_CASE("wall2 raised: a walkway's connect cells lost to destroyed pieces stay lost through a save and load; the next search is the same")
+// review of #161: a walkway piece removed where no other raised piece is near rebuilds its layer, which resets the wall connect cells. Lane WALL-5: every
+// ramp is stamped again after a change, newest first (RotWK's RW 0x935BFF stamps every Bridge), so the joints make the connect cells again (until then
+// only the ramps the removal met were, none here, and the layer kept no connect cell). The snapshot (walls version 2) saves them as they are, as RW's
+// layer xfer (RW 0x7683B8) does, so the loaded game has the same and searches as the saved one
+TEST_CASE("wall2 raised: a walkway's connect cells, made again from every ramp after pieces are destroyed, come back through a save and load; the next search is the same")
 {
 	GatehouseWorld saved, loaded;
 	// two pieces on the walkway's layer (60, each within 10 of the last), going off its side: 53 at y 115 .. 155, 54 at y 160 .. 195, whose cells (y 14 ..
@@ -649,10 +650,12 @@ TEST_CASE("wall2 raised: a walkway's connect cells lost to destroyed pieces stay
 		saved.zones();
 	}
 	REQUIRE(saved.pf->raisedLayerInUse(LAYER_TOP));
-	for (int k = 0; k < 2; ++k)
-	{
-		REQUIRE(saved.pf->raisedConnectCell(LAYER_TOP, k).x == -1); // the case
-	}
+	// the two ramps' joints on the walkway (cells 38 and 21 of row 10), in the stamp order (newest first). The old case (a layer left with no connect cell,
+	// saved as it is) no longer arises: every ramp is stamped again after a change
+	REQUIRE(saved.pf->raisedConnectCell(LAYER_TOP, 0).x == 38);
+	REQUIRE(saved.pf->raisedConnectCell(LAYER_TOP, 0).y == 10);
+	REQUIRE(saved.pf->raisedConnectCell(LAYER_TOP, 1).x == 21);
+	REQUIRE(saved.pf->raisedConnectCell(LAYER_TOP, 1).y == 10);
 	std::vector<std::uint8_t> bytes;
 	{
 		AIXfer::StringTableScope strings;
@@ -668,8 +671,8 @@ TEST_CASE("wall2 raised: a walkway's connect cells lost to destroyed pieces stay
 	for (int k = 0; k < 2; ++k)
 	{
 		INFO("connect cell " << k);
-		CHECK(loaded.pf->raisedConnectCell(LAYER_TOP, k).x == -1); // made again from the ramps (version 1), they were the joints' cells
-		CHECK(loaded.pf->raisedConnectCell(LAYER_TOP, k).y == -1);
+		CHECK(loaded.pf->raisedConnectCell(LAYER_TOP, k).x == saved.pf->raisedConnectCell(LAYER_TOP, k).x);
+		CHECK(loaded.pf->raisedConnectCell(LAYER_TOP, k).y == saved.pf->raisedConnectCell(LAYER_TOP, k).y);
 	}
 	// the next search, from the left wall top to the right one, node for node
 	std::vector<std::pair<Coord3D, PathfindLayerEnum>> nodes[2];

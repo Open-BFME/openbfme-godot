@@ -919,8 +919,9 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q38 (measured once on the merged tree and at each merge point; #172 keeps them): LOCODIST-1's retail locomotor distance to the goal
 	// (RW 0x664127) keeps seed 2 open at 9000 with a new table and ends seed 7 with Mordor's defeat (start position 1) at 8995; seed 1234 stays open at
 	// 9000. Engine pins, not retail values.
-	// Merge of main be3856ac (2026-11-04; the attack aim's half-turn success rule, RW 0x75232F / RW 0x5E372D, moves the games): seed 2 stays open at 9000
-	// with a new table, seed 7 stays open at 9000 as well (8995 before), seed 1234 stays open at 9000. Engine pins, not retail values.
+	// Merge queue q41 (measured once on the merged tree and at its merge point; NECRODIE-1 keeps them): DECOMPFIX-1104B (AIMAIM-1's aim, RW 0x75232F,
+	// with BUMP-1's give-way rules and STARTRANGE-1's start range) keeps seed 2 open at 9000 with a new table and seed 7 open at 9000 (Mordor's defeat at
+	// 8995 before); seed 1234 stays open at 9000. Engine pins, not retail values.
 	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
@@ -932,8 +933,7 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 		MESSAGE("progress, seed " << g.seed << ":\n" << run.progress);
 		// lane MODCOMPAT-MOD1 (PickupStuffUpdate, measured at its commit): the seed 7 game launches three (its AI hordes' crate scans and every horde's update in
 		// the sleepy update vectors move it)
-		// merge of main be3856ac (2026-11-04): the attack aim's half-turn success rule leaves seed 7 open, so it launches two, as the other seeds do
-		CHECK(run.attacks[0] + run.attacks[1] >= 2u); // tolerance: a floor of launches per game (DECOMP-1 r3: seed 2 launches two; seed 7 two on this tree; lane WARG-1: seed 1234 two before its end at 7803)
+		CHECK(run.attacks[0] + run.attacks[1] >= (g.seed == 7u ? 3u : 2u)); // tolerance: a floor of launches per game (DECOMP-1 r3: seed 2 launches two; seed 7 three; lane WARG-1: seed 1234 two before its end at 7803)
 		// SMOOTH-2 (the pending position cleared every frame, RW 0x62618F, feeds the crush warning's velocity RW 0x68EF58) ends seed 1234 with Men's defeat:
 		// 5275 on SMOOTH-2's base, 5186 on the merged tree (with GARRISON-1 / STEALTH-2 / END-2); seeds 2 and 7 stay open. Lane SMOOTH-3 (RotWK's member hub near arm RW 0x874F09, the angle goal RW 0x5E98D6 turning at the locomotor's rate): seed 1234 is open at 9000 as well. Engine pins, not retail values.
 		// SCRIPT-2 (merged with AUDIO-3 / GARRISON-2 / SMOOTH-3): the AI libraries' scripts now evaluate the conditions they use (PLAYER_HAS_OBJECT_COMPARISON ...
@@ -968,18 +968,18 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// merge queue q37 (measured once on the merged tree; ATKRESET-1 moves it): a new table from the first window on; the game ends with the Men's defeat at 6858
 			// merge queue q38 (measured once on the merged tree and at each merge point; LOCODIST-1 moves it, #172 keeps it): a new table from the first window on; the game
 			// stays open at 9000
-			// merge of main be3856ac (2026-11-04; the attack aim's half-turn success rule, RW 0x75232F / RW 0x5E372D, moves the game): a new table from the first
+			// merge queue q41 (measured once on the merged tree and at its merge point; DECOMPFIX-1104B moves it, NECRODIE-1 keeps it): a new table from the first
 			// window on; the game stays open at 9000
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 76u/7s destroyed 18u/1s] [1 attacks 1 built 91u/8s destroyed 39u/2s]\n"
-		"frame 2000: [0 attacks 2 built 214u/9s destroyed 146u/1s] [1 attacks 1 built 190u/10s destroyed 149u/4s]\n"
-		"frame 3000: [0 attacks 3 built 285u/11s destroyed 203u/2s] [1 attacks 2 built 314u/13s destroyed 245u/5s]\n"
-		"frame 4000: [0 attacks 3 built 388u/13s destroyed 233u/4s] [1 attacks 2 built 349u/16s destroyed 341u/11s]\n"
-		"frame 5000: [0 attacks 3 built 390u/15s destroyed 265u/4s] [1 attacks 2 built 366u/19s destroyed 350u/13s]\n"
-		"frame 6000: [0 attacks 3 built 391u/16s destroyed 268u/4s] [1 attacks 2 built 380u/24s destroyed 389u/15s]\n"
-		"frame 7000: [0 attacks 3 built 392u/17s destroyed 288u/4s] [1 attacks 2 built 397u/24s destroyed 390u/16s]\n"
-		"frame 8000: [0 attacks 3 built 392u/17s destroyed 288u/4s] [1 attacks 2 built 399u/27s destroyed 390u/16s]\n"
-		"frame 9000: [0 attacks 3 built 392u/17s destroyed 288u/4s] [1 attacks 2 built 400u/27s destroyed 393u/16s]\n");
+		"frame 1000: [0 attacks 0 built 72u/7s destroyed 36u/1s] [1 attacks 1 built 92u/7s destroyed 29u/1s]\n"
+		"frame 2000: [0 attacks 1 built 264u/10s destroyed 150u/2s] [1 attacks 1 built 201u/10s destroyed 135u/4s]\n"
+		"frame 3000: [0 attacks 1 built 382u/13s destroyed 237u/3s] [1 attacks 2 built 332u/11s destroyed 266u/5s]\n"
+		"frame 4000: [0 attacks 3 built 619u/14s destroyed 318u/3s] [1 attacks 3 built 424u/14s destroyed 519u/6s]\n"
+		"frame 5000: [0 attacks 5 built 822u/15s destroyed 453u/3s] [1 attacks 4 built 553u/16s destroyed 754u/7s]\n"
+		"frame 6000: [0 attacks 6 built 1010u/19s destroyed 584u/3s] [1 attacks 5 built 660u/19s destroyed 951u/7s]\n"
+		"frame 7000: [0 attacks 8 built 1167u/22s destroyed 666u/3s] [1 attacks 6 built 749u/23s destroyed 1094u/7s]\n"
+		"frame 8000: [0 attacks 12 built 1381u/23s destroyed 767u/3s] [1 attacks 6 built 843u/27s destroyed 1284u/7s]\n"
+		"frame 9000: [0 attacks 12 built 1549u/25s destroyed 849u/3s] [1 attacks 8 built 941u/27s destroyed 1472u/7s]\n");
 		}
 	}
 }
