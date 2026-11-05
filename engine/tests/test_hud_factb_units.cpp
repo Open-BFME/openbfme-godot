@@ -2990,7 +2990,9 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	// line passes; S-921 keeps the explanation (no effect of its own is asserted)
 	// merge queue q38 (measured once on the merged tree and at each merge point): LOCODIST-1's retail locomotor distance to the goal (RW 0x664127) moves the
 	// fight so the Devastation scene misses the 500 heuristic again (1600 lost with the cast, 1604 without): a KNOWN line once more (S-921)
-	r.check({ { "spell SpellBookDevastation", "S-921 (SPELL-3)" }, { "spell SpellBookIndustry", "S-1997" },
+	// lane DECOMPFIX-1104B (AIMAIM-1's aim and RW 0x70B9E0's facing in relAngle, measured on the lane's tree): the Devastation scene meets the 500 heuristic
+	// again (664 more lost with the cast), so its line passes; S-921 keeps the explanation (no effect of its own is asserted). Dragon Strike stays KNOWN (S-1997)
+	r.check({ { "spell SpellBookIndustry", "S-1997" },
 		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" }, { "spell SpellBookIsengardTaint", "S-1997" } });
 }
 

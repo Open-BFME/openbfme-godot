@@ -14,8 +14,12 @@
 //     Claimable" formatted with floor(fraction * 100 + 0.5) (WWMath::Float_To_Long), its colour (and the decal's) 0xFF00FF00 above 0.75, 0xFFFFFF00 from 0.5,
 //     0xFFFF0000 from 0.25, else 0xFF000000; the text sits centred on the pointer's x, its height + 20 above the pointer, clamped into the view (updateStringPos);
 //   * the placement decal (createPotentialClaimDecal, RW twin of BFME2 0x4E65CF): PlaceTerrainResourceClaimantDecal as a shadow of type 0x2000, 2 * Radius on
-//     both axes, at the ghost drawable's position, opacity 0x80, the colour above; the projected decal of type 0x2000 (RW 0x50C23A) snaps its centre down to the
+//     both axes, at the ghost drawable's position, setColor 0xFFFF8000 then the colour above and setOpacity 0x80 (neither reaches the decal: below); the
+//     projected decal of type 0x2000 (RW 0x50C23A) snaps its centre down to the
 //     claim grid (x - fmodf(x, cell), RW 0x492AC8) and gives every terrain vertex the alpha RW 0x75C1A9 (BFME2 rva0035A61F) computes for the local player;
+//     lane PLACEDECAL-1: from the decal's diffuse 0xFFFFFFFF (RW 0x50D264): setColor / setOpacity (RW 0x73232B / 0x73228B) leave a type 0x2000 decal's
+//     diffuse (their masks 0x1420 / 0x10840), so the colour and the opacity 0x80 never reach it; it is drawn on the terrain only (+ 0x64, RW 0x50C792) with
+//     flushDecals' blended shader (RW 0x509A1F: ShaderClass 0x1198B3, texture x diffuse);
 //   * RW 0x75B561: the disc of RW 0x75BA1D's arithmetic (centre floor((x - origin) / cell + 0.5), radius ceil(radius / cell)), each cell counted and tested
 //     with RW 0x75C02D (BFME2 isCellClaimable) as (cell, HighPriority ? 0x7FFFF43 : 0, 0, force false, the local player); the share claimed / total (0 for none);
 //   * RW 0x75C02D with a player >= 0 and no force: the player's cell shroud at the cell's centre ((i + 0.5) * cell + origin) SHROUDED -> no; FREE yes,
@@ -37,6 +41,7 @@
 #pragma once
 
 #include "Common/INIDataTypes.h"
+#include "GameClient/SelectionDecals.h"
 #include "GameLogic/ObjectTypes.h"
 
 #include <cstdint>
@@ -78,16 +83,16 @@ struct ResourcePlacementFeedback
 	float fraction = 0.0f;
 	int percent = 0;
 	std::u16string text;             ///< GUI:TerrainResourcePercentageClaimable formatted with the percent
-	std::uint32_t color = 0;         ///< the band colour, ARGB (the text and the decal)
+	std::uint32_t color = 0;         ///< the band colour, ARGB (the text's; RotWK sets it on the decal too, where it has no effect: lane PLACEDECAL-1)
 	int pointerX = 0, pointerY = 0;  ///< the pointer in window pixels (updateStringPos: the text's centre x, its bottom 20 pixels above)
 	Coord3D decalCenter{ 0.0f, 0.0f, 0.0f }; ///< the ghost's position snapped down to the claim grid (type 0x2000)
 	float decalSize = 0.0f;          ///< 2 * Radius
-	int decalOpacity = 0x80;
-	// the alpha (0 .. 255) of every map vertex the decal covers: maskW x maskH vertices from (maskVx0, maskVy0), 10 units apart (RW 0x75C1A9 with the decal's
-	// opacity as the colour's alpha)
+	int decalOpacity = 0x80;         ///< the setOpacity RotWK calls (RW 0x73228B), which leaves a type 0x2000 decal as it is (lane PLACEDECAL-1)
+	// the alpha (0 .. 255) of every map vertex the decal covers: maskW x maskH vertices from (maskVx0, maskVy0), 10 units apart (RW 0x75C1A9 from the decal's
+	// diffuse 0xFFFFFFFF: lane PLACEDECAL-1)
 	int maskVx0 = 0, maskVy0 = 0, maskW = 0, maskH = 0;
 	std::vector<std::uint8_t> maskAlpha;
-	unsigned version = 0;            ///< bumped when the mask or the colour changed (the device rebuilds its texture then)
+	unsigned version = 0;            ///< bumped when the mask or the colour changed
 };
 
 class TerrainResourceFeedback
@@ -99,6 +104,9 @@ public:
 	void updatePlacement(const GameLogic &logic, int localPlayer, const ThingTemplate *pending, const Coord3D &ghost, const std::u16string &format,
 		int pointerX = 0, int pointerY = 0);
 	const std::vector<ResourceClaimDecal> &claimedDecals() const { return m_claimed; }
+	// lane PLACEDECAL-1: the placement claim decal and the claims, in RotWK's draw order, as the selection decals' alpha decals (the shaders' grid,
+	// BuildMergeDecalGrid)
+	void appendDecals(const std::string &claimTexture, const std::string &placeTexture, std::vector<SelectionDecal> &out) const;
 	const ResourcePlacementFeedback &placement() const { return m_placement; }
 	static bool hasClientBehavior(const ThingTemplate &tt);
 	static std::string stopLine(); ///< "[S-5030] ..." (the HUD's stops)

@@ -184,6 +184,8 @@ public:
 	void xfer(class Xfer &x) override;
 
 private:
+	StateReturnType aim(bool firstCall); // RW 0x75232F (lane AIMAIM-1)
+
 	AIAttackState *m_att;
 	unsigned m_approachId;
 	bool m_setLocomotor = false;
