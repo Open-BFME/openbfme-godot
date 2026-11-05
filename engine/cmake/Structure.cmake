@@ -5,10 +5,13 @@ set(OPENBFME_STRUCTURE_SOURCES
     src/GameLogic/StructureStops.cpp
     src/GameLogic/VictoryConditions.cpp
     src/GameLogic/Object/ObjectGeometry.cpp
-    src/GameLogic/Module/StructureModules.cpp)
+    src/GameLogic/Module/StructureModules.cpp
+    src/GameLogic/Module/StructureToppleUpdate.cpp)
 
 set(OPENBFME_STRUCTURE_TESTS
     tests/test_structure_bodies.cpp
+    tests/test_topple1.cpp
+    tests/test_topple1_retail.cpp
     tests/test_structure_victory.cpp
     tests/test_structure_hash.cpp
     tests/test_structure_review.cpp

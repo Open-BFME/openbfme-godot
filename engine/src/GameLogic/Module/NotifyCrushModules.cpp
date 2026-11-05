@@ -33,7 +33,8 @@ const char *const kMuxFile = "NotifyTargetsOfImminentProbableCrushingMux.cpp"; /
 const char *const kStop =
 	"[S-1029] crush warning: NotifyTargetsOfImminentProbableCrushingUpdate / HordeNotifyTargetsOfImminentProbableCrushingUpdate (RW 0x8D3225 / 0x8D3167 -> mux RW "
 	"0x8D2B21: the draw, the velocity box, the region query with crushPolicy, the shape overlap RW 0xAD2CE0 and alive, BRACE / CHEER requests) are ported; "
-	"INFERENCE: crushPolicy is PHYS-1's reading of RW 0x69519A (its line test RW 0x6F5BB0 passes), the x87 sin / cos are SimMath::sinCosDet, the horde's member map "
+	"INFERENCE: crushPolicy is PHYS-1's reading of RW 0x69519A (its quick path test RW 0x695159 -> 0x6F5BB0 is not asked: taken as passing; the gate before it, "
+	"RW 0x664485 / 0x5E2DF4, is not read), the x87 sin / cos are SimMath::sinCosDet, the horde's member map "
 	"+ 0x170 is not ported";
 
 #if defined(__GNUC__)

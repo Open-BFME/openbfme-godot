@@ -2,7 +2,7 @@
 // Derived from Command & Conquer Generals Zero Hour, (c) 2001-2003 Electronic Arts Inc., GPL-3.0.
 //
 // RepairSpecialPower (lane MOD-4, QA-1 U2): the builders' repair power (the Rohan peasants' SpecialRepairStructure). A BFME class; ZH has none. Open-BFME-2
-// names it (RepairSpecialPowerAtObject.cpp, not byte-matched here); ported from the RotWK binary (caveat S-001).
+// names it (RepairSpecialPower.cpp; BFME2 0x8C875E has no RotWK counterpart); ported from the RotWK binary (caveat S-001).
 //
 // TARGET FACTS (each read from the disassembly):
 //   * create RW 0x6524CD (size 0x34), constructor RW 0x8CCADB over SpecialPowerModule's RW 0x8973EE: module vtable RW 0xC75358, behaviour interface RW

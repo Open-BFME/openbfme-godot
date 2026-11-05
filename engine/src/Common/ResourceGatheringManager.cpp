@@ -255,14 +255,13 @@ bool ResourceGatheringManager::findHarvestPosition(Object *worker, Coord3D &out)
 	}
 	const float radius = sup->getWarehouseScanDistance();
 	AIWorld *world = logic.aiWorld();
-	// the collector RW 0x67D5A0: the worker's quick path (RW 0x6F5BB0 with its locomotor) and ground line (RW 0x6EE5E3) to the tree
+	// the collector RW 0x67D5A0: the worker's quick path (RW 0x67D5F2 -> 0x6F5BB0, no set: its AI's; lane QPATH-1) and ground line (RW 0x6EE5E3) to the tree
 	auto reachable = [&](const TerrainTrees::Record &t) {
 		if (!world || !world->mapReady())
 		{
 			return true; // a logic without a pathfinder map (unit tests): nothing to test against
 		}
-		const PathfindLocomotorInfo loco = ai->locomotorInfo();
-		return world->pathfinder().clientSafeQuickDoesPathExist(loco, worker->getPosition(), &t.position) &&
+		return world->pathfinder().quickDoesPathExist(ai->adapter(), worker->getPosition(), &t.position, nullptr) &&
 		       world->pathfinder().isGroundLineClear(*worker->getPosition(), t.position);
 	};
 	const TerrainTrees::Record *tree = logic.trees().findClosestTree(centre, radius, false, 2, reachable); // RW 0x67F55F -> 0x67E323(.., 0, 2)

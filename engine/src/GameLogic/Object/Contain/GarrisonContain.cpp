@@ -58,7 +58,11 @@ bool quickPathToContainer(Pathfinder &pf, const PathfindLocomotorInfo &loco, con
 	}
 	if (goal->getType() != PathfindCell::CELL_OBSTACLE)
 	{
-		return pf.clientSafeQuickDoesPathExist(loco, &from, &to, unit);
+		if (!unit)
+		{
+			throw std::logic_error("GarrisonContain: RW 0x6F6070 (QuickDoesPathExist) without the unit");
+		}
+		return pf.quickDoesPathExist(*unit, &from, &to, nullptr); // RW 0x6F6070 (lane QPATH-1; both callers of RW 0x6F5F65 give it no set)
 	}
 	const PathfindMovement mv = Pathfinder::makeMovement(unit, loco);
 	const PathfindCell *fromCell = pf.getClippedCell(LAYER_GROUND, &from);
@@ -364,7 +368,7 @@ bool GarrisonContain::isValidContainerFor(const Object &obj, bool checkCapacity,
 	// ---- HordeGarrisonContain RW 0x87D0E0 ----
 	if (checkPath)
 	{
-		// RW 0x87D114 .. 0x87D153: a path from the object to the EntryOffset (RW 0x6F5BB0), else to the container itself (RW 0x6F5F65, lane GARRISON-2)
+		// RW 0x87D114 .. 0x87D153: a path from the object to the EntryOffset (RW 0x87D134 -> 0x6F5BB0, no set given: the AI's; lane QPATH-1), else to the container itself (RW 0x6F5F65, lane GARRISON-2)
 		const AIUpdateInterface *ai = obj.getAIUpdateInterface();
 		if (ai)
 		{
@@ -372,7 +376,7 @@ bool GarrisonContain::isValidContainerFor(const Object &obj, bool checkCapacity,
 			getEntryOffset(to);
 			Coord3D from = *obj.getPosition();
 			Pathfinder &pf = ai->world().pathfinder();
-			if (!pf.clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &to, &ai->adapter()) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject(), &ai->adapter()))
+			if (!pf.quickDoesPathExist(ai->adapter(), &from, &to, nullptr) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject(), &ai->adapter()))
 			{
 				return false;
 			}
@@ -1471,7 +1475,8 @@ bool CitadelSlaughterHordeContain::isValidContainerFor(const Object &obj, bool, 
 			getEntryOffset(entry);
 			const Coord3D from = *obj.getPosition();
 			Pathfinder &pf = ai->world().pathfinder();
-			if (!pf.clientSafeQuickDoesPathExist(ai->locomotorInfo(), &from, &entry, &ai->adapter()) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject(), &ai->adapter()))
+			// RotWK's citadel test RW 0x88397F asks RW 0x6F5BB0 (RW 0x8839FF) with no set (the AI's), then RW 0x6F5F65 (lane QPATH-1)
+			if (!pf.quickDoesPathExist(ai->adapter(), &from, &entry, nullptr) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject(), &ai->adapter()))
 				return false;
 		}
 	return true;
