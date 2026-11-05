@@ -1,0 +1,16 @@
+{
+  "files": [
+    {
+      "path": "REVIEW.md",
+      "description": "The shared review rules for human and bot reviewers: what to report and what not to report."
+    },
+    {
+      "path": "AGENTS.md",
+      "description": "Contributor rules for game editions: state the editions, cite both sources, never fall back silently."
+    },
+    {
+      "path": "docs/PLAN.md",
+      "description": "Standing engineering rules and acceptance gates, including the commit gate and the registered stops."
+    }
+  ]
+}

@@ -302,6 +302,44 @@ void TerrainResourceFeedback::updateSelection(const GameLogic &logic, int localP
 	}
 }
 
+void TerrainResourceFeedback::appendDecals(const std::string &claimTexture, const std::string &placeTexture, std::vector<SelectionDecal> &out) const
+{
+	// lane PLACEDECAL-1: RotWK's addDecal decals (list + 8, RW 0x50BA57), in its draw order (the shadow factory, BFME2 0x10BB11, puts a new decal before
+	// the first one of its texture, else at the head: the newest first): the placement claim decal (RW 0x8EACFC: SHADOW_DECAL_TERRAIN_CLAIM, the diffuse
+	// white, its alpha weighted per vertex; made as the placement starts), then the claims (INFERENCE S-2522: made before the placement started; a claimant
+	// that shows up during it gets its decal then, RotWK draws that one first) (RW 0x8EC81A .. 0x8EC899: SHADOW_ALPHA_DECAL, setColor
+	// 0xFF6464C8, + 0x64 = 1, setOpacity 0x80: the diffuse 0x806464C8), both on the terrain only (+ 0x64)
+	const ResourcePlacementFeedback &p = m_placement;
+	if (p.active && p.maskW > 0 && p.maskH > 0 && p.decalSize > 0.0f)
+	{
+		SelectionDecal d;
+		d.position = p.decalCenter;
+		d.size = p.decalSize;
+		d.texture = placeTexture;
+		d.style = 0x2000u;
+		d.color = 0xFFFFFFFFu;
+		d.terrainOnly = true;
+		d.maskVx0 = p.maskVx0;
+		d.maskVy0 = p.maskVy0;
+		d.maskW = p.maskW;
+		d.maskH = p.maskH;
+		d.maskAlpha = p.maskAlpha;
+		out.push_back(std::move(d));
+	}
+	for (const ResourceClaimDecal &c : m_claimed)
+	{
+		SelectionDecal d;
+		d.object = c.id;
+		d.position = c.position;
+		d.size = c.size;
+		d.texture = claimTexture;
+		d.style = 0x20u;
+		d.color = ((std::uint32_t)c.opacity << 24) | (c.color & 0xFFFFFFu);
+		d.terrainOnly = true;
+		out.push_back(std::move(d));
+	}
+}
+
 void TerrainResourceFeedback::updatePlacement(const GameLogic &logic, int localPlayer, const ThingTemplate *pending, const Coord3D &ghost,
 	const std::u16string &format, int pointerX, int pointerY)
 {
@@ -344,7 +382,9 @@ void TerrainResourceFeedback::updatePlacement(const GameLogic &logic, int localP
 	f.maskW = vx1 - f.maskVx0 + 1;
 	f.maskH = vy1 - f.maskVy0 + 1;
 	f.maskAlpha.resize((size_t)f.maskW * (size_t)f.maskH);
-	const std::uint32_t base = ((std::uint32_t)f.decalOpacity << 24) | (f.color & 0xFFFFFFu);
+	// lane PLACEDECAL-1: the vertices' diffuse before the weight is the decal's +0x28, 0xFFFFFFFF: setColor / setOpacity (RW 0x73232B / 0x73228B) leave it
+	// for type 0x2000 (outside their masks 0x1420 / 0x10840), so neither the band colour nor the opacity 0x80 reach the decal (the band colour is the text's)
+	const std::uint32_t base = 0xFFFFFFFFu;
 	// lane FOGFX-1 (FB-0055): every vertex asks 13 cells around it and neighbouring vertices share them (a farm's decal: about 1000 vertices, 13000
 	// asks of RW 0x75C02D on every render frame); each cell is asked once here and its answer reused (the same arguments give the same answer within
 	// this update: the values are retail's). The cells of vertex v are (v - 2) / 2 .. (v + 2) / 2 (truncating division, monotonic in v)

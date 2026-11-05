@@ -136,7 +136,6 @@ bool positionOf(ScriptEngine &engine, const std::string &name, Coord3D &out, boo
 //   TEAM_CREATE_RADAR_EVENT (RW 0x7C0B61): the team by name (getTeamNamed), only when it has a unit (RW 0x7A07D8: a member that is not dead, not Object + 0x94
 //   bit 0, not a STRUCTURE (KindOf bit 7), not a PROJECTILE (bit 25) and not IGNORE_FOR_VICTORY (bit 148)), at the members' average position (RW 0x7A0ECD).
 // The radar is the client's: the logic records the event (GameLogic::noteRadarEvent), Radar::noteLogicEvents applies it.
-// INFERENCE (stop S-2452): Object + 0x94 bit 0 is not read (isEffectivelyDead stands for both of RW 0x7A07D8's first two tests).
 void radarEventAction(ScriptEngine &engine, const ScriptActionRec &a, const std::string &name)
 {
 	GameLogic &logic = engine.logic();
@@ -170,7 +169,7 @@ void radarEventAction(ScriptEngine &engine, const ScriptActionRec &a, const std:
 		int n = 0;
 		for (const Object *o = team->getFirstMember(); o; o = o->friend_teamNext())
 		{
-			hasUnit = hasUnit || (!o->isEffectivelyDead() && !o->isKindOf(kStructure) && !o->isKindOf(kProjectile) && !o->isKindOf(kIgnoreForVictory));
+			hasUnit = hasUnit || (!o->isEffectivelyDead() && !o->isDestroyed() && !o->isKindOf(kStructure) && !o->isKindOf(kProjectile) && !o->isKindOf(kIgnoreForVictory));
 			// RW 0x7A0ECD: every member, SSE sums in member order, times 1 / n
 			x = SimMath::addf32(x, o->getPosition()->x);
 			y = SimMath::addf32(y, o->getPosition()->y);

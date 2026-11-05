@@ -1,0 +1,57 @@
+# What tests/test_bfme1_fields.cpp found the first time it ran. A file using one of these fields would not load in BFME1. Whether BFME1's own data uses any of
+# them needs a run with the game files (bfme1 isolation retail). The test fails on a rejected field missing here, and on a listed field now accepted, so this
+# list can only shrink unless someone adds to it on purpose.
+#
+# Blocks with no parser in this part of the engine.
+unreached BannerUI
+unreached Campaign
+#
+# Fields BFME1's tables hold and its parsers reject: <block or module> <field>
+AIUpdateInterface AltTurret
+AODHordeContain NarrowPassageScale
+AODHordeContain UpdateWeaponSetFlagsOnHordeToo
+AODHordeContain UsePorcupineBody
+AODHordeContain VeterancyLevels
+AllowBannerSpawnUpgrade FXListUpgrade
+AllowBannerSpawnUpgrade RemovesUpgrades
+CashHackSpecialPower InitiateSoundGroup
+CashHackSpecialPower InitiateSoundGroup2
+CastleMemberBehavior UnderAttackAllyEvaEvent
+CastleMemberBehavior UnderAttackEvaEvent
+CommandButton SetAutoAbilityUnitSound2
+CommandButton SetAutoAbilityUnitSoundGroup
+CommandButton SetAutoAbilityUnitSoundGroup2
+CommandButton UnitSpecificSoundGroup
+CommandButton UnitSpecificSoundGroup2
+CommandButton UnsetAutoAbilityUnitSound2
+CommandButton UnsetAutoAbilityUnitSoundGroup
+CommandButton UnsetAutoAbilityUnitSoundGroup2
+DamageFieldUpdate Weapon
+DeflectSpecialPower GroupInitiateSound
+DeflectSpecialPower GroupInitiateSound2
+FellBeastSwoopPower SpecialWeapon
+FellBeastSwoopPower WhichSpecialWeapon
+GiantBirdSlowDeathBehavior SoundDeathLoop
+GiveUpgradeUpdate GiveUpgradeSound
+LargeGroupBonusUpdate DamageArc
+LargeGroupBonusUpdate DamageFXType
+LevelGrantSpecialPower NumberOfLevels
+RandomSoundSelectorClientBehavior ExcludedUpgrades
+SlowDeathBehavior DeathDecal
+SlowDeathBehavior DecalWhenDead
+SlowDeathBehavior DestructionAltitude
+SlowDeathBehavior EjectRiderIfApplicable
+SlowDeathBehavior RiderSubObjects
+StealthUpdate SpecialObjectFilter
+StealthUpdate VoiceEnterStateMoveToStealthyArea2
+StealthUpdate VoiceMoveToStealthyArea2
+StealthUpdate VoiceMoveToStealthyAreaGroup
+StealthUpdate VoiceMoveToStealthyAreaGroup2
+W3DStreakDraw EndPosition
+W3DStreakDraw StartPosition
+Weapon OverrideVoiceAttack2Sound
+Weapon OverrideVoiceAttackGroup2Sound
+Weapon OverrideVoiceAttackGroupSound
+Weapon OverrideVoiceEnterStateAttack2Sound
+Weapon OverrideVoiceEnterStateAttackGroup2Sound
+Weapon OverrideVoiceEnterStateAttackGroupSound

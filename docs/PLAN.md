@@ -203,6 +203,18 @@ timing measurement), put `// tolerance: <reason>` (GDScript `# tolerance:
 <reason>`) with a non-empty reason on the same line or the line above, so the
 reviewer sees why. Lines already in the tree are never flagged.
 
+## Commit gate: golden pins
+
+A golden hash pin is a file matching `engine/tests/data/**/*.hashes`. When a
+commit adds lines to one, `tools/precommit.py` needs a line the same commit
+adds, in a staged C++ file under `engine/tests/`, that reads `// pin:
+<reason>` with a non-empty reason. The reason says which gameplay change moves
+the hashes. A comment already in the tree does not count, and removing pin
+lines needs none. In a merge a line counts as added only when it is new
+against both parents, so a merge that takes one parent's pin is not flagged.
+Reviewers still judge whether the reason fits the code change (`REVIEW.md`,
+rule 3).
+
 ## Roles
 
 Opus plans and orchestrates, Sonnet implements, Sol 6.1 reviews every lane
