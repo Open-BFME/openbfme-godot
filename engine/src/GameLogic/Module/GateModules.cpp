@@ -168,20 +168,21 @@ GateOpenAndCloseBehavior::~GateOpenAndCloseBehavior()
 	}
 }
 
-// RW 0x89C12F: the closed geometry is the one in the pathfinder's map. Opening / closing: true from 100 - PercentOpenForPathing percent; open: always;
-// closed: while PercentOpenForPathing is below 100 (the percent is 100 in that state)
-bool GateOpenAndCloseBehavior::blocksPathing() const
+// RW 0x89C12F: true while the gate's OPEN (passable) geometry is the one in the pathfinder's map, so the AI walks RW 0x8ED6DC / 0x8ED726 only close a gate
+// whose geometry is currently passable and restore it after the group's AIs. Opening: the open shapes are active from above PercentOpenForPathing percent;
+// open: always; closing: until the percent is above 100 - PercentOpenForPathing; closed: never.
+bool GateOpenAndCloseBehavior::openGeometryInPathfindMap() const
 {
-	const float threshold = (float)(100u - m_data->m_percentOpenForPathing);
 	switch (m_state)
 	{
 		case OPENING:
-		case CLOSING:
-			return !(m_percent < threshold);
+			return m_percent > (float)m_data->m_percentOpenForPathing;
 		case OPEN:
 			return true;
+		case CLOSING:
+			return m_percent <= (float)(100u - m_data->m_percentOpenForPathing);
 		case CLOSED:
-			return 100u > m_data->m_percentOpenForPathing;
+			return false;
 		default:
 			return false;
 	}
@@ -451,12 +452,15 @@ UpdateSleepTime GateOpenAndCloseBehavior::update()
 	}
 	if (obj->isEffectivelyDead())
 	{
+		// RW 0x89CC6B .. 0x89CD59: a non-open gate becomes opening at 100 %, the geometry opens inline with the "already open" early-out (the force 0
+		// call; the object-created open call RW 0x89CB4A with force 1 is not this path), and the module leaves the manager's gate list
 		if (m_state != OPEN)
 		{
 			m_state = OPENING;
 			m_percent = 100.0f;
 		}
-		setGeometry(true, true, true); // RW 0x89CB4A: the open call with the first argument 1
+		setGeometry(true, true, false);
+		obj->logic().skirmishAI().unregisterGate(*this); // RW 0x89CD4D .. 0x89CD59 -> 0x8ED772
 		m_settled = false;
 		return UPDATE_SLEEP_NONE;
 	}

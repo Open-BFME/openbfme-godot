@@ -23,9 +23,9 @@
 //     record in player index order (RW 0x8E3CF3), then every group in creation order (RW 0x8EDDF6).
 //   * group update RW 0x8EDDF6 (only while active): the first COMPUTER member (or any member when MakeAll..., RW 0x8EDACE) — none makes the group
 //     inactive; its AI's brain's shared part (+ 0x164 -> + 0x14) is updated with the number of live AI members (RW 0x8EDA8E: not defeated
-//     (Player + 0x754), and COMPUTER or MakeAll...); the manager's gate list (+ 0xA74) closes every enemy gate that blocks pathing (RW 0x8ED6DC), every AI
-//     of the group, in player index order, gets that shared part and is updated (RW 0x6C7946); the group's tasks (+ 0x18) are updated (RW 0x8EDB2C); the gate
-//     list then reopens those gates (RW 0x8ED726).
+//     (Player + 0x754), and COMPUTER or MakeAll...); the manager's gate list (+ 0xA74) temporarily closes every enemy gate whose OPEN geometry is the one in
+//     the pathfinder's map (RW 0x8ED6DC, the poll RW 0x89C12F), every AI of the group, in player index order, gets that shared part and is updated
+//     (RW 0x6C7946); the group's tasks (+ 0x18) are updated (RW 0x8EDB2C); the gate list then restores those gates' OPEN geometry (RW 0x8ED726).
 //   * AI update RW 0x6C7946: a disabled AI only updates its brain while its group still has more than one live AI member, or exactly one and the AI
 //     has an army; an enabled AI whose player is defeated is shut down (RW 0x6C78D9 / 0x6C7928) and disabled; otherwise RW 0x6C75B5 (when
 //     + 0x178 != -1), RW 0x6C7677, the AIPlayer part RW 0x8F0EB4 (its sub systems at + 0x4, + 0xE4, + 0x38, + 0x90, + 0xC0, + 0x108, + 0x12C -> + 0xC
@@ -166,6 +166,15 @@ public:
 		int playerIndex;          ///< its controlling player at the event (-1: none)
 	};
 	void setEventTrace(std::vector<ObjectEvent> *trace) { m_eventTrace = trace; }
+	// diagnostics only (not game state, not saved or hashed): a sink for the gate walk's results, set by tests. After each walk (RW 0x8ED6DC before the
+	// group's AIs, RW 0x8ED726 after them) one sample per listed gate: the walk, the gate and its geometry state at that moment.
+	struct GateWalkSample
+	{
+		bool before;
+		const GateOpenAndCloseBehavior *gate;
+		int geometryState; ///< GateOpenAndCloseBehavior::GeometryState
+	};
+	void setGateWalkTrace(std::vector<GateWalkSample> *trace) { m_gateWalkTrace = trace; }
 
 	void crc(StateHasher &h) const;
 	// lane SAVE-4c: the obfme:SkirmishAI block (SkirmishAISnapshot.cpp): the groups, every AI's builders and brain, the player info records, the farm site pool
@@ -205,6 +214,7 @@ private:
 	void updateGroup(AISkirmishGroup &g);
 	// RW 0x8ED6DC (before the group's AIs: the enemy gates' CLOSED geometry) / RW 0x8ED726 (after them: OPEN, forced)
 	void updateGates(bool before, Player &player);
+	void traceGateWalk(bool before); // diagnostics only (setGateWalkTrace)
 	void updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g);
 	AISkirmishPlayer *eventAI(const Object &obj);
 	// lane AI5: the AI of a player whatever its state (the record's listeners keep listening after a shutdown); null without one
@@ -223,5 +233,6 @@ private:
 	std::vector<std::string> m_errors;
 	Counters m_counters;
 	std::vector<ObjectEvent> *m_eventTrace = nullptr; ///< diagnostics only (setEventTrace)
+	std::vector<GateWalkSample> *m_gateWalkTrace = nullptr; ///< diagnostics only (setGateWalkTrace)
 	int m_worldHooks = 0; ///< the GameLogic world hook token while a game runs (0: none)
 };
