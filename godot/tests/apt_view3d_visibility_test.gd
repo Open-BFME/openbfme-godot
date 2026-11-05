@@ -2,6 +2,15 @@
 ## Private retail assets; headless supported. Run in an isolated project/user directory.
 extends SceneTree
 
+# A sibling processed after the player and its instancers reveals it in the same frame.
+class LateReveal extends Node:
+	signal revealed
+	var target: CanvasItem
+	func _process(_delta: float) -> void:
+		target.show()
+		set_process(false)
+		revealed.emit()
+
 var failures := 0
 var parent: Node2D
 var player: Node2D
@@ -22,6 +31,19 @@ func check(ok: bool, message: String) -> bool:
 
 func modes(expected: int, selected: Array[SubViewport], message: String) -> void:
 	check(not selected.is_empty() and selected.all(func(v): return v.render_target_update_mode == expected), message)
+
+func matches_apt_pose(inst: Node) -> bool:
+	# Compare the uploaded palette with an explicit reference at the APT clock's exposed frame.
+	# Capture first: evaluating the reference must not repair the result being checked.
+	var actual: PackedFloat32Array = inst.get_instance_palette(0)
+	var name: String = inst.get_model_report(0).get("name", "")
+	var frames: Dictionary = player.get_backdrop_state().model_animation_frames
+	for path in frames:
+		if str(path).to_lower().ends_with("|" + name.to_lower()):
+			inst.set_instance_pose(0, name + "." + name, float(frames[path]))
+			inst.update_now()
+			return actual == inst.get_instance_palette(0)
+	return false
 
 func settle() -> void:
 	for _frame in range(6):
@@ -119,7 +141,6 @@ func run() -> void:
 	var inst: Node
 	var clip := ""
 	var pose_a := PackedFloat32Array()
-	var pose_b := PackedFloat32Array()
 	var frame_b := 0.0
 	for view in active:
 		for child in view.get_children():
@@ -141,7 +162,6 @@ func run() -> void:
 					inst = child
 					clip = candidate_clip
 					pose_a = first
-					pose_b = other
 					frame_b = frame
 					break
 			if inst != null:
@@ -171,8 +191,8 @@ func run() -> void:
 		check(inst.get_global_time() == stopped, "hidden Playing=false preserves clock")
 		inst.set_playing(true)
 		parent.show()
+		check(matches_apt_pose(inst), "reveal immediately applies current APT pose instead of hand-set pending pose")
 		await settle()
-		check(inst.get_instance_palette(0) == pose_b, "reveal applies pending pose normally")
 		Engine.time_scale = 1.0
 		control.free()
 
@@ -199,12 +219,32 @@ func run() -> void:
 	check(palettes.keys().all(func(node): return node.get_instance_palette(0) == palettes[node]), "hidden player advance does not upload bone palettes")
 	check(cameras.keys().all(func(camera): return camera.transform == cameras[camera]), "hidden player advance does not move cameras")
 	modes(SubViewport.UPDATE_DISABLED, views, "ordinary hidden processing leaves every viewport disabled")
-	parent.show()
+	# One more hidden frame runs the player and child instancers first; a later sibling reveals.
+	var late := LateReveal.new()
+	late.target = parent
+	late.process_priority = 100
+	player.auto_process = true
+	root.add_child(late)
+	await late.revealed
+	player.auto_process = false
+	# This runs inside the sibling callback, before another player process or rendered frame.
+	var reveal_frames: Dictionary = player.get_backdrop_state().model_animation_frames
+	var reveal_instances := palettes.keys().filter(func(node):
+		var name: String = node.get_model_report(0).get("name", "")
+		return reveal_frames.keys().any(func(path): return str(path).to_lower().ends_with("|" + name.to_lower())))
+	check(not reveal_instances.is_empty() and reveal_instances.all(func(node): return matches_apt_pose(node)), "late sibling reveal uploads current APT poses before first rendered frame")
+	late.queue_free()
 	player.auto_process = true
 	await settle()
 	player.auto_process = false
 	# tolerance: at least one real animated clip must upload its progressed pose after reveal.
 	check(palettes.keys().any(func(node): return node.get_instance_palette(0) != palettes[node]), "visible ordinary player processing resumes pose uploads")
+	# Ordinary processing advances retail movies: some old background clips may have left the canvas.
+	# Snapshot current membership for subsequent retained redraw/reentry checks on every display backend.
+	active.clear()
+	for view in views:
+		if view.render_target_update_mode == SubViewport.UPDATE_ALWAYS:
+			active.append(view)
 	modes(SubViewport.UPDATE_ALWAYS, active, "ordinary player reveal resumes retained viewports")
 
 	# Change one retained native clip without removing its level: the real partial-canvas path.

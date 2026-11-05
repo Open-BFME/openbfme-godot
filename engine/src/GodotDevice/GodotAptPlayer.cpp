@@ -1480,6 +1480,12 @@ void AptMenuPlayer::_notification(int what)
 	if (what == NOTIFICATION_VISIBILITY_CHANGED || what == NOTIFICATION_ENTER_TREE || what == NOTIFICATION_EXIT_TREE)
 	{
 		m->view3d.syncVisibility(what == NOTIFICATION_EXIT_TREE);
+		if (what != NOTIFICATION_EXIT_TREE && is_inside_tree() && is_visible_in_tree())
+		{
+			// Reveal can happen after this frame's player/instancer process callbacks. Populate the
+			// retained scene now so its first enabled viewport frame uses the current APT pose.
+			m->view3d.advance();
+		}
 	}
 }
 
