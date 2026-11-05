@@ -72,6 +72,7 @@ Every pull request runs `.github/workflows/pr.yml` on GitHub's own runners, with
 - actionlint and zizmor on the workflows;
 - a Linux build of the engine and its unit tests without game files;
 - a Windows build (the release's llvm-mingw cross build), whose unit tests and asset-free Godot scripts then run on real Windows;
+- a Windows build with MSVC through `build.bat`, followed by the unit tests without game files;
 - a macOS arm64 build of the game library and unit test executable, followed by the unit tests without game files;
 - the Python tests that need no game files.
 
