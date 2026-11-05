@@ -98,8 +98,10 @@ retail-dependent skips are not evidence that the retail scenarios passed.
   and an undecodable castle-floor JPEG reproduce with the pre-change extension
   on this same local installation; BFME1 is not reported as fully passing.
 - Python inventory/runner/stop-count checks: 13 passed.
-- Simulation flags/classification audit is blocked by upstream's existing
-  unclassified MacOSTrackpad.mm; no exemption was added by this change.
+- On the initial upstream base, simulation flags/classification was blocked
+  by the then-unclassified MacOSTrackpad.mm. After merging upstream main
+  5704c3c081, flag/link/classification checks pass (AST skipped). No audit
+  exemption was added by this change.
 
 ### Binary follow-up for named reveal review findings
 
@@ -108,3 +110,13 @@ clean BFME2 repeats the named apply call and re-resolves the selector on undo.
 The available modified RotWK image corroborates the control flow, with S-001
 still applying. Regression cases pin repeated-name and alliance-change behavior;
 no gameplay change or idempotence/original-mask enhancement was introduced.
+
+### Upstream integration validation
+
+Merged upstream main 5704c3c081 into the contribution branch. The only textual
+conflict was README's generated stop count; regeneration gives 838 open stops.
+The Release ARM64 extension/test runner rebuilt successfully. Mounted-data
+script/shroud/save/command tests passed all 164 cases and 36,215 assertions.
+The Godot porter-construction and reveal/marker checks both passed headless.
+Python inventory/runner/stop-count checks passed all 13 cases. Simulation
+flag/link/classification audit passed with AST checking explicitly skipped.

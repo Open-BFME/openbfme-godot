@@ -11,7 +11,8 @@
 //     RequiredStatus (+0x14) object status masks (default empty), DamageAmountRequired (+0x24, default -1.0), MinKillerAngle (+0x28, default 1.0) and MaxKillerAngle (+0x2C,
 //     default -1.0), both in radians (RW 0x42EE15). isDieApplicable (RW 0x8D29A9, args the object and the damage info): false unless bit (deathType - 1) of DeathTypes is set (the
 //     shift count is the x86's, modulo 32); false unless the object's status has every RequiredStatus bit and none of ExemptStatus; with DamageAmountRequired >= 0 false when
-//     it is larger than the damage amount; when MaxKillerAngle > MinKillerAngle the killer's bearing must fall inside the window (not ported: reported, S-257).
+//     it is larger than the damage amount; when MaxKillerAngle > MinKillerAngle the killer
+//     (the source) must exist and its bearing must fall inside the window (RW 0x8D2A0F .. 0x8D2AAC; lane SIEGEFALL-1, see the definition).
 //   * RefundDie (module size 0x1C, data 0x44): table RW 0xC06998: UpgradeRequired (+0x38, none), RefundPercent (+0x3C, parsePercentToReal, 0.0), BuildingRequired (+0x40,
 //     ObjectFilter, unset). onDie (RW 0x888519): the die mux test; the object is neither under construction (status 2) nor sold (status 19); its owner exists, has completed
 //     UpgradeRequired (when set) and owns an object satisfying BuildingRequired (when valid, completedOnly = false); refund = ceil(object + 0x33C * RefundPercent) (x87 at
@@ -42,8 +43,8 @@ struct DieMuxData
 	float m_damageAmountRequired = -1.0f;
 	float m_minKillerAngle = 1.0f;
 	float m_maxKillerAngle = -1.0f;
-	// RW 0x8D29A9 (see above); false + `*angleNotPorted` set when the angle window would have been consulted
-	bool isDieApplicable(const Object &obj, const DieModuleInterface::Event &event, bool *angleNotPorted = nullptr) const;
+	// RW 0x8D29A9 (see above), the killer window included
+	bool isDieApplicable(const Object &obj, const DieModuleInterface::Event &event) const;
 };
 
 class RefundDieModuleData : public ModuleData

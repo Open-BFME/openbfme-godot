@@ -180,7 +180,8 @@ TEST_CASE("siege1 gate: #64's catapult made inside its MinimumAttackRange of Hel
 	// lane MODCOMPAT-MOD1 (GeometryUpgrade: every object reads its own GeometryInfo, RW Object + 0xA8, for its combat circle and sphere (+ 0xB8 / + 0xBC), partition cells and pathfinder footprint, and the gate's open / closed switch runs the full refresh RW 0x68B244; measured at its commit, a CI host):
 	// first hit 49 -> 48, the gate's death 287 -> 252
 	CHECK(r.firstHit == 53);
-	CHECK(r.deathFrame == 427); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 393 -> 223
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the Mordor catapult from 120: death 427 -> 393
+	CHECK(r.deathFrame == 393); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 393 -> 223
 }
 
 TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's gate break it; the arch takes no stone meant for the gate")
@@ -216,7 +217,8 @@ TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's ga
 	// its two stones a throw (until q31): both met HelmsDeepGatehouseLeft at frame 102 and, at frame 341, the front of the arch (HelmsDeepGatehouseCenter) 51 before
 	// its centre at z 174, below the lintel (the stones fell short; not the lintel reaching down, which the pair rule removed)
 	CHECK(dc.contactsWhileStanding == 0);
-	CHECK(dc.deathFrame == 301);
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the Dwarven catapult's death 301 -> 267
+	CHECK(dc.deathFrame == 267);
 	const GateRun b = pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBallista", 400.0f, 600);
 	// merge queue q27: one contact while the gate stands (was 0) and death 311 -> 389, LOS-1 (the terrain line of sight with the wall layers' heights;
 	// measured at each merge point)

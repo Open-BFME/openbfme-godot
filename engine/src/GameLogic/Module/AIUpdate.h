@@ -457,6 +457,7 @@ public:
 	Coord3D machineGoalPosition() const override;
 	bool movingBackwards() const override;
 	bool setModelCondition(const char *name, bool on) override;
+	void updateSailModelConditions() override; // lane SAILS-1: RW 0x666FA3
 	void revealDisguiseOnClimb() override; // lane WALL-2: RW 0x66A143 (a Climb portal)
 	void idleFromAI() override;            // lane WALL-2: RW 0x662A0E's vslot 0x60(2) (a type 7 portal)
 	void startMoveSound() override; // lane AUDIO-3: RW 0x748C0B

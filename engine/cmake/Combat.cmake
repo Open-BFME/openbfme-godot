@@ -22,7 +22,11 @@ set(OPENBFME_COMBAT_SOURCES
 set(OPENBFME_COMBAT_TESTS
     tests/test_combat_weapons.cpp
     tests/test_combat_damage.cpp
+    tests/test_siegefall1.cpp
+    tests/test_siegefall1_retail.cpp
     tests/test_killsrc1.cpp
+    tests/test_invul1.cpp
+    tests/test_kindfix1.cpp
     tests/test_combat_ai.cpp
     tests/test_target1_acquire.cpp
     tests/test_los1_terrain.cpp
