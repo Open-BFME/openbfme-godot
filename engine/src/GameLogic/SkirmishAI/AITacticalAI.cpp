@@ -1110,11 +1110,13 @@ constexpr bool kTargetlessAlways[] = { false, false, false, false, false, true, 
 constexpr int kTargetlessCount = 11;
 constexpr int TL_FLAG_CAPTURE = 0;
 constexpr int TL_FARM_KILL = 1;
+constexpr int TL_RETURN_THE_RING = 5; // ReturnTheRing (RW 0x90C0EE's 6th prototype)
 const char *const kFlagCaptureFile = "AIFlagCaptureSquad.cpp";
 const char *const kFlagCaptureRunning = "AIFlagCaptureSquad_IsRunning";
 const char *const kFlagCaptureNextFrame = "AIFlagCaptureSquad_FrameNextRun";
 const char *const kTargetlessFile = "AITacticsGenerator.cpp";  // RW 0xC7AD48
 const char *const kFarmKillFile = "AIFarmKillSquad.cpp";        // RW 0xC8A218
+const char *const kReturnTheRingFile = "AIReturnTheRingTactic.cpp"; // the class name RW 0xC89EE0
 // the FarmKillSquad counters (RW keys DAT_00DEBEF8 / DAT_00DEBEFC, AsciiStrings whose text is set by an initialiser that is not read: the port's names)
 const char *const kFarmKillRunning = "FarmKillSquad::IsRunning";
 const char *const kFarmKillNextFrame = "FarmKillSquad::NextLogicFrame";
@@ -1135,6 +1137,47 @@ int namedCounter(AIBrainState &b, const char *name)
 int enemyOfGroup(const AISkirmishPlayer &ai)
 {
 	return ai.groupFirst ? ai.groupFirst->brain.currentEnemy : ai.brain.currentEnemy; // RW 0x6C7807
+}
+
+// RW 0x9B877C: the first live object of the AI's army list carrying HOLDING_THE_RING (status 0x5E); INVALID_ID when none.
+ObjectID findRingBearer(GameLogic &logic, AISkirmishPlayer &ai)
+{
+	static const int holding = CombatNames::status("HOLDING_THE_RING");
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && alive(o) && o->testStatus((unsigned)holding))
+		{
+			return id;
+		}
+	}
+	return INVALID_ID;
+}
+
+// RW 0x9B88D8: the nearest structure of the player info record that is a DOZER_FACTORY (KindOf 194) and not SUMMONED (179), by
+// squared 2D distance from `from` (no z), the first of equal ones. Null when none.
+Object *nearestNonSummonedFortress(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &from)
+{
+	static const int fortress = KindOfTokens::indexOf("DOZER_FACTORY"), summoned = KindOfTokens::indexOf("SUMMONED");
+	Object *best = nullptr;
+	float bestD = 0.0f;
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (!o || !o->isKindOf((unsigned)fortress) || o->isKindOf((unsigned)summoned))
+		{
+			continue;
+		}
+		const Coord3D *p = o->getPosition();
+		const float dx = SimMath::subf32(p->x, from.x), dy = SimMath::subf32(p->y, from.y);
+		const float d = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx));
+		if (!best || d < bestD)
+		{
+			best = o;
+			bestD = d;
+		}
+	}
+	return best;
 }
 
 // vslot 1 (applies) of targetless prototype `index` (the prototype's + 0x24 player is the AI's: RW 0x90C623)
@@ -1172,8 +1215,13 @@ bool targetlessApplies(GameLogic &logic, AISkirmishPlayer &ai, int index)
 		const unsigned next = (unsigned)namedCounter(b, kFarmKillNextFrame);
 		return running == 0 && next <= logic.getFrame() && enemyOfGroup(ai) >= 0;
 	}
-	// the other 9 prototypes' vslot 1 (AIRingHeroTactic RW 0x9BAF6C, StructureCreep RW 0x9BA3C2, LumberMillBuild RW 0x9B9E06,
-	// ReturnTheRing RW 0x9B89CF, AIStartWoTRBattleTactic RW 0x9B8451, AIRoamingDefenseTactic RW 0x9B7F56, AIWoTRForfeitTactic RW 0x9B71B7, WallTactic RW 0x9B6F70,
+	if (index == TL_RETURN_THE_RING)
+	{
+		// RW 0x9B89CF: not running and a live HOLDING_THE_RING unit of the army; RW 0x9B877C stores its id in the prototype (+ 0x5C).
+		return namedCounter(b, "AIReturnTheRingTactic_IsRunning") == 0 && findRingBearer(logic, ai) != INVALID_ID;
+	}
+	// the other prototypes' vslot 1 (AIRingHeroTactic RW 0x9BAF6C, StructureCreep RW 0x9BA3C2, LumberMillBuild RW 0x9B9E06,
+	// ReturnTheRing RW 0x9B89CF, AIStartWoTRBattleTactic RW 0x9B8451, AIWoTRForfeitTactic RW 0x9B71B7, WallTactic RW 0x9B6F70,
 	// FarmBuilder RW 0x9B53C6) are not ported: taken as "does not apply" and counted (S-893)
 	++b.targetlessUnported;
 	return false;
@@ -1196,6 +1244,14 @@ void targetlessCleanup(GameLogic &logic, AISkirmishPlayer &ai, const AITactic &t
 		ai.brain.namedCounters[kFarmKillRunning] = 0;
 		const int delay = logic.random().getValue(kLogicFramesPerSecond * kFarmKillDelayMinSeconds, kLogicFramesPerSecond * kFarmKillDelayMaxSeconds, kFarmKillFile, 0x244);
 		ai.brain.namedCounters[kFarmKillNextFrame] = (int)(logic.getFrame() + (unsigned)delay);
+	}
+	if (tac.kindIndex == kTargetlessBase + TL_RETURN_THE_RING)
+	{
+		// RW 0x9B8635: clear IsRunning only when the run created the team (+ 0x65); the port's step 1 / 2 is that flag.
+		if (tac.step != 0)
+		{
+			ai.brain.namedCounters["AIReturnTheRingTactic_IsRunning"] = 0;
+		}
 	}
 }
 
@@ -1894,6 +1950,86 @@ void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, 
 	endAnyTactic(logic, ai, b, tac, owner, true);
 }
 
+// ReturnTheRing's run RW 0x9B8A7B: build the one-member team (RW 0x9B87DA; retail also moves the holder to that team and marks it, the
+// port keeps only the member list, S-418), set IsRunning, head for the nearest non-summoned DOZER_FACTORY or the base (RW 0x9B8A06) and
+// mark the run created (+ 0x65 -> step 1). Without a team the tactic ends (0, 0). The update RW 0x9B8A47, once every team is done
+// (RW 0x8F175A), garrisons the nearest fortress (RW 0x9B8994 -> RW 0x8F18DE team 0) and marks it (+ 0x64 -> step 2), then ends.
+void startReturnTheRing(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (namedCounter(ai.brain, "AIReturnTheRingTactic_IsRunning") != 0)
+	{
+		// RW 0x9B8A7B: another clone already set the key; this one made no team and ends (0, 0) at + 0x65 == 0.
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	Object *holder = logic.findObjectByID(tac.squadTarget);
+	if (!holder || !alive(holder))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	AITacticTeam team;
+	team.name = std::string("TARGETLESS_") + tac.kind + "_" + std::to_string(tac.id) + "_0";
+	team.type = kTargetlessType;
+	team.index = 0;
+	team.wantsMembers = false;
+	team.handedOver = true;
+	team.members.push_back(holder->getID());
+	tac.teams.push_back(team);
+	ai.brain.namedCounters["AIReturnTheRingTactic_IsRunning"] = 1;
+	const Coord3D *from = holder->getPosition();
+	Object *fortress = nearestNonSummonedFortress(logic, ai, *from);
+	Coord3D destination = fortress ? *fortress->getPosition() : ai.build.startPosition;
+	tac.step2 = fortress ? (int)fortress->getID() : -1;
+	if (const Player *player = playerOf(logic, ai.playerIndex))
+	{
+		for (int i = 0; i < (int)tac.teams.size(); ++i)
+		{
+			teamMoveFormation(logic, *player, tac, i, destination);
+		}
+	}
+	tac.step = 1;
+}
+
+void updateReturnTheRing(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (tac.step == 0 || tac.teams.empty())
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	if (!allTeamsDone(ai, tac))
+	{
+		return;
+	}
+	if (tac.step == 2)
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	Object *fortress = logic.findObjectByID((ObjectID)tac.step2);
+	if (!fortress || !alive(fortress))
+	{
+		Coord3D centre{};
+		teamCentre(logic, tac.teams[0], centre);
+		fortress = nearestNonSummonedFortress(logic, ai, centre);
+	}
+	if (fortress)
+	{
+		for (ObjectID id : tac.teams[0].members)
+		{
+			Object *o = logic.findObjectByID(id);
+			AIUpdateInterface *u = o && alive(o) ? o->getAIUpdateInterface() : nullptr;
+			if (u)
+			{
+				u->aiEnter(fortress, CMD_FROM_PLAYER); // RW 0x8F18DE -> RW 0x774EDF team 0, AI command 0x42
+			}
+		}
+		tac.step2 = (int)fortress->getID();
+		tac.step = 2;
+	}
+}
+
 void updateFarmKill(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
 	static const int canAttack = KindOfTokens::indexOf("CAN_ATTACK"), economy = KindOfTokens::indexOf("ECONOMY_STRUCTURE");
@@ -2387,7 +2523,8 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 		}
 	}
 	// RW 0x8F11DA
-	tac.ready = !tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; });
+	// RW 0x8F232F: a prototype with no teams (RW 0x851E97) marks itself ready (byte + 0x51); the port's team count keeps that
+	tac.ready = tacticTeamCount(tac) == 0 ? true : (!tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; }));
 	if (!tac.ready || tac.ended)
 	{
 		return;
@@ -2397,7 +2534,8 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 		if (tac.targetless)
 		{
 			if (tac.kindIndex == kTargetlessBase + TL_FLAG_CAPTURE) { updateFlagCapture(logic, ai, b, tac, owner); }
-			else { updateFarmKill(logic, ai, b, tac, owner); }
+			else if (tac.kindIndex == kTargetlessBase + TL_FARM_KILL) { updateFarmKill(logic, ai, b, tac, owner); }
+			else if (tac.kindIndex == kTargetlessBase + TL_RETURN_THE_RING) { updateReturnTheRing(logic, ai, b, tac, owner); }
 			return;
 		}
 		updateOffensive(logic, ai, b, tac, owner, t); // vslot 0x1C (lane AI-2 r5: every offensive body)
@@ -2412,6 +2550,10 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 	tac.started = true;
 	if (tac.targetless)
 	{
+		if (tac.kindIndex == kTargetlessBase + TL_RETURN_THE_RING)
+		{
+			startReturnTheRing(logic, ai, b, tac, owner);
+		}
 		return; // FarmKillSquad / FlagCaptureSquad vslot 0x18 is RW 0x63F3BF (nothing)
 	}
 	launchOffensive(logic, ai, b, tac, owner, t); // vslot 0x18
@@ -2478,6 +2620,10 @@ void pickTargetless(GameLogic &logic, AISkirmishPlayer &ai)
 		tac.kind = kTargetlessNames[index];
 		tac.id = b.nextTacticId++;
 		tac.targetOwner = ai.playerIndex;
+		if (index == TL_RETURN_THE_RING)
+		{
+			tac.squadTarget = findRingBearer(logic, ai); // RW 0x9B877C stores the holder in the prototype; the clone copies + 0x5C
+		}
 		// RW 0x9BB43D clones through RW 0x9BB3CA, then overwrites the eligibility flag: the discarded constructor result still consumes a draw.
 		if (index == TL_FARM_KILL)
 		{
