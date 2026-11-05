@@ -270,7 +270,8 @@ jobs:
     # the configuration of the Mac package (tools/release/package_macos.py cmake_configure_args) without the export
     runs-on: macos-15
     needs: fixtures
-    timeout-minutes: 40
+    # a cold compiler cache took 38 minutes (2026-11-04), and the unit tests take 2 more
+    timeout-minutes: 60
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 2G
