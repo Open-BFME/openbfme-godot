@@ -129,6 +129,7 @@ runner is claimed. All paths below are relative to the repository root.
 | Script | Runner/consumer | Scheduling decision |
 | --- | --- | --- |
 | `godot/tests/app_icon_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: bundled application icon resources; headless, 20 s timeout. |
+| `godot/tests/apt_view3d_visibility_test.gd` | Manual only; no generic pytest runner | Both editions: native paired View3D viewport visibility, retained cached/partial/empty canvas, tree exit/reentry, hidden pose uploads with unchanged instancer clocks, child-first teardown; private RotWK/BFME2 data, headless supported. |
 | `godot/tests/apt_canvas_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/audio_stress_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/audio_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |

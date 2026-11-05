@@ -1472,6 +1472,15 @@ void AptMenuPlayer::set_show_placeholders(bool show)
 void AptMenuPlayer::_ready()
 {
 	set_process(m_autoProcess && m_booted);
+	m->view3d.syncVisibility();
+}
+
+void AptMenuPlayer::_notification(int what)
+{
+	if (what == NOTIFICATION_VISIBILITY_CHANGED || what == NOTIFICATION_ENTER_TREE || what == NOTIFICATION_EXIT_TREE)
+	{
+		m->view3d.syncVisibility(what == NOTIFICATION_EXIT_TREE);
+	}
 }
 
 void AptMenuPlayer::_process(double delta)
@@ -4028,6 +4037,8 @@ Vector2 AptMenuPlayer::get_stage_size() const
 
 void AptMenuPlayer::clearCanvas()
 {
+	m->view3d.beginBuild();
+	m->view3d.endBuild(); // no retained View3D placeholder remains, including an empty movie stack
 	if (m->nativeHook)
 	{
 		m->nativeHook->beginCanvas();
@@ -4116,6 +4127,7 @@ void AptMenuPlayer::freeItemPool()
 
 void AptMenuPlayer::render(bool force)
 {
+	m->view3d.syncVisibility(); // visibility can change without dirtying the retained canvas
 	if (!m_booted)
 	{
 		return;
