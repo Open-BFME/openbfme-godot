@@ -18,6 +18,7 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Economy.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/SkirmishAIEditionRules.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -1235,6 +1236,7 @@ constexpr bool kTargetlessAlways[] = { false, false, false, false, false, true, 
 constexpr int kTargetlessCount = 11;
 constexpr int TL_FLAG_CAPTURE = 0;
 constexpr int TL_FARM_KILL = 1;
+constexpr int TL_WOTR_BATTLE_START = 6; // AIStartWoTRBattleTactic (RW 0x90C0EE's 7th prototype)
 const char *const kFlagCaptureFile = "AIFlagCaptureSquad.cpp";
 const char *const kFlagCaptureRunning = "AIFlagCaptureSquad_IsRunning";
 const char *const kFlagCaptureNextFrame = "AIFlagCaptureSquad_FrameNextRun";
@@ -1260,6 +1262,75 @@ int namedCounter(AIBrainState &b, const char *name)
 int enemyOfGroup(const AISkirmishPlayer &ai)
 {
 	return AITacticalAI::enemyOfGroup(ai); // RW 0x6C7807
+}
+
+// RW 0x9B8160: choose where a unit roams. With an economy structure within 900 of the AI's base (RW 0xC89CF0: 810000 = 900^2,
+// squared 3D SSE) one of them is drawn (AIRoamingDefenseTactic.cpp line 0xA4) and its position is the destination; otherwise the first
+// DOZER_FACTORY of the player info record's structures is the centre and the destination is 400 (RW 0xC89CF4) from it at a drawn angle
+// 0 .. 6 radians (line 0xBA; sin/cos RW 0xA3CF90 / 0xA3CF84). No economy structure and no fortress: no destination.
+bool chooseRoamDestination(GameLogic &logic, AISkirmishPlayer &ai, Coord3D &out)
+{
+	const AIStatCollector &record = AITacticalAI::recordOf(logic, ai.playerIndex);
+	const std::vector<ObjectID> &economy = record.economy();
+	if (!economy.empty())
+	{
+		const Coord3D &base = ai.build.startPosition; // RW 0x8F0284
+		std::vector<Object *> near;
+		for (ObjectID id : economy)
+		{
+			Object *o = logic.findObjectByID(id);
+			if (!o)
+			{
+				continue;
+			}
+			const Coord3D *p = o->getPosition();
+			const float dx = SimMath::subf32(base.x, p->x), dy = SimMath::subf32(base.y, p->y), dz = SimMath::subf32(base.z, p->z);
+			const float d = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
+			if (d < 810000.0f) // RW 0xC89CF0
+			{
+				near.push_back(o);
+			}
+		}
+		if (!near.empty())
+		{
+			const int index = logic.random().getValue(0, (int)near.size() - 1, "AIRoamingDefenseTactic.cpp", 0xA4);
+			out = *near[(size_t)index]->getPosition();
+			return true;
+		}
+	}
+	const Object *fortress = nullptr;
+	for (ObjectID id : record.structures())
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && o->isKindOfName("DOZER_FACTORY"))
+		{
+			fortress = o;
+			break;
+		}
+	}
+	if (!fortress)
+	{
+		return false;
+	}
+	const int angle = logic.random().getValue(0, 6, "AIRoamingDefenseTactic.cpp", 0xBA);
+	const float a = (float)angle;
+	const float c = SimMath::fstpDword(SimMath::cosd(a)); // RW 0xA3CF84
+	const float s = SimMath::fstpDword(SimMath::sind(a)); // RW 0xA3CF90
+	const Coord3D *centre = fortress->getPosition();
+	out.x = SimMath::addf32(centre->x, SimMath::mulf32(c, 400.0f)); // RW 0xC89CF4
+	out.y = SimMath::addf32(centre->y, SimMath::mulf32(s, 400.0f));
+	out.z = centre->z;
+	return true;
+}
+
+// RW 0x9B8160: the attack-move to that destination (aiAttackMoveToPosition RW 0x696266(pos, INT_MAX, CMD_FROM_PLAYER), AI command 0xF).
+void issueRoamOrder(GameLogic &logic, AISkirmishPlayer &ai, Object &unit)
+{
+	Coord3D destination{};
+	if (chooseRoamDestination(logic, ai, destination))
+	{
+		attackMove(logic, std::vector<ObjectID>{ unit.getID() }, destination, CMD_FROM_PLAYER);
+	}
 }
 
 // vslot 1 (applies) of targetless prototype `index` (the prototype's + 0x24 player is the AI's: RW 0x90C623)
@@ -1297,8 +1368,13 @@ bool targetlessApplies(GameLogic &logic, AISkirmishPlayer &ai, int index)
 		const unsigned next = (unsigned)namedCounter(b, kFarmKillNextFrame);
 		return running == 0 && next <= logic.getFrame() && enemyOfGroup(ai) >= 0;
 	}
-	// the other 9 prototypes' vslot 1 (AIRingHeroTactic RW 0x9BAF6C, StructureCreep RW 0x9BA3C2, LumberMillBuild RW 0x9B9E06,
-	// ReturnTheRing RW 0x9B89CF, AIStartWoTRBattleTactic RW 0x9B8451, AIRoamingDefenseTactic RW 0x9B7F56, AIWoTRForfeitTactic RW 0x9B71B7, WallTactic RW 0x9B6F70,
+	if (index == TL_WOTR_BATTLE_START)
+	{
+		// RW 0x9B8451: the game is not a skirmish (GameLogic + 0x114 != 3), past frame 5 and the run has not happened.
+		return namedCounter(b, "StartWoTRBattleTacticHasRun") == 0 && logic.economy().context().gameKind != 3 && logic.getFrame() > 5;
+	}
+	// the other 8 prototypes' vslot 1 (AIRingHeroTactic RW 0x9BAF6C, StructureCreep RW 0x9BA3C2, LumberMillBuild RW 0x9B9E06,
+	// ReturnTheRing RW 0x9B89CF, AIRoamingDefenseTactic RW 0x9B7F56, AIWoTRForfeitTactic RW 0x9B71B7, WallTactic RW 0x9B6F70,
 	// FarmBuilder RW 0x9B53C6) are not ported: taken as "does not apply" and counted (S-893)
 	++b.targetlessUnported;
 	return false;
@@ -2282,6 +2358,28 @@ void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, 
 	endAnyTactic(logic, ai, b, tac, owner, true);
 }
 
+// AIStartWoTRBattleTactic's run RW 0x9B8556: once per AI, every live unit of the army that is CAN_ATTACK or HERO (the KindOf mask
+// RW 0x46E72F's bits 3 / 90 through RW 0x70C548) gets RW 0x9B8160's roam order; then the tactic succeeds (1, 0) and the key stays set.
+void startWoTRBattle(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (namedCounter(ai.brain, "StartWoTRBattleTacticHasRun") != 0)
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	ai.brain.namedCounters["StartWoTRBattleTacticHasRun"] = 1;
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (!o || !alive(o) || !(o->isKindOfName("CAN_ATTACK") || o->isKindOfName("HERO")))
+		{
+			continue;
+		}
+		issueRoamOrder(logic, ai, *o);
+	}
+	endAnyTactic(logic, ai, b, tac, owner, true);
+}
+
 // ---- lane RAI-TL: FarmKillSquad's farm and production target choice (RW 0x9BBA51 / 0x9BB5E4) ------------------------------------------------
 // RW 0x9BB2A7 (Coord3D::length RW 0x403111): the 3D distance, the sum (x*x + y*y) + z*z in float and the correctly rounded sqrt of its double
 float distance3d(const Coord3D &a, const Coord3D &b)
@@ -3114,6 +3212,10 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 	tac.started = true;
 	if (tac.targetless)
 	{
+		if (tac.kindIndex == kTargetlessBase + TL_WOTR_BATTLE_START)
+		{
+			startWoTRBattle(logic, ai, b, tac, owner);
+		}
 		return; // FarmKillSquad / FlagCaptureSquad vslot 0x18 is RW 0x63F3BF (nothing)
 	}
 	launchOffensive(logic, ai, b, tac, owner, t); // vslot 0x18
