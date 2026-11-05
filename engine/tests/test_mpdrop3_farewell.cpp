@@ -108,6 +108,7 @@ HangRun runHang(std::uint64_t hangAfterDropMs, std::uint64_t survivorsLeaveMs = 
 			if (delayToSurvivorMs != 0)
 			{
 				// slot 2's datagrams slot 1 has not read yet are held back (the others' go on to it at once)
+				NetSleepMilliseconds(20); // a datagram just sent need not have arrived yet (macOS)
 				NetAddress from;
 				std::vector<std::uint8_t> bytes;
 				std::vector<std::vector<std::uint8_t>> others;

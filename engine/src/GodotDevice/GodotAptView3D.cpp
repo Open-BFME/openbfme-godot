@@ -8,6 +8,7 @@
 #include "GodotDevice/GodotW3DInstancer.h"
 
 #include <godot_cpp/classes/environment.hpp>
+#include <godot_cpp/classes/canvas_item.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport_texture.hpp>
@@ -163,6 +164,7 @@ bool AptView3DViewers::create(Slot &slot, const AptCanvasOp &op)
 	slot.white->set_world_3d(slot.black->find_world_3d()); // one scene, two clears
 	slot.camWhite = makeCamera(slot.white, Color(1, 1, 1, 1));
 	slot.inst = memnew(W3DInstancer);
+	slot.instId = slot.inst->get_instance_id();
 	slot.black->add_child(slot.inst);
 	const Dictionary setup = slot.inst->setup(m_fs);
 	if (!bool(setup.get("ok", false)))
@@ -279,26 +281,49 @@ void AptView3DViewers::draw(RID item, const Rect2 &rect, const AptCanvasOp &op, 
 
 void AptView3DViewers::endBuild()
 {
+	syncVisibility();
+}
+
+bool AptView3DViewers::ownerVisible() const
+{
+	const CanvasItem *owner = Object::cast_to<CanvasItem>(m_owner);
+	return owner && owner->is_inside_tree() && owner->is_visible_in_tree();
+}
+
+void AptView3DViewers::syncVisibility(bool forceHidden)
+{
+	const bool visible = !forceHidden && ownerVisible();
 	for (auto &kv : m_slots)
 	{
 		Slot &slot = kv.second;
-		if (!slot.black)
+		const SubViewport::UpdateMode mode = slot.used && !slot.failed && visible ? SubViewport::UPDATE_ALWAYS : SubViewport::UPDATE_DISABLED;
+		// Children can already be gone when the owner's destructor clears its retained canvas.
+		for (ObjectID id : { slot.blackId, slot.whiteId })
 		{
-			continue;
+			SubViewport *view = Object::cast_to<SubViewport>(ObjectDB::get_instance(id));
+			if (view && view->get_update_mode() != mode)
+			{
+				view->set_update_mode(mode);
+			}
 		}
-		const SubViewport::UpdateMode mode = slot.used && !slot.failed ? SubViewport::UPDATE_ALWAYS : SubViewport::UPDATE_DISABLED;
-		slot.black->set_update_mode(mode);
-		slot.white->set_update_mode(mode);
+		W3DInstancer *inst = Object::cast_to<W3DInstancer>(ObjectDB::get_instance(slot.instId));
+		if (inst)
+		{
+			inst->set_presentation_updates(mode == SubViewport::UPDATE_ALWAYS);
+		}
 	}
 }
 
 void AptView3DViewers::pose(Slot &slot, double now)
 {
-	if (!slot.inst || slot.instance < 0)
+	// Keep the existing incremental clock (including LOOP/PINGPONG boundaries) running while hidden.
+	// Only evaluating/uploading the model pose and updating its cameras depends on visibility.
+	slot.anim.progress(now, slot.frameRate);
+	if (!ownerVisible() || !ObjectDB::get_instance(slot.blackId) || !ObjectDB::get_instance(slot.whiteId) ||
+		!ObjectDB::get_instance(slot.instId) || slot.instance < 0)
 	{
 		return;
 	}
-	slot.anim.progress(now, slot.frameRate);
 	if (slot.numFrames > 0)
 	{
 		slot.inst->set_instance_pose_native(slot.instance, slot.clip, (double)slot.anim.frame(), std::string(), 0.0, 0.0);
@@ -333,6 +358,7 @@ Dictionary AptView3DViewers::animationFrames() const
 
 void AptView3DViewers::advance()
 {
+	syncVisibility();
 	const double now = nowMs();
 	for (auto &kv : m_slots)
 	{
