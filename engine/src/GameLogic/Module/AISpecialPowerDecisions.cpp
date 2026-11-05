@@ -23,6 +23,7 @@
 #include "GameLogic/Economy.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
@@ -756,4 +757,165 @@ bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)
 		}
 	}
 	return false;
+}
+
+// ---- the structure breakers: the enemy record's position sampler (lane RAI-POW-3b) ---------------------------------------------------------------
+
+namespace
+{
+// RW 0xA024DA (AISpellBookBase::findDenseStructureCenter): the enemy Player's record (RW 0x6A9999) and its position sampler (record + 0x10); in cluster
+// order the first cluster whose object count (RW 0x97D700: (members.end - members.begin) / 4) is above the best so far (strictly) and whose centre
+// (RW 0x9E7071: the group + 0x08) the viewer does not see SHROUDED (RW 0xB4D9A0 != 2) wins. `out` is zeroed first, as retail does; false when no
+// cluster has a member. The groups come from AIPositionSampler (the defence-records PR): its Group carries the retail group's + 0x08 centre and its
+// + 0x1C / + 0x20 members; the + 0x18 "used" byte is set and read only by RW 0x9E7095 / 0x9E70A6, which none of the three decisions calls.
+bool findDenseStructureCenter(Object &caster, const Player &recordPlayer, Coord3D &out)
+{
+	GameLogic &logic = caster.logic();
+	const Player *viewer = caster.getControllingPlayer();
+	out = Coord3D{};
+	if (!viewer || !logic.shroud())
+	{
+		return false;
+	}
+	AIStatCollector *record = logic.skirmishAI().record(recordPlayer.getPlayerIndex());
+	if (!record)
+	{
+		return false; // INFERENCE: retail reads through a null record; every playable player has one (RW 0x8E46D9)
+	}
+	unsigned best = 0;
+	bool found = false;
+	Coord3D bestPosition{};
+	for (const AIPositionSampler::Group &cluster : record->positions().groups())
+	{
+		const unsigned count = (unsigned)cluster.members.size();
+		if (count <= best)
+		{
+			continue;
+		}
+		if ((int)logic.shroud()->getStatusAt(viewer->getPlayerIndex(), cluster.center.x, cluster.center.y) == CELLSHROUD_SHROUDED)
+		{
+			continue;
+		}
+		best = count;
+		bestPosition = cluster.center;
+		found = true;
+	}
+	if (found)
+	{
+		out = bestPosition;
+	}
+	return found;
+}
+
+// RW 0x6C7807: the AI's current enemy player; null when it has none
+const Player *enemyPlayerOf(GameLogic &logic, const AISkirmishPlayer &ai)
+{
+	const int enemy = AITacticalAI::enemyOfGroup(ai);
+	return enemy >= 0 ? logic.players().getNthPlayer(enemy) : nullptr;
+}
+} // namespace
+
+bool AISpecialPowerUpdate::decideStructureBreaker(Object &obj)
+{
+	// RW 0x9E7A98: the controlling player's AI (RW 0x6A950B) and its current enemy (RW 0x6C7807); the enemy record's densest structure cluster
+	// (RW 0xA024DA) -> RW 0xA0229F at its centre
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(player->getPlayerIndex());
+	if (!ai)
+	{
+		return false;
+	}
+	const Player *enemy = enemyPlayerOf(logic, *ai);
+	if (!enemy)
+	{
+		return false;
+	}
+	Coord3D position{};
+	if (!findDenseStructureCenter(obj, *enemy, position))
+	{
+		return false;
+	}
+	return setLocationIfValid(obj, position); // RW 0xA0229F
+}
+
+bool AISpecialPowerUpdate::decideStructureBreakerWalls(Object &obj)
+{
+	// RW 0x9E7942: the first busy army unit (RW 0xA0241D(player, hero, any victim, live)); its player's ENEMIES (mask 4) within 500 (RW 0xC8DF5C),
+	// alive, of KindOf WALK_ON_TOP_OF_WALL (60), DEFENSIVE_WALL (61), WALL_UPGRADE (150), WALL_HUB (156) or WALL_SEGMENT (189) (RW 0x9E7985's mask),
+	// near to far: the first -> RW 0xA0229F. No busy unit or no wall falls back to RW 0x9E7A98 (RW 0x9E7A5F)
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	Object *unit = firstBusyArmyUnit(logic, *player, true, true, false);
+	if (unit)
+	{
+		static const int kWalkOnTopOfWall = kind("WALK_ON_TOP_OF_WALL"), kDefensiveWall = kind("DEFENSIVE_WALL"), kWallUpgrade = kind("WALL_UPGRADE"),
+		                 kWallHub = kind("WALL_HUB"), kWallSegment = kind("WALL_SEGMENT");
+		for (const PartitionHit &hit : scanAt(logic, player, *unit->getPosition(), 500.0f, 4u)) // RW 0xC8DF5C
+		{
+			const Object &wall = *hit.object;
+			if (hasKind(wall, kWalkOnTopOfWall) || hasKind(wall, kDefensiveWall) || hasKind(wall, kWallUpgrade) || hasKind(wall, kWallHub) ||
+			    hasKind(wall, kWallSegment))
+			{
+				return setLocationIfValid(obj, *wall.getPosition()); // RW 0xA0229F
+			}
+		}
+	}
+	return decideStructureBreaker(obj); // RW 0x9E7A5F
+}
+
+bool AISpecialPowerUpdate::decideStructureBaseKill(Object &obj)
+{
+	// RW 0x9E6EF4: the first busy army unit (RW 0xA0241D(player, hero, any victim, live)); its player's ENEMIES (mask 4) within 500 (RW 0xC8DDF8),
+	// alive, KindOf DOZER_FACTORY (194) (RW 0x9E6F36's mask), near to far: the first -> RW 0xA0229F. None (or no busy unit) then asks RW 0x9E6E8E
+	// whether the enemy record's structures still list a DOZER_FACTORY: if so no, else the densest structure cluster (RW 0x9E7A98)
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(player->getPlayerIndex());
+	if (!ai)
+	{
+		return false;
+	}
+	static const int kDozerFactory = kind("DOZER_FACTORY");
+	Object *unit = firstBusyArmyUnit(logic, *player, true, true, false);
+	if (unit)
+	{
+		for (const PartitionHit &hit : scanAt(logic, player, *unit->getPosition(), 500.0f, 4u)) // RW 0xC8DDF8
+		{
+			if (hasKind(*hit.object, kDozerFactory))
+			{
+				return setLocationIfValid(obj, *hit.object->getPosition()); // RW 0xA0229F
+			}
+		}
+	}
+	// RW 0x9E6E8E: the current enemy (RW 0x6C7807) and its record's structure list (record + 8)
+	if (const Player *enemy = enemyPlayerOf(logic, *ai))
+	{
+		const AIStatCollector *record = logic.skirmishAI().record(enemy->getPlayerIndex());
+		if (!record)
+		{
+			return false; // INFERENCE: every playable player has a record (RW 0x8E46D9)
+		}
+		for (ObjectID id : record->structures())
+		{
+			const Object *structure = logic.findObjectByID(id);
+			if (structure && hasKind(*structure, kDozerFactory))
+			{
+				return false;
+			}
+		}
+	}
+	return decideStructureBreaker(obj); // RW 0x9E7010
 }

@@ -23,6 +23,7 @@
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/PartitionManager.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -34,6 +35,8 @@
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "Common/Money.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponSetToggle.h"
@@ -493,11 +496,11 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("42 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("45 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 9 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
-	// TREE_KILLER, CITADEL, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING)
+	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 6 spell book ones (ARMY_BREAKER, HEAL, TREE_KILLER, CITADEL, DEBUFFECONOMYBUILDING,
+	// DEBUFFPRODUCTIONBUILDING)
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
 	{
@@ -508,7 +511,7 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 			CHECK_MESSAGE((spellBook || t == 44 || t == 49), TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 11);
+	CHECK(unported == 8);
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -986,4 +989,352 @@ TEST_CASE("AIPOW-1 r2: the Elves' BUFFTERRAIN (Elven Wood, RW 0x9E77EE) and ENSH
 	CHECK(distance2D(mist->decidedLocation(), *mine->getPosition()) <= 150.0f);
 	MESSAGE("BUFFTERRAIN " << distance2D(terrain->decidedLocation(), *mine->getPosition()) << ", ENSHROUDINGMIST "
 	                       << distance2D(mist->decidedLocation(), *mine->getPosition()) << " from the unit");
+}
+
+// pin: the position sampler's membership (record + 0x10) joins the player info record's state hash, so perf1's 4-player skirmish and uber1's Uber
+// battle hash differently from frame 0 (engine references, re-recorded here: not retail goldens)
+
+// ---- lane RAI-POW-2: the structure breakers (RW 0x9E7A98 / 0x9E7942 / 0x9E6EF4) and the record's position sampler (RW 0x8E4042 / 0xA024DA) -------------
+
+namespace
+{
+// the module of `type` on a spell book: the book's own active module, or (when that faction's command set does not reach the button) a module initialised
+// as if it did (RW 0x8B714F's test hook, as CALLTHEHORDE's test)
+AISpecialPowerUpdate *spellBookModule(Object &book, int type, std::unique_ptr<AISpecialPowerUpdate> &fresh)
+{
+	AISpecialPowerUpdate *found = aiPowerOfType(book, type);
+	REQUIRE(found);
+	if (found->active())
+	{
+		return found;
+	}
+	fresh = std::make_unique<AISpecialPowerUpdate>(&book, found->data());
+	fresh->initAsIfInCommandSetForTest();
+	return fresh.get();
+}
+
+// the spell book's power of the module's button made ready (RW 0x8B708B asks isReady)
+void readySpellPower(Object &book, AISpecialPowerUpdate &module, std::uint32_t frame)
+{
+	REQUIRE(module.decision());
+	const CommandButton *button = module.decision()->button;
+	REQUIRE(button);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName);
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(book, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(frame);
+	REQUIRE(sp->isReady());
+}
+
+// the centre RW 0x8E4082 grows for a cluster whose first point is `first` and whose second is `second`: weight starts at the sampler's radius `r`;
+// length L = (float)sqrt of the float sum of squares of first - second; newWeight = 0.5 * ((r + L) + r); the point moves along the normalised first -
+// second by (r - newWeight)
+Coord3D secondPointClusterCenter(const Coord3D &first, const Coord3D &second, float r)
+{
+	const float dz = SimMath::subf32(first.z, second.z), dy = SimMath::subf32(first.y, second.y), dx = SimMath::subf32(first.x, second.x);
+	const float length = SimMath::fstpDword(SimMath::length3d(dx, dy, dz));
+	const float inv = SimMath::divf32(1.0f, length);
+	const float nx = SimMath::mulf32(dx, inv), ny = SimMath::mulf32(dy, inv), nz = SimMath::mulf32(dz, inv);
+	const float newWeight = SimMath::mulf32(SimMath::addf32(SimMath::addf32(r, length), r), 0.5f);
+	return Coord3D{ SimMath::addf32(SimMath::addf32(SimMath::mulf32(nx, r), first.x), SimMath::mulf32(newWeight, SimMath::subf32(0.0f, nx))),
+		            SimMath::addf32(SimMath::addf32(SimMath::mulf32(ny, r), first.y), SimMath::mulf32(newWeight, SimMath::subf32(0.0f, ny))),
+		            SimMath::addf32(SimMath::addf32(SimMath::mulf32(nz, r), first.z), SimMath::mulf32(newWeight, SimMath::subf32(0.0f, nz))) };
+}
+
+// the brain's enemy manager picks its current enemy once the manager's update has run a few frames (RW 0x6C74C2 / 0x9B2EB9)
+void awaitEnemy(Arena &a)
+{
+	const AISkirmishPlayer *ai = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	for (int i = 0; i < 40 && (!ai || AITacticalAI::enemyOfGroup(*ai) < 0); ++i)
+	{
+		a.advance(1);
+	}
+	REQUIRE(ai);
+	REQUIRE(AITacticalAI::enemyOfGroup(*ai) >= 0); // tolerance: the arena has at least one hostile player
+}
+
+// every unit of the player's army list goes: the test's own busy unit is then the first one RW 0xA0241D finds
+void clearArmy(GameLogic &logic, const Player &player)
+{
+	const std::vector<ObjectID> ids = AITacticalAI::recordOf(logic, player.getPlayerIndex()).army();
+	for (ObjectID id : ids)
+	{
+		if (Object *o = logic.findObjectByID(id))
+		{
+			logic.destroyObject(o);
+		}
+	}
+}
+
+// the player's structures go, his citadel stays (a player without one is defeated): the sampler then holds only what the test makes
+void leaveOnlyTheCitadel(GameLogic &logic, const Player *player)
+{
+	std::vector<ObjectID> doomed;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == player && o->isKindOfName("STRUCTURE") && !o->isKindOfName("COMMANDCENTER"))
+		{
+			doomed.push_back(o->getID());
+		}
+	}
+	for (ObjectID id : doomed)
+	{
+		if (Object *o = logic.findObjectByID(id))
+		{
+			logic.destroyObject(o);
+		}
+	}
+}
+} // namespace
+
+TEST_CASE("RAI-POW-2: the structure breakers' decisions, their vtables and the sampler's constants (RW 0x9E7A98 / 0x9E7942 / 0x9E6EF4 / 0x8E4042)")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("RAI-POW-2 binary facts (set RW_GAME_DAT)");
+	}
+	else
+	{
+		CHECK(pe->u32At(0xC8DF88u + 0x1Cu) == 0x9E7A98u); // STRUCTURE_BREAKER
+		CHECK(pe->u32At(0xC8DF60u + 0x1Cu) == 0x9E7942u); // STRUCTURE_BREAKER_PREF_WALLS
+		CHECK(pe->u32At(0xC8DDFCu + 0x1Cu) == 0x9E6EF4u); // STRUCTURE_BASEKILL
+		CHECK(floatAt(*pe, 0xC8DF5C) == 500.0f);           // the walls' enemy radius
+		CHECK(floatAt(*pe, 0xC8DDF8) == 500.0f);           // the base kill's enemy radius
+		CHECK(floatAt(*pe, 0xBD889C) == 2.0f);             // RW 0x8E3DD6: the cluster reach's sqrt(2) factor
+		CHECK(floatAt(*pe, 0xBD869C) == 0.5f);             // RW 0x8E4082's weight step
+		CHECK(floatAt(*pe, 0xBD1908) == 1.0f);             // RW 0x403175's 1 / length
+		CHECK(pe->u32At(0x8E4069u) == 0x45100FF3u); // RW 0x8E4069: movss xmm0, [ebp + 8] (the sampler ctor's radius argument)
+		CHECK(pe->u32At(0x8E4071u) == 0x46110FF3u); // RW 0x8E4071: movss [esi + 0x1C], xmm0 (the sampler's radius at + 0x1C)
+		CHECK(pe->u32At(0x8E4076u) == 0x5D5EC68Bu); // RW 0x8E4076: mov eax, esi / pop esi / pop ebp (the ctor returns the sampler)
+	}
+	// the KindOf bits the wall mask and the base kill name (TheKindOfNames RW 0xDA0E68's order)
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("WALK_ON_TOP_OF_WALL") == 60);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("DEFENSIVE_WALL") == 61);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("WALL_UPGRADE") == 150);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("WALL_HUB") == 156);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("WALL_SEGMENT") == 189);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("DOZER_FACTORY") == 194);
+	CHECK(AISpecialPowerDecision::decisionPorted(27));
+	CHECK(AISpecialPowerDecision::decisionPorted(28));
+	CHECK(AISpecialPowerDecision::decisionPorted(36));
+}
+
+TEST_CASE("RAI-POW-2: STRUCTURE_BREAKER (RW 0x9E7A98) picks the enemy record's densest structure cluster (RW 0xA024DA)")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5301, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	leaveOnlyTheCitadel(*a.logic, a.human);
+	a.advance(1);
+	const Object *citadel = firstOf(*a.logic, a.human, "COMMANDCENTER");
+	REQUIRE(citadel);
+	REQUIRE(citadel->isKindOfName("DOZER_FACTORY"));
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *breaker = spellBookModule(*book, 27, fresh);
+	REQUIRE(breaker->decision());
+	CHECK(breaker->decision()->kind == AISpecialPowerDecision::KIND_LOCATION);
+	readySpellPower(*book, *breaker, a.logic->getFrame());
+	// the citadel is a one-member cluster: it is the densest cluster until the two farms below (RW 0xA024DA accepts one member)
+	CHECK(breaker->decideNow() == true);
+	CHECK(breaker->decidedLocation().x == citadel->getPosition()->x);
+	CHECK(breaker->decidedLocation().y == citadel->getPosition()->y);
+	// two enemy farms 20 apart: the cluster's centre is RW 0x8E4082's grown centre of the two, and it wins over the citadel's one
+	AIStatCollector *record = a.logic->skirmishAI().record(a.human->getPlayerIndex());
+	REQUIRE(record);
+	Object *farm1 = a.make("GondorFarm", a.human, -12.0f, 4.0f);
+	Object *farm2 = a.make("GondorFarm", a.human, 8.0f, 4.0f);
+	record->update(*a.logic); // the sampler add is deferred until the object's position is final (defence-records PR)
+	REQUIRE(std::abs(distance2D(*farm1->getPosition(), *citadel->getPosition())) > 400.0f); // tolerance: Evendim's midpoint is far from the human base
+	REQUIRE(std::abs(distance2D(*farm2->getPosition(), *farm1->getPosition())) < 30.0f);
+	const Coord3D expected = secondPointClusterCenter(*farm1->getPosition(), *farm2->getPosition(), 200.0f);
+	CHECK(breaker->decideNow() == true);
+	CHECK(breaker->decidedLocation().x == expected.x);
+	CHECK(breaker->decidedLocation().y == expected.y);
+	CHECK(breaker->decidedLocation().z == expected.z);
+	MESSAGE("STRUCTURE_BREAKER at " << distance2D(breaker->decidedLocation(), *farm1->getPosition()) << " from the first farm");
+	// a third farm far away is a cluster of one and changes nothing
+	a.make("GondorFarm", a.human, 500.0f, -300.0f);
+	record->update(*a.logic);
+	CHECK(breaker->decideNow() == true);
+	CHECK(breaker->decidedLocation().x == expected.x);
+	CHECK(breaker->decidedLocation().y == expected.y);
+	// RW 0xB4D9A0: a cluster whose centre the caster's player sees SHROUDED is skipped; with every cell shrouded nothing is left
+	a.logic->shroud()->undoRevealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.logic->shroud()->shroudMapForPlayer(a.ai->getPlayerIndex());
+	a.advance(1); // the shroud's next update folds the lookers into the cells
+	CHECK(breaker->decideNow() == false);
+	a.logic->shroud()->revealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.advance(1);
+	CHECK(breaker->decideNow() == true);
+	// a human caster never decides (RW 0x6A950B: no skirmish AI for his player)
+	Object *aragorn = a.make("GondorAragorn", a.human, 300.0f, 0.0f);
+	AISpecialPowerUpdate humanCaster(aragorn, breaker->data());
+	humanCaster.initAsIfInCommandSetForTest();
+	REQUIRE(humanCaster.decision());
+	CHECK(humanCaster.decideNow() == false);
+}
+
+TEST_CASE("RAI-POW-2: STRUCTURE_BREAKER_PREF_WALLS (RW 0x9E7942) takes the nearest enemy wall near the busy unit and falls back to RW 0x9E7A98")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5302, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	leaveOnlyTheCitadel(*a.logic, a.human);
+	clearArmy(*a.logic, *a.ai);
+	a.advance(1);
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *walls = spellBookModule(*book, 28, fresh);
+	REQUIRE(walls->decision());
+	readySpellPower(*book, *walls, a.logic->getFrame());
+	// two enemy walls far from the unit (the fallback's densest cluster; thin, so the summon's spot test accepts their midpoint)
+	AIStatCollector *record = a.logic->skirmishAI().record(a.human->getPlayerIndex());
+	REQUIRE(record);
+	Object *far1 = a.make("BlueMountainWall", a.human, -700.0f, 300.0f);
+	Object *far2 = a.make("BlueMountainWall", a.human, -420.0f, 300.0f);
+	record->update(*a.logic); // the sampler add is deferred until the object's position is final (defence-records PR)
+	const Coord3D clusterCenter = secondPointClusterCenter(*far1->getPosition(), *far2->getPosition(), 200.0f);
+	// a computer soldier busy with a human one; a wall of the human 100 away from it
+	Object *mine = a.make("GondorFighterHorde", a.ai, 0.0f, 0.0f);
+	Object *theirs = a.make("GondorFighterHorde", a.human, 60.0f, 0.0f);
+	Object *wall = a.make("BlueMountainWall", a.human, 100.0f, 0.0f);
+	REQUIRE(wall->isKindOfName("WALL_SEGMENT"));
+	REQUIRE(mine->getAIUpdateInterface()->aiAttackObject(theirs, CMD_FROM_PLAYER));
+	CHECK(walls->decideNow() == true);
+	// the wall is the target; the location base then applies the power's RandomizeTargetLocation walk (RW 0xA01C9C, 15 .. 150), because a spot under the
+	// wall's own footprint fails the ActionManager's pathable test (RW 0x82D2C9): the answer stays within 150 of the wall, not at the cluster
+	CHECK(distance2D(walls->decidedLocation(), *wall->getPosition()) <= 150.0f); // tolerance: RW 0xA01C9C's random walk is 15 .. 150
+	CHECK(distance2D(walls->decidedLocation(), clusterCenter) > 150.0f); // tolerance: the walk never reaches the cluster, 500+ away
+	MESSAGE("PREF_WALLS at " << distance2D(walls->decidedLocation(), *wall->getPosition()) << " from the wall");
+	// no busy unit: RW 0x9E7A5F runs the structure-breaker fallback; its densest cluster is the far walls' grown midpoint, and Ent Allies' summon spot
+	// test (RW 0x82E586, RadiusCursorRadius 100) refuses a spot inside that cluster, so the decision answers no (the near wall is gone: this is not it)
+	a.logic->destroyObject(mine);
+	a.logic->destroyObject(wall);
+	a.advance(1);
+	CHECK(walls->decideNow() == false);
+	// the fallback's candidate exists: the far walls are one cluster whose centre is the grown midpoint (the STRUCTURE_BREAKER test pins its arithmetic)
+	const AIPositionSampler::Group *cluster = nullptr;
+	for (const AIPositionSampler::Group &c : record->positions().groups())
+	{
+		if (c.members.size() == 2)
+		{
+			cluster = &c;
+		}
+	}
+	REQUIRE(cluster);
+	CHECK(cluster->center.x == clusterCenter.x);
+	CHECK(cluster->center.y == clusterCenter.y);
+	// with a busy unit but no wall within 500 the same fallback runs (the wall is gone)
+	Object *mine2 = a.make("GondorFighterHorde", a.ai, 0.0f, 40.0f);
+	Object *theirs2 = a.make("GondorFighterHorde", a.human, 60.0f, 40.0f);
+	REQUIRE(mine2->getAIUpdateInterface()->aiAttackObject(theirs2, CMD_FROM_PLAYER));
+	CHECK(walls->decideNow() == false);
+}
+
+TEST_CASE("RAI-POW-2: STRUCTURE_BASEKILL (RW 0x9E6EF4) takes an enemy DOZER_FACTORY within 500, else refuses while the enemy still lists one")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5303, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	clearArmy(*a.logic, *a.ai);
+	a.advance(1);
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *baseKill = spellBookModule(*book, 36, fresh);
+	REQUIRE(baseKill->decision());
+	readySpellPower(*book, *baseKill, a.logic->getFrame());
+	const Object *citadel = firstOf(*a.logic, a.human, "COMMANDCENTER");
+	REQUIRE(citadel);
+	REQUIRE(citadel->isKindOfName("DOZER_FACTORY"));
+	// a busy computer soldier 250 from the enemy citadel: the enemy dozer factory within 500 is the target
+	const Coord3D c = *citadel->getPosition();
+	const Object *a0 = firstOf(*a.logic, a.ai, "COMMANDCENTER");
+	REQUIRE(a0);
+	const float dx = a0->getPosition()->x - c.x, dy = a0->getPosition()->y - c.y;
+	const float len = std::sqrt(dx * dx + dy * dy);
+	REQUIRE(len > 400.0f); // tolerance: the two bases on Evendim are farther apart than the 500 scan
+	const Coord3D near{ c.x + dx / len * 250.0f, c.y + dy / len * 250.0f, 0.0f };
+	Object *mine = a.make("GondorFighterHorde", a.ai, near.x - a.where.x, near.y - a.where.y);
+	Object *theirs = a.make("GondorFighterHorde", a.human, 40.0f, 40.0f);
+	REQUIRE(mine->getAIUpdateInterface()->aiAttackObject(theirs, CMD_FROM_PLAYER));
+	CHECK(baseKill->decideNow() == true);
+	CHECK(baseKill->decidedLocation().x == citadel->getPosition()->x);
+	CHECK(baseKill->decidedLocation().y == citadel->getPosition()->y);
+	// no busy unit and the enemy's structure list still holds a DOZER_FACTORY (RW 0x9E6E8E): no
+	a.logic->destroyObject(mine);
+	a.advance(1);
+	CHECK(baseKill->decideNow() == false);
+}
+
+TEST_CASE("RAI-POW-2: the position sampler's membership (record + 0x10) round-trips through a snapshot")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5304, &err), err);
+	a.make("GondorFarm", a.human, 0.0f, 0.0f);
+	a.make("GondorFarm", a.human, 20.0f, 0.0f);
+	a.make("GondorFarm", a.human, 400.0f, 0.0f);
+	AIStatCollector *record = a.logic->skirmishAI().record(a.human->getPlayerIndex());
+	REQUIRE(record);
+	record->update(*a.logic); // the sampler add is deferred until the object's position is final (defence-records PR)
+	const std::vector<ObjectID> before = record->positions().members();
+	REQUIRE(before.size() >= 3); // tolerance: the human base's own structures join the three farms
+	const std::vector<AIPositionSampler::Group> groups = record->positions().groups();
+	REQUIRE(!groups.empty());
+	for (const AIPositionSampler::Group &g : groups)
+	{
+		CHECK(g.radius >= 200.0f); // tolerance: DefenseTreeNodeRadius (200) is a group's floor, a group with several members is larger (RW 0x8E4082)
+	}
+	XferSave save;
+	record->xfer(save);
+	REQUIRE(!save.data().empty());
+	CHECK(save.data()[0] == 3); // the block's version: the sampler's membership
+	AIStatCollector loaded(a.human->getPlayerIndex());
+	XferLoad load(save.data());
+	loaded.xfer(load);
+	CHECK(loaded.positions().members() == before);
+	REQUIRE(loaded.positions().groups().size() == groups.size());
+	for (size_t i = 0; i < groups.size(); ++i)
+	{
+		CHECK(loaded.positions().groups()[i].members == groups[i].members);
+		CHECK(loaded.positions().groups()[i].radius == groups[i].radius);
+		CHECK(loaded.positions().groups()[i].center.x == groups[i].center.x);
+		CHECK(loaded.positions().groups()[i].center.y == groups[i].center.y);
+		CHECK(loaded.positions().groups()[i].center.z == groups[i].center.z);
+	}
 }

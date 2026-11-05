@@ -58,12 +58,12 @@ using namespace AISpecialPowerDetail;
 namespace
 {
 const char *const kStop =
-	"[S-1421] AISpecialPowerUpdate (lanes MOD-4, AIPOW-1): the module (RW 0x8B73B7 / 0x8B714F / 0x8B708B), the decision framework (RW 0x993055 / 0x993307 / "
-	"0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 42 of the 53 decisions run; not ported "
-	"(they answer no, counted): SOUL_FREEZE (RW 0x9E9B37) and ATTACK_HEAL_AOE (RW 0x9E691D: the team's special power registry Team + 0x140 and its order "
-	"list Team + 0x13C, RW 0x7A3EF5 / 0x7A5582 / 0x7A1C5E, not ported); spell book HEAL (RW 0x9E85C6: the ZH AIPlayer's list, Player + 0x2FC -> + 0x4, "
-	"entries of type 0x1A); ARMY_BREAKER (RW 0x9E92CA: the brain's army trackers, AI + 0x164 -> + 0x20); STRUCTURE_BREAKER, its _PREF_WALLS and "
-	"_BASEKILL, CITADEL (RW 0x9E7A98 / 0x9E7942 / 0x9E6EF4 / 0x9E6CCB: the enemy record's structure cluster table, record + 0x10, RW 0x8E4042 / 0xA024DA); "
+	"[S-1421] AISpecialPowerUpdate (lanes MOD-4, AIPOW-1, RAI-POW-3b): the module (RW 0x8B73B7 / 0x8B714F / 0x8B708B), the decision framework (RW 0x993055 / "
+	"0x993307 / 0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 45 of the 53 decisions run; not "
+	"ported (they answer no, counted): SOUL_FREEZE (RW 0x9E9B37) and ATTACK_HEAL_AOE (RW 0x9E691D: the team's special power registry Team + 0x140 and its "
+	"order list Team + 0x13C, RW 0x7A3EF5 / 0x7A5582 / 0x7A1C5E, not ported); spell book HEAL (RW 0x9E85C6: the ZH AIPlayer's list, Player + 0x2FC -> + 0x4, "
+	"entries of type 0x1A); ARMY_BREAKER (RW 0x9E92CA: the brain's army trackers, AI + 0x164 -> + 0x20); CITADEL (RW 0x9E6CCB: the enemy record's "
+	"structure list and the AI's base position RW 0x8F0284); "
 	"DEBUFFECONOMYBUILDING / DEBUFFPRODUCTIONBUILDING (RW 0x9E74B7 / 0x9E726A: the ZH AISkirmishPlayer's enemy, Player + 0x2FC vslot 0x30 -> RW "
 	"0x8F47EB acquireEnemy); TREE_KILLER (RW 0x9E70B6: TheTerrainLogic + 0x584's list); the per-frame steering of a summoned helper (slot 1 of "
 	"TARGETAOE_SUMMON RW 0x9EB961, ASSIST_BATTLE_* RW 0x9E8A42, SHROUD_REVEAL RW 0x9E7F0F: the helper is found through the record's army and hero lists, "
@@ -148,6 +148,7 @@ bool AISpecialPowerDecision::decisionPorted(int type)
 	case AISP_GOBLINKING_CALLOFTHEDEEP: case AISP_TARGETAOE_SUMMON: case AISP_HEAL_AOE: case AISP_SPELLBOOK_ALWAYS_FIRE: case AISP_SPELLBOOK_CAPTURE_CREEP:
 	case AISP_SPELLBOOK_SHROUD_REVEAL: case AISP_SPELLBOOK_ASSIST_BATTLE_BUFF: case AISP_SPELLBOOK_ASSIST_BATTLE_DEBUFF: case AISP_SPELLBOOK_BUFFTERRAIN:
 	case AISP_SPELLBOOK_REBUILD: case AISP_SPELLBOOK_ENSHROUDINGMIST: case AISP_SPELLBOOK_CALLTHEHORDE: case AISP_SPELLBOOK_BUFFECONOMYBUILDING:
+	case AISP_SPELLBOOK_STRUCTURE_BREAKER: case AISP_SPELLBOOK_STRUCTURE_BREAKER_PREF_WALLS: case AISP_SPELLBOOK_STRUCTURE_BASEKILL:
 	case AISP_BASIC_SELF_BUFF: case AISP_CAPTURE_BUILDING: case AISP_ENEMY_TYPE_KILLER: case AISP_ENEMY_TYPE_KILLER_RANGED: case AISP_ENEMY_TYPE_KILLER_STRUCTURES: case AISP_TOGGLE_MOUNTED:
 	case AISP_STANCEBATTLE: case AISP_STANCEAGGRESSIVE: case AISP_STANCEHOLDGROUND: case AISP_BASIC_SELF_DEBUFF: case AISP_MORGUL_BLADE: case AISP_GOBLIN_POISON:
 		return true;
@@ -543,6 +544,12 @@ bool AISpecialPowerUpdate::decide(Object &obj)
 		return decideCallTheHorde(obj);
 	case AISP_SPELLBOOK_BUFFECONOMYBUILDING:
 		return decideBuffEconomy(obj);
+	case AISP_SPELLBOOK_STRUCTURE_BREAKER:
+		return decideStructureBreaker(obj);
+	case AISP_SPELLBOOK_STRUCTURE_BREAKER_PREF_WALLS:
+		return decideStructureBreakerWalls(obj);
+	case AISP_SPELLBOOK_STRUCTURE_BASEKILL:
+		return decideStructureBaseKill(obj);
 	case AISP_HEAL_AOE:
 	{
 		// RW 0x9EA462: a goal and an ALLIES cluster (RW 0xA01F99(obj, 1)) of at least 10; then 0.0 / (the hits of the four points) <= 0.75 (RW 0xC1B594 /

@@ -193,6 +193,10 @@ private:
 	bool decideEnshroudingMist(Object &obj);                    // RW 0x9E7869
 	bool decideCallTheHorde(Object &obj);                       // RW 0x9E71B0
 	bool decideBuffEconomy(Object &obj);                        // RW 0x9E7671
+	// lane RAI-POW-3b (AISpecialPowerDecisions.cpp): the enemy record's structure clusters (RW 0x8E4591's position sampler, RW 0xA024DA)
+	bool decideStructureBreaker(Object &obj);                   // RW 0x9E7A98
+	bool decideStructureBreakerWalls(Object &obj);              // RW 0x9E7942 (a wall near the busy unit, else RW 0x9E7A98)
+	bool decideStructureBaseKill(Object &obj);                  // RW 0x9E6EF4 (the enemy's DOZER_FACTORY, else RW 0x9E7A98)
 	// the location base (RW 0xA01C6B): RW 0xA021D8 (the ActionManager's test and SpellMakesAStructure), RW 0xA0229F (that test at the location, else with
 	// RandomizeTargetLocation at 15, 30, .. 150 along one random direction, RW 0xA01C9C); the first that passes becomes the location (+ 0x20)
 	bool locationValid(Object &obj, const Coord3D &loc);
