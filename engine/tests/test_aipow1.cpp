@@ -1068,6 +1068,8 @@ void leaveOnlyTheCitadel(GameLogic &logic, const Player *player)
 }
 } // namespace
 
+// pin: the AIPlayer's enemy cache (RW 0x8F47EB) enters the skirmish AI's hash and the save only once an AI has asked for an enemy (it holds a value);
+// a game that never asks keeps every recorded perf/uber state hash and the AI block's version 4 bytes.
 TEST_CASE("RAI-POW-2: the economy debuffs' decisions, vtables and the enemy acquire's constants (RW 0x9E74B7 / 0x9E726A / 0x8F457D)")
 {
 	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
@@ -1101,6 +1103,13 @@ TEST_CASE("RAI-POW-2: DEBUFFECONOMYBUILDING (RW 0x9E74B7) takes the enemy record
 	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
 	{
 		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	// no AI has asked for an enemy yet: the cache is empty, so the block keeps version 4's bytes (the new fields are not written)
+	{
+		XferSave empty;
+		a.logic->skirmishAI().xferState(empty, true);
+		REQUIRE(!empty.data().empty());
+		CHECK(empty.data()[0] == 4);
 	}
 	awaitEnemy(a);
 	leaveOnlyTheCitadel(*a.logic, a.human);
@@ -1147,7 +1156,7 @@ TEST_CASE("RAI-POW-2: DEBUFFECONOMYBUILDING (RW 0x9E74B7) takes the enemy record
 	a.logic->shroud()->revealMapForPlayerPermanently(a.ai->getPlayerIndex());
 	a.advance(1);
 	CHECK(blight->decideNow() == true);
-	// the snapshot round-trips the two new AIPlayer fields (the AI block's version 5)
+	// the snapshot round-trips the two new AIPlayer fields; with a used cache the AI block is version 5
 	XferSave save;
 	a.logic->skirmishAI().xferState(save, true);
 	REQUIRE(!save.data().empty());

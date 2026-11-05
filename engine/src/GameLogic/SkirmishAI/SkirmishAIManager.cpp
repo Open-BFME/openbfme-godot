@@ -642,8 +642,11 @@ void SkirmishAIManager::crc(StateHasher &h) const
 			h.addString(ai.dozerTemplate);
 			h.addU32(ai.shutdownFrame);
 			h.addU32(ai.retryTimer);
-			h.addI32(ai.enemyIndex);          // lane RAI-POW-2: the AIPlayer's cached enemy (RW 0x8F47EB)
-			h.addU32(ai.enemyRefreshFrame);
+			if (ai.enemyIndex != -1 || ai.enemyRefreshFrame != 0) // lane RAI-POW-2: the enemy cache (RW 0x8F47EB), only once it holds a value
+			{
+				h.addI32(ai.enemyIndex);
+				h.addU32(ai.enemyRefreshFrame);
+			}
 			AIBaseBuilder::crc(ai.build, h);
 			AITacticalAI::crc(ai.brain, h);
 		}

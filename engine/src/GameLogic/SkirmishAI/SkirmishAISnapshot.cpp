@@ -448,7 +448,20 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
 	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 3, 5 }; // version 5 (lane RAI-POW-2): each AI's cached enemy player and its refresh frame
+	// version 5 (lane RAI-POW-2): each AI's cached enemy player and its refresh frame, written only when some AI's cache holds a value, so a game that
+	// never asked for an enemy keeps version 4's bytes
+	bool enemyCache = x.isLoading();
+	for (const std::unique_ptr<AISkirmishGroup> &g : m_groups)
+	{
+		for (const auto &kv : g->players)
+		{
+			if (kv.second->enemyIndex != -1 || kv.second->enemyRefreshFrame != 0)
+			{
+				enemyCache = true;
+			}
+		}
+	}
+	XferVersion v{ 3, (std::uint8_t)(enemyCache ? 5 : 4) };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
