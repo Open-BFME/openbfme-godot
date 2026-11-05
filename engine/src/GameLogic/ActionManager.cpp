@@ -62,8 +62,9 @@ const SpecialPowerTemplate *powerOf(const CommandButton &b)
 	return TheSpecialPowerStore && !b.m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(b.m_specialPowerName) : nullptr;
 }
 
-// the UnitCost test (RW 0x82E000 / 0x82D605): with a cost, the object's horde interface (Object + 0x258 slot 0x7C) member count (slot 0x188) must reach it.
-// INFERENCE: slot 0x188 is the member count (the script condition RW 0x7E6195 reads it so); no contain or no horde interface: no test
+// the UnitCost test (RW 0x82E000 / 0x82D605): with a cost, the object's horde interface (Object + 0x258 slot 0x7C) member count (slot 0x188, RW 0x82D659)
+// must reach it; no contain or no horde interface: no test. Lane NECRODIE-1: slot 0x188 is RW 0x86C09B, the members without the banner carrier
+// (HordeContain::payloadCount), as the trigger's payment reads it (RW 0x855273)
 bool unitCostMet(const Object &obj, const SpecialPowerTemplate &t)
 {
 	if (t.m_unitCost == 0)
@@ -71,8 +72,8 @@ bool unitCostMet(const Object &obj, const SpecialPowerTemplate &t)
 		return true;
 	}
 	ContainModuleInterface *c = obj.getContain();
-	const HordeContainInterface *h = c ? c->getHordeContainInterface() : nullptr;
-	return !h || c->getContainCount() >= (unsigned)t.m_unitCost;
+	const HordeContain *h = c && c->getHordeContainInterface() ? dynamic_cast<const HordeContain *>(c) : nullptr;
+	return !h || h->payloadCount() >= (unsigned)t.m_unitCost;
 }
 
 // RW 0x82C366 (lane WALL-2): the pathfinder exists; the object's AI follows a path (RW 0x6628CD: AIUpdate + 0x1FC 1 or 4, a path, and a node of it carries a

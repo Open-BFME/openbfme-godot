@@ -31,7 +31,8 @@ const char *const kStopRequests =
 	"RW 0x6FB869; the attack request "
 	"RW 0x663802 and allied clearing RW 0x6F503B are lane PHYS-1's, S-784 / S-785)";
 const char *const kStopGroup =
-	"S-166 blockedBy skips the group / formation sort key (obj+0x42C / +0x430, unresolved)";
+	"S-166 blockedBy (RW 0x66D338 .. 0x66D35A): a standing INFANTRY unit whose AI is dead skips the step aside when the other can crush it at level 1 "
+	"(RW 0x69519A(it, 1): its squish test reads Object + 0x250, not modelled); the port asks the remaining gates (lane BUMP-1)";
 
 inline float hypot2(float x, float y)
 {
@@ -1372,6 +1373,12 @@ bool AIMover::blockedBy(PathfindObject &other)
 	{
 		return false;
 	}
+	// lane BUMP-1: RW 0x66D240 .. 0x66D263: an INFANTRY unit whose machine is in state 0x13 (machine + 4 -> state + 4; none: 0xF423F) is not blocked
+	// (the port defines no state 0x13 yet). BFME2 1.06: the same (decomp AIUpdateInterfaceCollisionResponse.cpp)
+	if (m_host.isInfantryKind() && m_host.stateId() == 0x13)
+	{
+		return false;
+	}
 	const bool selfMoving = isMoving();
 	const bool otherMoving = oAI->isMoving();
 	auto nearEnd = [](const AIMover &a) {
@@ -1398,8 +1405,15 @@ bool AIMover::blockedBy(PathfindObject &other)
 	}
 	if (!selfMoving)
 	{
-		// a unit standing still: other moving, busy or not idle leave it alone; else it steps aside
-		if (otherMoving || m_host.stateId() == 0x2A || !m_host.isIdle())
+		// RW 0x66D338 .. 0x66D3B4 (lane BUMP-1): a unit standing still steps aside unless: its AI is dead (+ 0x3BD), it is INFANTRY and the other can crush
+		// it at level 1 (RW 0x69519A: not modelled, stop S-166 above: counted, the remaining gates decide); the other moves; its state is 0x2A (busy); it has
+		// status 0x46 SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING; it is OFF_MAP (Object + 0x458 bit 3); it is LARGE_RECTANGLE_PATHFIND; it is not idle (vslot 0x1B8)
+		if (m_isAiDead && m_host.isInfantryKind())
+		{
+			note(kStopGroup);
+		}
+		if (otherMoving || m_host.stateId() == 0x2A || m_host.isUsingSpecialAbility() || m_host.isOffMapObject() || m_host.isLargeRectanglePathfind() ||
+			!m_host.isIdle())
 		{
 			return false;
 		}
@@ -1417,11 +1431,17 @@ bool AIMover::blockedBy(PathfindObject &other)
 		}
 		return false;
 	}
-	note(kStopGroup);
 	bool isBlockedNow;
 	const unsigned pS = (unsigned)m_host.pathPriority();
 	const unsigned pO = (unsigned)oAI->m_host.pathPriority();
-	if (!otherMoving)
+	const int formation = m_host.objectFormationId();
+	if (formation != 0 && formation == oAI->m_host.objectFormationId())
+	{
+		// lane BUMP-1: RW 0x66D427 .. 0x66D46C, 0x66D509: both in the same formation (Object + 0x42C, not 0): the one whose formation offset x (+ 0x430) is
+		// above the other's gives way to nobody (comiss / jbe: an unordered compare counts as blocked)
+		isBlockedNow = !(m_host.objectFormationOffsetX() > oAI->m_host.objectFormationOffsetX());
+	}
+	else if (!otherMoving)
 	{
 		isBlockedNow = pS <= pO;
 	}
@@ -1474,7 +1494,12 @@ bool AIMover::blockedBy(PathfindObject &other)
 		m_ignoreUntil = frame + 10;
 		return true;
 	}
-	(void)needToRotate();
+	// lane BUMP-1: RW 0x66D616 .. 0x66D64A: a unit that does not need to turn (RW 0x663F83) drops its MOVING (61) and BACKING_UP (156) model conditions
+	if (!needToRotate())
+	{
+		setMoveCondition("MOVING", false);
+		setMoveCondition("BACKING_UP", false);
+	}
 	return false;
 }
 
