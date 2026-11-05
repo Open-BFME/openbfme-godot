@@ -86,6 +86,10 @@ per process; the crashing thread waits at most 15 seconds. Initialization
 errors fail explicitly; dump-write errors are printed, never reported as
 success. The extension removes its callbacks and joins the writer at unload.
 
+Once the dump is written the writer thread starts the crash dialog (a second
+process of the same program, `docs/RELEASE.md` lane CRASHDIALOG-1) with a command
+line prepared at start-up; nothing in the crashed process builds it after the crash.
+
 Dumps live in `user://logs/minidumps/openbfme-<pid>-<timestamp>.dmp`, normally
 `%APPDATA%\Godot\app_userdata\OpenBFME\logs\minidumps`. They contain stacks,
 module names and other **unscrubbed private process data**, even without a

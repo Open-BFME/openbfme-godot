@@ -111,6 +111,8 @@ const MessagePanel := preload("res://scripts/ui/message_panel.gd")
 const PlayerMessages := preload("res://scripts/ui/player_messages.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const LauncherCrash := preload("res://scripts/core/launcher_crash.gd")
+const CrashDialogUi := preload("res://scripts/ui/crash_dialog.gd")
+const CrashClientScript := preload("res://scripts/net/crash_client.gd")
 const GameStart := preload("res://scripts/core/game_start.gd")
 const OnlineCount := preload("res://scripts/core/online_count.gd")  # lane ONLINECOUNT-1
 const GameList := preload("res://scripts/core/game_list.gd")
@@ -438,15 +440,35 @@ func _crash_start() -> void:
 		var r: Dictionary = LauncherCrash.report(previous)
 		if not r.ok:
 			Log.line("LAUNCHER CRASH the last launcher did not end normally; not reported: " + str(r.error))
+		elif DisplayServer.get_name() != "headless":
+			# lane CRASHDIALOG-1: what the report holds and a progress bar while it is sent (it sends the older reports with it)
+			Log.line("LAUNCHER CRASH the last launcher did not end normally: the crash dialog is shown")
+			_crash_dialog(r, automatic)
+			return
 		elif automatic:
 			LauncherCrash.enqueue(r.wire)
-		else:
-			Log.line("LAUNCHER CRASH the last launcher did not end normally; automatic reports are off: Send report offered")
-			_message.ask(L10n.t("launcher.crash.title"), L10n.t("launcher.crash.offer"), L10n.t("launcher.crash.send"), func() -> void:
-				if LauncherCrash.enqueue(r.wire).is_empty():
-					LauncherCrash.upload(self))
 	if automatic:
 		LauncherCrash.upload(self)
+
+
+## lane CRASHDIALOG-1: the crash dialog over the launcher's window
+func _crash_dialog(report: Dictionary, automatic: bool) -> void:
+	var overlay := W.modal("", CrashDialogUi.WIDTH)
+	var dialog := CrashDialogUi.new()
+	dialog.setup({
+		"strings": LauncherCrash.dialog_words(), "data": report.data, "json": report.json, "wire": report.wire,
+		"queue": LauncherCrash.QUEUE, "install_id": LauncherCrash.INSTALL_ID, "client": CrashClientScript, "automatic": automatic,
+		"fonts": {"title": Style.font("Cinzel", 600, 1), "body": Style.font("Inter")},
+		"log_line": func(text: String) -> void: Log.line("LAUNCHER " + text),
+		"on_logs": _open_logs,
+		"on_automatic": func(on: bool) -> void: GameOptions.set_value(LauncherCrash.OPTION, "yes" if on else "no"),
+		"on_close": func() -> void: overlay.root.queue_free(),
+	})
+	var center: Node = overlay.card.get_parent()
+	overlay.card.free()
+	center.add_child(dialog)
+	add_child(overlay.root)
+	dialog.start()
 
 
 ## tests (MACPLAY-1): press the real PLAY button `times` times, each once no job runs (its pressed signal: the player's click, _on_play),
