@@ -204,10 +204,12 @@ bool Pathfinder::worldToCell(const Coord3D *pos, bool center, ICoord2D *cell)
 // ---------------------------------------------------------------------------------------------------------
 unsigned Pathfinder::validLocomotorSurfacesForCellType(PathfindCell::CellType t)
 {
-	// TARGET RW table 0xDA2444 indexed by the 3-bit cell type (bits are the LocomotorSurfaceType flags of Locomotor.h: GROUND 1,
-	// WATER 2, CLIFF 4, AIR 8, RUBBLE 0x10, OBSTACLE 0x20, IMPASSABLE 0x40, DEEP_WATER 0x80)
-	static const unsigned table[8] = { 0x09, 0x0A, 0x0C, 0x18, 0x28, 0x48, 0x48, 0x88 };
-	return table[(unsigned)t & 7u];
+	// TARGET RW table 0xDA2444 indexed by the 4-bit cell type (`and 0xf` at every reader; bits are the LocomotorSurfaceType flags of Locomotor.h:
+	// GROUND 1, WATER 2, CLIFF 4, AIR 8, RUBBLE 0x10, OBSTACLE 0x20, IMPASSABLE 0x40, DEEP_WATER 0x80); lane WALL-5: entry 8 (RW 0xDA2464, the wall
+	// tops' rims) is 0; the bytes after it are other data (types 9 .. 15 are never written)
+	static const unsigned table[9] = { 0x09, 0x0A, 0x0C, 0x18, 0x28, 0x48, 0x48, 0x88, 0x00 };
+	const unsigned i = (unsigned)t & 0xFu;
+	return i < 9u ? table[i] : 0u;
 }
 
 PathfindMovement Pathfinder::makeMovement(const PathfindObject *obj, const PathfindLocomotorInfo &loco)
@@ -1670,11 +1672,12 @@ bool Pathfinder::checkForAdjust(PathfindObject &obj, const PathfindLocomotorInfo
 	}
 	else
 	{
-		pathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), dest, &obj); // RW 0x6F5BB0 with the unit (lane WALL-2)
-		adjustedPathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), &adjustDest, &obj);
+		// RW 0x6F6AE4 / 0x6F6B26 / 0x6F6B59 -> 0x6F5BB0 (lane QPATH-1); the last two give no set (the AI's: the port's caller passes that same set)
+		pathExists = quickDoesPathExist(obj, &obj.getPosition(), dest, &loco);
+		adjustedPathExists = quickDoesPathExist(obj, &obj.getPosition(), &adjustDest, &loco);
 		if (!pathExists)
 		{
-			if (clientSafeQuickDoesPathExist(loco, dest, &adjustDest, &obj))
+			if (quickDoesPathExist(obj, dest, &adjustDest, &loco))
 			{
 				adjustedPathExists = true;
 			}

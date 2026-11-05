@@ -53,8 +53,8 @@
 // INFERENCE / NOT PORTED (stops S-1940 .. S-1942): the repel (RW 0x89C6F5) runs only when the collision pass hands the gate a contact; the port's pass pairs AI
 // units only (S-581), so a gate meets no contact there; the layer of RW 0x68BBE0 is the pathfinder adapter's (ground without one, as EmotionModules); GateProxyBehavior and the Proxy link (onObjectCreated RW 0x89CB19), the gate sounds (no logic sound path: counted, not played), the
 // object interface call RW 0x68C3E6 -> vslot 2 at the start of the update, the AI notification RW 0x68BE59(9) and the skirmish AI's gate list
-// (TheSkirmishAIManager + 0xA74) (FakePathfindPortalBehaviour: lane WALL-2, PortalModules.h); the pathfinder's "keeping gate flags" removal (RW 0x6E861E) is the
-// plain removal here.
+// (TheSkirmishAIManager + 0xA74) (FakePathfindPortalBehaviour: lane WALL-2, PortalModules.h). Lane WALLFOOT-1: the pathfinder's "keeping gate flags" removal
+// (RW 0x6E861E) runs at each geometry change: the previous geometry's box cells keep bit 17 (CanPathThroughGates) until a plain removal.
 
 #pragma once
 

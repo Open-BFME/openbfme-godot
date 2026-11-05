@@ -648,6 +648,25 @@ bool ObjectPathfindAdapter::isParked() const
 
 bool ObjectPathfindAdapter::hasAI() const { return m_object->getAIUpdateInterface() != nullptr; }
 
+bool ObjectPathfindAdapter::isStatusImmobile() const
+{
+	// lane QPATH-1: RW 0x6F5C30 .. 0x6F5C35, Object::testStatus(49) (RW 0x44DDEC); 49 = IMMOBILE (BitFlagNames.cpp:162)
+	static const int immobile = CombatNames::status("IMMOBILE");
+	return m_object->testStatus((unsigned)immobile);
+}
+
+bool ObjectPathfindAdapter::getAILocomotorInfo(PathfindLocomotorInfo &out) const
+{
+	// lane QPATH-1: RW 0x6F5C90 .. 0x6F5CCE: the AI (Object + 0x260) and its locomotor set (AI + 0x1CC)
+	const AIUpdateInterface *a = m_object->getAIUpdateInterface();
+	if (!a)
+	{
+		return false;
+	}
+	out = a->locomotorInfo();
+	return true;
+}
+
 bool ObjectPathfindAdapter::inMoveAwaySearch() const
 {
 	// lane WALL-2: RW AI + 0x3CF, set only around the two getMoveAwayFromPath calls (RW 0x66DBFB / 0x66DC4B)
@@ -1236,6 +1255,14 @@ void AIWorld::removeObjectFromPathfindMap(Object &obj)
 	if (m_mapReady)
 	{
 		m_pathfinder->removeObjectFromPathfindMap(adapterFor(obj));
+	}
+}
+
+void AIWorld::removeObjectFromPathfindMapKeepGateFlag(Object &obj)
+{
+	if (m_mapReady)
+	{
+		m_pathfinder->removeObjectFromPathfindMapKeepGateFlag(adapterFor(obj));
 	}
 }
 

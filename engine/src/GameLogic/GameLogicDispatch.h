@@ -19,7 +19,9 @@
 //     entries go first, up to five when `all`. (BFME1 / ZH cancel by production id.)
 //   * MSG_SET_RALLY_POINT (RW 0x77A26C): args { object id, Coord3D, byte global, object id target }; the building is found by id and NOT checked for ownership;
 //     with `global` and no target the point goes to every AUTO_RALLYPOINT object (RW 0x7798D5); else RW 0x779544: a target object's position replaces the
-//     point, the exit interface's setRallyPoint takes it (the pathfinder's validation RW 0x6F5BB0 / 0x6EA88A is not ported, S-202).
+//     point, the exit interface's setRallyPoint takes it. Not ported (S-202): the validation of a point without a target, RW 0x779664 -> QuickDoesPathExist
+//     RW 0x6F5BB0 (lane QPATH-1: Pathfinder::quickDoesPathExist) from the building with a temporary HumanLocomotor (LargeShipLocomotor for template + 0x11F
+//     bit 4) set, then RW 0x6EA88A, else the refusal message.
 //   * the player's selection is changed by MSG_CREATE_SELECTED_GROUP (args: byte createNewGroup, object ids), MSG_REMOVE_FROM_SELECTED_GROUP (object ids, RW 0x77A147)
 //     and MSG_DESTROY_SELECTED_GROUP; it lives in Player::selection() (hashed) and nowhere else; the other selection
 //     messages (teams, area selection, formation) are not ported (S-208).
