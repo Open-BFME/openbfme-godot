@@ -251,7 +251,8 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	// (1144758272, 1167090688) (was 1144266752, 1167193088)
 	// merge queue q38 (LOCODIST-1: the locomotor distance to the goal follows RW 0x664127, the path length left instead of the 2D line; measured once on the
 	// merged tree and at its merge point): he walks 15 frames (8) and stops at (1144266752, 1167152128)
-	CHECK(walked == 15);
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): Boromir walks 17 frames (15) and stops on the same spot
+	CHECK(walked == 17);
 	CHECK(bitsOf(boromir->getPosition()->x) == 1144266752u);
 	CHECK(bitsOf(boromir->getPosition()->y) == 1167152128u);
 	CHECK(bitsOf(start.x) == 1144391642u);

@@ -171,6 +171,21 @@ TEST_CASE("heroring1: the grid carries an alpha decal after the merge decals: it
 	CHECK(SelectionDecalShaderMode(g) == 0);
 	broken.pop_back(); // the merge decal alone
 	CHECK_FALSE(BuildSelectionDecalGrid(broken, &Atlas::rect, twoPasses(), g, &err));
+	// the notes of the decals after the broken merge decal reach the report too (the first build stops at it): a missing ring texture, an
+	// unsupported style; each note once
+	std::vector<SelectionDecal> later = { member(0, 0, 0), hero(60, 0, 0, 0xFFFFFFFFu, "ringgone"), hero(-60, 0, 0, 0xFFFFFFFFu) };
+	later[0].texture = "mergegone";
+	later[2].style = 0x40u; // additive: not drawn
+	REQUIRE(BuildSelectionDecalGrid(later, &Atlas::rect, twoPasses(), g, &err)); // nothing drawn (the grid is empty)
+	CHECK(SelectionDecalShaderMode(g) == 0);
+	CHECK(err.find("mergegone") != std::string::npos);
+	CHECK(err.find("ringgone") != std::string::npos);
+	CHECK(err.find("0x40") != std::string::npos);
+	std::vector<SelectionDecal> before = { later[1], later[0] }; // the ring's note is already in the first build's: named once
+	REQUIRE(BuildSelectionDecalGrid(before, &Atlas::rect, twoPasses(), g, &err));
+	CHECK(err.find("ringgone") != std::string::npos);
+	CHECK(err.find("ringgone") == err.rfind("ringgone"));
+	CHECK(err.find("mergegone") != std::string::npos);
 	// a skipped alpha decal before another: the other takes the first alpha record and draws
 	const Atlas atlas;
 	REQUIRE(BuildMergeDecalGrid({ hero(0, 0, 0, 0xFFFF0000u, "nope"), hero(0, 0, 0, 0xFFFFFFFFu) }, &Atlas::rect, twoPasses(), g, &err));

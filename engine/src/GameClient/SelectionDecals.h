@@ -237,7 +237,7 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error);
 // the grid the shaders draw (the HUD's): BuildMergeDecalGrid, and when its merge list fails (a merge decal's texture missing: no outline that frame,
 // as ComposeMergeDecals) the grid of the other decals, so a hero's ring does not go with an unrelated marker's texture (the merge error stays in
-// `error`; lane PLACEDECAL-1: out.drawn indexes `decals`). False when not even that grid is built (`out` is then empty)
+// `error`, with the other decals' notes; lane PLACEDECAL-1: out.drawn indexes `decals`). False when not even that grid is built (`out` is then empty)
 bool BuildSelectionDecalGrid(const std::vector<SelectionDecal> &decals, const std::function<bool(const std::string &, MergeDecalAtlasRect &)> &rect,
 	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error);
 

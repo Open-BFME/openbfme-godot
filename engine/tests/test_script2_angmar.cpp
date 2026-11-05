@@ -131,8 +131,10 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		// hits 1033 -> 1006, banner carrier hits 101 -> 83, the last sling hit takes 955 (1017)
 		// merge queue q38 (measured once on the merged tree and at each merge point; LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves it,
 		// #172 keeps it): wolf rider hits 1006 -> 1016, banner carrier hits 83 -> 88, the last sling hit takes 1111 (955)
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 88 }, { "AngmarTrollSling dealt 1350 taken 1111", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 1016 } };
+		// merge queue q41 (measured once on the merged tree and at its merge point; DECOMPFIX-1104B's aim and give-way rules, AIMAIM-1 RW 0x75232F and BUMP-1,
+		// move it, NECRODIE-1 keeps it): wolf rider hits 1016 -> 982, banner carrier hits 88 -> 97, the last sling hit takes 1285 (1111)
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 97 }, { "AngmarTrollSling dealt 1350 taken 1285", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 3 }, { "AngmarTrollSling dealt 50 taken 50", 4 }, { "AngmarWolfRider dealt 5 taken 5", 982 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)

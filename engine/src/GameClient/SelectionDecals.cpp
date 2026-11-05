@@ -850,8 +850,25 @@ bool BuildSelectionDecalGrid(const std::vector<SelectionDecal> &decals, const st
 			at.push_back(i);
 		}
 	}
-	std::string notes; // the other decals' notes are already in `error` from the first build
-	if (!others.empty() && BuildMergeDecalGrid(others, rect, settings, out, &notes))
+	// the first build stopped at the broken merge decal: the notes of the other decals after it are only in the second build's, so each one `error`
+	// does not have yet is added (a missing ring texture or an unsupported style still reaches the report)
+	std::string notes;
+	const bool built = !others.empty() && BuildMergeDecalGrid(others, rect, settings, out, &notes);
+	for (size_t from = 0; error && from < notes.size();)
+	{
+		size_t end = notes.find("; ", from);
+		if (end == std::string::npos)
+		{
+			end = notes.size();
+		}
+		const std::string n = notes.substr(from, end - from);
+		if (error->find(n) == std::string::npos)
+		{
+			*error += (error->empty() ? "" : "; ") + n;
+		}
+		from = end + 2;
+	}
+	if (built)
 	{
 		std::vector<std::uint8_t> drawn(decals.size(), 0);
 		for (size_t k = 0; k < at.size() && k < out.drawn.size(); ++k)
