@@ -1,6 +1,6 @@
 // OpenBFME. GPL-3.0.
 //
-// AISpecialPowerUpdate's decisions ported by lane AIPOW-1 (stop S-1421's 39 kinds): the slot 0x1C of the classes RW 0x992724 makes (the files
+// AISpecialPowerUpdate's decisions ported by lanes AIPOW-1 and RAI-POW-2 (stop S-1421): the slot 0x1C of the classes RW 0x992724 makes (the files
 // SkirmishAI\AISpecialPowers\AISpecialPowerInstances\*.cpp, RW 0xC8E600 names one). Ported from the RotWK binary (caveat S-001); Open-BFME-2 has no matching
 // source. Every float operation names its retail instruction class (SSE scalar or x87 under precision control 24); the scans are the partition manager's
 // range query sorted near to far (RW 0xA39340 order 1), so their order is deterministic.
@@ -23,6 +23,7 @@
 #include "GameLogic/Economy.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
@@ -756,4 +757,59 @@ bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)
 		}
 	}
 	return false;
+}
+
+// ---- CITADEL (lane RAI-POW-2) -------------------------------------------------------------------------------------------------------------------------------
+
+bool AISpecialPowerUpdate::decideCitadel(Object &obj)
+{
+	// RW 0x9E6CCB: the controlling player's AI (RW 0x6A950B), its base position (RW 0x8F0284: the base builder's start) and its current enemy
+	// (RW 0x6C7807); the enemy record's structure list (record + 8): the first DOZER_FACTORY (template + 0x120 bit 2) is the target. Two draws of
+	// GameLogicRandomValueReal(0, 1) "AISpellBookCitadel.cpp" (RW 0x6D332C; the binary stores the full build path): line 0x49 places a point along the base -> target line, line 0x51
+	// offsets it perpendicular by the full base -> target vector (SSE: x += t2 * dy, y -= t2 * dx); then RW 0xA0229F
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(player->getPlayerIndex());
+	if (!ai)
+	{
+		return false;
+	}
+	const int enemyIndex = AITacticalAI::enemyOfGroup(*ai);
+	if (enemyIndex < 0)
+	{
+		return false;
+	}
+	const AIStatCollector *record = logic.skirmishAI().record(enemyIndex); // RW 0x6A9999
+	if (!record)
+	{
+		return false; // INFERENCE: every playable player has a record (RW 0x8E46D9)
+	}
+	static const int kDozerFactory = kind("DOZER_FACTORY");
+	const Object *target = nullptr;
+	for (ObjectID id : record->structures())
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && hasKind(*o, kDozerFactory))
+		{
+			target = o;
+			break;
+		}
+	}
+	if (!target)
+	{
+		return false; // RW 0x9E6D3A
+	}
+	const Coord3D &base = ai->build.startPosition; // RW 0x8F0284 -> RW 0x90CD45
+	const Coord3D &goal = *target->getPosition();
+	const float dx = SimMath::subf32(goal.x, base.x), dy = SimMath::subf32(goal.y, base.y), dz = SimMath::subf32(goal.z, base.z);
+	const float t1 = logic.random().getValueReal(0.0f, 1.0f, "AISpellBookCitadel.cpp", 0x49);
+	const Coord3D point{ SimMath::addf32(base.x, SimMath::mulf32(dx, t1)), SimMath::addf32(base.y, SimMath::mulf32(dy, t1)),
+		                 SimMath::addf32(base.z, SimMath::mulf32(dz, t1)) };
+	const float t2 = logic.random().getValueReal(0.0f, 1.0f, "AISpellBookCitadel.cpp", 0x51);
+	const Coord3D offset{ SimMath::addf32(point.x, SimMath::mulf32(t2, dy)), SimMath::subf32(point.y, SimMath::mulf32(t2, dx)), point.z };
+	return setLocationIfValid(obj, offset); // RW 0xA0229F
 }

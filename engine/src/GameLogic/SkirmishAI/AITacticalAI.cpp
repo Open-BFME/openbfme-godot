@@ -1134,7 +1134,7 @@ int namedCounter(AIBrainState &b, const char *name)
 
 int enemyOfGroup(const AISkirmishPlayer &ai)
 {
-	return ai.groupFirst ? ai.groupFirst->brain.currentEnemy : ai.brain.currentEnemy; // RW 0x6C7807
+	return AITacticalAI::enemyOfGroup(ai); // RW 0x6C7807
 }
 
 // vslot 1 (applies) of targetless prototype `index` (the prototype's + 0x24 player is the AI's: RW 0x90C623)
@@ -2639,6 +2639,12 @@ const AIStatCollector &AITacticalAI::recordOf(GameLogic &logic, int playerIndex)
 	static const AIStatCollector kNone(-1);
 	const AIStatCollector *r = logic.skirmishAI().record(playerIndex);
 	return r ? *r : kNone;
+}
+
+int AITacticalAI::enemyOfGroup(const AISkirmishPlayer &ai)
+{
+	// RW 0x6C7807: AI + 0x164 (the brain) -> + 0xC -> + 4 (the enemy manager) -> + 0x14 the current enemy; the group's first AI holds it for the group
+	return ai.groupFirst ? ai.groupFirst->brain.currentEnemy : ai.brain.currentEnemy;
 }
 
 namespace

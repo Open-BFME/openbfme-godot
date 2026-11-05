@@ -212,6 +212,8 @@ namespace AITacticalAI
 // lane DECOMP-3: the player info record (RW 0x6A9999, GameLogic/SkirmishAI/AIStatCollector.h) of the player with index `playerIndex`; an empty record when it
 // has none (RW would read through a null record)
 const AIStatCollector &recordOf(GameLogic &logic, int playerIndex);
+// RW 0x6C7807: the current enemy player index of the AI (the group's first AI's brain, else its own), -1 when none
+int enemyOfGroup(const AISkirmishPlayer &ai);
 // AIPlayer + 0x90's update (RW 0x9A3366): recruiting and hand-over of the tactic teams
 void updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai);
 // the brain's update (RW 0x6C74C2); `first` is the group's first AI (the target chooser's owner)

@@ -493,11 +493,11 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("42 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("43 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 9 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
-	// TREE_KILLER, CITADEL, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING)
+	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 8 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
+	// TREE_KILLER, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING)
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
 	{
@@ -508,7 +508,7 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 			CHECK_MESSAGE((spellBook || t == 44 || t == 49), TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 11);
+	CHECK(unported == 10);
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -986,4 +986,150 @@ TEST_CASE("AIPOW-1 r2: the Elves' BUFFTERRAIN (Elven Wood, RW 0x9E77EE) and ENSH
 	CHECK(distance2D(mist->decidedLocation(), *mine->getPosition()) <= 150.0f);
 	MESSAGE("BUFFTERRAIN " << distance2D(terrain->decidedLocation(), *mine->getPosition()) << ", ENSHROUDINGMIST "
 	                       << distance2D(mist->decidedLocation(), *mine->getPosition()) << " from the unit");
+}
+
+// ---- lane RAI-POW-2: CITADEL (RW 0x9E6CCB) ---------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+// the brain's enemy manager picks its current enemy once the manager's update has run a few frames (RW 0x6C74C2 / 0x9B2EB9)
+int brainEnemy(const AISkirmishPlayer &ai)
+{
+	return ai.groupFirst ? ai.groupFirst->brain.currentEnemy : ai.brain.currentEnemy;
+}
+
+AISpecialPowerUpdate *spellBookModule(Object &book, int type, std::unique_ptr<AISpecialPowerUpdate> &fresh)
+{
+	AISpecialPowerUpdate *found = aiPowerOfType(book, type);
+	REQUIRE(found);
+	if (found->active())
+	{
+		return found;
+	}
+	fresh = std::make_unique<AISpecialPowerUpdate>(&book, found->data());
+	fresh->initAsIfInCommandSetForTest();
+	return fresh.get();
+}
+
+void readySpellPower(Object &book, AISpecialPowerUpdate &module, std::uint32_t frame)
+{
+	REQUIRE(module.decision());
+	const CommandButton *button = module.decision()->button;
+	REQUIRE(button);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName);
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(book, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(frame);
+	REQUIRE(sp->isReady());
+}
+
+void leaveOnlyTheCitadel(GameLogic &logic, const Player *player)
+{
+	std::vector<ObjectID> doomed;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == player && o->isKindOfName("STRUCTURE") && !o->isKindOfName("COMMANDCENTER"))
+		{
+			doomed.push_back(o->getID());
+		}
+	}
+	for (ObjectID id : doomed)
+	{
+		if (Object *o = logic.findObjectByID(id))
+		{
+			logic.destroyObject(o);
+		}
+	}
+}
+} // namespace
+
+TEST_CASE("RAI-POW-2: CITADEL (RW 0x9E6CCB) draws its point along the AI base -> enemy DOZER_FACTORY line, lines 0x49 / 0x51")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("RAI-POW-2 CITADEL binary facts (set RW_GAME_DAT)");
+	}
+	else
+	{
+		CHECK(pe->u32At(0xC8DD50u + 0x1Cu) == 0x9E6CCBu); // the decision (vtable RW 0xC8DD50, slot 0x1C)
+		CHECK((pe->u32At(0x9E6D4Cu) & 0xFFFFu) == 0x496Au); // push 0x49: the first draw's line
+		CHECK((pe->u32At(0x9E6D8Au) & 0xFFFFu) == 0x516Au); // push 0x51: the second draw's line
+		CHECK(pe->cstring(0xC8DD70).find("AISpellBookCitadel.cpp") != std::string::npos); // the draws' source name
+	}
+	CHECK(AISpecialPowerDecision::decisionPorted(37));
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5501, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	const AISkirmishPlayer *ai = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	for (int i = 0; i < 40 && (!ai || brainEnemy(*ai) < 0); ++i)
+	{
+		a.advance(1);
+	}
+	REQUIRE(ai);
+	REQUIRE(brainEnemy(*ai) >= 0); // tolerance: the arena has at least one hostile player
+	leaveOnlyTheCitadel(*a.logic, a.human);
+	a.advance(1);
+	const Object *citadel = firstOf(*a.logic, a.human, "COMMANDCENTER");
+	REQUIRE(citadel);
+	REQUIRE(citadel->isKindOfName("DOZER_FACTORY"));
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *cit = spellBookModule(*book, 37, fresh);
+	REQUIRE(cit->decision());
+	CHECK(cit->data()->m_commandButtonName == "Command_SpellBookCitadel");
+	readySpellPower(*book, *cit, a.logic->getFrame());
+	// the body: the target is the enemy record's first DOZER_FACTORY (the human's citadel); the two draws are RW 0x6D332C at "AISpellBookCitadel.cpp"
+	// lines 0x49 / 0x51, both (0, 1), and the point is base + (target - base) * t1 with the perpendicular (t2 * dy, -t2 * dx) offset. The ActionManager's
+	// building-power placement test for type 0x67 is stop S-1874's unported branch (with its forbidden-object filter): it refuses the point, and the
+	// 15 .. 150 walk, so the decision answers no, as it does in this port today
+	const Coord3D &base = ai->build.startPosition; // RW 0x8F0284 -> RW 0x90CD45
+	const Coord3D &goal = *citadel->getPosition();
+	const float dx = SimMath::subf32(goal.x, base.x), dy = SimMath::subf32(goal.y, base.y), dz = SimMath::subf32(goal.z, base.z);
+	a.logic->random().enableCallLog(true);
+	a.logic->random().clearCallLog();
+	const bool yes = cit->decideNow();
+	const std::vector<GameLogicRandom::Call> &log = a.logic->random().callLog();
+	a.logic->random().enableCallLog(false);
+	REQUIRE(log.size() >= 2); // tolerance: the walk may add draws after the two of the point
+	CHECK(log[0].real);
+	CHECK(log[0].rlo == 0.0f);
+	CHECK(log[0].rhi == 1.0f);
+	CHECK(log[0].line == 0x49);
+	CHECK(log[0].file == "AISpellBookCitadel.cpp");
+	CHECK(log[1].real);
+	CHECK(log[1].rlo == 0.0f);
+	CHECK(log[1].rhi == 1.0f);
+	CHECK(log[1].line == 0x51);
+	CHECK(log[1].file == "AISpellBookCitadel.cpp");
+	const float t1 = log[0].rresult, t2 = log[1].rresult;
+	const Coord3D point{ SimMath::addf32(base.x, SimMath::mulf32(dx, t1)), SimMath::addf32(base.y, SimMath::mulf32(dy, t1)),
+		                 SimMath::addf32(base.z, SimMath::mulf32(dz, t1)) };
+	// RW 0x9E6DE0's SSE: x += t2 * dy, y -= t2 * dx, z unchanged
+	const Coord3D expected{ SimMath::addf32(point.x, SimMath::mulf32(t2, dy)), SimMath::subf32(point.y, SimMath::mulf32(t2, dx)), point.z };
+	CHECK(ActionManager::canDoSpecialPowerAtLocation(*book, *cit->decision()->button, expected) == false); // S-1874: type 0x67 is not ported
+	CHECK(yes == false);
+	CHECK(log.size() == 4); // the point's two draws, then RW 0xA01C9C's random walk's two: the walk tried and was refused too
+	// a human's spell book never decides (RW 0x6A950B: no skirmish AI for his player)
+	Player *humanPlayer = a.logic->players().getNthPlayer(a.human->getPlayerIndex());
+	REQUIRE(humanPlayer);
+	Object *theirBook = SpecialPowerModules::getSpellBookObject(*a.logic, *humanPlayer);
+	if (theirBook)
+	{
+		AISpecialPowerUpdate humanCaster(theirBook, cit->data());
+		humanCaster.initAsIfInCommandSetForTest();
+		REQUIRE(humanCaster.decision());
+		CHECK(humanCaster.decideNow() == false);
+	}
 }
