@@ -919,10 +919,10 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q38 (measured once on the merged tree and at each merge point; #172 keeps them): LOCODIST-1's retail locomotor distance to the goal
 	// (RW 0x664127) keeps seed 2 open at 9000 with a new table and ends seed 7 with Mordor's defeat (start position 1) at 8995; seed 1234 stays open at
 	// 9000. Engine pins, not retail values.
-	// Lane RAI-TL (FarmKillSquad's RotWK farm / production choice, RW 0x9BBA51 / 0x9BB5E4: its new draws and other raid targets): seed 2 ends with
-	// Mordor's defeat (start position 0) at 7515 with the table below, seed 7 stays open at 9000 and seed 1234 stays open at 9000. Engine pins, not
-	// retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 7515 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Merge queue q41 (measured once on the merged tree and at its merge point; NECRODIE-1 keeps them): DECOMPFIX-1104B (AIMAIM-1's aim, RW 0x75232F,
+	// with BUMP-1's give-way rules and STARTRANGE-1's start range) keeps seed 2 open at 9000 with a new table and seed 7 open at 9000 (Mordor's defeat at
+	// 8995 before); seed 1234 stays open at 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -968,16 +968,20 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// merge queue q37 (measured once on the merged tree; ATKRESET-1 moves it): a new table from the first window on; the game ends with the Men's defeat at 6858
 			// merge queue q38 (measured once on the merged tree and at each merge point; LOCODIST-1 moves it, #172 keeps it): a new table from the first window on; the game
 			// stays open at 9000
-			// Lane RAI-TL (FarmKillSquad's RotWK farm / production choice, RW 0x9BBA51 / 0x9BB5E4: its new draws and other raid targets): seed 2 ends with
-			// Mordor's defeat at 7515 with this table (an engine pin, not a retail value); see the table's own pins above
+			// merge queue q41 (measured once on the merged tree and at its merge point; DECOMPFIX-1104B moves it, NECRODIE-1 keeps it): a new table from the first
+			// window on; the game stays open at 9000
+			// pr/rai-farm-choice on the #217 / #214 main (measured on the merged tree; the farm and production selectors' draws move the fight from the first window
+			// on): a new table; the game stays open at 9000
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 90u/7s destroyed 10u/1s] [1 attacks 0 built 91u/8s destroyed 32u/2s]\n"
-		"frame 2000: [0 attacks 1 built 252u/9s destroyed 86u/1s] [1 attacks 1 built 152u/11s destroyed 174u/4s]\n"
-		"frame 3000: [0 attacks 1 built 289u/12s destroyed 166u/2s] [1 attacks 1 built 234u/14s destroyed 264u/10s]\n"
-		"frame 4000: [0 attacks 1 built 307u/14s destroyed 184u/3s] [1 attacks 2 built 289u/18s destroyed 275u/12s]\n"
-		"frame 5000: [0 attacks 1 built 309u/15s destroyed 224u/4s] [1 attacks 2 built 328u/20s destroyed 302u/14s]\n"
-		"frame 6000: [0 attacks 1 built 310u/17s destroyed 252u/4s] [1 attacks 2 built 362u/25s destroyed 309u/16s]\n"
-		"frame 7000: [0 attacks 1 built 310u/18s destroyed 252u/4s] [1 attacks 2 built 367u/27s destroyed 309u/16s]\n");
+		"frame 1000: [0 attacks 0 built 90u/7s destroyed 20u/1s] [1 attacks 0 built 91u/8s destroyed 33u/2s]\n"
+		"frame 2000: [0 attacks 0 built 219u/9s destroyed 107u/1s] [1 attacks 2 built 187u/10s destroyed 152u/6s]\n"
+		"frame 3000: [0 attacks 0 built 326u/12s destroyed 187u/2s] [1 attacks 3 built 301u/13s destroyed 227u/6s]\n"
+		"frame 4000: [0 attacks 1 built 449u/14s destroyed 250u/4s] [1 attacks 3 built 342u/17s destroyed 368u/7s]\n"
+		"frame 5000: [0 attacks 2 built 497u/15s destroyed 315u/4s] [1 attacks 4 built 377u/20s destroyed 454u/12s]\n"
+		"frame 6000: [0 attacks 2 built 497u/15s destroyed 374u/4s] [1 attacks 6 built 460u/24s destroyed 490u/13s]\n"
+		"frame 7000: [0 attacks 2 built 497u/17s destroyed 391u/4s] [1 attacks 6 built 504u/25s destroyed 490u/13s]\n"
+		"frame 8000: [0 attacks 2 built 497u/17s destroyed 391u/4s] [1 attacks 6 built 505u/27s destroyed 491u/13s]\n"
+		"frame 9000: [0 attacks 2 built 498u/18s destroyed 391u/4s] [1 attacks 6 built 521u/27s destroyed 492u/14s]\n");
 		}
 	}
 }
