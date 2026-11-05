@@ -9,6 +9,13 @@ python -m pytest -n 6 --dist worksteal -q -p no:cacheprovider tools --durations=
 python -m pytest -q -rs tools/test_gdscript.py
 ```
 
+## Mission-script manual checks
+
+| Script | Scheduling | Coverage |
+|---|---|---|
+| `godot/tests/mission_script_presentation_test.gd` | Manual: mounted retail data; rendered capture optional | Opening reveal reaches terrain shroud; additive marker lifecycle |
+| `godot/tests/tutorial_builders_test.gd` | Manual: mounted retail data | Both authored porters create and complete tower construction |
+
 ## Scheduling policy
 
 The manual native HUD grayscale fixture is separate from the GDScript runner:
