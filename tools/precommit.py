@@ -382,6 +382,25 @@ def added_lines() -> dict[str, set[int]]:
     return result
 
 
+def shader_problems(files: list[tuple[str, str]]) -> list[str]:
+    """Every Godot shader the index holds must fit Intel's varying budget once a shader file is staged (check_shader_varyings.py)."""
+    if not any(rel.startswith("godot/") and rel.endswith((".gdshader", ".gdshaderinc")) for rel, _ in files):
+        return []
+    sys.path.insert(0, str(REPO / "tools"))
+    import check_shader_varyings  # noqa: PLC0415 - only commits that touch a shader need it
+
+    listed = git("ls-files", "-z", "--", "godot/*.gdshader").stdout.split(b"\0")
+    shaders = [os.fsdecode(p).removeprefix("godot/") for p in listed if p]
+
+    def load(rel: str) -> str:
+        out = git("show", f":godot/{rel}")
+        if out.returncode != 0:
+            raise OSError(f"godot/{rel} is not in the index")
+        return out.stdout.decode("utf-8", "replace")
+
+    return [f"godot/{line}" for line in check_shader_varyings.problems(shaders, load)]
+
+
 def main() -> int:
     problems = []
     try:
@@ -399,6 +418,7 @@ def main() -> int:
             if problem:
                 problems.append(problem)
         problems += pin_problems(pins, pin_reason)
+        problems += shader_problems(files)
     except (subprocess.CalledProcessError, ValueError, OSError) as exc:
         problems.append(f"cannot check staged files: {exc}")
     if problems:
