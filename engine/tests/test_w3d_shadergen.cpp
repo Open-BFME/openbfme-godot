@@ -160,7 +160,8 @@ TEST_CASE("shader text: instance lighting and colour share one flat interpolatio
 TEST_CASE("shader text: the normal-mapped building permutation fits Intel Arc's 29 Forward+ locations")
 {
 	// Godot reported "Too many varyings used in shader (30 used, maximum supported is 29)" on an Intel Arc A770 (Mesa ANV, Vulkan 1.4)
-	// for this permutation with 16 declared varyings: Forward+ itself takes the other 14 locations. 14 declared varyings leave one spare.
+	// for the selection-decal permutation; this building permutation declared 14 and sat at 29 of Intel's 29 (Forward+ itself takes
+	// the other 15). The smooth varyings are packed into vec4s, so it now declares 12 and uses 27, and the worst permutation uses 28.
 	W3DShaderKey key;
 	key.Fx = key.NormalMap = key.Tangents = key.HouseColor = key.Uv2 = true;
 	key.Tex[0] = key.Tex[1] = key.Texturing = true;
@@ -178,7 +179,7 @@ TEST_CASE("shader text: the normal-mapped building permutation fits Intel Arc's 
 	{
 		if (line.find("varying ") == 0) ++varyings;
 	}
-	CHECK(varyings == 14); // includes the fragment-to-light shadow colour; unused v_col was removed
+	CHECK(varyings == 12); // includes the fragment-to-light shadow colour; v_fade rides in w of the packed view position
 	// the two UV sets share one interpolator, and the world position is a vertex() local
 	CHECK(has(code, "varying vec4 v_uv;"));
 	CHECK(has(code, "v_uv = vec4(UV, UV2);"));
@@ -187,11 +188,12 @@ TEST_CASE("shader text: the normal-mapped building permutation fits Intel Arc's 
 }
 
 // -------------------------------------------------------------------------------------------------------------------------------
-// The varying budget: Godot 4.7.2 Forward+ spatial takes 15 of Intel's 29 locations, the generator declares 7 more and either 2
-// classic or 6 normal-mapped (Fx) varyings, plus object_shadow's 1 when the surface is a shadow receiver and its extra 1 when the
-// wall selection decals draw over that shadow (SELWALL-1). The varying declarations are emitted only for k.Fx and shadowReceiver
-// (!OcclusionPass && Blend == OPAQUE && !AlphaOverride): that cross product is enumerated exactly, and every other key field is
-// swept through every value in each context so a field that starts emitting a varying turns the test red.
+// The varying budget: Godot 4.7.2 Forward+ spatial takes 15 of Intel's 29 locations, the generator declares 6 more (the smooth
+// v_fade rides in w of the packed view position) and either 2 classic or 5 normal-mapped (Fx) varyings, plus object_shadow's 1 when
+// the surface is a shadow receiver and its extra 1 when the wall selection decals draw over that shadow (SELWALL-1). The varying
+// declarations are emitted only for k.Fx and shadowReceiver (!OcclusionPass && Blend == OPAQUE && !AlphaOverride): that cross
+// product is enumerated exactly, and every other key field is swept through every value in each context so a field that starts
+// emitting a varying turns the test red.
 
 namespace
 {
@@ -227,14 +229,14 @@ std::vector<std::string> varyingNames(const ShaderVaryings::Result &result)
 
 std::vector<std::string> expectedW3DVaryings(bool fx, bool shadow, bool selectionDecals)
 {
-	std::vector<std::string> names = { "v_fade", "v_instance", "v_uv", "v_vnrm", "v_vpos", "v_wnrm", "v_wview" };
+	std::vector<std::string> names = { "v_instance", "v_pack_pos", "v_uv", "v_vnrm", "v_wnrm", "v_wview" };
 	if (fx)
 	{
-		for (int i = 0; i < 3; ++i)
-		{
-			names.push_back("v_ht" + std::to_string(i));
-			names.push_back("v_lt" + std::to_string(i));
-		}
+		names.push_back("v_light0");
+		names.push_back("v_light1");
+		names.push_back("v_light2");
+		names.push_back("v_light3");
+		names.push_back("v_light4");
 	}
 	else
 	{
@@ -281,7 +283,7 @@ TEST_CASE("shader budget: the Fx, occlusion, blend and alpha-override cross prod
 					key.NormalMap = fx;
 					key.Tangents = fx;
 					const bool shadow = shadowReceiver(key);
-					const int expected = 15 + 7 + (fx ? 6 : 2) + (shadow ? 1 : 0);
+					const int expected = 15 + 6 + (fx ? 5 : 2) + (shadow ? 1 : 0);
 					const ShaderVaryings::Result result = countW3D(key);
 					CAPTURE(fx);
 					CAPTURE(occlusion);
@@ -301,6 +303,7 @@ TEST_CASE("shader budget: the Fx, occlusion, blend and alpha-override cross prod
 		}
 	}
 	CHECK(checked == 2 * 3 * 8 * 2);
+	CHECK(worst == 27); // Fx + shadow receiver; every count above is exact, so this is the cross product's largest
 	std::fprintf(stderr, "w3d shader budget: %d varying-bearing variants, the most is %d/%d (Fx %d, occlusion %d, blend %d, alpha override %d)\n",
 		checked, worst, ShaderVaryings::kMaxVaryings, worstKey.Fx, worstKey.OcclusionPass, worstKey.Blend, worstKey.AlphaOverride);
 }
@@ -405,15 +408,18 @@ TEST_CASE("shader budget: no other W3D key field changes the varying set")
 		}
 	}
 	CHECK(checked == 2 * 3 * 8 * 2 * 101);
+	CHECK(worst == 28); // the new worst: Fx + opaque + selection decals + shadow receiver (see the next test)
 	std::fprintf(stderr, "w3d shader budget: %d single-field variants counted, the most is %d/%d (%s; Fx %d, occlusion %d, blend %d, alpha override %d)\n",
 		checked, worst, ShaderVaryings::kMaxVaryings, worstField.c_str(), worstKey.Fx, worstKey.OcclusionPass, worstKey.Blend, worstKey.AlphaOverride);
 }
 
-TEST_CASE("shader budget: the Fx selection-decal shadow receiver uses 30 and the guard reports it")
+TEST_CASE("shader budget: the Fx selection-decal shadow receiver uses 28 and fits Intel's 29")
 {
-	// The generator emits both shadow varyings when a normal-mapped (Fx) surface is also a selection-decal receiver
-	// (selection_decals.gdshaderinc's v_shadow_over, SELWALL-1). Every other varying-bearing permutation is <= 29; this
-	// one is 30, so the runtime guard must name it. The enumeration above pins the generator's exact sets.
+	// The generator drew both shadow varyings when a normal-mapped (Fx) surface is also a selection-decal receiver
+	// (selection_decals.gdshaderinc's v_shadow_over, SELWALL-1). With the packed smooth varyings it is 28 of Intel's 29:
+	// 15 Forward+ base + v_uv, v_pack_pos (v_fade in w), v_vnrm, v_wnrm, v_wview, the flat v_instance and the five packed
+	// Fx light vec4s + v_shadow_color + v_shadow_over. The runtime guard must not report it. The enumeration above pins the
+	// generator's exact sets; this case pins the one permutation that used to be over the limit.
 	W3DShaderKey key;
 	key.Fx = true;
 	key.SelectionDecals = true;
@@ -427,7 +433,7 @@ TEST_CASE("shader budget: the Fx selection-decal shadow receiver uses 30 and the
 		return !out.empty();
 	});
 	REQUIRE(result.ok);
-	CHECK(result.used == 30);
+	CHECK(result.used == 28);
 	std::vector<std::string> reported;
 	const bool fits = ShaderVaryings::Guard("W3D material Fx selection decals", code, "shaders/w3d.gdshader",
 		[](const std::string &rel, std::string &out) {
@@ -435,7 +441,6 @@ TEST_CASE("shader budget: the Fx selection-decal shadow receiver uses 30 and the
 			return !out.empty();
 		},
 		[&reported](const std::string &message) { reported.push_back(message); });
-	CHECK_FALSE(fits);
-	REQUIRE(reported.size() == 1);
-	CHECK(reported[0].find("30 varyings") != std::string::npos);
+	CHECK(fits);
+	CHECK(reported.empty());
 }
