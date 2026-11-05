@@ -23,6 +23,8 @@
 #include "GameLogic/Economy.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
@@ -726,6 +728,135 @@ bool AISpecialPowerUpdate::decideCallTheHorde(Object &obj)
 		return false;
 	}
 	return SimMath::subf32(1.0f, SimMath::divf32(used, limit)) > 0.25f;
+}
+
+// ---- the economy debuffs (lane RAI-POW-2) --------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+// RW 0x6AA5F5 (Player + 0x2FC's vslot 0x30) -> RW 0x8F47EB: the controlling player's AIPlayer enemy; null when the player has no skirmish AI
+const Player *aiEnemy(GameLogic &logic, const Player &player)
+{
+	AISkirmishPlayer *ai = logic.skirmishAI().findAI(player.getPlayerIndex());
+	return ai ? AITacticalAI::enemyPlayer(logic, *ai) : nullptr;
+}
+
+// RW 0xB4D9A0: the position is SHROUDED to the viewer
+bool shroudedFor(const GameLogic &logic, const Player &viewer, const Coord3D &position)
+{
+	return !logic.shroud() || (int)logic.shroud()->getStatusAt(viewer.getPlayerIndex(), position.x, position.y) == CELLSHROUD_SHROUDED;
+}
+} // namespace
+
+bool AISpecialPowerUpdate::decideDebuffEconomy(Object &obj)
+{
+	// RW 0x9E74B7: the controlling player's AIPlayer enemy (RW 0x6AA5F5 -> RW 0x8F47EB) and its record's economy list (record + 0xC, RW 0x72B229); each
+	// object that resolves, that the caster's player does not see SHROUDED and that is not UNDER_CONSTRUCTION (RW 0x44DDEC(object, 2)) weighs its
+	// PRODUCTION attribute product (RW 0x68C82D(object, 0xD, out = 1.0, 0, 1)); the largest weight (strictly greater) whose position RW 0xA0229F accepts
+	// wins. The answer is whether one was accepted
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const Player *enemy = aiEnemy(logic, *player);
+	if (!enemy)
+	{
+		return false;
+	}
+	const AIStatCollector *record = logic.skirmishAI().record(enemy->getPlayerIndex()); // RW 0x6A9999
+	if (!record)
+	{
+		return false; // INFERENCE: every playable player has a record (RW 0x8E46D9)
+	}
+	static const int kUnderConstruction = ObjectTemplateInfoBuilder::objectStatusIndex("UNDER_CONSTRUCTION");
+	float best = 0.0f;
+	const Object *bestObject = nullptr;
+	for (ObjectID id : record->economy()) // RW 0x72B229
+	{
+		Object *o = logic.findObjectByID(id); // RW 0x449681
+		if (!o)
+		{
+			continue;
+		}
+		if (shroudedFor(logic, *player, *o->getPosition()))
+		{
+			continue;
+		}
+		if (o->testStatus((unsigned)kUnderConstruction)) // RW 0x44DDEC(object, 2)
+		{
+			continue;
+		}
+		float weight = 1.0f; // RW 0xBD1908
+		o->attributeModifierProduct(0xD, nullptr, true, weight); // RW 0x68C82D(0xD, &weight, 0, 1)
+		if (!(weight > best))
+		{
+			continue;
+		}
+		if (!setLocationIfValid(obj, *o->getPosition())) // RW 0xA0229F
+		{
+			continue;
+		}
+		best = weight;
+		bestObject = o;
+	}
+	return bestObject != nullptr;
+}
+
+bool AISpecialPowerUpdate::decideDebuffProduction(Object &obj)
+{
+	// RW 0x9E726A: the same enemy (RW 0x6AA5F5) and its record's structure list (record + 8); each visible (RW 0xB4D9A0 != 2) FS_FACTORY (template + 0x10F
+	// bit 7, KindOf 63) whose position RW 0xA0229F accepts; the weight is the count of the caster's player's ENEMIES within 200 (RW 0xC8DE70) that are alive
+	// and FS_FACTORY (the query's KindOf mask); the largest count (strictly greater) wins
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const Player *enemy = aiEnemy(logic, *player);
+	if (!enemy)
+	{
+		return false;
+	}
+	const AIStatCollector *record = logic.skirmishAI().record(enemy->getPlayerIndex());
+	if (!record)
+	{
+		return false; // INFERENCE: every playable player has a record (RW 0x8E46D9)
+	}
+	static const int kFsFactory = kind("FS_FACTORY");
+	unsigned best = 0;
+	const Object *bestObject = nullptr;
+	PartitionFilterFn relation([&](Object &o) { return relationIn(player, o, 4u); }); // RW 0xC1676C mask 4
+	PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });        // RW 0xC10E20
+	PartitionFilterFn factory([](Object &o) { return hasKind(o, kFsFactory); });       // the query's KindOf mask
+	for (ObjectID id : record->structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (!o || !hasKind(*o, kFsFactory))
+		{
+			continue;
+		}
+		if (shroudedFor(logic, *player, *o->getPosition()))
+		{
+			continue;
+		}
+		const unsigned count = (unsigned)logic.partition()
+		                           .iterateObjectsInRange(*o->getPosition(), 200.0f, FROM_CENTER_2D, { &relation, &alive, &factory }, ITER_FASTEST)
+		                           .size(); // RW 0xC8DE70
+		if (count <= best)
+		{
+			continue;
+		}
+		if (!setLocationIfValid(obj, *o->getPosition())) // RW 0xA0229F
+		{
+			continue;
+		}
+		best = count;
+		bestObject = o;
+	}
+	return bestObject != nullptr;
 }
 
 bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)

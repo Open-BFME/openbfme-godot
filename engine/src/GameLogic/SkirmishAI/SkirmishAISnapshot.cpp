@@ -448,7 +448,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. A version 3 snapshot comes from a build without the heuristic: it loads with 0, the
 	// count at a game's start (its first expansion check then comes 301 checks after the load)
-	XferVersion v{ 3, 4 };
+	XferVersion v{ 3, 5 }; // version 5 (lane RAI-POW-2): each AI's cached enemy player and its refresh frame
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
@@ -637,6 +637,15 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 			x.xferAsciiString(&ai->dozerTemplate);
 			x.xferUnsignedInt(&ai->shutdownFrame);
 			x.xferUnsignedInt(&ai->retryTimer);
+			if (v.current >= 5)
+			{
+				x.xferInt(&ai->enemyIndex);        // lane RAI-POW-2: the AIPlayer's enemy cache (RW 0x8F47EB)
+				x.xferUnsignedInt(&ai->enemyRefreshFrame);
+				if (x.isLoading())
+				{
+					AIXfer::inRange(ai->enemyIndex, -1, m_logic.players().getPlayerCount() - 1, "skirmish ai: the cached enemy player of an AI");
+				}
+			}
 			AIXfer::inRange(ai->playerIndex, 0, m_logic.players().getPlayerCount() - 1, "skirmish ai: the player of an AI");
 			const Player *player = m_logic.players().getNthPlayer(ai->playerIndex);
 			if (!player)
@@ -736,6 +745,10 @@ void SkirmishAIManager::checkLoaded() const
 	for (const auto &kv : ais)
 	{
 		const AIBrainState &b = kv.second->brain;
+		if (kv.second->enemyIndex != -1)
+		{
+			player(kv.second->enemyIndex, "skirmish ai: an AI's cached enemy player");
+		}
 		if (b.currentEnemy != -1)
 		{
 			player(b.currentEnemy, "skirmish ai: the current enemy");

@@ -34,6 +34,8 @@
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "Common/Money.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponSetToggle.h"
@@ -493,11 +495,11 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("42 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("44 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 9 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
-	// TREE_KILLER, CITADEL, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING)
+	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 7 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
+	// TREE_KILLER, CITADEL)
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
 	{
@@ -508,7 +510,7 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 			CHECK_MESSAGE((spellBook || t == 44 || t == 49), TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 11);
+	CHECK(unported == 9);
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -986,4 +988,228 @@ TEST_CASE("AIPOW-1 r2: the Elves' BUFFTERRAIN (Elven Wood, RW 0x9E77EE) and ENSH
 	CHECK(distance2D(mist->decidedLocation(), *mine->getPosition()) <= 150.0f);
 	MESSAGE("BUFFTERRAIN " << distance2D(terrain->decidedLocation(), *mine->getPosition()) << ", ENSHROUDINGMIST "
 	                       << distance2D(mist->decidedLocation(), *mine->getPosition()) << " from the unit");
+}
+
+// pin: the AIPlayer's cached enemy player and its refresh frame (record + 0x9C / + 0xA0) join the AI state hash, so perf1's 4-player skirmish hashes
+// differently from frame 0 (an engine reference, re-recorded here: not a retail golden)
+
+// ---- lane RAI-POW-2: the economy debuffs (RW 0x9E74B7 / 0x9E726A) and the AIPlayer's enemy (RW 0x6AA5F5 / 0x8F47EB / 0x8F457D) ----------------------------
+
+namespace
+{
+// the module of `type` on a spell book: the book's own active module, or a module initialised as if the faction's command set reached the button
+AISpecialPowerUpdate *spellBookModule(Object &book, int type, std::unique_ptr<AISpecialPowerUpdate> &fresh)
+{
+	AISpecialPowerUpdate *found = aiPowerOfType(book, type);
+	REQUIRE(found);
+	if (found->active())
+	{
+		return found;
+	}
+	fresh = std::make_unique<AISpecialPowerUpdate>(&book, found->data());
+	fresh->initAsIfInCommandSetForTest();
+	return fresh.get();
+}
+
+void readySpellPower(Object &book, AISpecialPowerUpdate &module, std::uint32_t frame)
+{
+	REQUIRE(module.decision());
+	const CommandButton *button = module.decision()->button;
+	REQUIRE(button);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName);
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(book, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(frame);
+	REQUIRE(sp->isReady());
+}
+
+void awaitEnemy(Arena &a)
+{
+	const AISkirmishPlayer *ai = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	for (int i = 0; i < 40 && (!ai || (ai->groupFirst ? ai->groupFirst->brain.currentEnemy : ai->brain.currentEnemy) < 0); ++i)
+	{
+		a.advance(1);
+	}
+	REQUIRE(ai);
+	REQUIRE((ai->groupFirst ? ai->groupFirst->brain.currentEnemy : ai->brain.currentEnemy) >= 0); // tolerance: the arena has at least one hostile player
+}
+
+void clearArmy(GameLogic &logic, const Player &player)
+{
+	const std::vector<ObjectID> ids = AITacticalAI::recordOf(logic, player.getPlayerIndex()).army();
+	for (ObjectID id : ids)
+	{
+		if (Object *o = logic.findObjectByID(id))
+		{
+			logic.destroyObject(o);
+		}
+	}
+}
+
+void leaveOnlyTheCitadel(GameLogic &logic, const Player *player)
+{
+	std::vector<ObjectID> doomed;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == player && o->isKindOfName("STRUCTURE") && !o->isKindOfName("COMMANDCENTER"))
+		{
+			doomed.push_back(o->getID());
+		}
+	}
+	for (ObjectID id : doomed)
+	{
+		if (Object *o = logic.findObjectByID(id))
+		{
+			logic.destroyObject(o);
+		}
+	}
+}
+} // namespace
+
+TEST_CASE("RAI-POW-2: the economy debuffs' decisions, vtables and the enemy acquire's constants (RW 0x9E74B7 / 0x9E726A / 0x8F457D)")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("RAI-POW-2 economy debuff binary facts (set RW_GAME_DAT)");
+	}
+	else
+	{
+		CHECK(pe->u32At(0xC8DE9Cu + 0x1Cu) == 0x9E74B7u); // DEBUFFECONOMYBUILDING
+		CHECK(pe->u32At(0xC8DE74u + 0x1Cu) == 0x9E726Au); // DEBUFFPRODUCTIONBUILDING
+		CHECK(floatAt(*pe, 0xC8DE70) == 200.0f);   // the production debuff's enemy radius
+		CHECK(floatAt(*pe, 0xBD1908) == 1.0f);     // the economy weight's start
+		CHECK(floatAt(*pe, 0xC1C4AC) == 999999995904.0f);  // acquireEnemy's initial best
+		CHECK(floatAt(*pe, 0xC798D4) == 499999997952.0f);  // an unreachable candidate
+		CHECK(floatAt(*pe, 0xC798D0) == 250000.0f);        // a rival AI already targets it
+		CHECK(floatAt(*pe, 0xC798CC) == 625.0f);           // a rival AI targets me
+		CHECK(pe->cstring(0xBFD514) == std::string("PlyrCreeps")); // the player name acquireEnemy skips
+	}
+	CHECK(AISpecialPowerDecision::decisionPorted(41));
+	CHECK(AISpecialPowerDecision::decisionPorted(42));
+}
+
+TEST_CASE("RAI-POW-2: DEBUFFECONOMYBUILDING (RW 0x9E74B7) takes the enemy record's first visible, built economy building and the enemy cache refreshes every 25 frames")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMordor", 5401, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	leaveOnlyTheCitadel(*a.logic, a.human);
+	clearArmy(*a.logic, *a.ai);
+	a.advance(1);
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *blight = spellBookModule(*book, 41, fresh);
+	REQUIRE(blight->decision());
+	CHECK(blight->data()->m_commandButtonName == "Command_SpellBookBlight");
+	readySpellPower(*book, *blight, a.logic->getFrame());
+	// the AIPlayer's enemy (RW 0x6AA5F5 -> 0x8F47EB): the only enemy player, cached for 25 frames
+	AISkirmishPlayer *ai = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	REQUIRE(ai);
+	const Player *enemy = AITacticalAI::enemyPlayer(*a.logic, *ai);
+	REQUIRE(enemy == a.human);
+	CHECK(ai->enemyIndex == a.human->getPlayerIndex());
+	const std::uint32_t refresh = ai->enemyRefreshFrame;
+	CHECK(refresh >= a.logic->getFrame()); // tolerance: the refresh frame is this frame + 25, read at its boundary
+	CHECK(refresh <= a.logic->getFrame() + 25u); // tolerance: RW 0x8F47EB sets now + 25 exactly
+	a.advance(1);
+	CHECK(AITacticalAI::enemyPlayer(*a.logic, *ai) == enemy); // the cache is not refreshed before its frame
+	CHECK(ai->enemyRefreshFrame == refresh);
+	// two enemy economy buildings: the first in the record's list wins a tie (the weight both start at 1.0)
+	Object *farm1 = a.make("GondorFarm", a.human, 0.0f, 0.0f);
+	Object *farm2 = a.make("GondorFarm", a.human, 300.0f, 0.0f);
+	CHECK(blight->decideNow() == true);
+	CHECK(blight->decidedLocation().x == farm1->getPosition()->x);
+	CHECK(blight->decidedLocation().y == farm1->getPosition()->y);
+	// RW 0x44DDEC(object, 2): an UNDER_CONSTRUCTION building is skipped
+	const int underConstruction = ObjectTemplateInfoBuilder::objectStatusIndex("UNDER_CONSTRUCTION");
+	farm1->setStatus((unsigned)underConstruction, true);
+	CHECK(blight->decideNow() == true);
+	CHECK(blight->decidedLocation().x == farm2->getPosition()->x);
+	farm1->setStatus((unsigned)underConstruction, false);
+	// RW 0xB4D9A0: everything the caster's player sees shrouded -> no
+	a.logic->shroud()->undoRevealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.logic->shroud()->shroudMapForPlayer(a.ai->getPlayerIndex());
+	a.advance(1);
+	CHECK(blight->decideNow() == false);
+	a.logic->shroud()->revealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.advance(1);
+	CHECK(blight->decideNow() == true);
+	// the snapshot round-trips the two new AIPlayer fields (the AI block's version 5)
+	XferSave save;
+	a.logic->skirmishAI().xferState(save, true);
+	REQUIRE(!save.data().empty());
+	CHECK(save.data()[0] == 5);
+	const int savedEnemy = ai->enemyIndex;
+	const std::uint32_t savedRefresh = ai->enemyRefreshFrame;
+	ai->enemyIndex = -1;
+	ai->enemyRefreshFrame = 0;
+	XferLoad load(save.data());
+	a.logic->skirmishAI().xferState(load, true);
+	AISkirmishPlayer *loaded = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	REQUIRE(loaded);
+	CHECK(loaded->enemyIndex == savedEnemy);
+	CHECK(loaded->enemyRefreshFrame == savedRefresh);
+}
+
+TEST_CASE("RAI-POW-2: DEBUFFPRODUCTIONBUILDING (RW 0x9E726A) takes the enemy FS_FACTORY with the most enemy FS_FACTORYs within 200")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMordor", 5402, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	clearArmy(*a.logic, *a.ai);
+	a.advance(1);
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *snowbind = spellBookModule(*book, 42, fresh);
+	REQUIRE(snowbind->decision());
+	CHECK(snowbind->data()->m_commandButtonName == "Command_SpellBookSnowbind");
+	readySpellPower(*book, *snowbind, a.logic->getFrame());
+	// three extra enemy citadels (FS_FACTORY): two 100 apart, one alone 600 away; the human's own citadel is alone at its base
+	const Object *base = firstOf(*a.logic, a.human, "COMMANDCENTER");
+	REQUIRE(base);
+	REQUIRE(base->isKindOfName("FS_FACTORY"));
+	Object *pair1 = a.make("MenFortressCitadel", a.human, 0.0f, 0.0f);
+	Object *pair2 = a.make("MenFortressCitadel", a.human, 100.0f, 0.0f);
+	Object *alone = a.make("MenFortressCitadel", a.human, 600.0f, 0.0f);
+	REQUIRE(pair1->isKindOfName("FS_FACTORY"));
+	REQUIRE(std::abs(distance2D(*alone->getPosition(), *pair1->getPosition())) > 400.0f); // tolerance: the lone citadel is out of the pair's 200 count
+	CHECK(snowbind->decideNow() == true);
+	// the pair's first: it counts pair2 and itself within 200; the lone ones count one
+	CHECK(snowbind->decidedLocation().x == pair1->getPosition()->x);
+	CHECK(snowbind->decidedLocation().y == pair1->getPosition()->y);
+	// the pair's first is shrouded: pair2 wins (still two in reach), and the lone ones stay at one
+	a.logic->shroud()->undoRevealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.logic->shroud()->shroudMapForPlayer(a.ai->getPlayerIndex());
+	a.advance(1);
+	const bool second = snowbind->decideNow();
+	CHECK(second == false);
+	if (second)
+	{
+		CHECK(snowbind->decidedLocation().x == pair2->getPosition()->x);
+	}
+	a.logic->shroud()->revealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.advance(1);
 }

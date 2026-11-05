@@ -193,6 +193,9 @@ private:
 	bool decideEnshroudingMist(Object &obj);                    // RW 0x9E7869
 	bool decideCallTheHorde(Object &obj);                       // RW 0x9E71B0
 	bool decideBuffEconomy(Object &obj);                        // RW 0x9E7671
+	// lane RAI-POW-2: the AIPlayer's enemy (RW 0x6AA5F5 -> 0x8F47EB) and the enemy record's lists
+	bool decideDebuffEconomy(Object &obj);                     // RW 0x9E74B7
+	bool decideDebuffProduction(Object &obj);                  // RW 0x9E726A
 	// the location base (RW 0xA01C6B): RW 0xA021D8 (the ActionManager's test and SpellMakesAStructure), RW 0xA0229F (that test at the location, else with
 	// RandomizeTargetLocation at 15, 30, .. 150 along one random direction, RW 0xA01C9C); the first that passes becomes the location (+ 0x20)
 	bool locationValid(Object &obj, const Coord3D &loc);

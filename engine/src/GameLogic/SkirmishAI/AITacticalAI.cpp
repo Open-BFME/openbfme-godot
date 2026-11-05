@@ -2643,6 +2643,185 @@ const AIStatCollector &AITacticalAI::recordOf(GameLogic &logic, int playerIndex)
 
 namespace
 {
+// RW 0x7A07D8 (Team::hasAnyObjects, over every team of the player): a member that is not dead (Object + 0x458 bit 0), not destroyed (+ 0x94 bit 0),
+// not a STRUCTURE, not a PROJECTILE (KindOf bit 25) and not IGNORE_FOR_VICTORY (bit 148)
+bool hasAnyUnits(GameLogic &logic, const Player &player)
+{
+	static const int kStructure = KindOfTokens::indexOf("STRUCTURE"), kProjectile = KindOfTokens::indexOf("PROJECTILE"),
+	                 kIgnore = KindOfTokens::indexOf("IGNORE_FOR_VICTORY");
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() != &player || o->isEffectivelyDead() || o->isDestroyed())
+		{
+			continue;
+		}
+		if (is(*o, kStructure) || is(*o, kProjectile) || is(*o, kIgnore))
+		{
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
+// RW 0x7A0956 with argument 0 (through the player's RW 0x6ABDF7): a member that is not dead/destroyed, not a PROJECTILE, not INERT (bit 89) and not
+// IGNORE_FOR_VICTORY (bit 148)
+bool hasAnyLiveObject(GameLogic &logic, const Player &player)
+{
+	static const int kProjectile = KindOfTokens::indexOf("PROJECTILE"), kInert = KindOfTokens::indexOf("INERT"), kIgnore = KindOfTokens::indexOf("IGNORE_FOR_VICTORY");
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() != &player || o->isEffectivelyDead() || o->isDestroyed())
+		{
+			continue;
+		}
+		if (is(*o, kProjectile) || is(*o, kInert) || is(*o, kIgnore))
+		{
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
+// RW 0x7A1129 (Team::hasAnyObjectOfClass): a member whose template ThingClass (RW + 0x5F6) is not 0. INFERENCE: the port has no ThingClass parser, so
+// every object is taken as classified and any object of the player answers yes (a mod with classless objects differs)
+bool hasAnyClassified(GameLogic &logic, const Player &player)
+{
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == &player)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// RW 0x8F6511: the 2D box over the player's STRUCTURE objects (template + 0x108 bit 7), in object list order; zero when it has none. `min` / `max` are
+// (x, y).
+void baseBounds(GameLogic &logic, const Player &player, Coord3D &min, Coord3D &max)
+{
+	static const int kStructure = KindOfTokens::indexOf("STRUCTURE");
+	min = Coord3D{};
+	max = Coord3D{};
+	bool first = true;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() != &player || !is(*o, kStructure))
+		{
+			continue;
+		}
+		const Coord3D *p = o->getPosition();
+		if (first)
+		{
+			min.x = max.x = p->x;
+			min.y = max.y = p->y;
+			first = false;
+			continue;
+		}
+		min.x = p->x < min.x ? p->x : min.x;
+		min.y = p->y < min.y ? p->y : min.y;
+		max.x = p->x > max.x ? p->x : max.x;
+		max.y = p->y > max.y ? p->y : max.y;
+	}
+}
+
+// RW 0x8F457D (AIPlayer::acquireEnemy): the enemy player is the nearest candidate base whose player is an ENEMY with live objects, is not PlyrCreeps,
+// has units and classified objects (else it counts as unreachable), adjusted by the other AIs' current enemies: +250000 for each AI that already targets it,
+// -625 for each AI that targets this AI's player (never below 0). Ties keep the earlier player index
+void acquireEnemy(GameLogic &logic, AISkirmishPlayer &ai)
+{
+	const float kInitial = 999999995904.0f;   // RW 0xC1C4AC
+	const float kUnreachable = 499999997952.0f; // RW 0xC798D4
+	const float kRivalBonus = 250000.0f;      // RW 0xC798D0
+	const float kAllyMalus = 625.0f;          // RW 0xC798CC
+	const Player *me = logic.players().getNthPlayer(ai.playerIndex);
+	if (!me)
+	{
+		return;
+	}
+	const Player *current = ai.enemyIndex >= 0 ? logic.players().getNthPlayer(ai.enemyIndex) : nullptr;
+	if (current && hasAnyUnits(logic, *current) && hasAnyLiveObject(logic, *current))
+	{
+		return; // RW 0x8F45A8: the cached enemy is still valid
+	}
+	int best = -1;
+	float bestDistance = kInitial;
+	for (int i = 0; i < logic.players().getPlayerCount(); ++i)
+	{
+		const Player *candidate = logic.players().getNthPlayer(i);
+		if (!candidate || me->getRelationship(candidate) != ENEMIES) // RW 0x6ADBEB == 0
+		{
+			continue;
+		}
+		if (!hasAnyLiveObject(logic, *candidate) || candidate->getPlayerName() == "PlyrCreeps") // RW 0x6ABDF7 / 0xBFD514
+		{
+			continue;
+		}
+		const bool reachable = hasAnyUnits(logic, *candidate) && hasAnyClassified(logic, *candidate);
+		Coord3D min{}, max{};
+		baseBounds(logic, *candidate, min, max);
+		const float cx = SimMath::addf32(SimMath::mulf32(SimMath::subf32(max.x, min.x), 0.5f), min.x);
+		const float cy = SimMath::addf32(SimMath::mulf32(SimMath::subf32(max.y, min.y), 0.5f), min.y);
+		const float dx = SimMath::subf32(cx, ai.build.startPosition.x), dy = SimMath::subf32(cy, ai.build.startPosition.y);
+		float distance = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx)); // SSE 2D squared
+		if (!reachable)
+		{
+			distance = kUnreachable;
+		}
+		for (int j = 0; j < logic.players().getPlayerCount(); ++j)
+		{
+			if (j == i)
+			{
+				continue;
+			}
+			const Player *other = logic.players().getNthPlayer(j);
+			if (!other || !hasAnyUnits(logic, *other))
+			{
+				continue;
+			}
+			AISkirmishPlayer *otherAI = logic.skirmishAI().findAI(j);
+			const Player *otherEnemy = otherAI ? AITacticalAI::enemyPlayer(logic, *otherAI) : nullptr;
+			if (otherEnemy == candidate)
+			{
+				distance = SimMath::addf32(distance, kRivalBonus);
+			}
+			if (otherEnemy == me)
+			{
+				distance = SimMath::subf32(distance, kAllyMalus);
+				if (distance < 0.0f)
+				{
+					distance = 0.0f;
+				}
+			}
+		}
+		if (bestDistance > distance)
+		{
+			best = i;
+			bestDistance = distance;
+		}
+	}
+	if (best >= 0 && best != ai.enemyIndex)
+	{
+		ai.enemyIndex = best; // RW 0x8F4772 (+ 0xA0), then the debug log RW 0x9E... (not ported: a report line)
+	}
+}
+} // namespace
+
+const Player *AITacticalAI::enemyPlayer(GameLogic &logic, AISkirmishPlayer &ai)
+{
+	// RW 0x8F47EB: the refresh frame is written BEFORE the acquire (a nested getEnemy of another AI sees the old value)
+	if (logic.getFrame() >= ai.enemyRefreshFrame)
+	{
+		ai.enemyRefreshFrame = logic.getFrame() + (std::uint32_t)(kLogicFramesPerSecond * 5); // RW 0xD9F608 * 5
+		acquireEnemy(logic, ai);
+	}
+	return ai.enemyIndex >= 0 ? logic.players().getNthPlayer(ai.enemyIndex) : nullptr;
+}
+
+namespace
+{
 // RW 0x9A3040 (RotWK-only, the team builder's last step; lane DECOMP-2): the units of the player info record's army list (INFERENCE: the list RW 0x6A9999 ->
 // record + 0 -> + 4 is the army list, S-418) in order that are in the default team (+ 0x31C == player + 0x30C; INFERENCE: in no team of the tactics), have any
 // of CAN_ATTACK, HERO, SUPPORT and not STRUCTURE (template + 0x108 bit 7), are not IS_LEAVING_FACTORY (status 0x5A), were never sent (+ 0x18) and are 10 s old
