@@ -7,6 +7,7 @@
 
 #include "GameLogic/Module/StructureToppleUpdate.h"
 
+#include "Common/AsciiString.h"
 #include "Common/StateHash.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -26,7 +27,6 @@
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
-#include <strings.h>
 
 namespace
 {
@@ -81,11 +81,11 @@ void parseDamageFXTypes(INI *ini, void *, void *store, const void *)
 	std::uint32_t mask = 0xFFFFFFFFu;
 	for (const char *t = ini->getNextToken(); t; t = ini->getNextTokenOrNull())
 	{
-		if (strcasecmp(t, "ALL") == 0)
+		if (AsciiStringUtil::compareNoCase(t, "ALL") == 0)
 		{
 			mask = 0xFFFFFFFFu;
 		}
-		else if (strcasecmp(t, "NONE") == 0)
+		else if (AsciiStringUtil::compareNoCase(t, "NONE") == 0)
 		{
 			mask = 0;
 		}
@@ -210,7 +210,7 @@ void setBit(Object::ModelConditionBits &bits, int bit)
 // a null FXList (RW 0x73A302: an empty name or "None") plays nothing
 bool hasFX(const std::string &name)
 {
-	return !name.empty() && strcasecmp(name.c_str(), "None") != 0;
+	return !name.empty() && AsciiStringUtil::compareNoCase(name, "None") != 0;
 }
 } // namespace
 

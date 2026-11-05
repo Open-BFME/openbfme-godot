@@ -208,6 +208,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	if (shadowReceiver) line("#include \"res://shaders/object_shadow.gdshaderinc\"");
 	if (shadowReceiver) line("instance uniform bool w3d_receive_shadows : instance_index(1) = false;");
 	if (selectionDecals) line("#include \"res://shaders/selection_decals.gdshaderinc\""); // lane SELWALL-1
+	if (selectionDecals && shadowReceiver) line("varying vec3 v_shadow_over;"); // lane HERORING-1: the alpha decals over the shadowed surface (light())
 
 	// ---- uniforms ----
 	line("uniform sampler2D w3d_palette : filter_nearest, repeat_disable;");
@@ -751,10 +752,13 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\tvec4 sela = sel_up ? sel_alpha_at(sel_at, true) : vec4(0.0);");
 		line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
 		line("\tvec3 sel_ground = ALBEDO;");
-		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader)
-		line("\tif (sela.a > 0.0) { ALBEDO = w3d_to_linear(clamp(cur.rgb, 0.0, 1.0) * (1.0 - sela.a) + sela.rgb); }");
+		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader);
+		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows
+		line("\tvec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);");
+		line("\tvec3 sel_over = vec3(0.0);");
+		line("\tif (sela.a > 0.0) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
 		line("\tALBEDO = mix(ALBEDO, w3d_to_linear(clamp(sel.rgb, 0.0, 1.0)), sel.a);");
-		line("\tfloat sel_keep = (1.0 - sela.a) * (1.0 - sel.a);");
+		line("\tfloat sel_keep = 1.0 - sel.a;");
 	}
 	switch ((W3DGodotBlend)k.Blend)
 	{
@@ -773,7 +777,15 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	}
 	if (shadowReceiver)
 	{
-		line("\tv_shadow_color = clamp(cur.rgb, 0.0, 1.0);");
+		if (selectionDecals)
+		{
+			line("\tv_shadow_color = sel_shadow;");
+			line("\tv_shadow_over = sel_over;");
+		}
+		else
+		{
+			line("\tv_shadow_color = clamp(cur.rgb, 0.0, 1.0);");
+		}
 		line("\tfloat shadow_enabled = w3d_receive_shadows ? w3d_shadow.w : 0.0;");
 		if (selectionDecals)
 		{
@@ -791,7 +803,15 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	if (shadowReceiver)
 	{
 		line("void light() {");
-		line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += object_shadow_light(ATTENUATION);");
+		if (selectionDecals)
+		{
+			// lane HERORING-1: object_shadow_light with the alpha decals over the shadowed surface (as terrain.gdshader)
+			line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += shadow_to_linear(v_shadow_color * mix(w3d_shadow.rgb, vec3(1.0), ATTENUATION) + v_shadow_over);");
+		}
+		else
+		{
+			line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += object_shadow_light(ATTENUATION);");
+		}
 		line("}");
 	}
 	return c;

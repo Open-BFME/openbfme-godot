@@ -29,6 +29,7 @@
 #include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Module/UnportedModule.h"
@@ -53,9 +54,9 @@ const char *const kStopUpdate =
 	"S-222 AIUpdateInterface::update skips the turrets, the mood / auto-acquire scan, the dead-state machine and the surrender / demoralize timers (RW 0x6695EF blocks "
 	"that need weapons, bodies and emotions); the movement-complete refresh of the pathfinder goal is the B1 body (AIUpdate.cpp:2574-2594), RW forces m_doFinalPosition off";
 const char *const kStopLocomotor =
-	"S-222 chooseGoodLocomotorFromCurrentSet picks the first locomotor of the set whose surfaces fit the cell under the unit and otherwise the previous one or the "
-	"ground one (B1 AIUpdate.cpp:2385); the retail Pathfinder::chooseBestLocomotorForPosition was not read. The locomotor 'crusher' flag of the path searches (RW loco+0x15) is "
-	"ScalesWalls (inference)";
+	"S-222 chooseGoodLocomotorFromCurrentSet (RW 0x663D70; its fallback, SHIP surface 0x80 / slot 0x184 AIR / GROUND, and the flag clears are ported: lane LOCOPICK-1) "
+	"takes the first locomotor of the set whose surfaces fit the cell under the unit as the best one: the retail Pathfinder::chooseBestLocomotorForPosition (RW 0x6E8937) "
+	"was not read. The locomotor 'crusher' flag of the path searches (RW loco+0x15) is ScalesWalls (inference)";
 const char *const kStopStates =
 	"S-221 the AI state ids are BFME1's (Idle 0, MoveTo 1, FollowPath 6, FollowExitProductionPath 7, Wait 8, Busy 42; RotWK's own numbering is not read: RW tests 0x2A = Busy and "
 	"0x47 = a state RotWK added); AIIdleState::onEnter draws its random sleep offset as ZH does (GetGameLogicRandomValue(0, 10, \"AIStates.cpp\", 0x520)): the RW draw was not read, "
@@ -80,6 +81,7 @@ struct StatusBits
 	int hordeMember = objectStatusBit("HORDE_MEMBER");
 	int immobile = objectStatusBit("IMMOBILE");
 	int deployed = objectStatusBit("DEPLOYED");
+	int packingUsing = objectStatusBit("SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING"); // 0x46 (lane BUMP-1)
 };
 const StatusBits &statusBits()
 {
@@ -96,6 +98,9 @@ struct KindBits
 	int horde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
 	int siegeTower = ObjectTemplateInfoBuilder::kindOfIndex("SIEGE_TOWER");
 	int projectile = ObjectTemplateInfoBuilder::kindOfIndex("PROJECTILE"); // RW template + 0x10B bit 1 (lane LOCODIST-1)
+	int ship = ObjectTemplateInfoBuilder::kindOfIndex("SHIP"); // RW template + 0x11F bit 7 (191; lane LOCOPICK-1)
+	int infantry = ObjectTemplateInfoBuilder::kindOfIndex("INFANTRY"); // RW template + 0x109 bit 0 (8; lane BUMP-1)
+	int largeRectangle = ObjectTemplateInfoBuilder::kindOfIndex("LARGE_RECTANGLE_PATHFIND"); // RW template + 0x11F bit 2 (186; lane BUMP-1)
 };
 const KindBits &kindBits()
 {
@@ -1396,26 +1401,42 @@ void AIUpdateInterface::chooseGoodLocomotorFromCurrentSet()
 			}
 		}
 	}
+	// lane LOCOPICK-1: RW 0x663DA6 .. 0x663DE5 (BFME2 1.06: the same order, decomp AIUpdateInterfaceRva00263FA7.cpp:154-166): no best locomotor and no previous
+	// one: a SHIP takes the set's first locomotor with the surface 0x80 (DEEP_WATER), else an object whose AI answers its slot 0x184 (only GiantBirdAIUpdate,
+	// RW 0x8CEF91; the others RW 0x851E97 answer null) the first with AIR (8), else the first with GROUND (1); RW 0x5E4150 walks the set in order and may
+	// find none (null: no fallback to the set's first locomotor)
 	if (!chosen)
 	{
 		chosen = prev;
 		if (!chosen)
 		{
+			const Object &obj = *getObject();
+			unsigned surface = (unsigned)LOCOMOTORSURFACE_GROUND;
+			if (hasKind(obj, kindBits().ship))
+			{
+				surface = (unsigned)LOCOMOTORSURFACE_DEEP_WATER;
+			}
+			else if (dynamic_cast<const GiantBirdAIUpdate *>(obj.getAIUpdateInterface()))
+			{
+				surface = (unsigned)LOCOMOTORSURFACE_AIR;
+			}
 			for (const std::unique_ptr<Locomotor> &l : m_locomotors)
 			{
-				if (l->getTemplate().m_surfaces & (unsigned)LOCOMOTORSURFACE_GROUND)
+				if (l->getTemplate().m_surfaces & surface)
 				{
 					chosen = l.get();
 					break;
 				}
 			}
-			if (!chosen && !m_locomotors.empty())
-			{
-				chosen = m_locomotors.front().get();
-			}
 		}
 	}
 	m_curLocomotor = chosen;
+	// RW 0x663DEA .. 0x663E28: on a change the object's radar data is marked dirty (Object + 0x1A8 -> + 0xC = 1: the client's radar, no logic state here)
+	// and the new locomotor's flags 0x08, 0x10 and 0x40 are cleared
+	if (prev != m_curLocomotor && m_curLocomotor)
+	{
+		m_curLocomotor->setFlags(m_curLocomotor->flags() & ~0x58u);
+	}
 	m_world->noteStop(kStopLocomotor);
 }
 
@@ -1713,6 +1734,27 @@ float AIUpdateInterface::closeEnoughDist() const
 float AIUpdateInterface::locomotorSpeed() const
 {
 	return m_curLocomotor ? m_curLocomotor->speed() : 0.0f;
+}
+
+bool AIUpdateInterface::isInfantryKind() const
+{
+	return hasKind(*getObject(), kindBits().infantry);
+}
+
+bool AIUpdateInterface::isUsingSpecialAbility() const
+{
+	const int bit = statusBits().packingUsing;
+	return bit >= 0 && getObject()->testStatus((unsigned)bit);
+}
+
+bool AIUpdateInterface::isOffMapObject() const
+{
+	return getObject()->isOffMap();
+}
+
+bool AIUpdateInterface::isLargeRectanglePathfind() const
+{
+	return hasKind(*getObject(), kindBits().largeRectangle);
 }
 
 bool AIUpdateInterface::movingBackwards() const
