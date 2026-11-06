@@ -36,8 +36,13 @@ The manual packed-texture CPU oracle is also separate from the GDScript runner:
 python godot/tests/packed_texture_merge_test.py --build-dir engine/build --scratch workspace/packed-merge-check --godot "$GODOT"
 ```
 
-On macOS it reuses the configured godot-cpp archive and builds a scratch extension
-containing the actual packed loader. All 65,536 channel pairs are compared with
+On macOS, Linux and Windows it reuses the configured godot-cpp archive and builds a scratch extension
+containing the actual packed loader. Use a native build for the same host/architecture
+and a matching Godot executable; compile flags come from `compile_commands.json`.
+GNU-style compilers and MSVC/clang-cl are supported. `--bindings-library <archive>`
+selects a specific matching archive when `build/bin` contains several configurations.
+No normal build or post-build commands run, and outputs stay in the new scratch
+directory. All 65,536 channel pairs are compared with
 Godot's previous C++ `get_pixel`/`set_pixel` Color operations, including PNG alpha
 replacement. Full JPEG/PNG loads at 256, 512 and 1024 pixels compare exact output
 bytes, RGB-only masks and nearest resizing. Read counters require supplied JPEG
