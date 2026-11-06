@@ -189,13 +189,8 @@ AIThreatFinder::~AIThreatFinder() = default;
 void AIThreatFinder::query(GameLogic &logic, const Player *owner, int mode, const Player *mode2Player, ThreatRecord &out)
 {
 	const std::uint32_t now = logic.getFrame();
-	const std::int32_t delta = (std::int32_t)(now - m_lastScanFrame); // RW 0x7EE179: the signed difference the fild reads
-	double scaled = (double)delta;
-	if (delta < 0)
-	{
-		scaled += 4294967296.0; // RW 0x7EE190: fadd [0xBD8698]
-	}
-	if (!(scaled * (double)LOGICFRAMES_PER_SECOND < 3.0)) // RW 0x7EE196 .. 0x7EE1A2: fld 3.0; fcomi; jb (below: keep the cache)
+	const double scaled = SimMath::fildU32(now - m_lastScanFrame); // RW 0x7EE179 / 0x7EE190: fild + the 2^32 fix-up (the unsigned frame difference)
+	if (!(SimMath::pc24MulW(scaled, (double)LOGICFRAMES_PER_SECOND) < 3.0)) // RW 0x7EE196 .. 0x7EE1A2: fmul; fld 3.0; fcomi; jb (below: keep the cache)
 	{
 		scan(logic, m_position, m_radius, m_noStructures, m_records); // RW 0x7EE1A6
 		m_lastScanFrame = now;                                        // RW 0x7EE1B3

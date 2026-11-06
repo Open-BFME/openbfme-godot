@@ -985,7 +985,8 @@ struct CampaignHud
 //     DoCommandUpgrade switched off), so the intro's fights earn 160 skill points: rank 2, 6 power points; merge queue q23 (TARGET-1, ATTACKPATH-1, FLANK-1): 214, rank 3;
 //   * lane OFFMAP-1: that fight was the Black Numenorean counterattack the map places below its edge (y -78 .. -375), pulled onto the grid at frame 1 by
 //     the port's idle state (ZH's cheat move, not in RotWK's RW 0x745A64). Kept off the map (OFF_MAP, as retail: the Witch-king ends the intro at level 1)
-//     nobody fights in the intro: 0 skill points, rank 1, the 5 starting power points (measured), enough for Chill Wind;
+//     the counterattack fights nobody; merge of #229: the Witch-king's guard scan does reach an on-map Dark Dunedain, so the intro earns 6 skill points
+//     (measured old -> new: 0 -> 6), rank 1, the 5 starting power points, enough for Chill Wind;
 //   * the store sells Chill Wind (AngmarSpellStoreCommandSet slot 2) for EVIL_RANK_1_COST 5; a cast of it makes a SpellBookChillWind (OCL_SpellBookChillWind).
 TEST_CASE("ownerfix1 campaign powers played: the first Angmar mission's intro ends at rank 1 (its counterattack stays off the map), Powers opens by the Palantir's button, Chill Wind is bought by clicks, aimed and cast, and its object stands")
 {
@@ -1000,7 +1001,7 @@ TEST_CASE("ownerfix1 campaign powers played: the first Angmar mission's intro en
 	REQUIRE(me);
 	PlayerScience &sc = me->science();
 	CHECK(sc.getRankLevel() == 1);
-	CHECK(sc.getSkillPoints() == 0.0f);
+	CHECK(sc.getSkillPoints() == 0.0f); // at load, before the intro
 	CHECK(sc.getSciencePurchasePoints() == 5);
 	// the intro: DISABLE_INPUT ... ENABLE_INPUT around the mission's own fights (the heroes against the Mordor archers); nothing of the player's input
 	for (int i = 0; i < 400 && c.enables == 0; ++i)
@@ -1012,7 +1013,9 @@ TEST_CASE("ownerfix1 campaign powers played: the first Angmar mission's intro en
 	CHECK(c.disables == 1);
 	c.frames(20);
 	CHECK(sc.getRankLevel() == 1);
-	CHECK(sc.getSkillPoints() == 0.0f); // no kill in the intro
+	// merge of #229 (2026-11-06): with the retail-awake ThreatFinderUpdate markers the phase-5 order matches retail and the Witch-king's intro guard
+	// fight earns 6 skill points (measured old -> new: 0 -> 6); rank 1 still (the next rank needs 100) and the 5 starting power points are unchanged
+	CHECK(sc.getSkillPoints() == 6.0f);
 	const int points0 = sc.getSciencePurchasePoints();
 	CHECK(points0 == 5); // the 5 at the start
 	// three more kills by the Witch King: each exactly the data's award

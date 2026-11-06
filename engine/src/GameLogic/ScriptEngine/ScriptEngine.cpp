@@ -1454,9 +1454,11 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 		// enemies' total from TheThreatFinderManager, at the finder's own radius and position (RW 0x608CB4 .. 0x608CE2). A missing unit or
 		// finder does nothing (RW 0x608C99 / 0x608CC7). Every other unit reads the object's own cached threat (RW 0x697B41), not ported here.
 		const std::string &unitName = param(a.params, 1).stringValue;
+		Counter &target = counter(param(a.params, 0).stringValue);
 		Object *unit = getUnitNamed(unitName); // RW 0x75A243
 		if (!unit)
 		{
+			target.value = 0; // RW 0x608CFA: the helper always writes the counter, with a threat that starts at 0.0
 			return true;
 		}
 		if (unit->isKindOfName("THREAT_FINDER"))
@@ -1467,7 +1469,11 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 				const Player *owner = unit->getControllingPlayer(); // RW 0x68B678 (null: RW 0x7EE166 returns the zeroed record)
 				AIThreatFinder::ThreatRecord record;
 				finder->query(m_logic, owner, 0, nullptr, record); // RW 0x7EE166(out, owner, 0, 0)
-				counter(param(a.params, 0).stringValue).value = SimMath::cvttss2si(record.v[0]); // RW 0x608CFD
+				target.value = SimMath::cvttss2si(record.v[0]); // RW 0x608CFD
+			}
+			else
+			{
+				target.value = 0; // RW 0x608CFA: a marker without a finder writes the zero threat
 			}
 			return true;
 		}
@@ -1477,7 +1483,8 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 	case ACT_SET_COUNTER_TO_TEAM_THREAT: // RW 0x608BCA with isTeam = 1: the team's own threat (RW 0x7A6A20) is not ported (S-1180)
 		if (!ScriptConditions::team(*this, param(a.params, 1).stringValue))
 		{
-			return true; // RW 0x608C54: no team, nothing
+			counter(param(a.params, 0).stringValue).value = 0; // RW 0x608CFA: the helper writes the counter even with no team
+			return true; // RW 0x608C54: no team, nothing else
 		}
 		noteUnportedAction(ScriptTemplates::action(a.resolved)->name);
 		return true;
@@ -1487,7 +1494,7 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 		// anything else returns without a warning (RW 0xC3638C / 0xC36384). The named finder's summed record's total is truncated to the
 		// counter (RW 0x7C6957: cvttss2si); a name the manager lacks warns and leaves the counter (RW 0xC36348).
 		Counter &target = counter(param(a.params, 0).stringValue); // RW 0x60817A
-		Player *player = ScriptConditions::firstPlayer(*this, param(a.params, 3).stringValue);
+		Player *player = ScriptConditions::playerOfMask(*this, param(a.params, 3).stringValue); // RW 0x6A85B6: a mask of several players names none
 		if (!player)
 		{
 			return true;

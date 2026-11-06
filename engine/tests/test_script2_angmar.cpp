@@ -140,8 +140,11 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		// banner carrier hits 97 -> 77, four full sling hits and five 50s, the last sling hit taking 264 (#220 keeps it); CASTLEATK-1 (nothing attacks the
 		// UNATTACKABLE castle flag, RW 0x6C9207) moves it again: wolf rider hits 595 -> 401, banner carrier hits 77 -> 48, the last sling hit takes 1318
 		// (#225 keeps it)
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 48 }, { "AngmarTrollSling dealt 1350 taken 1318", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 401 } };
+		// pin: merge of #229 on main 1d43a17e (2026-11-06, lane PR-TEND-AI): the four ThreatFinderUpdate markers are awake every frame in retail
+		// (RW 0x7EDDB6 returns 1 at 0x7EDDF6), so the phase-5 order matches retail and the counterattack's AI and RNG order moves: banner carrier hits
+		// 48 -> 53, wolf rider hits 401 -> 582, and the last sling's 1350 leaves 717 (was 1318). Engine pins, not retail values.
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 53 }, { "AngmarTrollSling dealt 1350 taken 717", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 582 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)

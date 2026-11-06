@@ -13,6 +13,7 @@
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/ScriptEngine/MissionObjectiveTracker.h"
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -137,7 +138,11 @@ TEST_CASE("offmap1 retail: MAP ANG Angmar's counterattack placed below the map s
 		CHECK_MESSAGE(dx * dx + dy * dy < limit * limit, o->getTemplate()->getName() << " " << o->getID() << " moved (" << dx << ", " << dy << ")"); // tolerance: a member takes its formation slot (turn + step; the banner its slot 55 away), no walk
 		CHECK(o->getBodyModule()->getHealth() == o->getBodyModule()->getMaxHealth());
 	}
-	CHECK(wk->getExperienceTracker()->getExperience() == wkXp);
+	// merge of #229 (2026-11-06): the four ThreatFinderUpdate markers are awake every frame in retail (RW 0x7EDDB6 returns 1 at 0x7EDDF6), so the
+	// phase-5 order matches retail and the Witch-king's guard scan reaches an on-map Dark Dunedain during the intro: 1 -> 17.2787 experience. The rank is
+	// still 1 and the off-map counterattack still does not move, fight or fire 'BN Arrival Message'; that is what this test pins.
+	// tolerance: the printed value is 17.2787; the award's float accumulation (a few hundredths of a point per hit) is the game state, not a retail golden
+	CHECK(std::fabs(wk->getExperienceTracker()->getExperience() - 17.2787f) < 0.001f);
 	CHECK(wk->getExperienceTracker()->getRank() == wkRank);
 	CHECK(morgomir->getExperienceTracker()->getExperience() == morgomirXp);
 	CHECK_FALSE(t.objectives()[9].completed);  // 'WK Reaches Level 3'

@@ -222,6 +222,21 @@ TEST_CASE("threat finder: SET_COUNTER_TO_THREAT_FINDER_THREAT and the KindOf THR
 	engine.executeAction(unitAction);
 	CHECK(counterValue(engine, "Unit Threat Counter") == SimMath::cvttss2si(expected.v[0]));
 
+	// RW 0x608BCA's helper always writes the counter at 0x608CFA: a missing unit and a marker without a finder leave 0, not the old value
+	engine.counter("Unit Threat Counter").value = 12345;
+	engine.executeAction(scripttest::act("SET_COUNTER_TO_UNIT_THREAT", { scripttest::sp(4, "Unit Threat Counter"), scripttest::sp(14, "No Such Unit"), scripttest::rp(1.0f) }));
+	CHECK(counterValue(engine, "Unit Threat Counter") == 0);
+	Object *unplaced = g.live->createObject("ThreatFinder", men->getPlayerIndex(), Coord3D{ -400.0f, -400.0f, 0.0f }, 0.0f, &error);
+	REQUIRE_MESSAGE(unplaced, error);
+	unplaced->setName("No Finder Marker");
+	engine.counter("Unit Threat Counter").value = 12345;
+	engine.executeAction(scripttest::act("SET_COUNTER_TO_UNIT_THREAT", { scripttest::sp(4, "Unit Threat Counter"), scripttest::sp(14, "No Finder Marker"), scripttest::rp(1.0f) }));
+	CHECK(counterValue(engine, "Unit Threat Counter") == 0);
+	// the team branch without a team writes the same zero
+	engine.counter("Team Threat Counter").value = 12345;
+	engine.executeAction(scripttest::act("SET_COUNTER_TO_TEAM_THREAT", { scripttest::sp(4, "Team Threat Counter"), scripttest::sp(3, "No Such Team") }));
+	CHECK(counterValue(engine, "Team Threat Counter") == 0);
+
 	// RW 0x7C68AA's warning for a name the manager lacks; the counter is left alone
 	const int before = counterValue(engine, "Threat Finder Counter");
 	const ScriptActionRec missing = scripttest::act("SET_COUNTER_TO_THREAT_FINDER_THREAT",
@@ -230,6 +245,12 @@ TEST_CASE("threat finder: SET_COUNTER_TO_THREAT_FINDER_THREAT and the KindOf THR
 	engine.executeAction(missing);
 	CHECK(counterValue(engine, "Threat Finder Counter") == before);
 	CHECK(hasNote(engine, "WARNING - Threat Finder not found during script execution: No Such Area."));
+
+	// RW 0x6A85B6's mask must name exactly one player: <All Players> names none, so the action leaves the counter alone (lane RAI-THREAT)
+	engine.counter("Mask Counter").value = -12345;
+	engine.executeAction(scripttest::act("SET_COUNTER_TO_THREAT_FINDER_THREAT",
+		{ scripttest::sp(4, "Mask Counter"), scripttest::sp(67, "Test Threat Area"), scripttest::sp(66, "Enemies"), scripttest::sp(11, "<All Players>") }));
+	CHECK(counterValue(engine, "Mask Counter") == -12345);
 
 	// a relationship that is neither Enemies nor Allies returns before the lookup (RW 0x7C691A)
 	const ScriptActionRec neutral = scripttest::act("SET_COUNTER_TO_THREAT_FINDER_THREAT",
