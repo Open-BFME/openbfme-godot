@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <algorithm>
@@ -245,6 +246,8 @@ public:
 	bool canAffordCommandPoints(const ThingTemplate &tt) const;      // RW 0x6A7F79
 	bool hasObjectMatching(const ObjectFilter &filter, bool completedOnly) const; // RW 0x6ABD0B
 	float getProductionCostChangeBasedOnKindOf(const ThingTemplate &tt, bool slaughter = false) const; // RW 0x6AD8A7
+	// lane BRUTALAI-1: the Brutal skirmish AI's cost (`time` false) or time reduction m = min(1.0, r) when it applies (PlayerEconomyHost::brutalReduction)
+	std::optional<float> getBrutalBuildReduction(bool time) const;
 	int applyHandicapMoney(int amount) const;                        // RW 0x6AA858
 
 	// ---- lane UPGRADE-1: the player's upgrades -------------------------------------------------------------------------------------

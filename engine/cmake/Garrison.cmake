@@ -13,4 +13,5 @@ set(OPENBFME_GARRISON_TESTS
     tests/test_garrison_data.cpp
     tests/test_hud_garrison_retail.cpp
     tests/test_hud_garrison_input.cpp
+    tests/test_garrisonweapon1.cpp # lane GARRISONWEAPON-1
 )
