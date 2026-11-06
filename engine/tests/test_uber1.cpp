@@ -145,6 +145,9 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // and ATKRESET-1 (attack orders end the FiringDuration lock) moves it again.
 // pin: merge queue q44 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (AIRBORNE_TARGET
 // from the locomotor height, RW 0x66A472) moves it from frame 0.
+// pin: lane UBER-3P (third step) re-measured the pin vector (OPENBFME_UBER1_REGEN=1, 1 thread, Windows MSVC): the stall no longer ends a search whose
+// goal footprint alone fails (no unit blocks the goal, the same terrain and strict zone, a valid goal position), which now runs until its goal cell is
+// reached or closed, from frame 21.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {
