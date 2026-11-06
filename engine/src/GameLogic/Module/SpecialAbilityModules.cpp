@@ -12,6 +12,7 @@
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Object/PartitionManager.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Contain/OpenContainRuntime.h"
 
 #include "Common/GameCommon.h"
@@ -767,6 +768,12 @@ bool SpecialAbilityUpdate::withinStartAbilityRange()
 		}
 		// RW 0x6CA525: max(0, dist2D - own radius)^2 (the enum 0x5B / 0x38 branches use the AI's distance: S-860)
 		dist2 = CircleDistanceSquaredToPoint(*obj->getPosition(), CombatQueries::boundingCircleRadius(*obj), m_targetPos);
+		// lane STARTRANGE-1: RW 0x85221D .. 0x852233: SPECIAL_GRAB_PASSENGER (0x27) takes 400.0 (RW 0xC55874) off the squared distance (subss) whichever
+		// distance was taken. BFME2 1.06: the same rule (decomp SpecialAbilityUpdateIsWithinStartAbilityRange.cpp, retail 0x44F28E)
+		if (m_data->m_specialPowerTemplate && m_data->m_specialPowerTemplate->m_type == 0x27)
+		{
+			dist2 = SimMath::sseSub(dist2, 400.0f);
+		}
 	}
 	else
 	{
@@ -777,8 +784,19 @@ bool SpecialAbilityUpdate::withinStartAbilityRange()
 			return false;
 		}
 		// RW 0x852127: ContactPointOverride (RW 0x690BD2, the bone position: S-860) falls back to the edge distance; a source HORDE with
-		// ApproachUntilMembersInRange uses its formation radius (S-860); a structure target the box distance RW 0x68F430 (its bounding circle, S-183)
-		dist2 = CombatQueries::edgeDistanceSquared2D(*obj, *obj->getPosition(), *t, *t->getPosition());
+		// ApproachUntilMembersInRange uses its formation radius (S-860).
+		// lane STARTRANGE-1: RW 0x85212D tests the TARGET's template + 0x118 bit 4, KindOf CHUNK_VENDOR (132; not a structure test): that target answers
+		// with its box distance to the source (RW 0x852137 -> RW 0x8513FD -> RW 0x68F430, thiscall on the target). BFME2 1.06: the same (m_kindof[4] bit 4,
+		// retail 0x44F28E)
+		static const int kChunkVendor = ObjectTemplateInfoBuilder::kindOfIndex("CHUNK_VENDOR");
+		if (kChunkVendor >= 0 && t->isKindOf((unsigned)kChunkVendor))
+		{
+			dist2 = CombatQueries::boxDistanceSquared2D(*t, *obj);
+		}
+		else
+		{
+			dist2 = CombatQueries::edgeDistanceSquared2D(*obj, *obj->getPosition(), *t, *t->getPosition());
+		}
 	}
 	if (dist2 > SimMath::mulf32(m_data->m_startAbilityRange, m_data->m_startAbilityRange))
 	{
@@ -923,7 +941,11 @@ UpdateSleepTime SpecialAbilityUpdate::update()
 		{
 			return calcSleep();
 		}
-		// RW 0x8551F7 .. 0x855275: the template's + 0x80 (a unit cost of the summoning enums) is S-860
+		if (!payUnitCost()) // RW 0x85521F .. 0x855321
+		{
+			finishAbility(true, true); // RW 0x85527D: slot 0x34(1, 1)
+			return calcSleep();
+		}
 		triggerAbilityEffect();
 		endPreparation();
 		if (needToPack())
@@ -953,6 +975,11 @@ UpdateSleepTime SpecialAbilityUpdate::update()
 		}
 		return calcSleep();
 	}
+	if (!payUnitCost()) // RW 0x85507A .. 0x85513F
+	{
+		finishAbility(true, true); // RW 0x85527D: slot 0x34(1, 1)
+		return calcSleep();
+	}
 	triggerAbilityEffect();
 	if (persistentTrigger())
 	{
@@ -969,6 +996,58 @@ UpdateSleepTime SpecialAbilityUpdate::update()
 		finishAfterPacking();
 	}
 	return calcSleep();
+}
+
+// RW 0x85521F .. 0x855321 (lane NECRODIE-1; RotWK only: BFME2's SpecialPowerTemplate has no UnitCost, the field + 0x80 is RotWK's). A power with a UnitCost
+// (+ 0x80: the Necromancer's Black Ice 1, Fell Strength 2, Soul Freeze 3, Well of Souls and Corpse Rain 4) on an object with a horde interface (contain + 0x258
+// slot 0x7C): fewer members than the cost (slot 0x188, the members without the banner carrier) refuse it; else the cost is paid one member at a time: slot
+// 0x114(BANNER) picks the member, which is skipped (the count still drops) when it is the banner carrier (slot 0x118, interface + 0x150) or none; the member
+// leaves the horde (slot 0x38, RW 0x87393E), gets status UPDATING_AI (0x48), model condition BURNINGDEATH (+ 0x150 bit 0, RW 0x68B53C), is killed with
+// UNRESISTABLE damage and the power's UnitCostDeathType (+ 0x84, RW 0x698EC3(8, type)), then gets the statuses UNSELECTABLE (3) and IGNORE_PARALYZE_NUGGET
+// (0x65) (RW 0x62684D)
+bool SpecialAbilityUpdate::payUnitCost()
+{
+	const SpecialPowerTemplate *power = m_data->m_specialPowerTemplate ? m_data->m_specialPowerTemplate->getFinalOverride() : nullptr; // RW 0x688D3C
+	if (!power || power->m_unitCost == 0)
+	{
+		return true;
+	}
+	Object *obj = getObject();
+	ContainModuleInterface *c = obj->getContain();
+	HordeContain *horde = c && c->getHordeContainInterface() ? dynamic_cast<HordeContain *>(c) : nullptr;
+	if (!horde)
+	{
+		return true;
+	}
+	if (horde->payloadCount() < (unsigned)power->m_unitCost) // RW 0x855273 .. 0x85527B
+	{
+		return false;
+	}
+	static const unsigned kBanner = (unsigned)ObjectTemplateInfoBuilder::kindOfIndex("BANNER");                       // 0xA4
+	static const unsigned kUpdatingAI = (unsigned)CombatNames::status("UPDATING_AI");                                   // 0x48
+	static const unsigned kUnselectable = (unsigned)CombatNames::status("UNSELECTABLE");                                // 3
+	static const unsigned kIgnoreParalyze = (unsigned)CombatNames::status("IGNORE_PARALYZE_NUGGET");                    // 0x65
+	static const int kBurningDeath = CombatNames::modelCondition("BURNINGDEATH");                                        // 544
+	GameLogic &logic = obj->logic();
+	const ObjectID banner = horde->bannerCarrier(); // RW 0x855298: slot 0x118, read once
+	for (int n = power->m_unitCost; n != 0; --n)
+	{
+		Object *member = horde->firstMemberNotKindOf(kBanner); // RW 0x8552B4
+		if (!member || (banner != INVALID_ID && member == logic.findObjectByID(banner)))
+		{
+			continue;
+		}
+		horde->removeFromContain(member);         // RW 0x8552CC
+		member->setStatus(kUpdatingAI, true);     // RW 0x8552D5
+		if (!member->testModelCondition(kBurningDeath))
+		{
+			member->setModelConditionState(kBurningDeath, true); // RW 0x8552E3 .. 0x8552EC
+		}
+		member->kill(DAMAGE_UNRESISTABLE, power->m_unitCostDeathType); // RW 0x855302
+		member->setStatus(kUnselectable, true);   // RW 0x85530D
+		member->setStatus(kIgnoreParalyze, true); // RW 0x855318
+	}
+	return true;
 }
 
 // RW 0x85393B
@@ -1101,6 +1180,11 @@ bool SpecialAbilityUpdate::withinAbortRange() const
 			return true;
 		}
 		dist2 = CircleDistanceSquaredToPoint(*obj->getPosition(), CombatQueries::boundingCircleRadius(*obj), m_targetPos);
+		// lane STARTRANGE-1: RW 0x8523FC .. 0x85240B: SPECIAL_GRAB_PASSENGER (0x27) takes 400.0 (RW 0xC55874) off it here too (subss)
+		if (m_data->m_specialPowerTemplate && m_data->m_specialPowerTemplate->m_type == 0x27)
+		{
+			dist2 = SimMath::sseSub(dist2, 400.0f);
+		}
 	}
 	else if (const Object *t = target())
 	{
@@ -2667,8 +2751,8 @@ std::vector<std::string> SpecialAbilityModules::stopLines()
 		"SPECIAL_CHARGE_ATTACK (0x2A) in the trigger / preparation / packing (the 0x20 disguise trigger RW 0x8544CD runs: lane STEALTH-2; SPECIAL_SCREECH 0x89, the "
 		"disguise cancels 0x84 / 0x85: lane HERO-2; the grab enums SPECIAL_GRAB_PASSENGER / SPECIAL_GRAB_CHUNK 0x27 / 0x28 run since lane MODCOMPAT-MOD1: the "
 		"object grab, its hold, release and eat), the grab of a tree (RW 0x68449B makes it an object) and of a ROCK_VENDOR / CHUNK_VENDOR (its GrabObject, RW "
-		"0x85415C), the 0x28 unpack model condition (RW 0x85384C), the special objects (SpecialObject: no retail use), ContactPointOverride, the unit cost of the "
-		"summoning templates (+ 0x80): counted",
+		"0x85415C), the 0x28 unpack model condition (RW 0x85384C), the special objects (SpecialObject: no retail use), ContactPointOverride: counted (the "
+		"unit cost + 0x80 is paid since lane NECRODIE-1, RW 0x85521F)",
 		"[S-861] ToggleMountedSpecialAbilityUpdate: the toggle, CancelDisguiseWhenDismounting and MountedTemplate (the replacement RW 0x8B140D: Construction::"
 		"buildObjectNow, name, experience, health, team, SynchronizeTimerOnSpecialPower; the old object destroyed after its packing, RW 0x8B1E9A) run (lane "
 		"HERO-2); lane SUMMON-1: the initiate RW 0x8B1FDA (a current locomotor of speed 0 refuses, else IGNORE_AI_COMMAND) and SummonReplacementSpecialAbilityUpdate "

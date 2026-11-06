@@ -137,6 +137,7 @@ private:
 	int m_lockedSlotOnEnter = -1;
 	unsigned m_shotsFired = 0;
 	bool m_meleeMachine = false;
+	bool m_victimWasEnemyOnEnter = false; ///< ATKSTATE-1a: BFME2 + 0x49, the victim was an enemy at onEnter (BFME2 0x74B692 / 0x74B6E5)
 	const AttackExitConditions *m_exitConditions = nullptr; ///< ZH m_attackParameters
 };
 
@@ -184,6 +185,8 @@ public:
 	void xfer(class Xfer &x) override;
 
 private:
+	StateReturnType aim(bool firstCall); // RW 0x75232F (lane AIMAIM-1)
+
 	AIAttackState *m_att;
 	unsigned m_approachId;
 	bool m_setLocomotor = false;

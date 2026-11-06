@@ -11,6 +11,7 @@
 #include "GameLogic/Locomotor.h"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -103,6 +104,8 @@ struct Unit : AIMoveHost
 	Sim *sim;
 	TestObject obj;
 	LocoHostMock lh;
+	// lane BUMP-1: every model condition change the mover asks for (declared before `ai`: the mover's destructor still asks)
+	std::vector<std::pair<std::string, bool>> conditions;
 	std::unique_ptr<Locomotor> loco;
 	std::unique_ptr<AIMover> ai;
 	std::unique_ptr<AIMoveToState> state;
@@ -160,9 +163,29 @@ struct Unit : AIMoveHost
 	bool treatAsAircraftForLocoDistToGoal() const override { return false; }
 	Coord3D machineGoal{};
 	Coord3D machineGoalPosition() const override { return machineGoal; }
-	bool setModelCondition(const char *, bool) override { return true; }
+	bool setModelCondition(const char *name, bool on) override
+	{
+		conditions.emplace_back(name, on);
+		return true;
+	}
 	float relativeAngleTo(const Coord3D &p) const override { return std::atan2(p.y - obj.pos.y, p.x - obj.pos.x) - angle; }
 	const PathfindObject *findPathfindObject(PathfindObjectID id) override; // lane ATTACKPATH-1: the attack path's victim lookup
+	// lane BUMP-1: the object facts of RW 0x66D16E's gates, and the step aside's command (RW 0x66C4CA)
+	bool infantry = false, usingAbility = false, offMap = false, largeRectangle = false;
+	int formationId = 0;
+	float formationX = 0.0f;
+	bool isInfantryKind() const override { return infantry; }
+	bool isUsingSpecialAbility() const override { return usingAbility; }
+	bool isOffMapObject() const override { return offMap; }
+	bool isLargeRectanglePathfind() const override { return largeRectangle; }
+	int objectFormationId() const override { return formationId; }
+	float objectFormationOffsetX() const override { return formationX; }
+	int stepAsides = 0;
+	bool moveToPositionFromAI(const Coord3D &) override
+	{
+		++stepAsides;
+		return true;
+	}
 };
 
 struct Sim
@@ -1451,4 +1474,139 @@ TEST_CASE("path rebuild: the mover's quick path and a found path come back rebui
 	std::unique_ptr<Path> patch(sim.pf->patchPath(&a.obj, groundLoco(), original.get(), true));
 	REQUIRE(patch != nullptr);
 	CHECK(patch->nodeCount() > 2); // tolerance: the patch keeps the original's cells from the joined node on (backlog5 pins which); here only that they are kept matters
+}
+
+namespace
+{
+// lane BUMP-1: A (id 2) moves at a standing enemy B (id 7) with equal priority and overlaps it, as the priority case above; returns A's blocked flag after
+// one onCollide (frame 2: blockedFrames 1, not the cadence frame)
+bool bump1Blocked(const std::function<void(Unit &, Unit &)> &setup)
+{
+	Sim sim(40, 20);
+	sim.build();
+	Unit &a = sim.add(2, 55.0f, 105.0f);
+	Unit &b = sim.add(7, 70.0f, 105.0f, 1);
+	sim.order(a, 355.0f, 105.0f);
+	sim.step(false);
+	REQUIRE(a.ai->path() != nullptr);
+	a.obj.pos = Coord3D{ 55.0f, 105.0f, 0.0f };
+	a.lh.sync();
+	b.obj.pos = Coord3D{ 62.0f, 105.0f, 0.0f };
+	b.lh.sync();
+	setup(a, b);
+	++sim.frame;
+	sim.world.frame = sim.frame;
+	a.ai->onCollide(b.obj);
+	return a.ai->isBlocked();
+}
+} // namespace
+
+TEST_CASE("BUMP-1: RW 0x66D243, an INFANTRY unit in machine state 0x13 is never blocked; another state or a non-infantry unit is")
+{
+	CHECK(bump1Blocked([](Unit &, Unit &) {}));
+	CHECK_FALSE(bump1Blocked([](Unit &a, Unit &) {
+		a.infantry = true;
+		a.stateIdValue = 0x13;
+	}));
+	CHECK(bump1Blocked([](Unit &a, Unit &) { a.stateIdValue = 0x13; }));
+	CHECK(bump1Blocked([](Unit &a, Unit &) { a.infantry = true; }));
+}
+
+TEST_CASE("BUMP-1: RW 0x66D427, two units of one formation (Object + 0x42C): the one with the larger formation offset x (+ 0x430) is not blocked, "
+		  "whatever the priorities")
+{
+	// same formation, A's x above B's: not blocked (the priority rule alone would block: equal priorities)
+	CHECK_FALSE(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationId = b.formationId = 3;
+		a.formationX = 10.0f;
+		b.formationX = -10.0f;
+	}));
+	// same formation, A's x below or equal: blocked even with A's priority above B's
+	CHECK(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationId = b.formationId = 3;
+		a.formationX = -10.0f;
+		b.formationX = 10.0f;
+		a.priority = 50;
+	}));
+	CHECK(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationId = b.formationId = 3;
+		a.formationX = b.formationX = 5.0f;
+	}));
+	// formation 0 is no formation: the priority rule (A above B: not blocked)
+	CHECK_FALSE(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationX = 10.0f;
+		b.formationX = -10.0f;
+		a.priority = 50;
+		(void)b;
+	}));
+	// different formations: the priority rule
+	CHECK(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationId = 3;
+		b.formationId = 4;
+		a.formationX = 10.0f;
+	}));
+}
+
+TEST_CASE("BUMP-1: RW 0x66D616, on a cadence frame a blocked unit that need not turn (RW 0x663F83) drops MOVING and BACKING_UP")
+{
+	Sim sim(40, 20);
+	sim.build();
+	Unit &a = sim.add(2, 55.0f, 105.0f);
+	Unit &b = sim.add(7, 70.0f, 105.0f, 1);
+	sim.order(a, 355.0f, 105.0f);
+	sim.step(false);
+	REQUIRE(a.ai->path() != nullptr);
+	b.obj.pos = Coord3D{ 62.0f, 105.0f, 0.0f };
+	b.lh.sync();
+	bool dropped = false;
+	for (int f = 0; f < 3; ++f)
+	{
+		++sim.frame;
+		sim.world.frame = sim.frame;
+		a.obj.pos = Coord3D{ 55.0f, 105.0f, 0.0f };
+		a.angle = 0.0f; // facing the goal along +x: no turn needed
+		a.lh.sync();
+		a.conditions.clear();
+		const int before = a.ai->blockedFrames();
+		a.ai->onCollide(b.obj);
+		// id 2: the cadence frame is blockedFrames 2 (2 % 5 == 2 % 5)
+		if (before == 2)
+		{
+			REQUIRE(a.conditions.size() == 2);
+			CHECK(a.conditions[0] == std::make_pair(std::string("MOVING"), false));
+			CHECK(a.conditions[1] == std::make_pair(std::string("BACKING_UP"), false));
+			dropped = true;
+		}
+		else
+		{
+			CHECK(a.conditions.empty());
+		}
+		a.ai->doLocomotor();
+	}
+	CHECK(dropped);
+}
+
+TEST_CASE("BUMP-1: RW 0x66D37A .. 0x66D3A2, a standing idle unit bumped by a standing enemy steps aside unless it uses a special ability (status 0x46), "
+		  "is OFF_MAP or is LARGE_RECTANGLE_PATHFIND")
+{
+	auto stepAsides = [](const std::function<void(Unit &)> &setup) {
+		Sim sim(40, 20);
+		sim.terrain.cliff.insert({ 6, 10 }); // B stands on a cliff cell: the possible destination (RW 0x6F3C87) moves it
+		sim.build();
+		Unit &a = sim.add(2, 62.0f, 105.0f);
+		Unit &b = sim.add(7, 62.0f, 105.0f, 1);
+		REQUIRE_FALSE(a.ai->isMoving());
+		REQUIRE_FALSE(b.ai->isMoving());
+		b.stateIdValue = 0;
+		setup(b);
+		++sim.frame;
+		sim.world.frame = sim.frame;
+		b.ai->onCollide(a.obj);
+		return b.stepAsides;
+	};
+	CHECK(stepAsides([](Unit &) {}) == 1);
+	CHECK(stepAsides([](Unit &b) { b.usingAbility = true; }) == 0);
+	CHECK(stepAsides([](Unit &b) { b.offMap = true; }) == 0);
+	CHECK(stepAsides([](Unit &b) { b.largeRectangle = true; }) == 0);
+	CHECK(stepAsides([](Unit &b) { b.idle = false; }) == 0);
 }

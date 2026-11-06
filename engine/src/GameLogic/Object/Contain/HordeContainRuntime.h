@@ -417,6 +417,9 @@ public:
 	void bannerCarrierRemoved(const Object &member);
 	void expediteBannerRespawn() { if (m_bannerCountdown > 1) { m_bannerCountdown = 1; } } // RW 0x89ACC1
 	unsigned payloadCount() const; ///< RW interface slot 0x188: members, including those entering a garrison, without the banner.
+	// lane NECRODIE-1: RW 0x8705A6 (interface slot 0x114): the first contained member whose template lacks KindOf `kindOfBit`, else the first contained member;
+	// with nothing contained, the same pick over the members on their way into a garrison (interface + 0x54, by id); null when there is none
+	Object *firstMemberNotKindOf(unsigned kindOfBit) const;
 	unsigned lastMemberDamageFrame() const; ///< RW 0x86EB60, interface slot 0x26C.
 	// RW HordeContainInterface slot 0x18C (RW 0x873AE3): a new member of the payload template joins at `pos` facing `orientation` (the matrix), with the horde's
 	// weapon set flags, experience pool, attribute modifiers and lifetime (null when the horde is full or has no single payload template)

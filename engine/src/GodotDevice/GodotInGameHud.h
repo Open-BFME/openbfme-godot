@@ -130,6 +130,10 @@ public:
 	// scripted camera moves for the viewers (the same View::lookAt / setHeightAboveGround the radar click and the wheel call)
 	void camera_look_at(const Vector2 &sage_xy);
 	void camera_set_height(float height_above_ground);
+	// Enhanced desktop gestures, shared by all editions; no simulation commands.
+	bool trackpad_pan(const Vector2 &delta, const Vector2 &position);
+	bool trackpad_zoom(double factor, const Vector2 &position);
+	bool trackpad_rotate(double degrees, const Vector2 &position);
 	// lane CAMPUI-1: a map script's RESET_CAMERA (view slot 0xC8, the game start's RW 0x63135B) and the letterbox's zoom limit (W3DDisplay::enableLetterBox
 	// RW 0x443C81: TheTacticalView slot 0x1C setZoomLimited(!enable)) on the HUD's own camera, so a cinematic moves the camera the player then keeps
 	void camera_reset(const Vector2 &sage_xy);
@@ -197,6 +201,7 @@ protected:
 	void _notification(int what); ///< lane BACKLOG3 (S-454): the window lost the focus: the keyboard's keys are up (HudInput::resetKeys)
 
 private:
+	bool trackpad_allowed(const Vector2 &position) const;
 	void syncModifiers(const InputEventWithModifiers *event);
 	void keyEvent(int dik, bool down, char32_t character);
 	void syncModal(); ///< lane OPTS-6: a menu became (or stopped being) the input's top: the world's held input is cancelled ///< lane INPUT-1: inject_key with the layout's character ///< lane INPUT-1: Ctrl / Shift / Alt as the event reports them

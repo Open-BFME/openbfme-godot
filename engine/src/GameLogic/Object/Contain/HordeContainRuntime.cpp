@@ -148,11 +148,15 @@ UpdateSleepTime HordeContain::update()
 	{
 		return UPDATE_SLEEP_NONE;
 	}
+	if (m_garrisoned)
+	{
+		return UPDATE_SLEEP_NONE; // lane GARRISON-1 (S-1102): the members stand on the garrison points, no member pass
+	}
 	if (!(m_meleeEngaged || ai->isMoving()) && ai->world().mapReady())
 	{
 		// lane WALLHORDE-1: RW 0x872EFC's parked branch (BFME2 0x86FC1B, decomp HordeContainRva0046FC1B.cpp:137-148): a horde neither moving nor in melee takes
 		// RW 0x6EE600's layer at its position; when that changes it, every contained member takes its own (setLayer returns at once when unchanged) and the
-		// pass is dirty. RotWK has no garrison return before it
+		// pass is dirty. After the contained (garrison) return, RW + 0x294 (set by RW 0x872ADF; BFME2 the same, decomp lines 121-124)
 		Pathfinder &pf = ai->world().pathfinder();
 		const PathfindLayerEnum l = pf.objectLayerAt(ai->adapter(), *horde->getPosition());
 		if (l != ai->adapter().getLayer())
@@ -167,10 +171,6 @@ UpdateSleepTime HordeContain::update()
 			}
 			m_dirty = true;
 		}
-	}
-	if (m_garrisoned)
-	{
-		return UPDATE_SLEEP_NONE; // lane GARRISON-1 (S-1102): the members stand on the garrison points, no member pass
 	}
 	if (ai->isMoving())
 	{

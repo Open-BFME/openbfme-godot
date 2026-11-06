@@ -170,8 +170,8 @@ TEST_CASE("wallhorde1: a parked horde takes RW 0x6EE600's layer at its place and
 	CHECK(ai->adapter().getLayer() == LAYER_GROUND);
 	CHECK(mw.aiOf(ms[3])->adapter().getLayer() == LAYER_GROUND);
 	// the recentre (the garrison exit's) gives the horde the winning member's layer (the members on the ramp's layer, so not the ground's default; the
-	// validity test reads the horde's layer)
-	ai->setLayer(LAYER_WALL_FIRST);
+	// validity test reads the horde's layer: the ground's, which a ground cell passes also with #220's wall-top layer test, RW 0x6EA52E .. 0x6EA547)
+	ai->setLayer(LAYER_GROUND);
 	for (Object *m : ms)
 	{
 		mw.aiOf(m)->setLayer(LAYER_RAMP);
@@ -195,4 +195,25 @@ TEST_CASE("wallhorde1: objectLayerAt is RW 0x6EE600: the ground cell's own layer
 	even.diameter = 20.0f; // a footprint 2 cells wide (footprintSize, RW 0x6EAF79): the point moves by 5 (RW 0x6EE62D .. 0x6EE64C)
 	CHECK(w.pf->objectLayerAt(odd, Coord3D{ 145.0f, 95.0f, 50.0f }) == LAYER_RAMP); // cell (14, 9): the ramp
 	CHECK(w.pf->objectLayerAt(even, Coord3D{ 145.0f, 95.0f, 50.0f }) == top);      // moved to cell (15, 10): the wall top
+}
+
+TEST_CASE("wallhorde1: a garrisoned horde gets no layer sync: RW 0x872EFC returns on the contained flag (+0x294, set by RW 0x872ADF) before the parked branch")
+{
+	// BFME2 0x86FC1B the same (decomp HordeContainRva0046FC1B.cpp:121-124: the + 0x294 return comes before the layer sync)
+	MoveWorld mw;
+	mw.buildMap();
+	Object *h = mw.spawn("Horde", 505.0f, 505.0f);
+	mw.frames(5);
+	AIUpdateInterface *ai = mw.aiOf(h);
+	REQUIRE(ai);
+	REQUIRE_FALSE(ai->isMoving());
+	const std::vector<Object *> ms = mw.membersOf(h);
+	REQUIRE(ms.size() == 15);
+	mw.hordeOf(h)->setGarrisoned(true);
+	ai->setLayer(LAYER_WALL_FIRST);
+	mw.aiOf(ms[3])->setLayer(LAYER_WALL_FIRST);
+	mw.hordeOf(h)->update();
+	CHECK(ai->adapter().getLayer() == LAYER_WALL_FIRST);
+	CHECK(mw.aiOf(ms[3])->adapter().getLayer() == LAYER_WALL_FIRST);
+	mw.hordeOf(h)->setGarrisoned(false);
 }

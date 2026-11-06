@@ -285,8 +285,9 @@ bool Pathfinder::validMovementPosition(const PathfindObject *obj, const Pathfind
 	const int y = SimMath::truncToInt32(SimMath::mulf32(pos->y, 0.1f));
 	const PathfindMovement mv = makeMovement(obj, loco);
 	const PathfindCell *cell = getCell(layer, x, y);
-	// lane WALL-1 (INFERENCE, S-4840): a unit on `layer` stands only on a cell of that layer or one connecting to it (a ground unit is not valid on a wall top)
-	if (cell && !m_wallPieces.empty() && !cell->allowsLayer(layer))
+	// lane WALLSEARCH-1: RW 0x6EA4E7 (BFME2 0x6E909F) tests the layer of a wall top only, exactly (RW 0x6EA52E .. 0x6EA547: no connect layer); the ground,
+	// a raised walkway and the ramp take any cell of their grid
+	if (cell && isWallLayer(layer) && cell->getLayer() != layer)
 	{
 		return false;
 	}
@@ -1795,7 +1796,8 @@ bool Pathfinder::adjustToPossibleDestination(PathfindObject &obj, const Pathfind
 	{
 		return false; // outside of bounds
 	}
-	const PathfindLayerEnum destinationLayer = searchDestinationLayer(*dest);
+	// lane WALLSEARCH-1: getLayerForDestination with the object (RW 0x6F3C87 -> RW 0x680A75(obj, dest); BFME2 0x6F287A): a wall top's or the ramp's layer
+	const PathfindLayerEnum destinationLayer = getLayerAt(obj, *dest);
 	PathfindCell *goalCell = getCell(destinationLayer, goalCellNdx.x, goalCellNdx.y);
 	Coord3D from = obj.getPosition();
 	PathfindCell *parentCell = getClippedCell(obj.getLayer(), &from);
