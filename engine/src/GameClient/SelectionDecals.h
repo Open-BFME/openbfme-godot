@@ -177,7 +177,8 @@ struct MergeDecalAtlasRect
 // lane SELPERF-1: the merge decals as the terrain shader reads them (godot/shaders/selection_decals.gdshaderinc): RGBA32F texels, kWidth a row:
 //   decal i at texels 4i .. 4i + 3: (x, y, size, opacity 0..255), (r, g, b 0..255, z), Texture's atlas rect (x, y, w, h), Texture2's (w 0 in the simple mode;
 //   lane HERORING-1: an alpha decal's (cos, sin) of its turn, then (lane PLACEDECAL-1) its height (y size) and 0, -1 for a terrain-only decal or the texel
-//   of its vertex mask: a header (vx0, vy0, w, h) and w x h texels, the alpha in x, after the index list); the merge decals are records 0 .. decals - 1,
+//   of its vertex mask; lane ECOCIRCLE-2: the fourth texel's w is -2 for a terrain-only additive decal and -3 for an additive decal that may draw on a
+//   wall as well; a header (vx0, vy0, w, h) and w x h texels, the alpha in x, after the index list); the merge decals are records 0 .. decals - 1,
 //   the alpha decals the next alphaDecals;
 //   cell c of the grid at cellOffset + c: (first, count) into the index list (lane HERORING-1: then (alphaFirst, alphaCount), its alpha entries, which follow
 //   every merge entry); the index list's entry j at indexOffset + j: (x, y, size, decal) (the place
@@ -228,7 +229,8 @@ private:
 	int m_height = 0;
 };
 
-// the decals of `decals` whose Style has SHADOW_MERGE_DECAL into `out` and, lane HERORING-1, the alpha decals (SHADOW_ALPHA_DECAL 0x20, SHADOW_ALPHA_DECAL_DYNAMIC 0x400);
+// the decals of `decals` whose Style has SHADOW_MERGE_DECAL into `out` and, lane HERORING-1, the alpha decals (SHADOW_ALPHA_DECAL 0x20, SHADOW_ALPHA_DECAL_DYNAMIC
+// 0x400; lane ECOCIRCLE-2: and the additive SHADOW_ADDITIVE_DECAL 0x40 / SHADOW_ADDITIVE_DECAL_DYNAMIC 0x800, which sel_alpha_at adds to the surface);
 // `rect` answers a texture's atlas rectangle (false: not in the atlas, an error). False with `error` when a merge decal's texture is missing (as
 // ComposeMergeDecals); an alpha decal whose texture is missing, or a decal of another style, is left out with its error in `error` (true)
 // lane HERORING-1: the shaders' mode (sel_grid2.w): the merge decals' (0 none, 1 the two passes, 2 the simple pass), + 4 when there are alpha decals
