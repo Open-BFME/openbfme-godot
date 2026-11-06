@@ -1401,8 +1401,7 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	}
 	if (m_trees->anyChanged() || m_trees->anyClusterUsed())
 	{
-		// lane SPELL-3: once a tree toppled or was harvested; lane RAI-POW-3: or once Devastation marked a cluster (the mark is set before the location
-		// test and changes the next pick, so it must be hashed even when no tree record changed; a game without either keeps its hash)
+		// lane SPELL-3: only once a tree toppled or was harvested, or (RAI-POW-3) a tree killer marked a cluster: a game without keeps its hash
 		section("terrain trees", [&](StateHasher &x) { m_trees->crc(x); });
 	}
 	section("large group audio", [&](StateHasher &x) { m_largeGroupAudio.crc(x); }); // lane AUDIO-4: TheLargeGroupAudio's gate (+ 0x38 / + 0x3C)

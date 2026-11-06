@@ -135,14 +135,13 @@ public:
 	const std::vector<Record> &records() const { return m_records; }
 
 	// ---- lane RAI-POW-3: the AI's tree-cluster index (TerrainTrees + 0x584) ---------------------------------------------------------------
-	// TheTerrainLogic + 0x584 holds one position sampler (constructor RW 0x8E4042 with padding 100.0, RW 0xBD88D8) over the tree records: the same
-	// class as the skirmish AI's player info record sampler (AIPositionSampler). RW 0x8E4082's greedy grouping is the tree copy RW 0x683055 /
-	// 0x683807 / 0x6831BE: insert a record's position into every group whose member is within 2 * padding^2 (squared 3D, RW 0x8E3DD6), append it to
-	// the first selected group, merge the other selected groups into that one; a record with no selected group starts a new one. The decision reads a
-	// group's position (RW 0x9E7071: group + 8), its member count (RW 0x97D700: (members.end - members.begin) / 4) and sets its "used" byte
-	// (RW 0x9E7095; getter RW 0x9E70A6). RW 0x67D3C2 clears a record but does not unlink it from its group (the index is built while the map's trees
-	// are added and kept for the game).
-	using Cluster = AIPositionSampler::Group; ///< + 0x18 is Group::used
+	// TheTerrainLogic + 0x584 holds one position sampler, the class of the AI record's (constructor RW 0x8E4042 at RW 0x684876 with padding 100.0, RW
+	// 0xBD88D8): AIPositionSampler. Retail's tree index runs the record copies of its functions (RW 0x683C2D register + insert, RW 0x683807 /
+	// 0x6831BE / 0x683055, the copies of RW 0x8E42C8 / 0x8E41EB / 0x8E4082; clear RW 0x682F3D); here the sampler's id is the record's index. Every
+	// record joins as the map adds it (RW 0x683F17), a load rebuilds the index (RW 0x683D53 from TerrainLogic::xfer, RW 0x6842F1). The decision reads a
+	// group's centre (RW 0x9E7071: group + 8), its member count (RW 0x97D700) and sets its "used" byte (RW 0x9E7095; getter RW 0x9E70A6). RW 0x67D3C2
+	// clears a record but does not unlink it from its group (the index is built while the map's trees are added and kept for the game).
+	using Cluster = AIPositionSampler::Group;
 	static constexpr float kClusterPadding = 100.0f; ///< RW 0xBD88D8 (RW 0x8E4042's padding argument at RW 0x684876)
 	const std::vector<Cluster> &clusters() const { return m_clusters.groups(); }
 	std::vector<Cluster> &clusters() { return m_clusters.groups(); }
@@ -167,13 +166,12 @@ private:
 	void clearRecord(Record &tree);                  ///< RW 0x67D3C2
 	void markChanged(Record &tree);
 	void keepStart();                                ///< lane SAVE-4e: m_start before the first change
-	void clearClusters();                            ///< empty groups (the sampler's clear)
-	void installRecord(std::uint32_t recordIndex);   ///< RW 0x683F17 .. 0x683F20: the record joins the tree cluster index
-	void rebuildClusters();                          ///< RW 0x683D53: clear, then add every record in list order
+	void insertCluster(int recordIndex, const std::vector<Record> &from); ///< RW 0x683C2D (the record copy of RW 0x8E4456)
+	void rebuildClusters(const std::vector<Record> &from); ///< clear, then insert every record in list order
 	std::vector<Record> m_start;                     ///< lane SAVE-4e: the records as the map made them (empty until the first change)
 	GameLogic &m_logic;
 	std::vector<Record> m_records;   ///< + 0x578
-	AIPositionSampler m_clusters;     ///< + 0x584 (the lane's index; the tree records' positions, padding kClusterPadding)
+	AIPositionSampler m_clusters;     ///< + 0x584
 	std::vector<std::int16_t> m_heads; ///< + 0x588 (50 * 50)
 	std::vector<Event> m_events;
 	float m_lo[2] = { 0.0f, 0.0f }, m_hi[2] = { 0.0f, 0.0f };

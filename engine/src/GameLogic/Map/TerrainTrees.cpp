@@ -65,7 +65,7 @@ TerrainTrees::TerrainTrees(GameLogic &logic) : m_logic(logic)
 void TerrainTrees::reset()
 {
 	m_records.clear();
-	m_clusters = AIPositionSampler{};
+	m_clusters.clear();
 	m_events.clear();
 	m_heads.assign((size_t)BUCKETS * BUCKETS, (std::int16_t)-1);
 	m_hasExtent = false;
@@ -96,11 +96,6 @@ void TerrainTrees::setExtent(float loX, float loY, float hiX, float hiY)
 
 // ---- lane RAI-POW-3: the AI's tree-cluster index (see the header) -------------------------------------------------------------------------
 
-void TerrainTrees::clearClusters()
-{
-	m_clusters = AIPositionSampler{};
-}
-
 bool TerrainTrees::anyClusterUsed() const
 {
 	for (const Cluster &c : m_clusters.groups())
@@ -113,19 +108,21 @@ bool TerrainTrees::anyClusterUsed() const
 	return false;
 }
 
-// RW 0x683F17 .. 0x683F20: the record joins the sampler over the tree list; the sampler's grouping is RW 0x683C2D's copy of RW 0x8E42C8
-void TerrainTrees::installRecord(std::uint32_t recordIndex)
+// RW 0x683C2D: register the record (+ 0x04) and insert it (RW 0x683807 / 0x683055 / 0x6831BE, the record copies of RW 0x8E42C8 / 0x8E4082 / 0x8E41EB);
+// the sampler's id is the record's index in `from`
+void TerrainTrees::insertCluster(int recordIndex, const std::vector<Record> &from)
 {
-	m_clusters.add((ObjectID)recordIndex, kClusterPadding, [this](ObjectID id) { return m_records[(size_t)id].position; });
+	m_clusters.add((ObjectID)recordIndex, kClusterPadding, [&from](ObjectID id) { return from[(size_t)id].position; });
 }
 
 // RW 0x683D53: the index over the map's tree list, rebuilt from the records as the map made them (a cleared record keeps its place: RW 0x67D3C2)
-void TerrainTrees::rebuildClusters()
+void TerrainTrees::rebuildClusters(const std::vector<Record> &from)
 {
-	clearClusters();
-	for (size_t i = 0; i < m_records.size(); ++i)
+	// the caller has already put the map's records back into m_records (TerrainTrees::xfer); `from` names them
+	m_clusters.clear(); // RW 0x682F3D
+	for (size_t i = 0; i < from.size(); ++i)
 	{
-		installRecord((std::uint32_t)i);
+		insertCluster((int)i, from);
 	}
 }
 
@@ -165,7 +162,7 @@ bool TerrainTrees::addTree(const ThingTemplate &tmpl, const Coord3D &position, s
 	r.grabbable = boolField(tmpl, "IsGrabbable");     // + 0x5FB
 	r.harvestable = boolField(tmpl, "IsHarvestable"); // + 0x5FC
 	m_records.push_back(r);
-	installRecord((std::uint32_t)m_records.size() - 1); // RW 0x683F17 .. 0x683F20: the record joins the tree cluster index
+	insertCluster((int)m_records.size() - 1, m_records); // RW 0x683F17 .. 0x683F20: the record joins the tree cluster index
 	return true;
 }
 
@@ -639,7 +636,7 @@ void TerrainTrees::xfer(Xfer &x)
 		m_records[e.first] = e.second;
 	}
 	// lane RAI-POW-3: the index is the map's (RW 0x683D53 rebuilds it from the records); the snapshot's used bytes go on top
-	rebuildClusters();
+	rebuildClusters(m_start);
 	m_changed = (int)changed;
 	m_changedFrame = changedFrame;
 	m_toppleSpeed = toppleSpeed;

@@ -300,6 +300,8 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/weatherfx_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: the Enhanced weather's effects against a stub GameWorld and synthetic images (lane WEATHERFX-2: no weather outside a live game, the menus' Original / Enhanced check; lane INGAMEBG-1: the in-game panels' backdrop check); headless, 20 s timeout. |
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
+| `godot/tests/w3d_shader_reuse_test.gd` | `godot/tests/w3d_shader_reuse_test.py` | Dedicated scratch native extension; real material factories, resource identity, sampler/permutation isolation, independent uniforms and owner lifetimes. Headless; no retail assets or GPU required. |
+| `godot/tests/draw_cull_test.gd` | Manual only; no generic pytest runner | GPU rendering and a frame_pre_draw; retail soldier models. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 | `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
 | `godot/tests/map_water_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `water.ini` over a retail map. |
@@ -316,3 +318,25 @@ runner is claimed. All paths below are relative to the repository root.
 Friend seeding can trigger `SocialClient`'s inbox-driven friends refresh. Creating a recovery code while that action owns the client emits `action_done("recovery", false)` and does not emit `recovery_ready`. The old integration ignored the rejection and waited for a code until timeout; no OAuth callback had run yet.
 
 The test now waits for a signed-in, populated, idle social client, connects both terminal signals before issuing the request, and checks successful completion and a nonempty code. A controlled busy-client probe holds readiness until explicitly released, proves no request was sent while busy, and then proves exactly one successful request. There is no fixed sleep or larger timeout. The real Node/SQLite integration still exercises both Discord rounds and all callback, restore, unlink and offline-provider assertions.
+
+## W3D shader resource ownership regression
+
+After building the current native source, set `GODOT` and `NINJA` to the executable
+paths and `BASELINE_COMMIT` to a commit before shader sharing, then run the isolated
+factory test (macOS/Linux). Each scratch directory must
+be new. The runner compiles one test translation unit and relinks into scratch;
+it does not rebuild or replace the installed game extension.
+
+```sh
+python3 godot/tests/w3d_shader_reuse_test.py --build-dir engine/build --scratch workspace/shader-reuse-fixed --godot "$GODOT" --ninja "$NINJA"
+python3 godot/tests/w3d_shader_reuse_test.py --build-dir engine/build --scratch workspace/shader-reuse-baseline --godot "$GODOT" --ninja "$NINJA" --baseline-ref "$BASELINE_COMMIT"
+```
+
+The baseline invocation must fail the cross-factory resource-sharing assertion;
+that expected negative control makes the runner succeed. The probe checks 128
+permutation/sampler combinations for sharing, complete generated text and release,
+as well as independent material parameters and shaders retained beyond a factory.
+Neither invocation needs retail files, a window or GPU rendering. `--window`
+creates a real rendering device for the same resource checks; it does not draw
+or compare pixels. Resource sharing alone is not a claim that live first-use
+frame stalls have been eliminated.
