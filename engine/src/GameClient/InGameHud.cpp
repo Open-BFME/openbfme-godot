@@ -774,8 +774,15 @@ bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
 // (RW 0x6D5AD9: the Apt player's scale)
 void InGameHud::updateRadarEvents()
 {
-	m_radar->noteAttacks(m_config.game.logic()); // the logic is idle here (update's gate)
-	m_radar->noteLogicEvents(m_config.game.logic()); // lane BACKLOG3 (S-2452): the scripts' and the dozer's events
+	// What a logic frame writes (an object's radar attack frame, the scripts' event notices) is read once per logic frame.
+	// noteAttacks walks every live object; that walk does not change while one logic frame stands. The client-frame ping work below stays every render frame.
+	const unsigned radarLogicFrame = m_config.game.logic().getFrame();
+	if (radarLogicFrame != m_radarLogicFrame)
+	{
+		m_radarLogicFrame = radarLogicFrame;
+		m_radar->noteAttacks(m_config.game.logic()); // the logic is idle here (update's gate)
+		m_radar->noteLogicEvents(m_config.game.logic()); // lane BACKLOG3 (S-2452): the scripts' and the dozer's events
+	}
 	int pic[4];
 	if (!m_palantirRef || !m_radar->picture(pic))
 	{
