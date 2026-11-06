@@ -170,6 +170,8 @@ public:
 	// changes. Default on. (Added by lane MAPOBJ-1.)
 	void set_auto_update(bool enabled);
 	bool get_auto_update() const { return AutoUpdate; }
+	// Owned offscreen View3D scenes can skip presentation work while their animation clock keeps normal process-delta semantics.
+	void set_presentation_updates(bool enabled) { PresentationUpdates = enabled; }
 
 	// { ok, name, frames, frame_rate, seconds, pivots } for a clip of a model
 	Dictionary get_clip_info(int64_t model, const String &clip);
@@ -421,6 +423,7 @@ private:
 	double TimeScale = 1.0;
 	bool Playing = true;
 	bool AutoUpdate = true;
+	bool PresentationUpdates = true;
 	bool HouseColorEnabled = false;
 
 	// stats

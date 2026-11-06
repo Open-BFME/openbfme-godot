@@ -678,7 +678,8 @@ bool AIMover::computePath(const Coord3D &destIn)
 	// two fall back, when they made nothing and the unit has no path, to the closest path (slot + 4, RW 0x6FB869), which always sets the retry flag
 	Path *np = nullptr;
 	bool tryClosest = true;
-	if (!m_pf.validMovementPosition(&obj, info, m_pf.getLayerAt(dest.x, dest.y, dest.z), &dest)) // the destination's layer (RW 0x680A75; lane WALL-1: a wall top's)
+	// the destination's layer (lane WALLSEARCH-1: RW 0x666328 asks RW 0x680A75 with the object, so the footprint's +5 for an even footprint applies)
+	if (!m_pf.validMovementPosition(&obj, info, m_pf.getLayerAt(obj, dest), &dest))
 	{
 		np = nullptr;
 	}
