@@ -22,6 +22,68 @@ HEADER = MATERIAL.with_suffix('.h')
 TESTS = Path(__file__).resolve().parent
 
 
+def extract_link_command(command):
+    """Select the compiler operation, never execute CMake's post-build chain."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|<>')
+    lexer.whitespace_split = True
+    lexer.commenters = ''
+    operations, operation = [], []
+    for token in lexer:
+        if token and all(c in ';&|<>' for c in token):
+            operations.append(operation)
+            operation = []
+        else:
+            operation.append(token)
+    operations.append(operation)
+    links = [op for op in operations if '-o' in op and
+             any(token.endswith('/GodotW3DMaterial.cpp.o') for token in op)]
+    if len(links) != 1:
+        raise RuntimeError('expected exactly one material link operation')
+    return links[0]
+
+
+def validate_baseline(output):
+    expected = {
+        'same permutation across factories shares resource',
+        'Metal policy shares only its own domain',
+        '128 permutation and sampler requests share across factories',
+    }
+    prefix = 'SHADER REUSE FAIL '
+    failed = {line[len(prefix):] for line in output.splitlines() if line.startswith(prefix)}
+    if failed != expected:
+        raise RuntimeError(f'negative control failures differ: expected {sorted(expected)}, got {sorted(failed)}')
+
+
+def test_extract_link_command():
+    link = ['/usr/bin/c++', '-dynamiclib', 'CMakeFiles/openbfme.dir/src/GodotDevice/GodotW3DMaterial.cpp.o',
+            '-o', 'bin with spaces/openbfme.dylib', 'bindings.a']
+    command = ': && ' + shlex.join(link)
+    for suffix in (' && :', ' && cd build && lipo input.dylib -thin arm64 -output shipped.dylib',
+                   ' && objcopy --only-keep-debug shipped.so shipped.so.debug && objcopy --strip-all shipped.so'):
+        assert extract_link_command(command + suffix) == link
+    for invalid in ('lipo input.dylib -output shipped.dylib', command + ' && ' + shlex.join(link)):
+        try:
+            extract_link_command(invalid)
+        except RuntimeError:
+            continue
+        raise AssertionError('missing or ambiguous link operation was accepted')
+
+
+def test_validate_baseline():
+    failures = ['same permutation across factories shares resource', 'Metal policy shares only its own domain',
+                '128 permutation and sampler requests share across factories']
+    output = '\n'.join('SHADER REUSE FAIL ' + name for name in failures) + '\nSHADER REUSE FAIL\n'
+    validate_baseline(output)
+    for invalid in (output + 'SHADER REUSE FAIL recreated shader preserves exact generated text\n',
+                    output + 'SHADER REUSE FAIL factory-only shader released immediately\n',
+                    '\n'.join(output.splitlines()[1:])):
+        try:
+            validate_baseline(invalid)
+        except RuntimeError:
+            continue
+        raise AssertionError('unexpected or missing baseline failure was accepted')
+
+
 def run(command, cwd, name, expected=0, records=None, env=None):
     records = records or cwd
     (records / (name + '.command.json')).write_text(json.dumps(command, indent=2))
@@ -80,14 +142,10 @@ def main():
     compile_command[compile_command.index('-o') + 1] = str(scratch / 'probe.o')
     run(compile_command, build, 'shader-reuse-compile', records=scratch, env=env)
 
-    # Ninja supplies the configured toolchain and libraries, including platform
-    # flags. Refuse shell compound operations beyond CMake's harmless : wrappers.
+    # Keep the configured toolchain/libraries, but omit post-build lipo/objcopy
+    # operations: they target the installed outputs, not this scratch library.
     commands = subprocess.check_output([str(args.ninja.resolve()), '-t', 'commands', 'openbfme'], cwd=build, text=True)
-    link = shlex.split(commands.splitlines()[-1])
-    if link[:2] == [':', '&&']: link = link[2:]
-    if link[-2:] == ['&&', ':']: link = link[:-2]
-    if any(token in ('&&', ';', '|') for token in link):
-        raise RuntimeError('unsupported compound link command')
+    link = extract_link_command(commands.splitlines()[-1])
     library_suffix = Path(link[link.index('-o') + 1]).suffix
     library = scratch / ('shader-reuse' + library_suffix)
     link[link.index('-o') + 1] = str(library)
@@ -112,8 +170,7 @@ def main():
     output = run(command + ['--path', str(project), '--script', 'res://test.gd'], scratch,
                  'run', expected=1 if args.baseline_ref else 0, env=env)
     if args.baseline_ref:
-        if 'SHADER REUSE FAIL same permutation across factories shares resource' not in output:
-            raise RuntimeError('negative control did not fail the cross-factory assertion')
+        validate_baseline(output)
     elif 'SHADER REUSE PASS' not in output:
         raise RuntimeError('missing pass marker')
     (scratch / 'manifest.json').write_text(json.dumps({'baseline_ref': args.baseline_ref, 'window': args.window,
