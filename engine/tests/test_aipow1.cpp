@@ -1099,6 +1099,7 @@ TEST_CASE("RAI-POW-2: CITADEL (RW 0x9E6CCB) draws its point along the AI base ->
 	const float dx = SimMath::subf32(goal.x, base.x), dy = SimMath::subf32(goal.y, base.y), dz = SimMath::subf32(goal.z, base.z);
 	a.logic->random().enableCallLog(true);
 	a.logic->random().clearCallLog();
+	AISpecialPowerUpdate::citadelProposedPoints().clear();
 	const bool yes = cit->decideNow();
 	const std::vector<GameLogicRandom::Call> &log = a.logic->random().callLog();
 	a.logic->random().enableCallLog(false);
@@ -1109,7 +1110,7 @@ TEST_CASE("RAI-POW-2: CITADEL (RW 0x9E6CCB) draws its point along the AI base ->
 	CHECK(log[0].line == 0x49);
 	CHECK(log[0].file == "AISpellBookCitadel.cpp");
 	CHECK(log[1].real);
-	CHECK(log[1].rlo == 0.0f);
+	CHECK(log[1].rlo == -1.0f); // RW 0x9E6D9D: fld [0xBD19DC] = -1.0f
 	CHECK(log[1].rhi == 1.0f);
 	CHECK(log[1].line == 0x51);
 	CHECK(log[1].file == "AISpellBookCitadel.cpp");
@@ -1118,6 +1119,12 @@ TEST_CASE("RAI-POW-2: CITADEL (RW 0x9E6CCB) draws its point along the AI base ->
 		                 SimMath::addf32(base.z, SimMath::mulf32(dz, t1)) };
 	// RW 0x9E6DE0's SSE: x += t2 * dy, y -= t2 * dx, z unchanged
 	const Coord3D expected{ SimMath::addf32(point.x, SimMath::mulf32(t2, dy)), SimMath::subf32(point.y, SimMath::mulf32(t2, dx)), point.z };
+	// the point the decision actually proposed (the hook records RW 0xA0229F's argument): all three coordinates, not a re-computation in the test
+	REQUIRE(!AISpecialPowerUpdate::citadelProposedPoints().empty());
+	const Coord3D proposed = AISpecialPowerUpdate::citadelProposedPoints().back();
+	CHECK(proposed.x == expected.x);
+	CHECK(proposed.y == expected.y);
+	CHECK(proposed.z == expected.z);
 	CHECK(ActionManager::canDoSpecialPowerAtLocation(*book, *cit->decision()->button, expected) == false); // S-1874: type 0x67 is not ported
 	CHECK(yes == false);
 	CHECK(log.size() == 4); // the point's two draws, then RW 0xA01C9C's random walk's two: the walk tried and was refused too

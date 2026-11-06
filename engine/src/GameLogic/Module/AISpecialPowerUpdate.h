@@ -193,7 +193,10 @@ private:
 	bool decideEnshroudingMist(Object &obj);                    // RW 0x9E7869
 	bool decideCallTheHorde(Object &obj);                       // RW 0x9E71B0
 	bool decideBuffEconomy(Object &obj);                        // RW 0x9E7671
-	bool decideCitadel(Object &obj);                            // RW 0x9E6CCB (lane RAI-POW-2)
+	bool decideCitadel(Object &obj);                            // RW 0x9E6CCB
+public:
+	static std::vector<Coord3D> &citadelProposedPoints();        // test hook: RW 0xA0229F's argument from decideCitadel (lane RAI-POW-2)
+private:
 	// the location base (RW 0xA01C6B): RW 0xA021D8 (the ActionManager's test and SpellMakesAStructure), RW 0xA0229F (that test at the location, else with
 	// RandomizeTargetLocation at 15, 30, .. 150 along one random direction, RW 0xA01C9C); the first that passes becomes the location (+ 0x20)
 	bool locationValid(Object &obj, const Coord3D &loc);

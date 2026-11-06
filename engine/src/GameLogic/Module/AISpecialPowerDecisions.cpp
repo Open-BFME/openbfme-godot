@@ -764,8 +764,8 @@ bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)
 bool AISpecialPowerUpdate::decideCitadel(Object &obj)
 {
 	// RW 0x9E6CCB: the controlling player's AI (RW 0x6A950B), its base position (RW 0x8F0284: the base builder's start) and its current enemy
-	// (RW 0x6C7807); the enemy record's structure list (record + 8): the first DOZER_FACTORY (template + 0x120 bit 2) is the target. Two draws of
-	// GameLogicRandomValueReal(0, 1) "AISpellBookCitadel.cpp" (RW 0x6D332C; the binary stores the full build path): line 0x49 places a point along the base -> target line, line 0x51
+	// (RW 0x6C7807); the enemy record's structure list (record + 8): the first DOZER_FACTORY (template + 0x120 bit 2) is the target. Two draws
+	// "AISpellBookCitadel.cpp" (RW 0x6D332C; the binary stores the full build path): line 0x49 GameLogicRandomValueReal(0, 1) places a point along the base -> target line, line 0x51 Real(-1, 1)
 	// offsets it perpendicular by the full base -> target vector (SSE: x += t2 * dy, y -= t2 * dx); then RW 0xA0229F
 	GameLogic &logic = obj.logic();
 	const Player *player = obj.getControllingPlayer();
@@ -809,7 +809,17 @@ bool AISpecialPowerUpdate::decideCitadel(Object &obj)
 	const float t1 = logic.random().getValueReal(0.0f, 1.0f, "AISpellBookCitadel.cpp", 0x49);
 	const Coord3D point{ SimMath::addf32(base.x, SimMath::mulf32(dx, t1)), SimMath::addf32(base.y, SimMath::mulf32(dy, t1)),
 		                 SimMath::addf32(base.z, SimMath::mulf32(dz, t1)) };
-	const float t2 = logic.random().getValueReal(0.0f, 1.0f, "AISpellBookCitadel.cpp", 0x51);
+	// RW 0x9E6D9D pushes [0xBD19DC] = -1.0f as the low bound: the Citadel lands on either side of the base -> target line
+	const float t2 = logic.random().getValueReal(-1.0f, 1.0f, "AISpellBookCitadel.cpp", 0x51);
 	const Coord3D offset{ SimMath::addf32(point.x, SimMath::mulf32(t2, dy)), SimMath::subf32(point.y, SimMath::mulf32(t2, dx)), point.z };
+	citadelProposedPoints().push_back(offset); // test hook: the point handed to RW 0xA0229F
 	return setLocationIfValid(obj, offset); // RW 0xA0229F
+}
+
+// test hook (lane RAI-POW-2): every point decideCitadel proposed, in call order (the ActionManager refuses the Citadel's type 0x67 today, so the
+// decision's own location never records one)
+std::vector<Coord3D> &AISpecialPowerUpdate::citadelProposedPoints()
+{
+	static std::vector<Coord3D> points;
+	return points;
 }
