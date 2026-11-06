@@ -250,32 +250,34 @@ vec3 terrain_output(vec2 uv0, vec4 vcol) {
 	vec2 p = v_local;
 	bool has_rec = v_rec > -0.5;
 	int rec = has_rec ? int(v_rec + 0.5) : 0;
-	// the record is fetched unconditionally so that every UV below (and its derivatives) is computed in
-	// uniform control flow; a cell without a record never uses these values
-	vec4 flags = record_texel(rec, 8);
+	// The record's layer entries, their interpolated UVs, gradients and shading run only where the cell has that
+	// layer. `v_rec` is flat (uniform over the primitive), so a cell without a record or without layer 1 / 2 takes
+	// the branch whole. The base layer stays unconditional.
+	vec4 flags = has_rec ? record_texel(rec, 8) : vec4(0.0);
 	bool has1 = has_rec && flags.z > 0.5;
 	bool has2 = has_rec && flags.w > 0.5;
-	vec4 a1 = record_texel(rec, 0);
-	vec4 a2 = record_texel(rec, 1);
-	vec2 uv1 = interp_vec2(a1.xy, a1.zw, a2.xy, a2.zw, flags.x > 0.5, p);
-	float alpha1 = interp_float(record_texel(rec, 2), flags.x > 0.5, p);
-	vec4 b1 = record_texel(rec, 4);
-	vec4 b2 = record_texel(rec, 5);
-	vec2 uv2 = interp_vec2(b1.xy, b1.zw, b2.xy, b2.zw, flags.y > 0.5, p);
-	float alpha2 = interp_float(record_texel(rec, 6), flags.y > 0.5, p);
-	vec4 rect1 = record_texel(rec, 3);
-	vec4 rect2 = record_texel(rec, 7);
 
-	vec2 g0x, g0y, g1x, g1y, g2x, g2y;
+	vec2 g0x, g0y;
 	atlas_gradients(uv0, g0x, g0y);
-	atlas_gradients(uv1, g1x, g1y);
-	atlas_gradients(uv2, g2x, g2y);
-
 	vec3 comp = shade_layer(uv0, v_wrap, vcol, g0x, g0y);
 	if (has1) {
+		vec4 a1 = record_texel(rec, 0);
+		vec4 a2 = record_texel(rec, 1);
+		vec2 uv1 = interp_vec2(a1.xy, a1.zw, a2.xy, a2.zw, flags.x > 0.5, p);
+		float alpha1 = interp_float(record_texel(rec, 2), flags.x > 0.5, p);
+		vec4 rect1 = record_texel(rec, 3);
+		vec2 g1x, g1y;
+		atlas_gradients(uv1, g1x, g1y);
 		comp = mix(comp, shade_layer(uv1, rect1, vcol, g1x, g1y), alpha1);
 	}
 	if (has2) {
+		vec4 b1 = record_texel(rec, 4);
+		vec4 b2 = record_texel(rec, 5);
+		vec2 uv2 = interp_vec2(b1.xy, b1.zw, b2.xy, b2.zw, flags.y > 0.5, p);
+		float alpha2 = interp_float(record_texel(rec, 6), flags.y > 0.5, p);
+		vec4 rect2 = record_texel(rec, 7);
+		vec2 g2x, g2y;
+		atlas_gradients(uv2, g2x, g2y);
 		comp = mix(comp, shade_layer(uv2, rect2, vcol, g2x, g2y), alpha2);
 	}
 	if (debug_mode == 4) { return vec3(fract(uv0 * 16.0), 0.0); }
