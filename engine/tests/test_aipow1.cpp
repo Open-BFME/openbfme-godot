@@ -1129,6 +1129,13 @@ TEST_CASE("RAI-POW-2: DEBUFFECONOMYBUILDING (RW 0x9E74B7) takes the enemy record
 	REQUIRE(ai);
 	const Player *enemy = AITacticalAI::enemyPlayer(*a.logic, *ai);
 	REQUIRE(enemy == a.human);
+	// RW 0x7A1129's ThingClass read is not ported: the acquire says so once (S-4257)
+	bool classifiedStop = false;
+	for (const std::string &line : a.logic->report().stops)
+	{
+		classifiedStop = classifiedStop || line.rfind("[S-4257]", 0) == 0;
+	}
+	CHECK(classifiedStop);
 	CHECK(ai->enemyIndex == a.human->getPlayerIndex());
 	const std::uint32_t refresh = ai->enemyRefreshFrame;
 	CHECK(refresh >= a.logic->getFrame()); // tolerance: the refresh frame is this frame + 25, read at its boundary

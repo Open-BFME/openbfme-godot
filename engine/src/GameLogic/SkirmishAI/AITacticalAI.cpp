@@ -2684,7 +2684,7 @@ bool hasAnyLiveObject(GameLogic &logic, const Player &player)
 	return false;
 }
 
-// RW 0x7A1129 (Team::hasAnyObjectOfClass): a member whose template ThingClass (RW + 0x5F6) is not 0. INFERENCE: the port has no ThingClass parser, so
+// RW 0x7A1129 (Team::hasAnyObjectOfClass): a member whose template ThingClass (RW + 0x5F6) is not 0. The port does not parse ThingClass (stop S-4257), so
 // every object is taken as classified and any object of the player answers yes (a mod with classless objects differs)
 bool hasAnyClassified(GameLogic &logic, const Player &player)
 {
@@ -2727,6 +2727,10 @@ void baseBounds(GameLogic &logic, const Player &player, Coord3D &min, Coord3D &m
 	}
 }
 
+const char *const kStopClassified =
+	"[S-4257] skirmish ai enemy classification: RW 0x7A1129's ThingClass test (template + 0x5F6) is not parsed, so hasAnyClassified takes any object as "
+	"classified; a mod whose players have only classless objects would be treated as unreachable";
+
 // RW 0x8F457D (AIPlayer::acquireEnemy): the enemy player is the nearest candidate base whose player is an ENEMY with live objects, is not PlyrCreeps,
 // has units and classified objects (else it counts as unreachable), adjusted by the other AIs' current enemies: +250000 for each AI that already targets it,
 // -625 for each AI that targets this AI's player (never below 0). Ties keep the earlier player index
@@ -2742,10 +2746,11 @@ void acquireEnemy(GameLogic &logic, AISkirmishPlayer &ai)
 		return;
 	}
 	const Player *current = ai.enemyIndex >= 0 ? logic.players().getNthPlayer(ai.enemyIndex) : nullptr;
-	if (current && hasAnyUnits(logic, *current) && hasAnyLiveObject(logic, *current))
+	if (current && hasAnyUnits(logic, *current) && hasAnyClassified(logic, *current))
 	{
-		return; // RW 0x8F45A8: the cached enemy is still valid
+		return; // RW 0x8F45A8 / 0x6ABD44 / 0x6ABE2C: units + classified objects keep the cache
 	}
+	logic.noteStop(kStopClassified); // the ThingClass read RW 0x7A1129 makes is the unported one (once per acquire)
 	int best = -1;
 	float bestDistance = kInitial;
 	for (int i = 0; i < logic.players().getPlayerCount(); ++i)
@@ -2777,11 +2782,11 @@ void acquireEnemy(GameLogic &logic, AISkirmishPlayer &ai)
 				continue;
 			}
 			const Player *other = logic.players().getNthPlayer(j);
-			if (!other || !hasAnyUnits(logic, *other))
+			AISkirmishPlayer *otherAI = other ? logic.skirmishAI().findAI(j) : nullptr; // RW 0x6AA5B3: every other player with a skirmish AI
+			if (!otherAI)
 			{
 				continue;
 			}
-			AISkirmishPlayer *otherAI = logic.skirmishAI().findAI(j);
 			const Player *otherEnemy = otherAI ? AITacticalAI::enemyPlayer(logic, *otherAI) : nullptr;
 			if (otherEnemy == candidate)
 			{
