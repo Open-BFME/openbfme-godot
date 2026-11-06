@@ -718,7 +718,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
 		"0x6C7946); the manager's gate list (+ 0xA74, RW 0x8ED6DC / 0x8ED726: every gate registers at construction, RW 0x89C04B -> 0x8EDA39, and the group update "
-		"closes the enemy gates that block pathing before its AIs and reopens them after) is ported; the bodies they call are not: the group tasks (RW 0x8EDB2C), "
+		"closes the passable enemy gates before its AIs and reopens them after) is ported; the bodies they call are not: the group tasks (RW 0x8EDB2C), "
 		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the wall builder (RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419), attacks with its tactic teams (S-417) and (lane AI5) buys its units' and structures' upgrades and its plots' expansions "
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "
