@@ -334,7 +334,7 @@ TEST_CASE("wall2 modules retail: through Helm's Deep's postern gate: a hero orde
 	CHECK_FALSE(ai->mover().onPortal());
 }
 
-TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert takes its postern gate: its front ranks end inside the wall (q26 follow-up: the rest stop in the culvert); without the gate none does")
+TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert takes its postern gate: every member ends inside the wall (lane WALL-5; since q26 only the front ranks did); without the gate none does")
 {
 	OPENBFME_REQUIRE_START(s);
 	for (const bool gate : { false, true })
@@ -367,7 +367,7 @@ TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert ta
 		int hordeOnPortal = 0;
 		// inside: south of the culvert's inner face (Post04 at y 2872.9); lane WALLSEARCH-1: counted, with the horde's place, after 571 frames, before an AI
 		// unit of another player meets the horde (from frame 580 on the lane's tree, a member dying at 599): the crossing, not the fight
-		int members = 0, inner = 0;
+		int members = 0, inner = 0, onTop = 0;
 		Coord3D hp{ 0.0f, 0.0f, 0.0f };
 		for (int f = 0; f < 600; ++f)
 		{
@@ -382,15 +382,26 @@ TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert ta
 					{
 						++members;
 						inner += o->getPosition()->y < 2872.0f ? 1 : 0; // tolerance: south of Post04, the gate's inner end
+						// review prtrko: on the culvert top (layer 0x14), counted at the same frame as `members`
+						onTop += o->getAIUpdateInterface()->adapter().getLayer() == (PathfindLayerEnum)0x14 ? 1 : 0;
 					}
 				}
 			}
 		}
 		MESSAGE(std::string(gate ? "with" : "without") << " the gate: horde at " << hp.x << ", " << hp.y << ", " << hordeOnPortal << " frames on a portal, " << inner << " of " << members
 		                                     << " members inside");
-		CHECK(members == 15); // GondorFighterHorde's 15 soldiers
+		// GondorFighterHorde's 15 soldiers through the gate. Without it (lane WALL-5): the horde stops in front of the culvert's outer face, where its formation
+		// slots lie in the culvert top's cells (layer 0x14, 153.8, the ground 100; the port's tops are the meshes' triangles, S-4840); a member's step there is
+		// refused (RW 0x6F1B3E: no change of layer from the ground except onto a ramp) and AdjustLayer (RW 0x6F0741 at RW 0x66CCB4) puts it on the top, which
+		// is more than 10 above it; up there the map's archers can kill some (PIERCE; which ones moves with the random stream): every member left stands on
+		// the top, no count of the survivors is pinned
+		if (!gate)
+		{
+			CHECK(onTop == members);
+		}
 		if (gate)
 		{
+			CHECK(members == 15);
 			// the horde's own path crosses the gate: its point ahead on the waypoint nodes for 19 frames (AI + 0x3BB; a HORDE appearance locomotor walks them on
 			// the ground, RW 0x669E47 .. 0x669E89); the members follow their formation slots with straight steps (RW 0x6F1B3E: the target cell; since lane WALL-4 its layer change too)
 			CHECK(hordeOnPortal == 19);
@@ -398,6 +409,8 @@ TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert ta
 			// the other 8 stop in the culvert's passage (y 2900 .. 2921) and stay there (measured to frame 1600). An engine pin of a follow-up, not retail:
 			// the members' own paths through the gate's portal are the open part (lane WALL-4 ported the member's AdjustLayer RW 0x6F0741, which S-1751 named
 			// as the likely cause); lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E): all 15 members end inside the wall
+			// lane WALL-5 (#207: ClassifyWall's edge pass, RW 0x936686 .. 0x936811, the wall tops' rims refuse every locomotor, and lane WALL-4's per-frame
+			// AdjustLayer is gone with the wider tops it stood in for): still all 15 (measured once on the archive with #207)
 			CHECK(inner == 15);
 			CHECK(hp.y < 2872.0f); // tolerance: the horde itself stands south of Post04
 		}
@@ -766,10 +779,24 @@ TEST_CASE("walljoint1 retail: a unit that stepped off the gatehouse ramp's top o
 	CHECK(pf.layerAfterSurfaceLoss(ai->adapter()) == LAYER_RAMP);
 	// RotWK's AdjustLayer (RW 0x6F0741): the footprint cell is another layer and its surface is not above; walkway 2 has a passable cell there within 10
 	CHECK(pf.adjustLayer(ai->adapter(), LAYER_RAMP) == LAYER_TOP);
+	// #207 dropped the per-frame AdjustLayer; refreshLayer keeps it for a unit on the ramp's layer off every ramp (the merge with WALLJOINT-1, INFERENCE)
 	g.frames(1);
 	MESSAGE("after a frame: layer " << (int)ai->adapter().getLayer() << " z " << hero->getPosition()->z);
 	CHECK(ai->adapter().getLayer() == LAYER_TOP);
 	CHECK(hero->getPosition()->z > 200.0f); // tolerance: on the walkway (225), not in the passage (141.6)
+	// moved along the walkway it stays on it: it never drops into the passage (without the call above its path's first step did, to z 141.6)
+	const Coord3D along{ 2885.0f, 2658.46f, 225.0f };
+	ai->aiMoveToPosition(along, CMD_FROM_PLAYER);
+	float lowest = hero->getPosition()->z;
+	int f = 0;
+	for (; f < 150 && (ai->isMoving() || f < 10); ++f)
+	{
+		g.frames(1);
+		lowest = std::min(lowest, hero->getPosition()->z);
+	}
+	MESSAGE("after the move (" << f << " frames): layer " << (int)ai->adapter().getLayer() << " at " << hero->getPosition()->x << ", " << hero->getPosition()->z << ", lowest z " << lowest);
+	CHECK(ai->adapter().getLayer() == LAYER_TOP);
+	CHECK(lowest > 200.0f); // tolerance: as above
 }
 
 namespace
@@ -1093,8 +1120,9 @@ TEST_CASE("wall2 raised retail: Minas Tirith: MinisGate1's RaisedWallMesh P1 is 
 	CHECK(g.game->report().wallMeshProblems.size() == 7);
 	// fix/ramp-bridge-cells (RotWK's ramp cell RW 0x93527F on getRamp's Bridge: joints only at a ramp's two end edges, a covered cell the ramp's even over
 	// a wall top): 8291 / 1874 -> 8143 / 1785
-	CHECK(wallCells == 8143);
-	CHECK(rampCells == 1785);
+	// lane WALL-5 r1 (every ramp stamped again after a change, newest first, RW 0x935BFF): walls 8143 -> 8126, ramps 1785 -> 1802
+	CHECK(wallCells == 8126);
+	CHECK(rampCells == 1802);
 	// a hero beside the fortress's command centre walks onto the nearest wall top it reaches and stands at its height
 	Object *keep = nullptr;
 	for (Object *o = g.game->logic().getFirstObject(); o && !keep; o = o->getNextObject())

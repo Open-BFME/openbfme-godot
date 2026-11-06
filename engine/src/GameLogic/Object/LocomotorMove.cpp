@@ -150,7 +150,7 @@ LocomotorMatrix LocomotorMatrix::identity()
 	return r;
 }
 
-// RW 0x5E3D0x (constructor): caps 99999, temporary cap -1, matrix identity (RW 0x5E3DE3), flags 0.
+// RW 0x5E3D02 (constructor): caps 99999, temporary cap -1, matrix identity (RW 0x5E3DE3), flags 0 but bit 10.
 Locomotor::Locomotor(const LocomotorTemplate *tmpl)
 	: m_template(tmpl ? tmpl->getFinalOverride() : nullptr)
 	, m_closeEnoughDist(tmpl ? tmpl->getFinalOverride()->m_closeEnoughDist : 0.0f)
@@ -162,6 +162,11 @@ Locomotor::Locomotor(const LocomotorTemplate *tmpl)
 	if (!m_template)
 	{
 		throw std::logic_error("Locomotor: null template");
+	}
+	// RW 0x5E3E6A: setFlag(10, final template + 0xC8) (lane LOCODIST-1: getLocomotorDistanceToGoal RW 0x664127 reads it)
+	if (m_template->m_closeEnoughDist3D)
+	{
+		m_flags |= LOCOMOTOR_FLAG_CLOSE_ENOUGH_DIST_3D;
 	}
 }
 

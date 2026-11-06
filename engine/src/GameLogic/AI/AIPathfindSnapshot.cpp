@@ -40,7 +40,8 @@ std::uint32_t widenClassWord(std::uint32_t w)
 	return (w & 0xFu) | (((w >> 4) & 0xFu) << 4) | (((w >> 8) & 0xFu) << 11) | ((w >> 12) << 18);
 }
 
-// the closed set of a class word: the 24 bits classWord writes (18 before version 3), a cell type 0 .. 7 (RW 0xDA2444's table), layers up to LAYER_LAST
+// the closed set of a class word: the 24 bits classWord writes (18 before version 3), a cell type 0 .. 8 (RW 0xDA2444's table; 8, a wall top's rim, from
+// version 3 on: lane WALL-5), layers up to LAYER_LAST
 void checkClassWord(std::uint32_t w, int version)
 {
 	const int bits = version >= 3 ? 24 : 18;
@@ -48,7 +49,7 @@ void checkClassWord(std::uint32_t w, int version)
 	{
 		throw XferException("pathfinder: a cell class word " + std::to_string(w) + " with bits beyond the " + std::to_string(bits) + " a cell keeps");
 	}
-	AIXfer::inRange(w & 0xF, 0, 7, "pathfinder: a cell type");
+	AIXfer::inRange(w & 0xF, 0, version >= 3 ? 8 : 7, "pathfinder: a cell type");
 	if (version >= 3)
 	{
 		AIXfer::inRange((w >> 4) & 0x7F, LAYER_INVALID, LAYER_LAST, "pathfinder: a cell's layer");
@@ -140,7 +141,7 @@ void PathfindZoneManager::xfer(Xfer &x)
 	m_tables.clear();
 	m_zoneBlock.clear(); // derived from the cells, which load after the zones: Pathfinder::ensureZoneBlocks rebuilds it
 	m_blockTables.clear();
-	// the closed sets: a block per block of the extent, a zone's class (a cell type 0 .. 7, layers 0 .. LAYER_LAST, lanes WALL-1 / WALL-2), the adjacency sorted, unique, a < b, of zones
+	// the closed sets: a block per block of the extent, a zone's class (a cell type 0 .. 8: 8 a wall top's rim, lane WALL-5; layers 0 .. LAYER_LAST, lanes WALL-1 / WALL-2), the adjacency sorted, unique, a < b, of zones
 	if (m_blockSize <= 0 || m_zoneBlockExtent.x < 0 || m_zoneBlockExtent.y < 0 ||
 		(std::uint64_t)m_zoneBlockExtent.x * (std::uint64_t)m_zoneBlockExtent.y != m_blocks.size())
 	{
@@ -149,7 +150,7 @@ void PathfindZoneManager::xfer(Xfer &x)
 	}
 	for (const ZoneInfo &z : m_zones)
 	{
-		AIXfer::inRange(z.type, 0, 7, "pathfinder zones: a zone's cell type");
+		AIXfer::inRange(z.type, 0, 8, "pathfinder zones: a zone's cell type");
 		AIXfer::inRange(z.layer, LAYER_INVALID, LAYER_LAST, "pathfinder zones: a zone's layer");
 		AIXfer::inRange(z.conn, LAYER_INVALID, LAYER_LAST, "pathfinder zones: a zone's connected layer");
 	}

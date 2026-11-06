@@ -204,10 +204,12 @@ bool Pathfinder::worldToCell(const Coord3D *pos, bool center, ICoord2D *cell)
 // ---------------------------------------------------------------------------------------------------------
 unsigned Pathfinder::validLocomotorSurfacesForCellType(PathfindCell::CellType t)
 {
-	// TARGET RW table 0xDA2444 indexed by the 3-bit cell type (bits are the LocomotorSurfaceType flags of Locomotor.h: GROUND 1,
-	// WATER 2, CLIFF 4, AIR 8, RUBBLE 0x10, OBSTACLE 0x20, IMPASSABLE 0x40, DEEP_WATER 0x80)
-	static const unsigned table[8] = { 0x09, 0x0A, 0x0C, 0x18, 0x28, 0x48, 0x48, 0x88 };
-	return table[(unsigned)t & 7u];
+	// TARGET RW table 0xDA2444 indexed by the 4-bit cell type (`and 0xf` at every reader; bits are the LocomotorSurfaceType flags of Locomotor.h:
+	// GROUND 1, WATER 2, CLIFF 4, AIR 8, RUBBLE 0x10, OBSTACLE 0x20, IMPASSABLE 0x40, DEEP_WATER 0x80); lane WALL-5: entry 8 (RW 0xDA2464, the wall
+	// tops' rims) is 0; the bytes after it are other data (types 9 .. 15 are never written)
+	static const unsigned table[9] = { 0x09, 0x0A, 0x0C, 0x18, 0x28, 0x48, 0x48, 0x88, 0x00 };
+	const unsigned i = (unsigned)t & 0xFu;
+	return i < 9u ? table[i] : 0u;
 }
 
 PathfindMovement Pathfinder::makeMovement(const PathfindObject *obj, const PathfindLocomotorInfo &loco)
@@ -1443,11 +1445,13 @@ bool Pathfinder::memberFootprintFits(const PathfindMovement &mv, PathfindLayerEn
 			{
 				return false;
 			}
-			if (!c->allowsLayer(hordeLayer))
+			// lane WALLHORDE-1: RW 0x6EA5B2's layer rule (BFME2 0x6E916A): a ramp cell always passes and a horde on the ramp takes any cell; a horde on the
+			// ground, a wall top (RW 0x6E82B3: 0x11 .. 0x40) or a raised walkway (RW 0x5E2F24: 2 .. 15) needs a cell of its own layer (the connect layer is
+			// not read)
+			const PathfindLayerEnum cl = c->getLayer();
+			if (hordeLayer != cl && cl != LAYER_RAMP &&
+				(hordeLayer == LAYER_GROUND || (hordeLayer != LAYER_RAMP && (isWallLayer(hordeLayer) || isRaisedLayer(hordeLayer)))))
 			{
-				// RW: a cell of another layer than the horde's fails unless the horde is on a raised layer whose tests (RW 0x6E82B3 / 0x5E2F24) pass (the raised
-				// layers' tests are not ported, S-4856). Lane WALL-1 (INFERENCE, S-4840): a cell that connects to the horde's layer (a ramp's foot for a horde on
-				// the ground, a joint for one on a wall) is the horde's layer too; the port's old exception for ZH's wall layer 15 is gone
 				return false;
 			}
 			if (!validMovementPosition(mv, c))
@@ -1467,8 +1471,9 @@ bool Pathfinder::memberFootprintFits(const PathfindMovement &mv, PathfindLayerEn
 			}
 		}
 	}
-	// RW 0x76550F: the line to the horde's cell is tested on the ground layer and the layers from 0x10 (the wall layer of the port is 15: only the ground runs here)
-	if (hordeLayer == LAYER_GROUND && (cell.x != hordeCell.x || cell.y != hordeCell.y))
+	// RW 0x76550F: the line to the horde's cell (RW 0x6E95B2, BFME2 0x6E8145) is tested on the ground layer and the layers from 0x10 (lane WALLHORDE-1: the
+	// ramp and the wall tops too, so a wall top horde's slots stay on its own piece)
+	if (isGroundLayer(hordeLayer) && (cell.x != hordeCell.x || cell.y != hordeCell.y))
 	{
 		if (memberLineBlocked(*this, cell, hordeCell, hordeLayer, hordeCell))
 		{
@@ -1671,11 +1676,12 @@ bool Pathfinder::checkForAdjust(PathfindObject &obj, const PathfindLocomotorInfo
 	}
 	else
 	{
-		pathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), dest, &obj); // RW 0x6F5BB0 with the unit (lane WALL-2)
-		adjustedPathExists = clientSafeQuickDoesPathExist(loco, &obj.getPosition(), &adjustDest, &obj);
+		// RW 0x6F6AE4 / 0x6F6B26 / 0x6F6B59 -> 0x6F5BB0 (lane QPATH-1); the last two give no set (the AI's: the port's caller passes that same set)
+		pathExists = quickDoesPathExist(obj, &obj.getPosition(), dest, &loco);
+		adjustedPathExists = quickDoesPathExist(obj, &obj.getPosition(), &adjustDest, &loco);
 		if (!pathExists)
 		{
-			if (clientSafeQuickDoesPathExist(loco, dest, &adjustDest, &obj))
+			if (quickDoesPathExist(obj, dest, &adjustDest, &loco))
 			{
 				adjustedPathExists = true;
 			}
