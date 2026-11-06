@@ -105,7 +105,7 @@ vec3 retail_output(vec3 c) {
 }
 
 // The smooth varyings are packed into vec4s: every varying takes one interpolator slot whatever its size, and
-// Intel Arc (DG2) allows 29 in total with Godot's own; the terrain shader used 30 and failed to compile there
+// Intel Arc (DG2) allows 29 in total with Godot's own; the terrain shader used 31 and failed to compile there
 // (flat brown ground). The names stay as macros so the maths reads unchanged.
 varying vec4 v_pack_lts_fog;    // xyz: v_lts, w: v_fog
 varying vec4 v_pack_cloud_macro; // xy: v_cloud, zw: v_macro

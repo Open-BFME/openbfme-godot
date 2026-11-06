@@ -46,6 +46,14 @@ def test_includes_count_once_and_res_paths_are_not_comments():
     assert len(found) == 1 and "30 varyings" in found[0] and "v_inc" in found[0]
 
 
+def test_declarations_sharing_a_line_all_count():
+    one_line = "shader_type spatial;\n" + " ".join(f"varying vec4 v{i};" for i in range(15)) + "\nvoid fragment() {}\n"
+    assert csv.shader_usage("a.gdshader", lambda _: one_line)[1] == 30
+    found = check({"a.gdshader": one_line})
+    assert len(found) == 1 and "30 varyings" in found[0]
+    assert csv.shader_usage("a.gdshader", lambda _: spatial(0, "float my_varying_x;"))[1] == 15
+
+
 def test_commented_varyings_do_not_count():
     code = spatial(14, "// varying vec4 gone;\n/* varying vec4 also_gone;\n*/")
     assert check({"a.gdshader": code}) == []
@@ -104,3 +112,51 @@ def test_gate_refuses_a_staged_include_that_pushes_a_shader_over(repo):
     bad = gate(repo, {"godot/shaders/c.gdshaderinc": "varying vec2 one;\nvarying vec2 two;\n"})
     assert bad.returncode == 1
     assert "godot/shaders/t.gdshader: 30 varyings" in bad.stdout
+
+
+def test_gdscript_inline_shader_over_budget_is_a_problem():
+    code = 'extends Node\nvar shader := Shader.new()\nvar code := """' + spatial(15) + '"""\nshader.code = code\n'
+    found = csv.inline_problems({"scripts/a.gd": code}, lambda _: "")
+    assert len(found) == 1
+    assert "scripts/a.gd:3 (inline shader): 30 varyings" in found[0]
+
+
+def test_gdscript_inline_shader_at_the_budget_passes():
+    code = 'var code := """' + spatial(14) + '"""\n'
+    assert csv.inline_problems({"scripts/a.gd": code}, lambda _: "") == []
+
+
+def test_gdscript_comment_and_ordinary_string_mentioning_shader_type_are_not_shaders():
+    code = 'extends Node\n# shader_type spatial;\nvar text := "shader_type spatial;"\n'
+    assert csv.inline_problems({"scripts/a.gd": code}, lambda _: "") == []
+
+
+def test_gdscript_inline_shader_includes_count():
+    code = 'var code := """shader_type spatial;\n' + "\n".join(f"varying vec4 v{i};" for i in range(13)) + \
+        '\n#include "res://shaders/inc.gdshaderinc"\n"""\n'
+    found = csv.inline_problems({"scripts/a.gd": code}, lambda rel: "varying vec2 one;\nvarying vec2 two;\n" if rel == "shaders/inc.gdshaderinc" else "")
+    assert len(found) == 1
+    assert "scripts/a.gd:1 (inline shader): 30 varyings" in found[0]
+
+
+def test_cli_reports_projects_without_inline_shaders_or_without_shader_files(tmp_path, capsys):
+    (tmp_path / "files").mkdir()
+    (tmp_path / "files" / "a.gdshader").write_text(spatial(2))
+    assert csv.main(["check", str(tmp_path / "files")]) == 0
+    assert "1 shaders and 0 inline shaders, the most is 17/29 (a.gdshader)" in capsys.readouterr().out
+    (tmp_path / "inline").mkdir()
+    (tmp_path / "inline" / "a.gd").write_text('var code := """shader_type canvas_item;\nvarying vec4 a;\n"""\n')
+    assert csv.main(["check", str(tmp_path / "inline")]) == 0
+    assert "0 shaders and 1 inline shaders, the most is 10/29 (a.gd:1 (inline shader))" in capsys.readouterr().out
+    (tmp_path / "none").mkdir()
+    assert csv.main(["check", str(tmp_path / "none")]) == 0
+    assert "0 shaders and 0 inline shaders, the most is 0/29 (no shaders)" in capsys.readouterr().out
+
+
+def test_gate_refuses_a_staged_gdscript_inline_shader_over_budget(repo):
+    ok = gate(repo, {"godot/scripts/a.gd": 'var code := """shader_type canvas_item;\nvoid fragment() {}\n"""\n'})
+    assert ok.returncode == 0, ok.stdout
+    git(repo, "commit", "-q", "--no-verify", "-m", "base")
+    bad = gate(repo, {"godot/scripts/a.gd": 'var code := """' + spatial(15) + '"""\n'})
+    assert bad.returncode == 1
+    assert "godot/scripts/a.gd" in bad.stdout and "30 varyings" in bad.stdout

@@ -365,22 +365,29 @@ TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert ta
 		REQUIRE(ai);
 		ai->aiMoveToPosition(inside, CMD_FROM_PLAYER);
 		int hordeOnPortal = 0;
+		// inside: south of the culvert's inner face (Post04 at y 2872.9); lane WALLSEARCH-1: counted, with the horde's place, after 571 frames, before an AI
+		// unit of another player meets the horde (from frame 580 on the lane's tree, a member dying at 599): the crossing, not the fight
+		int members = 0, inner = 0, onTop = 0;
+		Coord3D hp{ 0.0f, 0.0f, 0.0f };
 		for (int f = 0; f < 600; ++f)
 		{
 			g.frames(1);
 			hordeOnPortal += ai->mover().onPortal() ? 1 : 0;
-		}
-		// inside: south of the culvert's inner face (Post04 at y 2872.9)
-		int members = 0, inner = 0;
-		for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
-		{
-			if (o->getContainedBy() == horde && o->getAIUpdateInterface())
+			if (f == 570)
 			{
-				++members;
-				inner += o->getPosition()->y < 2872.0f ? 1 : 0; // tolerance: south of Post04, the gate's inner end
+				hp = *horde->getPosition();
+				for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+				{
+					if (o->getContainedBy() == horde && o->getAIUpdateInterface())
+					{
+						++members;
+						inner += o->getPosition()->y < 2872.0f ? 1 : 0; // tolerance: south of Post04, the gate's inner end
+						// review prtrko: on the culvert top (layer 0x14), counted at the same frame as `members`
+						onTop += o->getAIUpdateInterface()->adapter().getLayer() == (PathfindLayerEnum)0x14 ? 1 : 0;
+					}
+				}
 			}
 		}
-		const Coord3D hp = *horde->getPosition();
 		MESSAGE(std::string(gate ? "with" : "without") << " the gate: horde at " << hp.x << ", " << hp.y << ", " << hordeOnPortal << " frames on a portal, " << inner << " of " << members
 		                                     << " members inside");
 		// GondorFighterHorde's 15 soldiers through the gate. Without it (lane WALL-5): the horde stops in front of the culvert's outer face, where its formation
@@ -388,14 +395,6 @@ TEST_CASE("wall2 modules retail: a horde ordered across Helm's Deep's culvert ta
 		// refused (RW 0x6F1B3E: no change of layer from the ground except onto a ramp) and AdjustLayer (RW 0x6F0741 at RW 0x66CCB4) puts it on the top, which
 		// is more than 10 above it; up there the map's archers can kill some (PIERCE; which ones moves with the random stream): every member left stands on
 		// the top, no count of the survivors is pinned
-		int onTop = 0;
-		for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
-		{
-			if (o->getContainedBy() == horde && o->getAIUpdateInterface() && o->getAIUpdateInterface()->adapter().getLayer() == (PathfindLayerEnum)0x14)
-			{
-				++onTop;
-			}
-		}
 		if (!gate)
 		{
 			CHECK(onTop == members);
