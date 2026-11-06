@@ -453,6 +453,13 @@ PathfindObjectID ObjectPathfindAdapter::getID() const { return m_object->getID()
 const Coord3D &ObjectPathfindAdapter::getPosition() const { return *m_object->getPosition(); }
 float ObjectPathfindAdapter::getOrientation() const { return m_object->getOrientation(); }
 
+// lane PATH-REBUILD: RW 0x70B9E0's vector is the object's facing; the port's transform basis holds the same cosine and sine (AIUpdateInterface::unitDirectionOf)
+Coord2D ObjectPathfindAdapter::getUnitDirection2D() const
+{
+	// RW 0x70B9E0: the cosine and sine of the orientation (a unit vector); the transform's basis is the same for a yaw-only unit up to its rounding
+	return PathfindObject::getUnitDirection2D();
+}
+
 float ObjectPathfindAdapter::getHeightAboveTerrain() const
 {
 	const Coord3D &p = *m_object->getPosition();
@@ -640,6 +647,25 @@ bool ObjectPathfindAdapter::isParked() const
 }
 
 bool ObjectPathfindAdapter::hasAI() const { return m_object->getAIUpdateInterface() != nullptr; }
+
+bool ObjectPathfindAdapter::isStatusImmobile() const
+{
+	// lane QPATH-1: RW 0x6F5C30 .. 0x6F5C35, Object::testStatus(49) (RW 0x44DDEC); 49 = IMMOBILE (BitFlagNames.cpp:162)
+	static const int immobile = CombatNames::status("IMMOBILE");
+	return m_object->testStatus((unsigned)immobile);
+}
+
+bool ObjectPathfindAdapter::getAILocomotorInfo(PathfindLocomotorInfo &out) const
+{
+	// lane QPATH-1: RW 0x6F5C90 .. 0x6F5CCE: the AI (Object + 0x260) and its locomotor set (AI + 0x1CC)
+	const AIUpdateInterface *a = m_object->getAIUpdateInterface();
+	if (!a)
+	{
+		return false;
+	}
+	out = a->locomotorInfo();
+	return true;
+}
 
 bool ObjectPathfindAdapter::inMoveAwaySearch() const
 {
@@ -1229,6 +1255,14 @@ void AIWorld::removeObjectFromPathfindMap(Object &obj)
 	if (m_mapReady)
 	{
 		m_pathfinder->removeObjectFromPathfindMap(adapterFor(obj));
+	}
+}
+
+void AIWorld::removeObjectFromPathfindMapKeepGateFlag(Object &obj)
+{
+	if (m_mapReady)
+	{
+		m_pathfinder->removeObjectFromPathfindMapKeepGateFlag(adapterFor(obj));
 	}
 }
 

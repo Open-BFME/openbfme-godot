@@ -73,7 +73,23 @@ public:
 	virtual float closeEnoughDist() const = 0;      // locomotor +0x3C
 	virtual float locomotorSpeed() const = 0;       // locomotor +0x40 (RW getter 0x5E36F7), per frame
 	virtual bool movingBackwards() const = 0;       // locomotor flags bit 7
+	// lane BUMP-1: the object facts RW 0x66D16E tests (defaults: none): KindOf INFANTRY (template + 0x109 bit 0), status 0x46
+	// SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING, Object + 0x458 bit 3 (OFF_MAP), KindOf LARGE_RECTANGLE_PATHFIND (template + 0x11F bit 2), the
+	// formation id (Object + 0x42C) and the formation offset's x (+ 0x430)
+	virtual bool isInfantryKind() const { return false; }
+	virtual bool isUsingSpecialAbility() const { return false; }
+	virtual bool isOffMapObject() const { return false; }
+	virtual bool isLargeRectanglePathfind() const { return false; }
+	virtual int objectFormationId() const { return 0; }
+	virtual float objectFormationOffsetX() const { return 0.0f; }
+	// lane LOCODIST-1, getLocomotorDistanceToGoal (RW 0x664127): the object's template KindOf PROJECTILE (RW template + 0x10B bit 1), AI vslot 0x25C
+	// getTreatAsAircraftForLocoDistToGoal (RW 0x6629D3) and the state machine's goal position (AI + 0x30, machine + 0x24)
+	virtual bool isProjectile() const = 0;
+	virtual bool treatAsAircraftForLocoDistToGoal() const = 0;
+	virtual Coord3D machineGoalPosition() const = 0;
 	virtual bool setModelCondition(const char *name, bool on) = 0; // MOVING, CLIMBING, RAPPELLING, BACKING_UP
+	// RW 0x666FA3, called at the end of every doLocomotor pass (RW 0x66A4B7): the SAIL_* model conditions of a SHIP
+	virtual void updateSailModelConditions() {}
 	virtual float relativeAngleTo(const Coord3D &p) const = 0;     // RW relAngle2D(obj, p)
 	virtual bool isCellTypeTwo(const Coord3D &p, PathfindLayerEnum layer) const { (void)p; (void)layer; return false; } // RW 0x6EAD0E
 	// ---- lane PHYS-1 ----
@@ -222,16 +238,17 @@ public:
 	bool computePath(const Coord3D &dest);
 	bool computeQuickPath(const Coord3D &dest);
 	// lane EXIT-1 (factored out of doLocomotor for the horde member update RW 0x66C748): RW 0x6F1B3E, the straight step `from` -> `to` toward the locomotor goal is
-	// valid; RW 0x6F74D0, a path from `from` that reaches the locomotor goal, else null
+	// valid (lane WALL-4: its end on the layer there, and a change of layer only as RotWK allows it); RW 0x6F74D0, a path from `from` that reaches the locomotor
+	// goal, else null
 	bool stepValid(const Coord3D &from, const Coord3D &to);
 	Path *pathReachingGoal(const Coord3D &from);
 	// lane EXIT-1: the horde member update's switch to the path goal around doLocomotor (RW 0x66CD29 / 0x66CD41 write AI + 0x1FC directly)
 	void setGoalTypeRaw(AIGoalType t) { m_goalType = t; }
 	// distance left to the goal for the current goal type (RW 0x664127)
 	float locomotorDistanceToGoal() const;
-	// lane WALL-1: the unit's layer settles to the cell under it (Pathfinder::settleLayer) and, with a type 4 goal on a path, follows the nearest path node's
-	// layer (Pathfinder::UpdateLayer BFME2 0x6F11A1). The horde member update (RW 0x66C748) calls it too; its z then is the layer's height
-	// (LocomotorHost::groundHeightAt). Lane WALL-2: a type 1 path goal's layer follows RotWK's doLocomotor (RW 0x669D3D .. 0x669D66, the point ahead's layer)
+	// lane WALL-1 / WALL-4: a unit whose wall top, walkway or ramp went away under it takes the ground (Pathfinder::layerAfterSurfaceLoss, INFERENCE S-1750),
+	// then stands on the terrain (lane WALL-5: no per-frame AdjustLayer, S-4840). doLocomotor's branches make RotWK's layer changes: a path goal's UpdateLayer (RW 0x669D3D .. 0x669D66, the
+	// point ahead's layer), an explicit goal's RW 0x680A75 after its step (RW 0x669B95), the horde member update's (RW 0x66C748). The member update calls it too
 	void refreshLayer();
 
 	// ---- the per-frame locomotor step (RW 0x669932): returns the number of frames until the next call is needed ----

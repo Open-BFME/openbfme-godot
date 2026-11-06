@@ -158,7 +158,7 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 		{
 			AptArchiveFileSource source(*fs.archive_fs());
 			bool paired = false;
-			image = loadPackedTexture(source, path.substr(0, path.size() - 4), &paired);
+			image = loadPackedTexture(source, path.substr(0, path.size() - 4), &paired, &buffer);
 			err = image.is_valid() ? OK : ERR_FILE_CORRUPT;
 			if (paired) meshInfo["packed_texture_stop"] = "[S-1482] packed PNG colour multiplication and alpha replacement are inferred; the loader merge was not read";
 		}

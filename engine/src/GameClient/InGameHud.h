@@ -332,6 +332,7 @@ private:
 	const GameLogic *m_decalLogic = nullptr;
 	unsigned long long m_decalBuilds = 0;
 	unsigned long long m_decalVersion = 0;
+	void markRaisedSelectionDecals(); // lane SELWALL-1
 	unsigned m_decalClientFrame = ~0u;              // the client frame the markers were last refreshed in
 	DrawableIconUI m_iconUI;                  // lane HUD-5
 	IconUISettings m_iconSettings;

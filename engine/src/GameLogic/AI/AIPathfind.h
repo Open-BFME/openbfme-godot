@@ -172,6 +172,17 @@ public:
 	// ZH Path::optimize: shortcut the cell path by line of sight (marks the optimised chain, ZH setNextOptimized)
 	void optimize(Pathfinder &pathfinder, const PathfindObject *obj, unsigned acceptableSurfaces, bool blocked, const float *dir = nullptr);
 
+	// lane PATH-REBUILD: RW Path::rebuild 0x767B0E (AIPathfindRebuild.cpp): the raw chain of the search is freed and the path built again from its
+	// optimised nodes alone (`next` == `nextOptimized` afterwards), the first segment bent from the unit's facing by its locomotor's turn radius and
+	// every corner rounded by an arc. Every path a search returns gets it (buildActualPath's faceDirection, RW 0x6FDCDA for the goal path); the
+	// blocked unit's patches do not
+	void rebuild(Pathfinder &pf, const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord2D &facing, unsigned acceptableSurfaces, bool blocked);
+	struct RebuildVec
+	{
+		float x, y, z;
+	};
+	static int arcSegments(float angle, float radius); // RW 0x765E00: the segments of an arc, 1..128
+
 	// ---- LocomotorPath (the consumer in GameLogic/Locomotor.h) ----
 	LocomotorPathPoint computePointAhead(float distance) override;
 	void updateClosestSegment(const Coord3D &pos) override;
@@ -183,6 +194,12 @@ public:
 	// RW 0x765972: length from a point returned by computePointAhead (the segment containing it) to the end of the optimised path,
 	// measured with the retail approximation max + 0.25 * min on each segment
 	float remainingFrom(const PathNode *node, const Coord3D &pos) const;
+	// lane LOCODIST-1, RW 0x766173 then RW 0x765972 on its result (getLocomotorDistanceToGoal RW 0x664127): the remaining length from the point `speed`
+	// ahead (computePointAhead writes Path + 0x18 as retail does; the node is part of RW's returned record, so the port's m_lastAheadNode is kept)
+	float remainingFromPointAhead(float speed);
+	// RW 0x765B12 Path::computeFlightDistToGoal (BFME2 0x763EC0, decomp AI/Path.cpp:86): the sum of the non-negative projections of the unit's offset to
+	// every optimised node on its segment's direction; `goal` gets the first node past the unit (the head without a next node, zero without a head)
+	float computeFlightDistToGoal(const Coord3D &pos, Coord3D &goal) const;
 	// the node the follower is on (RW Path+0x10) and the fraction along its segment (RW Path+0x14)
 	const PathNode *currentNode() const { return m_closest; }
 	float currentT() const { return m_t; }
@@ -204,6 +221,20 @@ public:
 
 private:
 	void xferLoad(class Xfer &x);
+	// lane PATH-REBUILD (AIPathfindRebuild.cpp)
+	struct BendOptions
+	{
+		bool dryRun;        // RW + 0: test the arc's cells, append nothing
+		bool otherWay;      // RW + 1: the arc the other way round
+		float radius;       // RW + 4
+		bool noCornerAfter; // RW + 8: no corner arc after the bend
+	};
+	void appendCopy(const PathNode *src);
+	void appendPoint(const Coord3D *pos, PathfindLayerEnum layer); // an arc point at the tail
+	void roundCorner(PathNode *prev, PathNode *cur, PathNode *next, float radius);
+	bool bendFirstSegment(Pathfinder &pf, const PathfindObject *obj, const PathfindLocomotorInfo &loco, PathNode *node, const RebuildVec &input, BendOptions &opt,
+		unsigned surfaces, float maxAngle, bool blocked);
+	void reverseTurn(Pathfinder &pf, const PathfindObject *obj, const PathfindLocomotorInfo &loco, PathNode *start, PathNode *end, const RebuildVec &input, float radius);
 	PathNode *m_path;
 	PathNode *m_pathTail;
 	bool m_isOptimized;
@@ -343,7 +374,7 @@ enum { COST_ORTHOGONAL = 10, COST_DIAGONAL = 14 };
 class PathfindCell
 {
 public:
-	// RW cell types (the low 4 bits of [cell+0xC]); the surface table at RW 0xDA2444 has an entry for each of 0..7
+	// RW cell types (the low 4 bits of [cell+0xC]); the surface table at RW 0xDA2444 has an entry for each of 0..8 (its bytes after entry 8 are other data)
 	enum CellType
 	{
 		CELL_CLEAR = 0x00,
@@ -353,7 +384,10 @@ public:
 		CELL_OBSTACLE = 0x04,
 		CELL_BRIDGE_IMPASSABLE = 0x05, // RW: a type the footprint pinch pass writes and the passability tests reject (name INFERRED)
 		CELL_IMPASSABLE = 0x06,
-		CELL_DEEP_WATER = 0x07
+		CELL_DEEP_WATER = 0x07,
+		// lane WALL-5: a wall top's rim (ClassifyWall's edge pass, RW 0x9367B0 .. 0x936811: a stamped cell pinched by 2 or more neighbours on another layer;
+		// BFME2 decomp CellEdge); the surface table's entry 8 (RW 0xDA2464) is 0: no locomotor stands on it
+		CELL_WALL_EDGE = 0x08
 	};
 
 	PathfindCell() { reset(nullptr); }
@@ -537,6 +571,9 @@ public:
 	// RW 0x93894B: the effective zone of `zone` for a unit. `terrainVariant` (flag 1) treats obstacle zones like ground; AIR units
 	// are all in zone 1; a mask that kind-less (RW kind -1) is zone 1, kind -666 zone 0.
 	zoneStorageType getEffectiveZone(const PathfindMovement &mv, bool terrainVariant, zoneStorageType zone) const;
+	// lane QPATH-1: RW 0x938939, the terrain zone of `zone`: adjacent CLEAR and OBSTACLE zones of one layer are one terrain zone (a structure does not split the
+	// ground under it); the highest zone id of the class. 0 for zone 0 and ids out of range
+	zoneStorageType getTerrainZone(zoneStorageType zone) const;
 	// RW 0x937B9F: the kind of a surface mask (-1: everything passable, -666: no valid combination)
 	static int kindOf(const PathfindMovement &mv);
 	// lane PATHPERF-1: RW 0x938240 (BFME2 decomp Rva002E99F9Sub460::rva005318DB, tier A): the hierarchical search may step from a cell of zone `a` into an
@@ -676,7 +713,7 @@ private:
 struct PathfindGridStats
 {
 	int width = 0, height = 0;       // cells
-	int types[8] = {};               // by PathfindCell::CellType
+	int types[9] = {};               // by PathfindCell::CellType (lane WALL-5: 8 the wall tops' rims)
 	int pinched = 0;
 	int impassableToPlayers = 0, extraPass = 0; // cell bits 18 and 21
 };
@@ -802,6 +839,8 @@ public:
 	// Add / remove a structure's footprint (RW 0x936B7D); mobile units use updateGoal / updatePos.
 	void addObjectToPathfindMap(PathfindObject &obj) { classifyObjectFootprint(obj, true); }
 	void removeObjectFromPathfindMap(PathfindObject &obj) { classifyObjectFootprint(obj, false); }
+	// lane WALLFOOT-1: RW 0x6E861E (BFME2 0x6E71AD), GateOpenAndCloseBehavior's removal: the box's cells keep bit 17 (CanPathThroughGates)
+	void removeObjectFromPathfindMapKeepGateFlag(PathfindObject &obj) { classifyObjectFootprint(obj, false, true); }
 
 	// ---- grid access ----
 	const ICoord2D *getExtent() const { return &m_extent.hi; }
@@ -1051,9 +1090,19 @@ public:
 	int hierarchicalPositionOf(int cellX, int cellY) const;
 	// the corridor's last index (RW HierarchicalPath + 0x14 after RW 0x93B3D8), -1 when there is none
 	int hierarchicalLastIndex() const { return m_hierLast; }
-	// terrain-and-structure zone test, no search (ZH clientSafeQuickDoesPathExist). Lane WALL-2: with the unit (RW 0x6F5BB0 QuickDoesPathExist's first argument)
-	// different zones still pass when a portal chain joins them (RW 0x6F5EE7 -> 0x6F5547)
+	// the ZH client-safe zone test (ZH clientSafeQuickDoesPathExist), no search. Lane QPATH-1: no RotWK caller; RW 0x6F5BB0 is quickDoesPathExist below. Kept for
+	// the object-less debug view and zone tests; with a unit, different zones still pass when a portal chain joins them (RW 0x6F5EE7 -> 0x6F5547)
 	bool clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, const PathfindObject *obj = nullptr);
+	// lane QPATH-1: Pathfinder::QuickDoesPathExist, RW 0x6F5BB0 (BFME2 0x6F477E, Open-BFME-2 pathfinder.cpp:2951; tier B same-shape, layout operands only),
+	// both editions. `overrideSet` is the caller's locomotor set (retail's fourth argument); null: the object's AI's (none -> false). The retail callers
+	// all use this one; clientSafeQuickDoesPathExist stays for the debug view and the zone-only tests
+	bool quickDoesPathExist(const PathfindObject &obj, const Coord3D *from, const Coord3D *to, const PathfindLocomotorInfo *overrideSet);
+	// findPath's goal test: quickDoesPathExist with the unit and the set; an object-less search (the debug view, zone tests: no retail caller) takes the
+	// client-safe zone test
+	bool quickPathForSearch(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to)
+	{
+		return obj ? quickDoesPathExist(*obj, from, to, &loco) : clientSafeQuickDoesPathExist(loco, from, to, nullptr);
+	}
 	// RW 0x6F2FC3: the straight line is passable for the unit (the optimiser's test)
 	bool isLinePassable(const PathfindObject *obj, unsigned acceptableSurfaces, PathfindLayerEnum layer, const Coord3D &startWorld,
 		const Coord3D &endWorld, bool blocked, bool allowPinched = false);
@@ -1062,28 +1111,47 @@ public:
 	void clip(Coord3D *from, Coord3D *to);
 
 	// ---- lane WALL-1: wall tops and ramps (AIPathfindWalls.cpp) ----
-	// Pathfinder::GetWallHeight (BFME2 WorldBuilder decomp 0xd3ed70): the height of `layer` at (x, y): a wall layer's height, a ramp's surface (raised to the
-	// wall under it), the terrain for the ground and every other layer
+	// TheTerrainLogic->getLayerHeight (W3DTerrainLogic::getLayerHeight RW 0x4623A5 / BFME2 0x462C95): the height of `layer` at (x, y). The ground: the terrain;
+	// a raised walkway: its height; a ramp or a wall layer: Pathfinder::GetWallHeight (RW 0x6F0B27 / BFME2 0x6EF68C) of the point, which first takes the
+	// layer of the ground grid's cell there when it is another (a ramp cell only for a point on the ramp); off every ramp the terrain (lane WALL-4, S-4840)
 	float getLayerHeight(float x, float y, PathfindLayerEnum layer) const;
 	// ZH TerrainLogic::getHighestLayerForDestination + getLayerHeight: the highest walkable surface at (x, y) (a wall top or a ramp over the terrain)
 	float getHighestLayerHeight(float x, float y) const;
-	// lane WALL-2 (review #63): the layer a search aims at for the point `to`: a raised walkway's when getLayerAt (RW 0x680A75) names one there, else the
-	// ground grid (wall tops and ramps are layers of the ground grid's cells, as before)
+	// lane WALL-2 (review #63): the layer whose grid holds the cell at the point `to`: a raised walkway's when getLayerAt (RW 0x680A75) names one there,
+	// else the ground grid (wall tops and ramps are layers of the ground grid's cells). Lane WALLSEARCH-1: a cell lookup only; internalFindPath and
+	// adjustToPossibleDestination take getLayerAt's own answer (a wall top's or the ramp's layer, RW 0x6FD2B2 / 0x6F3C87)
 	PathfindLayerEnum searchDestinationLayer(const Coord3D &to) const;
 	// the layer of the walkable surface a point stands on (TerrainLogic::getLayerForDestination RW 0x680A75 / BFME2 0x6802FE: a ramp under it first, then a
 	// raised layer whose passable cell is there and whose height is less than 25 above `z` (RW 0x6EE600), else the ground grid cell's layer). The form
 	// without `z` takes the terrain's height there
 	PathfindLayerEnum getLayerAt(float x, float y) const;
 	PathfindLayerEnum getLayerAt(float x, float y, float z) const;
+	// lane WALL-4: the same for the object at `pos`, as RotWK's callers ask it (RW 0x6EE600 moves the point by 5 for an even footprint)
+	PathfindLayerEnum getLayerAt(const PathfindObject &obj, const Coord3D &pos) const;
+	// lane WALLHORDE-1: RW 0x6EE600 (BFME2 0x6ED236), the object's layer at `pos` without RW 0x680A75's ramp test: the point moved by 5 for an even footprint,
+	// the first raised walkway whose cell there is passable and whose height is less than 25 above z, else the ground grid cell's own layer (a wall top's, the
+	// ramp's or the ground). RW first answers the ground for an object whose byte + 0x4AC is set (RW 0x68C053; not identified, S-4840)
+	PathfindLayerEnum objectLayerAt(const PathfindObject &obj, const Coord3D &pos) const;
 	// Pathfinder::IsPointOnRamp: (x, y) is on a ramp's surface; `z` its height there
 	bool isPointOnRamp(float x, float y, float *z = nullptr) const;
 	// Pathfinder::IsPointOnWall (BFME2 0x6E940F): the ground cell under `pos` has a wall layer (and is CLEAR when `requireClear`)
 	bool isPointOnWall(const Coord3D &pos, bool requireClear = false) const;
-	// Pathfinder::UpdateLayer (BFME2 0x6F11A1): the layer a unit at its position takes when the path node it follows is on `nodeLayer`
-	PathfindLayerEnum updateLayer(const PathfindObject &obj, PathfindLayerEnum nodeLayer) const;
-	// lane WALL-1: the layer of a unit that is not following a path node: a unit put on a wall top (a map's archers, a teleported horde member) takes the
-	// wall's layer, one whose wall is gone takes the ground (Pathfinder::AdjustLayer BFME2 0x6EF2A6 for the ground grid's layers; INFERENCE, S-4300)
-	PathfindLayerEnum settleLayer(const PathfindObject &obj) const;
+	// Pathfinder::UpdateLayer (RW 0x6F25FE / BFME2 0x6F11A1): the layer a unit at its position takes when the path node it follows is on `nodeLayer`,
+	// AdjustLayer included (UpdateLayer ends with it); a walkway node or a unit on a walkway keeps lane WALL-2's rule (S-4856)
+	PathfindLayerEnum updateLayer(const PathfindObject &obj, PathfindLayerEnum nodeLayer);
+	// Pathfinder::AdjustLayer (RW 0x6F0741 / BFME2 0x6EF2A6) for a unit on `layer` at its position: where the cell under it (the unit's footprint rule) is of
+	// another layer, that layer when its surface is more than 10 above the unit; then the first raised walkway with a cell there within 10 of the unit's height.
+	// Otherwise `layer`
+	PathfindLayerEnum adjustLayer(const PathfindObject &obj, PathfindLayerEnum layer);
+	// the layer test of Pathfinder::IsValidHordeMemberRegularMovement (RW 0x6F1B3E / BFME2 0x6F06A3) after its cell test: a straight step from `from` to `to`
+	// (`toLayer` the layer RW 0x680A75 names at `to`) changes layer only onto a ramp, from the ground or a wall; a step from a ramp or a walkway may change it.
+	// True on a map without wall pieces
+	bool straightStepKeepsLayer(const PathfindObject &obj, const Coord3D &from, const Coord3D &to, PathfindLayerEnum toLayer);
+	// lane WALL-1 (INFERENCE, S-1750): the layer of a unit whose surface went away under it (its wall piece, walkway or ramp removed): the ground when the
+	// ground grid's cell under it is a plain ground cell that does not carry its layer and it is on no ramp; else its layer. RotWK's handling of a removed
+	// wall under a unit was not read (AdjustLayer moves a unit down only onto a walkway within 10 of it)
+	PathfindLayerEnum layerAfterSurfaceLoss(const PathfindObject &obj) const;
+	bool hasWallPieces() const { return !m_wallPieces.empty(); }
 	// the wall heights by layer (index = layer - LAYER_WALL_FIRST) and the counts, for tests and reports
 	const std::vector<float> &wallHeights() const { return m_wallHeights; }
 	size_t wallPieceCount() const { return m_wallPieces.size(); }
@@ -1128,10 +1196,12 @@ public:
 	// RW 0x6E82FD: a portal (the flag + 0x48) of type 1, 2, 3, 4, 7 or 8
 	static bool isPortalWaypoint(const PathfindWaypoint &w);
 	// RW 0x6F5547: a chain of portals the unit may take leads from zone `from` to zone `to` (the effective zones, terrain variant, of the portals' cells)
-	bool portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const;
+	// lane QPATH-1: `terrainVariant` names the table the caller's zones come from, and the portals are filed under that table's zones (QuickDoesPathExist
+	// passes false, see quickDoesPathExist; internalFindPath and the hierarchical search keep the terrain variant: S-162)
+	bool portalPathExists(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to, bool terrainVariant = true) const;
 	// performance (the same answers): while a scope lives on this thread, portalPathExists for `obj` remembers each zone pair's answer. Nothing the answer
 	// reads (the portal waypoints, their zones and links, what the unit may cross) changes while one search runs (AI::findClosestEnemy opens one)
-	bool portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to) const;
+	bool portalPathExistsUncached(const PathfindObject *obj, const PathfindLocomotorInfo &loco, zoneStorageType from, zoneStorageType to, bool terrainVariant) const;
 	class PortalMemoScope
 	{
 	public:
@@ -1243,8 +1313,8 @@ private:
 
 	void freeGrid();
 	void classifyMapCell(int i, int j, PathfindCell *cell);
-	void classifyObjectFootprint(PathfindObject &obj, bool insert);
-	void internal_classifyObjectFootprint(PathfindObject &obj, bool insert, bool walkOnWall);
+	void classifyObjectFootprint(PathfindObject &obj, bool insert, bool keepGateFlag = false);
+	void internal_classifyObjectFootprint(PathfindObject &obj, bool insert, bool walkOnWall, bool keepGateFlag);
 	void classifyFence(PathfindObject &obj, bool insert);
 	// lane WALL-1: Pathfinder::ClassifyWall (BFME2 0x92F63F, pathfinder_classify.cpp): the wall tops and ramps of a wall piece into / out of the ground grid
 	void classifyWall(PathfindObject &obj, bool insert);
@@ -1314,17 +1384,30 @@ private:
 	void crcRaised(StateHasher &h) const;
 	PathfindLayerEnum wallLayerFor(float height);
 	void stampWallSurface(const PathfindWallSurface &s, PathfindLayerEnum layer);
+	// lane WALL-5: ClassifyWall's edge pass after a wall top's stamp (RW 0x936686 .. 0x936811): `changed` the cells the stamp covered
+	void wallEdgePass(const PathfindRegion &r, PathfindLayerEnum layer, const std::vector<ICoord2D> &changed);
+	// lane WALL-5: ClassifyWall's window of a wall top (RW 0x936511 .. 0x9365CB): the polygon's bounds, the low corner floored and the high ceiled to integers
+	// (getBounds RW 0x6E4D2C), divided by 10 (idiv), 2 cells more each way, clamped to the map
+	PathfindRegion wallEdgeWindow(const PathfindWallSurface &s) const;
+	// lane WALL-5: the 8 neighbours of (x, y) whose layer is not the cell's (a neighbour off the map is not counted)
+	int otherLayerNeighbours(int x, int y, PathfindLayerEnum layer);
 	void stampRampSurface(const PathfindWallSurface &s);
 	void restampWalls(const PathfindRegion &region);
 	bool isWallPiece(PathfindObjectID id) const;
 	PathfindRegion surfaceCells(const PathfindWallSurface &s) const;
 	float wallHeightOf(PathfindLayerEnum layer) const;
+	// lane WALL-4: every wall piece's ramps get their Bridge plane (PathfindWallSurface::planeState), on the serial paths that add or load wall pieces, so the
+	// height queries (which may run on the job pools) only read it
+	void prepareRampPlanes();
 	void cleanOpenAndClosedLists();
 	// lane BACKLOG-8 r2 (AIPathfindGround.cpp): RW 0x6E8BBA's cell test, RW 0x6F0DA3 and RW 0x765BF6
 	bool groundCellClear(const PathfindCell *cell, unsigned crusher) const;
 	Path *buildGroundPath(const Coord3D *from, PathfindCell *goalCell, bool center, int diameter, float formationColumnWidth);
 	void optimizeGroundPath(Path &path, int diameter);
-	Path *buildActualPath(const PathfindObject *obj, unsigned acceptableSurfaces, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked);
+	// RW 0x6F1A31: the cells from the goal back to the unit, optimised; `faceDirection` (RW's seventh argument): finished by Path::rebuild from the unit's
+	// facing (lane PATH-REBUILD). RW passes 1 from the attack, safe and move-away searches and the closest-cell path; the goal path calls the rebuild itself
+	Path *buildActualPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked,
+		bool faceDirection);
 	void prependCells(Path *path, const Coord3D *fromPos, PathfindCell *goalCell, bool center);
 	int examineNeighboringCells(PathfindCell *parentCell, PathfindCell *goalCell, const PathfindLocomotorInfo &loco, bool isHuman, bool centerInCell,
 		int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical = false, int attackDistance = 0);

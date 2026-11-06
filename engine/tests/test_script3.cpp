@@ -469,7 +469,7 @@ TEST_CASE("aidata1 TEAM_FOLLOW_WAYPOINTS: a skirmish AI team moves on when its c
 	const Advance human = firstAdvance(false, 20.0f);
 	const Advance skirmish = firstAdvance(true, 20.0f);
 	const Advance skirmishNoFudge = firstAdvance(true, 0.0f);
-	CHECK(human.frame == 17);   // a member's move ended about 8 from W1 (merge queue q28, on the archive with MERGEQ-27: 17, was 16; an engine pin)
+	CHECK(human.frame == 16);   // a member's move ended about 8 from W1 (merge queue q28, on the archive with MERGEQ-27: 17, was 16; lane PATH-REBUILD: 16; an engine pin)
 	CHECK(skirmish.frame == 7); // the centre about 40 from W1
 	CHECK(skirmish.distance <= 60.0f); // tolerance: within 3 x 20 of W1 (the test's own centre, double precision)
 	CHECK(skirmishNoFudge.frame == human.frame); // a fudge of 0: only a member's arrival moves the team on

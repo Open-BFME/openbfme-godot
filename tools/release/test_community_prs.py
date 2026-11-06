@@ -658,7 +658,7 @@ def test_the_ci_script_fails_on_every_non_success(tmp_path):
     body = script.split("<<'EOF'\n", 1)[1].rsplit("EOF", 1)[0]
     f = tmp_path / "ci.py"
     f.write_text(body)
-    names = ("lint", "gate", "fixtures", "linux", "windows", "macos")
+    names = ("lint", "gate", "fixtures", "linux", "windows", "windows-tests", "msvc", "macos")
 
     def ci(results):
         env = {**os.environ, "RESULTS": json.dumps({k: {"result": v, "outputs": {}} for k, v in results.items()})}
@@ -701,6 +701,7 @@ def test_the_public_tree_holds_the_contributor_files():
     names = set(git(REPO, "ls-tree", "--name-only", tree).split())
     assert {".github", "CONTRIBUTING.md"} <= names and "archive" not in names
     assert {".github", "CONTRIBUTING.md"} <= autorelease.PUBLIC_TOP
+    assert {".greptile", ".macroscope", "REVIEW.md"} <= autorelease.PUBLIC_TOP
 
 
 def test_pr_audit_passes_the_real_public_tree_and_refuses_an_empty_one(tmp_path):

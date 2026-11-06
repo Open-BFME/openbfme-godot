@@ -9,6 +9,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "GodotDevice/GodotGameWorld.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "Common/MD5.h"
 #include "GameClient/ObjectShadow.h"
 #include "GameClient/InGameChat.h"
@@ -811,6 +812,15 @@ void GameWorld::clear_scene()
 }
 
 // lane GLOW-1 (S-5231): a model draw module's GlowEnabled / GlowEmissive (module data + 0x128 / + 0x129, RW 0x4C518B): 0 none, 1 glows, 2 glows emissive only
+// lane SELWALL-1: a drawable whose models receive the selection decals: KINDOF_WALK_ON_TOP_OF_WALL, the casters RotWK's decal projection collects
+// (W3DProjectedShadowManager RW 0x50C876 .. 0x50C8B1: iterateObjectsInRange with that bit; the retail maps' bridges are such objects, S-161). INFERENCE
+// (S-2522): every such model receives the decals over it, not RotWK's at most 16 objects within sqrt(sx^2 + sy^2) + 50 of the decal
+static bool selectionDecalReceiver(const Drawable *d)
+{
+	static const int bit = ObjectTemplateInfoBuilder::kindOfIndex("WALK_ON_TOP_OF_WALL");
+	return d && d->isKindOfIndex(bit);
+}
+
 static int staticGlowOf(const ModuleData *data)
 {
 	const W3DModelDrawModuleData *md = dynamic_cast<const W3DModelDrawModuleData *>(data);
@@ -1918,7 +1928,13 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			{
 				glowModel = plainModel + (f.glow == 2 ? "|glow-emissive" : "|glow");
 			}
-			const std::string &model = glowModel.empty() ? plainModel : glowModel;
+			// lane SELWALL-1: a wall top or bridge (KINDOF_WALK_ON_TOP_OF_WALL) gets a model of its own whose surfaces draw the selection decals
+			std::string selModel;
+			if (shown && selectionDecalReceiver(d))
+			{
+				selModel = (glowModel.empty() ? plainModel : glowModel) + "|sel";
+			}
+			const std::string &model = !selModel.empty() ? selModel : glowModel.empty() ? plainModel : glowModel;
 			if (model != ev.model)
 			{
 				if (ev.instance >= 0)
@@ -1941,6 +1957,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 						if (!swappedModel.empty())
 						{
 							dyn->Set_Build_Texture_Swaps(*f.textureSwaps); // taken by the add below (and add_model_colored's)
+						}
+						if (!selModel.empty())
+						{
+							dyn->Set_Build_Selection_Decals(true); // lane SELWALL-1: taken by the add below
 						}
 						if (!coloredModel.empty())
 						{
@@ -2084,6 +2104,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				{
 					ev.staticKey += ev.staticGlow == 2 ? "|glow-emissive" : "|glow";
 				}
+				if (selectionDecalReceiver(d))
+				{
+					ev.staticKey += "|sel"; // lane SELWALL-1: as on the animated path
+				}
 				if (ev.staticKeyColored)
 				{
 					const HouseColorParams &pp = ev.staticKeyPalette;
@@ -2113,6 +2137,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				{
 					const double tm = nowMs();
 					dyn->Set_Build_Texture_Swaps(swaps);
+					dyn->Set_Build_Selection_Decals(selectionDecalReceiver(d)); // lane SELWALL-1
 					if(colored) {
 					 PackedInt64Array colors;for(auto color:palette.colors) colors.push_back((int64_t)color);
 					 mid=dyn->add_model_colored(toGodot(e.staticModel),palette.kind,colors);
@@ -3115,13 +3140,14 @@ void GameWorld::refresh_streaks(bool record)
 			if (m_streakShader[add].is_null())
 			{
 				m_streakShader[add].instantiate();
-				m_streakShader[add]->set_code(String("shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled, ")
+				const String streakCode = String("shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled, ")
 					+ (add ? "blend_add" : "blend_mix")
 					+ ";\nuniform sampler2D tex : hint_default_white, filter_linear_mipmap, repeat_disable;\n"
 					  "void fragment() {\n\tvec4 t = texture(tex, UV) * COLOR;\n"
 					  "\tALBEDO = clamp(t.rgb, 0.0, 1.0);\n" // RENDER-3 (S-831): the gamma-space transparent pass takes the gamma value
 					+ String(add ? "\tALPHA = 1.0;\n}\n" // PROJ-2: DAT 0xD9B2E4 is SRCBLEND ONE / DSTBLEND ONE: the texture's alpha does not weigh the sum
-								 : "\tALPHA = t.a;\n}\n")); // DAT 0xD9B2F0: SRC_ALPHA / INV_SRC_ALPHA
+								 : "\tALPHA = t.a;\n}\n"); // DAT 0xD9B2F0: SRC_ALPHA / INV_SRC_ALPHA
+				SetShaderCode(m_streakShader[add].ptr(), streakCode, add ? "W3D streak additive" : "W3D streak alpha");
 			}
 			mat.instantiate();
 			mat->set_shader(m_streakShader[add]);

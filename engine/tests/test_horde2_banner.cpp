@@ -19,6 +19,39 @@ HordeContain *hc(Object *h)
 {
 	return dynamic_cast<HordeContain *>(h->getContain());
 }
+
+// the same fixture with BannerCarrierDestroyHordeOnDeath (HordeContain module data + 0x224) set, and a member with no body: RW 0x871915 kills only the
+// members whose object has a body (RW 0x871983 tests Object + 0x25C), so the bodyless one keeps the horde alive and its carrier id readable
+std::string destroyOnDeathObjects()
+{
+	std::string s(kBannerObjects);
+	const std::string anchor = "    BannerCarrierMinLevel = 0\n";
+	const size_t at = s.find(anchor);
+	REQUIRE(at != std::string::npos);
+	s.insert(at + anchor.size(), "    BannerCarrierDestroyHordeOnDeath = Yes\n    BannerCarrierHordeDeathType = +NORMAL\n");
+	s +=
+		"Object BannerGhost\n"
+		"  KindOf = INFANTRY\n"
+		"  Geometry = CYLINDER\n"
+		"  GeometryMajorRadius = 8\n"
+		"  GeometryMinorRadius = 8\n"
+		"  GeometryHeight = 20\n"
+		"End\n";
+	return s;
+}
+
+// a BannerHorde at rank 1 with its carrier; returns the carrier
+Object *withCarrier(CombatWorld &w, Object *h)
+{
+	w.frames(10);
+	ExperienceTrackerTestAccess::setRank(*h->getExperienceTracker(), 1);
+	w.frames(2);
+	REQUIRE(hc(h)->bannerCarrier() != 0); // tolerance: the carrier id is the factory's next free id; 0 means none was made
+	Object *banner = w.byId(hc(h)->bannerCarrier());
+	REQUIRE(banner != nullptr);
+	return banner;
+}
+
 } // namespace
 
 TEST_CASE("horde2 banner: no carrier at rank 0; at rank 1 the carrier joins, stands at its position and refills a dead member when out of combat")
@@ -189,4 +222,97 @@ TEST_CASE("horde2 AutoHeal: a horde healer's under-attack test reads its members
 	CHECK((hordeBody == nullptr || hordeBody->lastDamageFrame() == 0xFFFFFFFFu));
 	// one member hit again, the others' frames are old: the newest (the larger) decides, so the pulse is blocked
 	CHECK_FALSE(pulseAfter([&] { hit(members[2]); }));
+}
+
+// RW 0x871915 (HordeContainInterface slot 0x34, called by the member removals RW 0x87370B / 0x87393E) with BannerCarrierDestroyHordeOnDeath (module data
+// + 0x224): when the removed member is the banner carrier (H + 0x26C), every member of the contain list copy (interface slot 0x108 -> RW 0x865598) that has
+// a body is killed with Object::kill (RW 0x698EC3: DAMAGE_UNRESISTABLE, the BannerCarrierHordeDeathType word + 0x228 as the death type), and the carrier id
+// is NOT cleared (no countdown, so no new carrier). The horde itself dies empty with its last member.
+TEST_CASE("horde2 banner: BannerCarrierDestroyHordeOnDeath kills the horde's members with its carrier and keeps the carrier id (RW 0x871915)")
+{
+	CombatWorld w(destroyOnDeathObjects().c_str());
+	w.combat().setAutoAcquireEnabled(false);
+	Object *h = w.unit("BannerHorde", 'A', 300, 300);
+	Object *banner = withCarrier(w, h);
+	const ObjectID carrier = banner->getID();
+	std::vector<ObjectID> others;
+	for (Object *m : w.membersOf(h))
+	{
+		if (m != banner)
+		{
+			others.push_back(m->getID());
+		}
+	}
+	REQUIRE(others.size() == 3);
+	Object *ghost = w.unit("BannerGhost", 'A', 300, 300);
+	REQUIRE(hc(h)->addToContain(ghost));
+	banner->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+	w.frames(1);
+	for (ObjectID id : others)
+	{
+		Object *m = w.byId(id);
+		REQUIRE(m != nullptr);
+		CHECK(m->isEffectivelyDead()); // Object::kill takes the body's whole health: the member dies (its SlowDeathBehavior sinks it)
+	}
+	REQUIRE(h->isDestroyed() == false); // the bodyless member survives, so the horde does too
+	CHECK(w.byId(ghost->getID()) == ghost);
+	CHECK(hc(h)->bannerCarrier() == carrier); // H + 0x26C is kept: RW 0x8719B5 is the no-flag branch
+	// DiedRespawnTime (2000 ms = 10 frames) would have made a new carrier had the id been cleared
+	w.frames(20);
+	CHECK(hc(h)->bannerCarrier() == carrier);
+	CHECK(hc(h)->getContainCount() == 1);
+}
+
+// the same removal without the flag: RW 0x8719B5 clears the id and starts the countdown, and the members outlive their carrier
+TEST_CASE("horde2 banner: without BannerCarrierDestroyHordeOnDeath the members outlive the carrier and the id clears (RW 0x8719B5)")
+{
+	CombatWorld w(kBannerObjects);
+	w.combat().setAutoAcquireEnabled(false);
+	Object *h = w.unit("BannerHorde", 'A', 300, 300);
+	Object *banner = withCarrier(w, h);
+	std::vector<ObjectID> others;
+	for (Object *m : w.membersOf(h))
+	{
+		if (m != banner)
+		{
+			others.push_back(m->getID());
+		}
+	}
+	REQUIRE(others.size() == 3);
+	banner->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+	w.frames(1);
+	for (ObjectID id : others)
+	{
+		CHECK(w.byId(id) != nullptr);
+	}
+	CHECK(hc(h)->bannerCarrier() == 0);
+	CHECK(hc(h)->getContainCount() == 3);
+}
+
+// a carrier released toward a garrison takes the contain slot 0xA4 path (RW 0x86EBF4 -> RW 0x8665BE / RW 0x86CF2A), which never reaches the horde interface
+// slots 0x34 / 0x38 that call RW 0x871915: the flag must not fire
+TEST_CASE("horde2 banner: a banner carrier released toward a garrison does not trigger BannerCarrierDestroyHordeOnDeath (RW 0x86EBF4)")
+{
+	CombatWorld w(destroyOnDeathObjects().c_str());
+	w.combat().setAutoAcquireEnabled(false);
+	Object *h = w.unit("BannerHorde", 'A', 300, 300);
+	Object *banner = withCarrier(w, h);
+	const ObjectID carrier = banner->getID();
+	std::vector<ObjectID> others;
+	for (Object *m : w.membersOf(h))
+	{
+		if (m != banner)
+		{
+			others.push_back(m->getID());
+		}
+	}
+	REQUIRE(others.size() == 3);
+	hc(h)->releaseMemberForGarrison(banner);
+	w.frames(1);
+	for (ObjectID id : others)
+	{
+		CHECK(w.byId(id) != nullptr);
+	}
+	CHECK_FALSE(banner->isEffectivelyDead());
+	CHECK(hc(h)->bannerCarrier() == carrier);
 }

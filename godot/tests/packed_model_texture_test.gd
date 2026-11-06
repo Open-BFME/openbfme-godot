@@ -53,6 +53,7 @@ func _check_corrupt_mask() -> bool:
 	var jpg := folder.path_join("zzpackedprobe.jpg")
 	var png := folder.path_join("zzpackedprobe.png")
 	var plain_jpg := folder.path_join("zzpackedplain.jpg")
+	var bad_jpg := folder.path_join("zzpackedbad.jpg")
 	var image := Image.create(2, 2, false, Image.FORMAT_RGB8)
 	image.fill(Color.WHITE)
 	_check(image.save_jpg(jpg) == OK)
@@ -60,6 +61,10 @@ func _check_corrupt_mask() -> bool:
 	var file := FileAccess.open(png, FileAccess.WRITE)
 	_check(file != null)
 	file.store_string("invalid PNG companion")
+	file.close()
+	file = FileAccess.open(bad_jpg, FileAccess.WRITE)
+	_check(file != null)
+	file.store_string("invalid JPEG colour")
 	file.close()
 	var fs = ClassDB.instantiate("RetailFileSystem")
 	fs.set_mods(PackedStringArray([mod_path]))
@@ -70,9 +75,34 @@ func _check_corrupt_mask() -> bool:
 	_check(builder.get_report().errors.is_empty(), str(builder.get_report()))
 	_check(builder.load_texture(fs, "ZZPackedProbe.tga") == null)
 	_check(builder.get_report().errors.has("could not decode texture art\\compiledtextures\\zz\\zzpackedprobe.jpg"), str(builder.get_report()))
+	_check(builder.load_texture(fs, "ZZPackedBad.tga") == null)
+	_check(builder.get_report().errors.has("could not decode texture art\\compiledtextures\\zz\\zzpackedbad.jpg"), str(builder.get_report()))
+	# The callers pass their already-read JPG buffer to the packed loader. A bad
+	# buffer must still fail, and neither failed JPG nor companion may be cached.
+	_check(image.save_jpg(bad_jpg) == OK)
+	var mask := Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	mask.set_pixel(0, 0, Color(0.25, 0.5, 0.75, 0.125))
+	mask.set_pixel(1, 0, Color(0.5, 0.75, 1.0, 0.25))
+	mask.set_pixel(0, 1, Color(0.75, 1.0, 0.25, 0.5))
+	mask.set_pixel(1, 1, Color(1.0, 0.25, 0.5, 0.75))
+	_check(mask.save_png(png) == OK)
+	# Mounted mods are immutable; remount the repaired fixture before retrying.
+	fs = ClassDB.instantiate("RetailFileSystem")
+	fs.set_mods(PackedStringArray([mod_path]))
+	_check(fs.mount_retail().ok)
+	var repaired: Texture2D = builder.load_texture(fs, "ZZPackedBad.tga")
+	_check(repaired != null)
+	_check(builder.get_report().errors.is_empty(), str(builder.get_report()))
+	var paired: Texture2D = builder.load_texture(fs, "ZZPackedProbe.tga")
+	if _check(paired != null):
+		# The white JPEG leaves the PNG's colour and alpha unchanged, byte for byte.
+		_check(paired.get_image().get_data() == mask.get_data())
+	_check(builder.get_report().errors.is_empty(), str(builder.get_report()))
+	_check(str(builder.get_report().texture.packed_texture_stop).begins_with("[S-1482]"))
 	DirAccess.remove_absolute(png)
 	DirAccess.remove_absolute(jpg)
 	DirAccess.remove_absolute(plain_jpg)
+	DirAccess.remove_absolute(bad_jpg)
 	for path in [folder, mod_path.path_join("art/compiledtextures"), mod_path.path_join("art"), mod_path]:
 		DirAccess.remove_absolute(path)
 	return true

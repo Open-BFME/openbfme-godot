@@ -674,8 +674,9 @@ TEST_CASE("AIPOW-1: end to end: a Hard computer's wounded Aragorn uses Athelas o
 	// next check (RW 0x6686F0, GameLogicRandomValue line 0x2079 after the idle entry's resetNextMoodCheckTime RW 0x662DD9) draws from the logic generator
 	// before the power's roll. Merge queue q28 (the random stream moves with the merged batch; measured once on the merged tree and at each merge point): 26.
 	// Merge queue q29 (measured once on the merged tree and at each merge point): 22; community #113 moves it 26 -> 24 (its FlagCaptureSquad's draws) and
-	// FBSIM-1 24 -> 22 (the computer player's phantom sites)
-	CHECK(frame == 22);
+	// FBSIM-1 24 -> 22 (the computer player's phantom sites). Lane PATH-REBUILD (RW 0x767B0E, the found paths bent and rounded: the routes move the frame
+	// on which the roll passes, as PATHPERF-1's corridor did; measured on the lane's tree): 23
+	CHECK(frame == 23);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[10] == 1);
 	a.advance(10); // Athelas's heal lands a few frames after the cast
 	CHECK(AISpecialPowerUpdate::healthRatio(*mine) > wounded);    // healed

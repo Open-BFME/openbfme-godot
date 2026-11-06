@@ -247,9 +247,14 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	// ordered spot moved
 	// merge queue q33 (measured at each merge point): #133's straight production exits move the scene's draws before the rebuild's two: he walks 8 frames and
 	// stops at x 1144266752 (10 / 1143611392), y unchanged
-	CHECK(walked == 8);
+	// lane PATH-REBUILD (RW 0x767B0E: the found path's first segment bent from his facing and its corners rounded): he walks the same 8 frames and stops at
+	// (1144758272, 1167090688) (was 1144266752, 1167193088)
+	// merge queue q38 (LOCODIST-1: the locomotor distance to the goal follows RW 0x664127, the path length left instead of the 2D line; measured once on the
+	// merged tree and at its merge point): he walks 15 frames (8) and stops at (1144266752, 1167152128)
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): Boromir walks 17 frames (15) and stops on the same spot
+	CHECK(walked == 17);
 	CHECK(bitsOf(boromir->getPosition()->x) == 1144266752u);
-	CHECK(bitsOf(boromir->getPosition()->y) == 1167193088u);
+	CHECK(bitsOf(boromir->getPosition()->y) == 1167152128u);
 	CHECK(bitsOf(start.x) == 1144391642u);
 }
 
@@ -351,6 +356,7 @@ TEST_CASE("BACKLOG2 S-950: the foundation's creation interface clears the pad an
 	// state adjusted the ordered spot to
 	CHECK_FALSE(boromirFirst);
 	// Lane TARGET-1: was 15 frames to (1143119872, 1166701568): the mood scans' random offset draws (RW 0x6686F0) come before the pad's draws
+	// lane PATH-REBUILD (RW 0x767B0E, with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree)): the same 22 frames to the same cell
 	CHECK(walked == 22);
 	CHECK(bitsOf(boromir->getPosition()->x) == 1142300672u);
 	CHECK(bitsOf(boromir->getPosition()->y) == 1167070208u);
@@ -692,7 +698,9 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// 0x458CE977), the goals unchanged
 	// merge queue q27: LOS-1 (the terrain line of sight in the target search and the attack view) moves Aragorn as LOS-1's own port measured (was
 	// 0x44246B33 0x458D5A9A), the goals unchanged; the last hash 0x4BFCBFF6 -> 0x5572D938 (measured at each merge point: LOS-1 alone)
-	CHECK(a.positions == std::vector<std::uint32_t>{ 0x442A2000u, 0x458ED400u, 0x44202000u, 0x458CA400u, 0x4413A000u, 0x458D9400u });
+	// lane PATH-REBUILD (RW 0x767B0E, the found paths bent from the units' facing with their corners rounded): Boromir ends at y 0x458ECE8B (was 0x458ED400),
+	// the goals and the others unchanged
+	CHECK(a.positions == std::vector<std::uint32_t>{ 0x442A2000u, 0x458ECE8Bu, 0x44202000u, 0x458CA400u, 0x4413A000u, 0x458D9400u });
 	// merge queue q24: the last hash 0x165E2BAF -> 0x0E2AE1AF, goals and positions unchanged: OFFMAP-1 (RotWK's idle state RW 0x745A64: no ZH frame <= 1 snap, no
 	// pathfinder position update) moves it (bisected: the q24 tree with CAMPUI-1 alone keeps q23's hash); measured once on the merged tree
 	// merge queue q26 (community #73 / #74 with BANNER-1, SIEGE-1 and the rest, measured once on the merged tree): 0x0E2AE1AF -> 0x4BFCBFF6
@@ -723,7 +731,11 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// merge queue q34 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x445ADD14 -> 0x1D2B9A1D at SPELLFIX-1's merge
 	// point (an omitted ShroudClearingRange clears the VisionRange, RW 0x73FB7A / 0x69990F: the hashed shroud state), #160 keeps it, -> 0x24ADB575 at #161's
 	// (the block search's block flags, RW 0x6F49BC, and the corridors)
-	CHECK(a.hashes.back() == 0x24ADB575U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// lane PATH-REBUILD (measured on the lane's tree, Windows MSVC; goals unchanged, Boromir's position above): 0x24ADB575 -> 0xE4523180 (every path's node chain is
+	// in the mover hash)
+	// merge queue q38 (measured once on the merged tree and at LOCODIST-1's merge point; goals unchanged): 0xE4523180 -> 0x45726314 (the retail locomotor
+	// distance to the goal, RW 0x664127, moves when the units arrive)
+	CHECK(a.hashes.back() == 0x45726314U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);
