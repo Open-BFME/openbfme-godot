@@ -73,7 +73,7 @@ const char *HordeContain::movementStop()
 	return "S-224 HordeContain movement (member pass, reform, refresh) is the RotWK member order (RW 0x877A7A: ahead test, snap threshold, hub RW 0x87468B, farthest-first reform "
 		"reassignment RW 0x877E12, formation always ready RW 0x9B501B) with these inferences: a member waiting for the formation (UseSlowHordeMovement) is not counted as work (B1 "
 		"sets its work flag and re-runs the pass every frame), so a member left ahead of its slot by a parked horde stays there; the leash command (0, 2) is counted and does nothing "
-		"(its identity is unknown); the frozen-formation and engaged-target branches (melee), the flank history, the banner carriers, the layer sync and the every-fifth-frame "
+		"(its identity is unknown); the frozen-formation and engaged-target branches (melee), the flank history, the banner carriers and the every-fifth-frame "
 		"pair of HordeContain::update are not ported; the TRANSPORT_MOVING mirror is BFME's TransportContain::update; MACHINE members ride on the horde object; "
 		"PRODUCER FOOTPRINT (inference, no retail evidence: RW 0x6F1B3E / 0x6F74D0 show no producer exemption): EVERY far-arm member walk order (the first exit, every later "
 		"walk of a displaced or re-formed member) sets the member mover's ignored obstacle to the horde's producer object (none for a horde without a producer), so the "
@@ -98,7 +98,7 @@ void HordeContain::onObjectCreated()
 
 // HordeContain::update (B1 FormationRefresh0023FA80.cpp:119-176, RW 0x00872EFC - 0x00873179), the movement part: TransportContain::update (the model condition
 // mirror), the dirty flag while the horde object moves, the member pass when dirty, the pathfinder goal of a parked horde. Not ported (S-149 / S-222): the flank
-// history ring buffer, the banner carrier check, the layer sync, the every-5th-frame `slot070` / `periodic` pair, the melee tick.
+// history ring buffer, the banner carrier check, the every-5th-frame `slot070` / `periodic` pair, the melee tick. Lane WALLHORDE-1: the layer sync is ported (below).
 const HordeContainModuleData &HordeContain::hordeData() const
 {
 	return m_data->horde;
@@ -151,6 +151,26 @@ UpdateSleepTime HordeContain::update()
 	if (m_garrisoned)
 	{
 		return UPDATE_SLEEP_NONE; // lane GARRISON-1 (S-1102): the members stand on the garrison points, no member pass
+	}
+	if (!(m_meleeEngaged || ai->isMoving()) && ai->world().mapReady())
+	{
+		// lane WALLHORDE-1: RW 0x872EFC's parked branch (BFME2 0x86FC1B, decomp HordeContainRva0046FC1B.cpp:137-148): a horde neither moving nor in melee takes
+		// RW 0x6EE600's layer at its position; when that changes it, every contained member takes its own (setLayer returns at once when unchanged) and the
+		// pass is dirty. After the contained (garrison) return, RW + 0x294 (set by RW 0x872ADF; BFME2 the same, decomp lines 121-124)
+		Pathfinder &pf = ai->world().pathfinder();
+		const PathfindLayerEnum l = pf.objectLayerAt(ai->adapter(), *horde->getPosition());
+		if (l != ai->adapter().getLayer())
+		{
+			ai->setLayer(l);
+			for (Object *m : m_members)
+			{
+				if (AIUpdateInterface *mai = m ? m->getAIUpdateInterface() : nullptr)
+				{
+					mai->setLayer(pf.objectLayerAt(mai->adapter(), *m->getPosition()));
+				}
+			}
+			m_dirty = true;
+		}
 	}
 	if (ai->isMoving())
 	{
