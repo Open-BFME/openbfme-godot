@@ -48,6 +48,23 @@ def run(command, cwd, records, name, env, allow_decoder_errors=False):
     return output
 
 
+def validate_mask_errors(output):
+    message = 'ERROR: Packed texture RGBA8 image and mask byte counts differ'
+    if output.splitlines().count(message) != 2:
+        raise RuntimeError('expected exactly two packed-mask size diagnostics')
+
+
+def test_validate_mask_errors():
+    message = 'ERROR: Packed texture RGBA8 image and mask byte counts differ\n'
+    validate_mask_errors(message * 2)
+    for output in ('', message, message * 3, message.replace('byte counts', 'sizes') * 2):
+        try:
+            validate_mask_errors(output)
+        except RuntimeError:
+            continue
+        raise AssertionError('missing, extra or altered size diagnostic accepted')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir', type=Path, required=True)
@@ -111,6 +128,7 @@ def main():
     start = datetime.datetime.now(datetime.timezone.utc).isoformat()
     output = run([str(args.godot.resolve()), '--headless', '--path', str(project),
                   '--script', 'res://test.gd'], scratch, scratch, 'run', env, allow_decoder_errors=True)
+    validate_mask_errors(output)
     end = datetime.datetime.now(datetime.timezone.utc).isoformat()
     result = json.loads(next(line.removeprefix('PACKED RESULT ') for line in output.splitlines()
                              if line.startswith('PACKED RESULT ')))
