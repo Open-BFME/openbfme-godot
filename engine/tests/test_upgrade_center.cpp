@@ -9,6 +9,7 @@
 
 #include "Common/INIException.h"
 #include "Common/Player.h"
+#include "Common/PlayerEconomyHost.h"
 #include "Common/Upgrade.h"
 #include "GameLogic/Module/UpgradeModule.h"
 
@@ -226,7 +227,21 @@ TEST_CASE("upgrade center: the sub upgrade cost sum wraps like the retail int ad
 			.empty());
 	std::string err;
 	REQUIRE(f.center.resolveSubUpgrades(&err));
+	// lane BRUTALAI-1: the cost asks the player's world whether a Brutal skirmish AI runs it (RW 0x66F3AC); this world runs none
+	struct NoBrutalHost : PlayerEconomyHost
+	{
+		bool hasObjectMatching(const Player &, const ObjectFilter &, bool) const override { return false; }
+		int commandPointLimit(const Player &) const override { return 0; }
+		float productionCostChange(const Player &, const ThingTemplate &, bool) const override { return 1.0f; }
+		int applyHandicapMoney(const Player &, int amount) const override { return amount; }
+		bool canAffordCommandPoints(const Player &, const ThingTemplate &) const override { return true; }
+		void updateUpgradeModulesOfPlayer(const Player &) override {}
+		void removeUpgradeFromObjectsOfPlayer(const Player &, const UpgradeTemplate &) override {}
+		void reportUpgradeEva(const Player &, const UpgradeTemplate &, bool) override {}
+		std::optional<float> brutalReduction(const Player &, bool) const override { return std::nullopt; }
+	} host;
 	Player player(0);
+	player.setEconomyHost(&host);
 	CHECK(f.center.findUpgrade("Pack2")->calcCostToBuild(&player, nullptr) == -294967296);
 }
 

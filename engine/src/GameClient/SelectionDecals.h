@@ -258,8 +258,7 @@ enum class DecalReceiver
 bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver, std::uint8_t rgba[4]);
 
 // lane HERORING-1: the surface's colour bytes `surface` (gamma space) under every selection decal at (x, y, z) of `receiver`, as the shaders draw it
-// (selection_decals.gdshaderinc sel_alpha_at, then sel_merge_at): the alpha decals blended in their list order (clipped to [0, 1] after each draw, as
-// retail's D3D9 frame buffer is), then the merge result over them. False
+// (selection_decals.gdshaderinc sel_alpha_at, then sel_merge_at): the alpha decals blended in their list order, then the merge result over them. False
 // where no decal covers the point (out = surface). The merge result is blended in gamma space here; the shaders mix it in linear space: the same in the two
 // passes (it covers 0 or 1), not in the simple pass (UseSimpleMergeDecals, a blended pass)
 // `shadow` (optional, per channel, 1 lit .. 0 black): the object shadow on the surface; the decals are drawn over the shadowed surface, as the

@@ -239,7 +239,7 @@ constexpr int kPassAlphaRef = 0x60;            // INFERENCE (S-2522): ZH ShaderC
 // only with that vertex mask (kTerrainClaimStyle)
 constexpr std::uint32_t kAlphaStyles = 0x20u | 0x400u;
 // lane ECOCIRCLE-2: the additive styles (SHADOW_ADDITIVE_DECAL 0x40 / SHADOW_ADDITIVE_DECAL_DYNAMIC 0x800): flushDecals draws them with
-// SRC_ALPHA / ONE (RW 0x509A1F), the alpha decal shader with the destination's colour kept; sel_alpha_at adds their share
+// ShaderClass 0x515833 = SC_ADDITIVE, ONE / ONE (RW 0x509A1F), the alpha decal shader with the destination's colour kept; sel_alpha_at adds their share
 constexpr std::uint32_t kAdditiveStyles = 0x40u | 0x800u;
 // lane PLACEDECAL-1: SHADOW_DECAL_TERRAIN_CLAIM, drawn as an alpha decal when it carries its vertex mask (the placement claim decal)
 constexpr std::uint32_t kTerrainClaimStyle = 0x2000u;
@@ -969,22 +969,22 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 				}
 				float s[4];
 				atlasSample(atlas, d + 8, u, v, s);
-				float a = s[3] * d[3] / 255.0f;
+				// an additive decal's diffuse is its colour x opacity with no alpha (setOpacity RW 0x73228B for 0x10840) and ShaderClass 0x515833
+				// (SC_ADDITIVE, ONE / ONE, RW 0x509A1F) adds texel x diffuse: the texel's alpha takes no part
+				float a = additive ? d[3] / 255.0f : s[3] * d[3] / 255.0f;
 				if (d[15] > 0.0f)
 				{
 					a *= maskAt(t, (size_t)d[15], x, y) / 255.0f; // lane PLACEDECAL-1: the vertex mask
 				}
 				for (int ch = 0; ch < 3; ++ch)
 				{
-					// review (Greptile P2 on #243): D3D9's frame buffer clips to [0, 1] after EVERY draw; carry the clipped value into the next decal, or
-					// an additive overbright decal survives a later alpha / multiply blend (white ground + half additive white + half black = 0.5, not 0.75)
 					if (additive)
 					{
-						c[ch] = std::max(0.0f, std::min(255.0f, c[ch] + s[ch] * d[4 + ch] * a)); // SRC_ALPHA / ONE: the surface keeps its colour
+						c[ch] += s[ch] * d[4 + ch] * a; // ONE / ONE: the surface keeps its colour
 					}
 					else
 					{
-						c[ch] = std::max(0.0f, std::min(255.0f, c[ch] * (1.0f - a) + s[ch] * d[4 + ch] * a));
+						c[ch] = c[ch] * (1.0f - a) + s[ch] * d[4 + ch] * a;
 					}
 				}
 				drawn = drawn || a > 0.0f;

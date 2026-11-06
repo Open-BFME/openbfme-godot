@@ -429,26 +429,6 @@ void TerrainResourceFeedback::buildClaimCircles(const GameLogic &logic, int loca
 	m_claimCircles = std::move(next);
 }
 
-int TerrainResourceFeedback::claimSegmentCount(float length, float circumference)
-{
-	if (!(circumference > 0.0f))
-	{
-		return 0; // a zero (or negative) radius: no circumference, no positive segment count (and no 0 / 0 conversion)
-	}
-	int count = (int)(length / circumference * 32.0f); // RW 0xC18DE0
-	const int byMaximum = (int)(length / 60.0f);        // RW 0xBDC1F8
-	if (count < byMaximum)
-	{
-		count = byMaximum;
-	}
-	const int byMinimum = (int)(length / 20.0f); // RW 0xBDBC6C
-	if (count > byMinimum)
-	{
-		count = byMinimum;
-	}
-	return count > 0 ? count : 0;
-}
-
 void TerrainResourceFeedback::buildClaimArcs(const GameLogic &logic, int localPlayer)
 {
 	m_claimArcs.clear();
@@ -461,7 +441,7 @@ void TerrainResourceFeedback::buildClaimArcs(const GameLogic &logic, int localPl
 	{
 		if (!(c.radius > 0.0f))
 		{
-			continue; // a Radius-0 claim: RW 0x8E9744's 0 / 0 draws nothing retail either way; skip before the C++ int conversion of the NaN
+			continue; // radius 0 (the module's default): RW 0x8E9744's count is 0 (0 / 0 truncated, then clamped) and its loop never runs; skipped before the 0 / 0
 		}
 		const float circumference = c.radius * 6.28318548f; // RW 0xBDD38C
 		for (const ResourceClaimAngle &range : c.uncovered)
@@ -469,7 +449,17 @@ void TerrainResourceFeedback::buildClaimArcs(const GameLogic &logic, int localPl
 			// RW 0x8E9744 (BFME2 0x4E50C8): count = min(max(32 * length / circumference, (int)(length / 60)), (int)(length / 20))
 			const float difference = range.last - range.first;
 			const float length = circumference * (difference * 0.159154937f); // RW 0xC36090
-			int count = claimSegmentCount(length, circumference);             // RW 0xC18DE0 / 0xBDC1F8 / 0xBDBC6C
+			int count = (int)(length / circumference * 32.0f);               // RW 0xC18DE0
+			const int byMaximum = (int)(length / 60.0f);                      // RW 0xBDC1F8
+			if (count < byMaximum)
+			{
+				count = byMaximum;
+			}
+			const int byMinimum = (int)(length / 20.0f); // RW 0xBDBC6C
+			if (count > byMinimum)
+			{
+				count = byMinimum;
+			}
 			if (count <= 0)
 			{
 				continue;

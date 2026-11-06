@@ -23,8 +23,10 @@
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/PartitionManager.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/System/ShroudManager.h"
 #include "GameLogic/Object/Object.h"
@@ -34,6 +36,9 @@
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "Common/Money.h"
+#include "Common/Team.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponSetToggle.h"
@@ -41,6 +46,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -493,11 +499,10 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("42 of the 53 decisions run") != std::string::npos);
-	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
+	CHECK(ai[0].find("50 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("SOUL_FREEZE") == std::string::npos); // lane RAI-POW ported it
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 9 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
-	// TREE_KILLER, CITADEL, DEBUFFECONOMYBUILDING, DEBUFFPRODUCTIONBUILDING)
+	// the decisions still unported: ATTACK_HEAL_AOE and the 2 spell book ones (ARMY_BREAKER, HEAL); TREE_KILLER is ported by lane RAI-POW-3
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
 	{
@@ -505,10 +510,10 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 		{
 			++unported;
 			const bool spellBook = std::string(TheAISpecialPowerTypeNames[t]).rfind("AI_SPELLBOOK_", 0) == 0;
-			CHECK_MESSAGE((spellBook || t == 44 || t == 49), TheAISpecialPowerTypeNames[t]);
+			CHECK_MESSAGE((spellBook || t == 49), TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 11);
+	CHECK(unported == 3); // RAI-POW-3 moved this from 4: TREE_KILLER is ported
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -986,4 +991,1076 @@ TEST_CASE("AIPOW-1 r2: the Elves' BUFFTERRAIN (Elven Wood, RW 0x9E77EE) and ENSH
 	CHECK(distance2D(mist->decidedLocation(), *mine->getPosition()) <= 150.0f);
 	MESSAGE("BUFFTERRAIN " << distance2D(terrain->decidedLocation(), *mine->getPosition()) << ", ENSHROUDINGMIST "
 	                       << distance2D(mist->decidedLocation(), *mine->getPosition()) << " from the unit");
+}
+
+// ---- lane RAI-POW: SOUL_FREEZE (RW 0x9E9B37) and the team's special-power registry (RW 0x7A3EF5 / 0x7A5582) ----------------------------------------------
+
+TEST_CASE("RAI-POW: SOUL_FREEZE (RW 0x9E9B37) bins the enemies into retail's 3x3 cost grid and returns a cell of the caster's range")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("RAI-POW SOUL_FREEZE binary facts (set RW_GAME_DAT)");
+	}
+	else
+	{
+		CHECK(pe->u32At(0xC8E340u + 0x1Cu) == 0x9E9B37u); // the decision (vtable RW 0xC8E340, slot 0x1C)
+		CHECK(AISpecialPowerDecision::decisionPorted(44));
+		CHECK(floatAt(*pe, 0xC8E338) == 2.0f);    // the second difference test's factor
+		CHECK(floatAt(*pe, 0xC8E33C) == 0.65f);   // the fallback's allied-ratio bound
+		CHECK(pe->u32At(0xC8E360u) == 0x55555555u); // the double 2/3: its low word .. and its high word
+		CHECK(pe->u32At(0xC8E364u) == 0x3FE55555u);
+	}
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5201, &err), err);
+	// the target's shroud must be CLEAR (SPECIAL_ARROW_STORM's final location test, RW 0x82E913 type 0x2F): reveal the map for both players
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *necro = a.make("AngmarNecromancerHorde", a.human, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf = aiPowerOfType(*necro, 44);
+	REQUIRE(sf);
+	a.advance(1);
+	REQUIRE(sf->decision());
+	CHECK(sf->data()->m_commandButtonName == "Command_NecromancerSoulFreeze");
+	CHECK(sf->decision()->powerTemplate == TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze"));
+	CHECK(sf->decision()->range == 300.0f); // ANGMAR_NECRO_SOUL_FREEZE_START_RANGE through SpecialPowerRange
+	const Coord3D at = *necro->getPosition();
+	// no enemy in the scan -> no
+	CHECK(sf->decideNow() == false);
+	// a disabled caster skips every hit's accounting (Object + 0x1C8, RW 0x9325B4), so the enemy total stays 0
+	Object *far = a.make("GondorFighterHorde", a.ai, 400.0f, 0.0f);
+	CHECK(sf->decideNow() == false); // outside the 300 range
+	a.logic->destroyObject(far);
+	Object *enemy = a.make("GondorFighterHorde", a.ai, 290.0f, 0.0f);
+	necro->setDisabled(DISABLED_HELD, a.logic->getFrame() + 1000);
+	CHECK(sf->decideNow() == false);
+	necro->clearDisabled(DISABLED_HELD);
+	// the enemy bins x = 2, y = 1 ((caster - 300 + 590) / 200, (caster - 300 + 300) / 200); the target is x * RANGE from the origin
+	REQUIRE(sf->decideNow() == true);
+	// the exact retail arithmetic (RW 0x9E9F68): origin = position - range (SSE), target = index * range + origin (SSE)
+	const float ox = SimMath::subf32(at.x, 300.0f), oy = SimMath::subf32(at.y, 300.0f);
+	CHECK(sf->decidedLocation().x == SimMath::addf32(SimMath::mulf32(2.0f, 300.0f), ox));
+	CHECK(sf->decidedLocation().y == SimMath::addf32(SimMath::mulf32(1.0f, 300.0f), oy));
+	CHECK(sf->decidedLocation().z == at.z);
+	// a tie keeps the first cell in x-major order: an enemy at x = 0, y = 1 comes before the one at x = 2, y = 1
+	a.logic->destroyObject(enemy);
+	// a second caster on the computer's team (its registry is still empty) for the tie
+	Object *necro2 = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 600.0f);
+	AISpecialPowerUpdate *sf2 = aiPowerOfType(*necro2, 44);
+	REQUIRE(sf2);
+	a.advance(1);
+	// both enemies in the x = 2 column (cells (2, 0) and (2, 2)); the tie keeps (2, 0), the first in x-major order
+	a.make("GondorFighterHorde", a.human, 200.0f, 400.0f);
+	a.make("GondorFighterHorde", a.human, 200.0f, 800.0f);
+	REQUIRE(sf2->decideNow() == true);
+	const float o2x = SimMath::subf32(necro2->getPosition()->x, 300.0f), o2y = SimMath::subf32(necro2->getPosition()->y, 300.0f);
+	CHECK(sf2->decidedLocation().x == SimMath::addf32(SimMath::mulf32(2.0f, 300.0f), o2x));
+	CHECK(sf2->decidedLocation().y == SimMath::addf32(SimMath::mulf32(0.0f, 300.0f), o2y)); // cell y = 0
+}
+
+TEST_CASE("RAI-POW: the team's special-power registry (RW 0x7A3EF5 / 0x7A5582): a computer's Necromancer registers Soul Freeze and another caster of the team is refused")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5202, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *necro = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf = aiPowerOfType(*necro, 44);
+	REQUIRE(sf);
+	a.make("GondorFighterHorde", a.human, 100.0f, 0.0f);
+	a.advance(1);
+	REQUIRE(sf->decision());
+	Team *team = necro->getTeam();
+	REQUIRE(team);
+	REQUIRE(team->specialPowerRecords().empty());
+	REQUIRE(sf->decideNow() == true);
+	REQUIRE(team->specialPowerRecords().size() == 1);
+	CHECK(team->specialPowerRecords()[0].powerType == sf->decision()->powerType);
+	CHECK(team->specialPowerRecords()[0].frame == a.logic->getFrame());
+	CHECK(team->specialPowerRecords()[0].caster == necro->getID());
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerType, nullptr, *a.logic) == necro);
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerType, necro, *a.logic) == necro);
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerType, nullptr, *a.logic)->getID() == necro->getID());
+	// the same caster passes the gate again (retail compares the record's id with the caster), a second unit of the team does not
+	CHECK(sf->decideNow() == true);
+	Object *other = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf2 = aiPowerOfType(*other, 44);
+	REQUIRE(sf2);
+	a.advance(1);
+	CHECK(sf2->decideNow() == false);
+}
+
+TEST_CASE("RAI-POW end to end: a Hard computer's Angmar Necromancer runs Soul Freeze on its own and writes the team's registry")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5203, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *necro = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf = aiPowerOfType(*necro, 44);
+	REQUIRE(sf);
+	a.make("GondorFighterHorde", a.human, 100.0f, 0.0f);
+	a.make("GondorFighterHorde", a.human, 110.0f, 0.0f);
+	// the retail module's starter is StartsPaused (data\ini\object\evilfaction\hordes\angmar\angmarhordes.ini); a script's
+	// unpause (pauseCountdown) is what the AI waits for, so lift it here to exercise the framework's readiness gate
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze");
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(*necro, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(a.logic->getFrame());
+	REQUIRE(sp->isReady());
+	a.advance(1);
+	REQUIRE(sf->decision());
+	AISpecialPowerUpdate::stats() = AISpecialPowerUpdate::Stats{};
+	int frame = -1;
+	for (int i = 0; i < 400 && frame < 0; ++i)
+	{
+		a.advance(1);
+		if (AISpecialPowerUpdate::stats().executedByType[44] != 0)
+		{
+			frame = i;
+		}
+	}
+	MESSAGE("Soul Freeze ran after " << frame << " frames");
+	// engine pin (seed 5203): the module's 25-frame counter (RW 0x99302D) from its first update and the roll above Hard's chance pass on this frame.
+	// Merge queue q43 (measured once on the merged tree and at each merge point): #226's own tree said 26; on the archive (q41's DECOMPFIX-1104B and q42
+	// move the random stream) the roll passes at 23 from #226's merge point on
+	CHECK(frame == 23);
+	CHECK(AISpecialPowerUpdate::stats().executedByType[44] == 1);
+	REQUIRE(necro->getTeam());
+	const std::vector<Team::SpecialPowerRecord> &records = necro->getTeam()->specialPowerRecords();
+	REQUIRE(!records.empty());
+	CHECK(records[0].powerType == sf->decision()->powerType);
+	CHECK(records[0].caster == necro->getID());
+	for (const Team::SpecialPowerRecord &r : records)
+	{
+		CHECK(r.caster == necro->getID());
+	}
+	// one record per successful decision: the next call appends exactly one
+	const size_t before = records.size();
+	REQUIRE(sf->decideNow() == true);
+	CHECK(records.size() == before + 1);
+}
+
+TEST_CASE("RAI-POW: the team special-power registry round-trips through a snapshot and an old snapshot stays version 1")
+{
+	OPENBFME_REQUIRE_START(s);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze");
+	REQUIRE(t);
+	TeamFactory f;
+	TeamPrototype *proto = f.initTeam("RAI-POW registry", nullptr, false, nullptr);
+	REQUIRE(proto);
+	Team *saved = f.createTeam(proto);
+	REQUIRE(saved);
+	saved->addSpecialPowerRecord(t->getSpecialPowerType(), 7, 42);
+	XferSave save;
+	saved->xfer(save);
+	REQUIRE(!save.data().empty());
+	CHECK(save.data()[0] == 2); // the block's version
+	Team *loaded = f.createTeam(proto);
+	REQUIRE(loaded);
+	XferLoad load(save.data());
+	loaded->xfer(load);
+	REQUIRE(loaded->specialPowerRecords().size() == 1);
+	CHECK(loaded->specialPowerRecords()[0].powerType == t->getSpecialPowerType());
+	CHECK(loaded->specialPowerRecords()[0].frame == 7);
+	CHECK(loaded->specialPowerRecords()[0].caster == 42);
+	// a team with no record writes version 1, and a version 1 load clears a record the target team already had
+	Team *empty = f.createTeam(proto);
+	REQUIRE(empty);
+	XferSave save1;
+	empty->xfer(save1);
+	REQUIRE(!save1.data().empty());
+	CHECK(save1.data()[0] == 1);
+	Team *loaded1 = f.createTeam(proto);
+	REQUIRE(loaded1);
+	loaded1->addSpecialPowerRecord(t->getSpecialPowerType(), 9, 43);
+	XferLoad load1(save1.data());
+	loaded1->xfer(load1);
+	CHECK(loaded1->specialPowerRecords().empty());
+}
+
+// review probe prtrkq (PR #226, Greptile P1 / Devin): an initialized Soul Freeze decision that went through a snapshot keeps deciding
+TEST_CASE("RAI-POW review probe: SOUL_FREEZE still decides after its module round-trips through a snapshot")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5204, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *necro = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf = aiPowerOfType(*necro, 44);
+	REQUIRE(sf);
+	a.make("GondorFighterHorde", a.human, 100.0f, 0.0f);
+	a.advance(1);
+	REQUIRE(sf->decision());
+	REQUIRE(sf->initialized());
+	XferSave save;
+	sf->xfer(save);
+	XferLoad load(save.data());
+	sf->xfer(load);
+	REQUIRE(sf->decision());
+	CHECK(sf->decideNow() == true); // before the load it answers yes (the registry test above); a null template after the load answers no
+}
+
+// pin: the position sampler's membership (record + 0x10) joins the player info record's state hash, so perf1's 4-player skirmish and uber1's Uber
+// battle hash differently from frame 0 (engine references, re-recorded here: not retail goldens)
+
+// ---- lane RAI-POW-2: the structure breakers (RW 0x9E7A98 / 0x9E7942 / 0x9E6EF4) and the record's position sampler (RW 0x8E4042 / 0xA024DA) -------------
+
+namespace
+{
+// the module of `type` on a spell book: the book's own active module, or (when that faction's command set does not reach the button) a module initialised
+// as if it did (RW 0x8B714F's test hook, as CALLTHEHORDE's test)
+AISpecialPowerUpdate *spellBookModule(Object &book, int type, std::unique_ptr<AISpecialPowerUpdate> &fresh)
+{
+	AISpecialPowerUpdate *found = aiPowerOfType(book, type);
+	REQUIRE(found);
+	if (found->active())
+	{
+		return found;
+	}
+	fresh = std::make_unique<AISpecialPowerUpdate>(&book, found->data());
+	fresh->initAsIfInCommandSetForTest();
+	return fresh.get();
+}
+
+// the spell book's power of the module's button made ready (RW 0x8B708B asks isReady)
+void readySpellPower(Object &book, AISpecialPowerUpdate &module, std::uint32_t frame)
+{
+	REQUIRE(module.decision());
+	const CommandButton *button = module.decision()->button;
+	REQUIRE(button);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName);
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(book, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(frame);
+	REQUIRE(sp->isReady());
+}
+
+// the centre RW 0x8E4082 grows for a cluster whose first point is `first` and whose second is `second`: weight starts at the sampler's radius `r`;
+// length L = (float)sqrt of the float sum of squares of first - second; newWeight = 0.5 * ((r + L) + r); the point moves along the normalised first -
+// second by (r - newWeight)
+Coord3D secondPointClusterCenter(const Coord3D &first, const Coord3D &second, float r)
+{
+	const float dz = SimMath::subf32(first.z, second.z), dy = SimMath::subf32(first.y, second.y), dx = SimMath::subf32(first.x, second.x);
+	const float length = SimMath::fstpDword(SimMath::length3d(dx, dy, dz));
+	const float inv = SimMath::divf32(1.0f, length);
+	const float nx = SimMath::mulf32(dx, inv), ny = SimMath::mulf32(dy, inv), nz = SimMath::mulf32(dz, inv);
+	const float newWeight = SimMath::mulf32(SimMath::addf32(SimMath::addf32(r, length), r), 0.5f);
+	return Coord3D{ SimMath::addf32(SimMath::addf32(SimMath::mulf32(nx, r), first.x), SimMath::mulf32(newWeight, SimMath::subf32(0.0f, nx))),
+		            SimMath::addf32(SimMath::addf32(SimMath::mulf32(ny, r), first.y), SimMath::mulf32(newWeight, SimMath::subf32(0.0f, ny))),
+		            SimMath::addf32(SimMath::addf32(SimMath::mulf32(nz, r), first.z), SimMath::mulf32(newWeight, SimMath::subf32(0.0f, nz))) };
+}
+
+// the brain's enemy manager picks its current enemy once the manager's update has run a few frames (RW 0x6C74C2 / 0x9B2EB9)
+void awaitEnemy(Arena &a)
+{
+	const AISkirmishPlayer *ai = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	for (int i = 0; i < 40 && (!ai || AITacticalAI::enemyOfGroup(*ai) < 0); ++i)
+	{
+		a.advance(1);
+	}
+	REQUIRE(ai);
+	REQUIRE(AITacticalAI::enemyOfGroup(*ai) >= 0); // tolerance: the arena has at least one hostile player
+}
+
+// every unit of the player's army list goes: the test's own busy unit is then the first one RW 0xA0241D finds
+void clearArmy(GameLogic &logic, const Player &player)
+{
+	const std::vector<ObjectID> ids = AITacticalAI::recordOf(logic, player.getPlayerIndex()).army();
+	for (ObjectID id : ids)
+	{
+		if (Object *o = logic.findObjectByID(id))
+		{
+			logic.destroyObject(o);
+		}
+	}
+}
+
+// the player's structures go, his citadel stays (a player without one is defeated): the sampler then holds only what the test makes
+void leaveOnlyTheCitadel(GameLogic &logic, const Player *player)
+{
+	std::vector<ObjectID> doomed;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == player && o->isKindOfName("STRUCTURE") && !o->isKindOfName("COMMANDCENTER"))
+		{
+			doomed.push_back(o->getID());
+		}
+	}
+	for (ObjectID id : doomed)
+	{
+		if (Object *o = logic.findObjectByID(id))
+		{
+			logic.destroyObject(o);
+		}
+	}
+}
+} // namespace
+
+TEST_CASE("RAI-POW-2: the structure breakers' decisions, their vtables and the sampler's constants (RW 0x9E7A98 / 0x9E7942 / 0x9E6EF4 / 0x8E4042)")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("RAI-POW-2 binary facts (set RW_GAME_DAT)");
+	}
+	else
+	{
+		CHECK(pe->u32At(0xC8DF88u + 0x1Cu) == 0x9E7A98u); // STRUCTURE_BREAKER
+		CHECK(pe->u32At(0xC8DF60u + 0x1Cu) == 0x9E7942u); // STRUCTURE_BREAKER_PREF_WALLS
+		CHECK(pe->u32At(0xC8DDFCu + 0x1Cu) == 0x9E6EF4u); // STRUCTURE_BASEKILL
+		CHECK(floatAt(*pe, 0xC8DF5C) == 500.0f);           // the walls' enemy radius
+		CHECK(floatAt(*pe, 0xC8DDF8) == 500.0f);           // the base kill's enemy radius
+		CHECK(floatAt(*pe, 0xBD889C) == 2.0f);             // RW 0x8E3DD6: the cluster reach's sqrt(2) factor
+		CHECK(floatAt(*pe, 0xBD869C) == 0.5f);             // RW 0x8E4082's weight step
+		CHECK(floatAt(*pe, 0xBD1908) == 1.0f);             // RW 0x403175's 1 / length
+		CHECK(pe->u32At(0x8E4069u) == 0x45100FF3u); // RW 0x8E4069: movss xmm0, [ebp + 8] (the sampler ctor's radius argument)
+		CHECK(pe->u32At(0x8E4071u) == 0x46110FF3u); // RW 0x8E4071: movss [esi + 0x1C], xmm0 (the sampler's radius at + 0x1C)
+		CHECK(pe->u32At(0x8E4076u) == 0x5D5EC68Bu); // RW 0x8E4076: mov eax, esi / pop esi / pop ebp (the ctor returns the sampler)
+	}
+	// the KindOf bits the wall mask and the base kill name (TheKindOfNames RW 0xDA0E68's order)
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("WALK_ON_TOP_OF_WALL") == 60);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("DEFENSIVE_WALL") == 61);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("WALL_UPGRADE") == 150);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("WALL_HUB") == 156);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("WALL_SEGMENT") == 189);
+	CHECK(ObjectTemplateInfoBuilder::kindOfIndex("DOZER_FACTORY") == 194);
+	CHECK(AISpecialPowerDecision::decisionPorted(27));
+	CHECK(AISpecialPowerDecision::decisionPorted(28));
+	CHECK(AISpecialPowerDecision::decisionPorted(36));
+}
+
+TEST_CASE("RAI-POW-2: STRUCTURE_BREAKER (RW 0x9E7A98) picks the enemy record's densest structure cluster (RW 0xA024DA)")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5301, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	leaveOnlyTheCitadel(*a.logic, a.human);
+	a.advance(1);
+	const Object *citadel = firstOf(*a.logic, a.human, "COMMANDCENTER");
+	REQUIRE(citadel);
+	REQUIRE(citadel->isKindOfName("DOZER_FACTORY"));
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *breaker = spellBookModule(*book, 27, fresh);
+	REQUIRE(breaker->decision());
+	CHECK(breaker->decision()->kind == AISpecialPowerDecision::KIND_LOCATION);
+	readySpellPower(*book, *breaker, a.logic->getFrame());
+	// the citadel is a one-member cluster: it is the densest cluster until the two farms below (RW 0xA024DA accepts one member)
+	CHECK(breaker->decideNow() == true);
+	CHECK(breaker->decidedLocation().x == citadel->getPosition()->x);
+	CHECK(breaker->decidedLocation().y == citadel->getPosition()->y);
+	// two enemy farms 20 apart: the cluster's centre is RW 0x8E4082's grown centre of the two, and it wins over the citadel's one
+	AIStatCollector *record = a.logic->skirmishAI().record(a.human->getPlayerIndex());
+	REQUIRE(record);
+	Object *farm1 = a.make("GondorFarm", a.human, -12.0f, 4.0f);
+	Object *farm2 = a.make("GondorFarm", a.human, 8.0f, 4.0f);
+	record->update(*a.logic); // the sampler add is deferred until the object's position is final (defence-records PR)
+	REQUIRE(std::abs(distance2D(*farm1->getPosition(), *citadel->getPosition())) > 400.0f); // tolerance: Evendim's midpoint is far from the human base
+	REQUIRE(std::abs(distance2D(*farm2->getPosition(), *farm1->getPosition())) < 30.0f);
+	const Coord3D expected = secondPointClusterCenter(*farm1->getPosition(), *farm2->getPosition(), 200.0f);
+	CHECK(breaker->decideNow() == true);
+	CHECK(breaker->decidedLocation().x == expected.x);
+	CHECK(breaker->decidedLocation().y == expected.y);
+	CHECK(breaker->decidedLocation().z == expected.z);
+	MESSAGE("STRUCTURE_BREAKER at " << distance2D(breaker->decidedLocation(), *farm1->getPosition()) << " from the first farm");
+	// a third farm far away is a cluster of one and changes nothing
+	a.make("GondorFarm", a.human, 500.0f, -300.0f);
+	record->update(*a.logic);
+	CHECK(breaker->decideNow() == true);
+	CHECK(breaker->decidedLocation().x == expected.x);
+	CHECK(breaker->decidedLocation().y == expected.y);
+	// RW 0xB4D9A0: a cluster whose centre the caster's player sees SHROUDED is skipped; with every cell shrouded nothing is left
+	a.logic->shroud()->undoRevealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.logic->shroud()->shroudMapForPlayer(a.ai->getPlayerIndex());
+	a.advance(1); // the shroud's next update folds the lookers into the cells
+	CHECK(breaker->decideNow() == false);
+	a.logic->shroud()->revealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.advance(1);
+	CHECK(breaker->decideNow() == true);
+	// a human caster never decides (RW 0x6A950B: no skirmish AI for his player)
+	Object *aragorn = a.make("GondorAragorn", a.human, 300.0f, 0.0f);
+	AISpecialPowerUpdate humanCaster(aragorn, breaker->data());
+	humanCaster.initAsIfInCommandSetForTest();
+	REQUIRE(humanCaster.decision());
+	CHECK(humanCaster.decideNow() == false);
+}
+
+TEST_CASE("RAI-POW-2: STRUCTURE_BREAKER_PREF_WALLS (RW 0x9E7942) takes the nearest enemy wall near the busy unit and falls back to RW 0x9E7A98")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5302, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	leaveOnlyTheCitadel(*a.logic, a.human);
+	clearArmy(*a.logic, *a.ai);
+	a.advance(1);
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *walls = spellBookModule(*book, 28, fresh);
+	REQUIRE(walls->decision());
+	readySpellPower(*book, *walls, a.logic->getFrame());
+	// two enemy walls far from the unit (the fallback's densest cluster; thin, so the summon's spot test accepts their midpoint)
+	AIStatCollector *record = a.logic->skirmishAI().record(a.human->getPlayerIndex());
+	REQUIRE(record);
+	Object *far1 = a.make("BlueMountainWall", a.human, -700.0f, 300.0f);
+	Object *far2 = a.make("BlueMountainWall", a.human, -420.0f, 300.0f);
+	record->update(*a.logic); // the sampler add is deferred until the object's position is final (defence-records PR)
+	const Coord3D clusterCenter = secondPointClusterCenter(*far1->getPosition(), *far2->getPosition(), 200.0f);
+	// a computer soldier busy with a human one; a wall of the human 100 away from it
+	Object *mine = a.make("GondorFighterHorde", a.ai, 0.0f, 0.0f);
+	Object *theirs = a.make("GondorFighterHorde", a.human, 60.0f, 0.0f);
+	Object *wall = a.make("BlueMountainWall", a.human, 100.0f, 0.0f);
+	REQUIRE(wall->isKindOfName("WALL_SEGMENT"));
+	REQUIRE(mine->getAIUpdateInterface()->aiAttackObject(theirs, CMD_FROM_PLAYER));
+	CHECK(walls->decideNow() == true);
+	// the wall is the target; the location base then applies the power's RandomizeTargetLocation walk (RW 0xA01C9C, 15 .. 150), because a spot under the
+	// wall's own footprint fails the ActionManager's pathable test (RW 0x82D2C9): the answer stays within 150 of the wall, not at the cluster
+	CHECK(distance2D(walls->decidedLocation(), *wall->getPosition()) <= 150.0f); // tolerance: RW 0xA01C9C's random walk is 15 .. 150
+	CHECK(distance2D(walls->decidedLocation(), clusterCenter) > 150.0f); // tolerance: the walk never reaches the cluster, 500+ away
+	MESSAGE("PREF_WALLS at " << distance2D(walls->decidedLocation(), *wall->getPosition()) << " from the wall");
+	// no busy unit: RW 0x9E7A5F runs the structure-breaker fallback; its densest cluster is the far walls' grown midpoint, and Ent Allies' summon spot
+	// test (RW 0x82E586, RadiusCursorRadius 100) refuses a spot inside that cluster, so the decision answers no (the near wall is gone: this is not it)
+	a.logic->destroyObject(mine);
+	a.logic->destroyObject(wall);
+	a.advance(1);
+	CHECK(walls->decideNow() == false);
+	// the fallback's candidate exists: the far walls are one cluster whose centre is the grown midpoint (the STRUCTURE_BREAKER test pins its arithmetic)
+	const AIPositionSampler::Group *cluster = nullptr;
+	for (const AIPositionSampler::Group &c : record->positions().groups())
+	{
+		if (c.members.size() == 2)
+		{
+			cluster = &c;
+		}
+	}
+	REQUIRE(cluster);
+	CHECK(cluster->center.x == clusterCenter.x);
+	CHECK(cluster->center.y == clusterCenter.y);
+	// with a busy unit but no wall within 500 the same fallback runs (the wall is gone)
+	Object *mine2 = a.make("GondorFighterHorde", a.ai, 0.0f, 40.0f);
+	Object *theirs2 = a.make("GondorFighterHorde", a.human, 60.0f, 40.0f);
+	REQUIRE(mine2->getAIUpdateInterface()->aiAttackObject(theirs2, CMD_FROM_PLAYER));
+	CHECK(walls->decideNow() == false);
+}
+
+TEST_CASE("RAI-POW-2: STRUCTURE_BASEKILL (RW 0x9E6EF4) takes an enemy DOZER_FACTORY within 500, else refuses while the enemy still lists one")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5303, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	clearArmy(*a.logic, *a.ai);
+	a.advance(1);
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *baseKill = spellBookModule(*book, 36, fresh);
+	REQUIRE(baseKill->decision());
+	readySpellPower(*book, *baseKill, a.logic->getFrame());
+	const Object *citadel = firstOf(*a.logic, a.human, "COMMANDCENTER");
+	REQUIRE(citadel);
+	REQUIRE(citadel->isKindOfName("DOZER_FACTORY"));
+	// a busy computer soldier 250 from the enemy citadel: the enemy dozer factory within 500 is the target
+	const Coord3D c = *citadel->getPosition();
+	const Object *a0 = firstOf(*a.logic, a.ai, "COMMANDCENTER");
+	REQUIRE(a0);
+	const float dx = a0->getPosition()->x - c.x, dy = a0->getPosition()->y - c.y;
+	const float len = std::sqrt(dx * dx + dy * dy);
+	REQUIRE(len > 400.0f); // tolerance: the two bases on Evendim are farther apart than the 500 scan
+	const Coord3D near{ c.x + dx / len * 250.0f, c.y + dy / len * 250.0f, 0.0f };
+	Object *mine = a.make("GondorFighterHorde", a.ai, near.x - a.where.x, near.y - a.where.y);
+	Object *theirs = a.make("GondorFighterHorde", a.human, 40.0f, 40.0f);
+	REQUIRE(mine->getAIUpdateInterface()->aiAttackObject(theirs, CMD_FROM_PLAYER));
+	CHECK(baseKill->decideNow() == true);
+	CHECK(baseKill->decidedLocation().x == citadel->getPosition()->x);
+	CHECK(baseKill->decidedLocation().y == citadel->getPosition()->y);
+	// no busy unit and the enemy's structure list still holds a DOZER_FACTORY (RW 0x9E6E8E): no
+	a.logic->destroyObject(mine);
+	a.advance(1);
+	CHECK(baseKill->decideNow() == false);
+}
+
+TEST_CASE("RAI-POW-2: the position sampler's membership (record + 0x10) round-trips through a snapshot")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5304, &err), err);
+	a.make("GondorFarm", a.human, 0.0f, 0.0f);
+	a.make("GondorFarm", a.human, 20.0f, 0.0f);
+	a.make("GondorFarm", a.human, 400.0f, 0.0f);
+	AIStatCollector *record = a.logic->skirmishAI().record(a.human->getPlayerIndex());
+	REQUIRE(record);
+	record->update(*a.logic); // the sampler add is deferred until the object's position is final (defence-records PR)
+	const std::vector<ObjectID> before = record->positions().members();
+	REQUIRE(before.size() >= 3); // tolerance: the human base's own structures join the three farms
+	const std::vector<AIPositionSampler::Group> groups = record->positions().groups();
+	REQUIRE(!groups.empty());
+	for (const AIPositionSampler::Group &g : groups)
+	{
+		CHECK(g.radius >= 200.0f); // tolerance: DefenseTreeNodeRadius (200) is a group's floor, a group with several members is larger (RW 0x8E4082)
+	}
+	XferSave save;
+	record->xfer(save);
+	REQUIRE(!save.data().empty());
+	CHECK(save.data()[0] == 3); // the block's version: the sampler's membership
+	AIStatCollector loaded(a.human->getPlayerIndex());
+	XferLoad load(save.data());
+	loaded.xfer(load);
+	CHECK(loaded.positions().members() == before);
+	REQUIRE(loaded.positions().groups().size() == groups.size());
+	for (size_t i = 0; i < groups.size(); ++i)
+	{
+		CHECK(loaded.positions().groups()[i].members == groups[i].members);
+		CHECK(loaded.positions().groups()[i].radius == groups[i].radius);
+		CHECK(loaded.positions().groups()[i].center.x == groups[i].center.x);
+		CHECK(loaded.positions().groups()[i].center.y == groups[i].center.y);
+		CHECK(loaded.positions().groups()[i].center.z == groups[i].center.z);
+	}
+}
+
+// ---- lane RAI-POW-2 (community #233): the economy debuffs (RW 0x9E74B7 / 0x9E726A) and the AIPlayer's enemy (RW 0x6AA5F5 / 0x8F47EB / 0x8F457D) ----------------------------
+
+// (the helpers spellBookModule, readySpellPower, awaitEnemy, clearArmy and leaveOnlyTheCitadel are the structure breakers' above)
+
+// pin: the AIPlayer's enemy cache (RW 0x8F47EB) enters the skirmish AI's hash and the save only once an AI has asked for an enemy (it holds a value);
+// a game that never asks keeps every recorded perf/uber state hash and the AI block's version 4 bytes.
+TEST_CASE("RAI-POW-2: the economy debuffs' decisions, vtables and the enemy acquire's constants (RW 0x9E74B7 / 0x9E726A / 0x8F457D)")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("RAI-POW-2 economy debuff binary facts (set RW_GAME_DAT)");
+	}
+	else
+	{
+		CHECK(pe->u32At(0xC8DE9Cu + 0x1Cu) == 0x9E74B7u); // DEBUFFECONOMYBUILDING
+		CHECK(pe->u32At(0xC8DE74u + 0x1Cu) == 0x9E726Au); // DEBUFFPRODUCTIONBUILDING
+		CHECK(floatAt(*pe, 0xC8DE70) == 200.0f);   // the production debuff's enemy radius
+		CHECK(floatAt(*pe, 0xBD1908) == 1.0f);     // the economy weight's start
+		CHECK(floatAt(*pe, 0xC1C4AC) == 999999995904.0f);  // acquireEnemy's initial best
+		CHECK(floatAt(*pe, 0xC798D4) == 499999997952.0f);  // an unreachable candidate
+		CHECK(floatAt(*pe, 0xC798D0) == 250000.0f);        // a rival AI already targets it
+		CHECK(floatAt(*pe, 0xC798CC) == 625.0f);           // a rival AI targets me
+		CHECK(pe->cstring(0xBFD514) == std::string("PlyrCreeps")); // the player name acquireEnemy skips
+	}
+	CHECK(AISpecialPowerDecision::decisionPorted(41));
+	CHECK(AISpecialPowerDecision::decisionPorted(42));
+}
+
+TEST_CASE("RAI-POW-2: DEBUFFECONOMYBUILDING (RW 0x9E74B7) takes the enemy record's first visible, built economy building and the enemy cache refreshes every 25 frames")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMordor", 5401, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	// no AI has asked for an enemy yet: the cache is empty, so the block keeps version 5's bytes (the new fields are not written)
+	{
+		XferSave empty;
+		a.logic->skirmishAI().xferState(empty, true);
+		REQUIRE(!empty.data().empty());
+		CHECK(empty.data()[0] == 5);
+	}
+	awaitEnemy(a);
+	leaveOnlyTheCitadel(*a.logic, a.human);
+	clearArmy(*a.logic, *a.ai);
+	a.advance(1);
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *blight = spellBookModule(*book, 41, fresh);
+	REQUIRE(blight->decision());
+	CHECK(blight->data()->m_commandButtonName == "Command_SpellBookBlight");
+	readySpellPower(*book, *blight, a.logic->getFrame());
+	// the AIPlayer's enemy (RW 0x6AA5F5 -> 0x8F47EB): the only enemy player, cached for 25 frames
+	AISkirmishPlayer *ai = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	REQUIRE(ai);
+	const Player *enemy = AITacticalAI::enemyPlayer(*a.logic, *ai);
+	REQUIRE(enemy == a.human);
+	CHECK(ai->enemyIndex == a.human->getPlayerIndex());
+	const std::uint32_t refresh = ai->enemyRefreshFrame;
+	CHECK(refresh >= a.logic->getFrame()); // tolerance: the refresh frame is this frame + 25, read at its boundary
+	CHECK(refresh <= a.logic->getFrame() + 25u); // tolerance: RW 0x8F47EB sets now + 25 exactly
+	a.advance(1);
+	CHECK(AITacticalAI::enemyPlayer(*a.logic, *ai) == enemy); // the cache is not refreshed before its frame
+	CHECK(ai->enemyRefreshFrame == refresh);
+	// two enemy economy buildings: the first in the record's list wins a tie (the weight both start at 1.0)
+	Object *farm1 = a.make("GondorFarm", a.human, 0.0f, 0.0f);
+	Object *farm2 = a.make("GondorFarm", a.human, 300.0f, 0.0f);
+	CHECK(blight->decideNow() == true);
+	CHECK(blight->decidedLocation().x == farm1->getPosition()->x);
+	CHECK(blight->decidedLocation().y == farm1->getPosition()->y);
+	// RW 0x44DDEC(object, 2): an UNDER_CONSTRUCTION building is skipped
+	const int underConstruction = ObjectTemplateInfoBuilder::objectStatusIndex("UNDER_CONSTRUCTION");
+	farm1->setStatus((unsigned)underConstruction, true);
+	CHECK(blight->decideNow() == true);
+	CHECK(blight->decidedLocation().x == farm2->getPosition()->x);
+	farm1->setStatus((unsigned)underConstruction, false);
+	// RW 0xB4D9A0: everything the caster's player sees shrouded -> no
+	a.logic->shroud()->undoRevealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.logic->shroud()->shroudMapForPlayer(a.ai->getPlayerIndex());
+	a.advance(1);
+	CHECK(blight->decideNow() == false);
+	a.logic->shroud()->revealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.advance(1);
+	CHECK(blight->decideNow() == true);
+	// the snapshot round-trips the two new AIPlayer fields; with a used cache the AI block is version 6
+	XferSave save;
+	a.logic->skirmishAI().xferState(save, true);
+	REQUIRE(!save.data().empty());
+	CHECK(save.data()[0] == 6);
+	const int savedEnemy = ai->enemyIndex;
+	const std::uint32_t savedRefresh = ai->enemyRefreshFrame;
+	ai->enemyIndex = -1;
+	ai->enemyRefreshFrame = 0;
+	XferLoad load(save.data());
+	a.logic->skirmishAI().xferState(load, true);
+	AISkirmishPlayer *loaded = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	REQUIRE(loaded);
+	CHECK(loaded->enemyIndex == savedEnemy);
+	CHECK(loaded->enemyRefreshFrame == savedRefresh);
+}
+
+TEST_CASE("RAI-POW-2: DEBUFFPRODUCTIONBUILDING (RW 0x9E726A) takes the enemy FS_FACTORY with the most enemy FS_FACTORYs within 200")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMordor", 5402, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	awaitEnemy(a);
+	clearArmy(*a.logic, *a.ai);
+	a.advance(1);
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *snowbind = spellBookModule(*book, 42, fresh);
+	REQUIRE(snowbind->decision());
+	CHECK(snowbind->data()->m_commandButtonName == "Command_SpellBookSnowbind");
+	readySpellPower(*book, *snowbind, a.logic->getFrame());
+	// three extra enemy citadels (FS_FACTORY): two 100 apart, one alone 600 away; the human's own citadel is alone at its base
+	const Object *base = firstOf(*a.logic, a.human, "COMMANDCENTER");
+	REQUIRE(base);
+	REQUIRE(base->isKindOfName("FS_FACTORY"));
+	Object *pair1 = a.make("MenFortressCitadel", a.human, 0.0f, 0.0f);
+	Object *pair2 = a.make("MenFortressCitadel", a.human, 100.0f, 0.0f);
+	Object *alone = a.make("MenFortressCitadel", a.human, 600.0f, 0.0f);
+	REQUIRE(pair1->isKindOfName("FS_FACTORY"));
+	REQUIRE(std::abs(distance2D(*alone->getPosition(), *pair1->getPosition())) > 400.0f); // tolerance: the lone citadel is out of the pair's 200 count
+	CHECK(snowbind->decideNow() == true);
+	// the pair's first: it counts pair2 and itself within 200; the lone ones count one
+	CHECK(snowbind->decidedLocation().x == pair1->getPosition()->x);
+	CHECK(snowbind->decidedLocation().y == pair1->getPosition()->y);
+	// the pair's first is shrouded: pair2 wins (still two in reach), and the lone ones stay at one
+	a.logic->shroud()->undoRevealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.logic->shroud()->shroudMapForPlayer(a.ai->getPlayerIndex());
+	a.advance(1);
+	const bool second = snowbind->decideNow();
+	CHECK(second == false);
+	if (second)
+	{
+		CHECK(snowbind->decidedLocation().x == pair2->getPosition()->x);
+	}
+	a.logic->shroud()->revealMapForPlayerPermanently(a.ai->getPlayerIndex());
+	a.advance(1);
+}
+
+// ---- lane RAI-POW-2 (community #234): CITADEL (RW 0x9E6CCB) ---------------------------------------------------------------------------------------------
+
+TEST_CASE("RAI-POW-2: CITADEL (RW 0x9E6CCB) draws its point along the AI base -> enemy DOZER_FACTORY line, lines 0x49 / 0x51")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("RAI-POW-2 CITADEL binary facts (set RW_GAME_DAT)");
+	}
+	else
+	{
+		CHECK(pe->u32At(0xC8DD50u + 0x1Cu) == 0x9E6CCBu); // the decision (vtable RW 0xC8DD50, slot 0x1C)
+		CHECK((pe->u32At(0x9E6D4Cu) & 0xFFFFu) == 0x496Au); // push 0x49: the first draw's line
+		CHECK((pe->u32At(0x9E6D8Au) & 0xFFFFu) == 0x516Au); // push 0x51: the second draw's line
+		CHECK(pe->cstring(0xC8DD70).find("AISpellBookCitadel.cpp") != std::string::npos); // the draws' source name
+		// review fix: the second draw's low bound is fld [0xBD19DC] (RW 0x9E6D9D) = -1.0f, the first's fldz (RW 0x9E6D5A)
+		CHECK((pe->u32At(0x9E6D9Du) & 0xFFFFu) == 0x05D9u);    // fld dword ptr [disp32]
+		CHECK(pe->u32At(0x9E6D9Fu) == 0x00BD19DCu);            // .. [0xBD19DC]
+		CHECK(floatAt(*pe, 0xBD19DC) == -1.0f);
+	}
+	CHECK(AISpecialPowerDecision::decisionPorted(37));
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5501, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	const AISkirmishPlayer *ai = a.logic->skirmishAI().findAI(a.ai->getPlayerIndex());
+	for (int i = 0; i < 40 && (!ai || AITacticalAI::enemyOfGroup(*ai) < 0); ++i)
+	{
+		a.advance(1);
+	}
+	REQUIRE(ai);
+	REQUIRE(AITacticalAI::enemyOfGroup(*ai) >= 0); // tolerance: the arena has at least one hostile player
+	leaveOnlyTheCitadel(*a.logic, a.human);
+	a.advance(1);
+	const Object *citadel = firstOf(*a.logic, a.human, "COMMANDCENTER");
+	REQUIRE(citadel);
+	REQUIRE(citadel->isKindOfName("DOZER_FACTORY"));
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *cit = spellBookModule(*book, 37, fresh);
+	REQUIRE(cit->decision());
+	CHECK(cit->data()->m_commandButtonName == "Command_SpellBookCitadel");
+	readySpellPower(*book, *cit, a.logic->getFrame());
+	// the body: the target is the enemy record's first DOZER_FACTORY (the human's citadel); the two draws are RW 0x6D332C at "AISpellBookCitadel.cpp"
+	// lines 0x49 / 0x51, both (0, 1), and the point is base + (target - base) * t1 with the perpendicular (t2 * dy, -t2 * dx) offset. The ActionManager's
+	// building-power placement test for type 0x67 is stop S-1874's unported branch (with its forbidden-object filter): it refuses the point, and the
+	// 15 .. 150 walk, so the decision answers no, as it does in this port today
+	const Coord3D &base = ai->build.startPosition; // RW 0x8F0284 -> RW 0x90CD45
+	const Coord3D &goal = *citadel->getPosition();
+	const float dx = SimMath::subf32(goal.x, base.x), dy = SimMath::subf32(goal.y, base.y), dz = SimMath::subf32(goal.z, base.z);
+	a.logic->random().enableCallLog(true);
+	a.logic->random().clearCallLog();
+	const bool yes = cit->decideNow();
+	const std::vector<GameLogicRandom::Call> &log = a.logic->random().callLog();
+	a.logic->random().enableCallLog(false);
+	REQUIRE(log.size() >= 2); // tolerance: the walk may add draws after the two of the point
+	CHECK(log[0].real);
+	CHECK(log[0].rlo == 0.0f);
+	CHECK(log[0].rhi == 1.0f);
+	CHECK(log[0].line == 0x49);
+	CHECK(log[0].file == "AISpellBookCitadel.cpp");
+	CHECK(log[1].real);
+	CHECK(log[1].rlo == -1.0f); // review fix: RW 0xBD19DC
+	CHECK(log[1].rhi == 1.0f);
+	CHECK(log[1].line == 0x51);
+	CHECK(log[1].file == "AISpellBookCitadel.cpp");
+	const float t1 = log[0].rresult, t2 = log[1].rresult;
+	const Coord3D point{ SimMath::addf32(base.x, SimMath::mulf32(dx, t1)), SimMath::addf32(base.y, SimMath::mulf32(dy, t1)),
+		                 SimMath::addf32(base.z, SimMath::mulf32(dz, t1)) };
+	// RW 0x9E6DE0's SSE: the cross product with (0, 0, t2): x += t2 * dy - dz * 0, y = (dz * 0 - t2 * dx) + y, z = (dx * 0 - dy * 0) + z
+	const float zdz = SimMath::mulf32(dz, 0.0f);
+	const Coord3D expected{ SimMath::addf32(point.x, SimMath::subf32(SimMath::mulf32(t2, dy), zdz)),
+		                    SimMath::addf32(SimMath::subf32(zdz, SimMath::mulf32(t2, dx)), point.y),
+		                    SimMath::addf32(SimMath::subf32(SimMath::mulf32(dx, 0.0f), SimMath::mulf32(dy, 0.0f)), point.z) };
+	// review fix (Greptile / Devin): the point the decision handed to RW 0xA0229F is the expected one
+	CHECK(cit->proposedLocationForTest().x == expected.x);
+	CHECK(cit->proposedLocationForTest().y == expected.y);
+	CHECK(cit->proposedLocationForTest().z == expected.z);
+	CHECK(ActionManager::canDoSpecialPowerAtLocation(*book, *cit->decision()->button, expected) == false); // S-1874: type 0x67 is not ported
+	CHECK(yes == false);
+	CHECK(log.size() == 4); // the point's two draws, then RW 0xA01C9C's random walk's two: the walk tried and was refused too
+	// a human's spell book never decides (RW 0x6A950B: no skirmish AI for his player)
+	Player *humanPlayer = a.logic->players().getNthPlayer(a.human->getPlayerIndex());
+	REQUIRE(humanPlayer);
+	Object *theirBook = SpecialPowerModules::getSpellBookObject(*a.logic, *humanPlayer);
+	if (theirBook)
+	{
+		AISpecialPowerUpdate humanCaster(theirBook, cit->data());
+		humanCaster.initAsIfInCommandSetForTest();
+		REQUIRE(humanCaster.decision());
+		CHECK(humanCaster.decideNow() == false);
+	}
+}
+
+// ---- lane RAI-POW-3: TREE_KILLER (Devastation, RW 0x9E70B6) and the terrain's tree-cluster index (TerrainTrees + 0x584) -----------------------
+
+namespace
+{
+// the spell book's module of `type`: the book's own active module, or (when the faction's command set does not reach the button) a module
+// initialised as if it did (RW 0x8B714F's test hook, as CALLTHEHORDE's test)
+AISpecialPowerUpdate *spellBookModuleForTest(Object &book, int type, std::unique_ptr<AISpecialPowerUpdate> &fresh)
+{
+	AISpecialPowerUpdate *found = aiPowerOfType(book, type);
+	REQUIRE(found);
+	if (found->active())
+	{
+		return found;
+	}
+	fresh = std::make_unique<AISpecialPowerUpdate>(&book, found->data());
+	fresh->initAsIfInCommandSetForTest();
+	return fresh.get();
+}
+
+// the spell book's power of the module's button made ready (RW 0x8B708B asks isReady)
+void readySpellPowerForTest(Object &book, AISpecialPowerUpdate &module, std::uint32_t frame)
+{
+	REQUIRE(module.decision());
+	const CommandButton *button = module.decision()->button;
+	REQUIRE(button);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName);
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(book, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(frame);
+	REQUIRE(sp->isReady());
+}
+} // namespace
+
+TEST_CASE("RAI-POW-3: TREE_KILLER (Devastation, RW 0x9E70B6) is ported and the computer's spell book decides it")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionIsengard", 6101, &err), err);
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i); // RW 0xB4D9A0 == 2 skips a cluster; the test sees every tree
+	}
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	REQUIRE(!a.logic->trees().records().empty()); // Evendim's map has trees
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *killer = spellBookModuleForTest(*book, 35, fresh);
+	REQUIRE(killer);
+	CHECK(AISpecialPowerDecision::decisionPorted(35)); // red before the port: false
+	REQUIRE(killer->decision());
+	CHECK(killer->decision()->kind == AISpecialPowerDecision::KIND_LOCATION);
+	CHECK(killer->data()->m_commandButtonName == "Command_SpellBookDevastation");
+	readySpellPowerForTest(*book, *killer, a.logic->getFrame());
+	CHECK(killer->decideNow() == true); // red before the port: false (the decision answers no and counts it)
+}
+
+TEST_CASE("RAI-POW-3: the tree-cluster index (TerrainTrees + 0x584) groups the map's trees at 100 and the decision burns the largest")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionIsengard", 6102, &err), err);
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	TerrainTrees &trees = a.logic->trees();
+	const std::vector<TerrainTrees::Record> &records = trees.records();
+	REQUIRE(!records.empty());
+	CHECK(TerrainTrees::kClusterPadding == 100.0f); // RW 0xBD88D8, RW 0x8E4042's padding argument at RW 0x684876
+
+	// every tree record is in exactly one cluster (RW 0x683C2D adds each record as the map makes it; RW 0x67D3C2's clear does not unlink)
+	std::vector<int> membership(records.size(), 0);
+	for (const TerrainTrees::Cluster &c : trees.clusters())
+	{
+		CHECK(!c.members.empty());
+		CHECK(c.radius >= TerrainTrees::kClusterPadding); // tolerance: the empty group's radius is the padding and it only grows (RW 0x8E40A4 / 0x8E4082)
+		for (int m : c.members)
+		{
+			REQUIRE(m >= 0); // tolerance: a member is a record index the map's add wrote
+			REQUIRE((size_t)m < records.size()); // tolerance: the index must name one of the map's records
+			++membership[(size_t)m];
+		}
+	}
+	for (int n : membership)
+	{
+		CHECK(n == 1);
+	}
+	// the expected pick: the cluster with the most members (strictly, in cluster order), none used and none SHROUDED (the map is revealed)
+	std::vector<TerrainTrees::Cluster> &clusters = trees.clusters();
+	size_t expected = clusters.size();
+	for (size_t i = 0; i < clusters.size(); ++i)
+	{
+		if (clusters[i].used || (expected != clusters.size() && clusters[i].members.size() <= clusters[expected].members.size()))
+		{
+			continue;
+		}
+		expected = i;
+	}
+	REQUIRE(expected != clusters.size());
+	const Coord3D expectedCenter = clusters[expected].center;
+
+	Player *aiPlayer = a.logic->players().getNthPlayer(a.ai->getPlayerIndex());
+	REQUIRE(aiPlayer);
+	Object *book = SpecialPowerModules::getSpellBookObject(*a.logic, *aiPlayer);
+	REQUIRE(book);
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *killer = spellBookModuleForTest(*book, 35, fresh);
+	REQUIRE(killer);
+	readySpellPowerForTest(*book, *killer, a.logic->getFrame());
+
+	// a snapshot taken before the cast has version 1's tree block (no used cluster)
+	std::vector<std::uint8_t> before;
+	REQUIRE_MESSAGE(a.logic->saveSnapshot(before, &err), err);
+	CHECK(killer->decideNow() == true);
+	CHECK(killer->decidedLocation().x == expectedCenter.x);
+	CHECK(killer->decidedLocation().y == expectedCenter.y);
+	CHECK(killer->decidedLocation().z == expectedCenter.z);
+	CHECK(clusters[expected].used); // RW 0x9E7095
+	MESSAGE("TREE_KILLER picked cluster " << expected << " of " << clusters.size() << " with " << clusters[expected].members.size() << " trees");
+
+	// a second decision skips the burnt cluster: it picks the next-largest unused one (or answers no when none is left)
+	size_t second = clusters.size();
+	for (size_t i = 0; i < clusters.size(); ++i)
+	{
+		if (clusters[i].used || (second != clusters.size() && clusters[i].members.size() <= clusters[second].members.size()))
+		{
+			continue;
+		}
+		second = i;
+	}
+	const bool again = killer->decideNow();
+	if (second == clusters.size())
+	{
+		CHECK(again == false);
+	}
+	else
+	{
+		CHECK(again == true);
+		CHECK(killer->decidedLocation().x == clusters[second].center.x);
+		CHECK(killer->decidedLocation().y == clusters[second].center.y);
+		CHECK(clusters[second].used);
+	}
+
+	// the used bytes round-trip in the TerrainTrees block (version 2, written only now that one is set)
+	std::vector<std::uint8_t> used;
+	REQUIRE_MESSAGE(a.logic->saveSnapshot(used, &err), err);
+	REQUIRE(used != before);
+	REQUIRE_MESSAGE(a.g.live->loadSnapshot(used, &err), err);
+	CHECK(trees.anyClusterUsed());
+	CHECK(trees.clusters()[expected].used);
+	// ... and the earlier version 1 snapshot loads into a game whose clusters were never used
+	REQUIRE_MESSAGE(a.g.live->loadSnapshot(before, &err), err);
+	CHECK(!trees.anyClusterUsed());
+}
+
+TEST_CASE("RAI-POW-3 review: a used tree cluster enters the game hash before any tree changes")
+{
+	// the decision sets the used byte (RW 0x9E7095) before the location base (RW 0xA0229F) answers, so a refused cast leaves a used cluster and no
+	// other trace: the byte alone must reach the hash
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionIsengard", 6103, &err), err);
+	TerrainTrees &trees = a.logic->trees();
+	REQUIRE(!trees.clusters().empty());
+	REQUIRE(!trees.anyChanged());
+	const std::uint32_t before = a.logic->computeStateHash();
+	trees.clusters().back().used = true;
+	REQUIRE(!trees.anyChanged()); // no tree toppled
+	CHECK(a.logic->computeStateHash() != before); // red before the fix: the trees' section was hashed only once a tree changed
+}
+
+TEST_CASE("RAI-POW-3 review: the tree clusters are the connected groups of trees closer than sqrt(2) * 100 (RW 0x683807's insert and merge)")
+{
+	// an independent check of the grouping (Greptile's note): the greedy insert merges every group a new tree touches, so the clusters are exactly the
+	// connected components of "squared 3D distance < 2 * 100^2" (RW 0x6831BE -> RW 0x8E3DD6); the test computes them with its own union-find
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionIsengard", 6104, &err), err);
+	const TerrainTrees &trees = a.logic->trees();
+	const std::vector<TerrainTrees::Record> &records = trees.records();
+	REQUIRE(records.size() > 1); // tolerance: the map's tree count is not this test's subject; it needs two trees to pair
+	std::vector<size_t> parent(records.size());
+	for (size_t i = 0; i < parent.size(); ++i)
+	{
+		parent[i] = i;
+	}
+	const std::function<size_t(size_t)> root = [&](size_t i) { return parent[i] == i ? i : parent[i] = root(parent[i]); };
+	const float bound = SimMath::mulf32(SimMath::mulf32(100.0f, 100.0f), 2.0f);
+	for (size_t i = 0; i < records.size(); ++i)
+	{
+		for (size_t j = i + 1; j < records.size(); ++j)
+		{
+			const Coord3D &p = records[i].position, &q = records[j].position;
+			const float dx = SimMath::subf32(p.x, q.x), dy = SimMath::subf32(p.y, q.y), dz = SimMath::subf32(p.z, q.z);
+			const float d2 = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
+			if (bound > d2)
+			{
+				parent[root(i)] = root(j);
+			}
+		}
+	}
+	std::map<size_t, std::vector<std::uint32_t>> expected;
+	for (size_t i = 0; i < records.size(); ++i)
+	{
+		expected[root(i)].push_back((std::uint32_t)i);
+	}
+	std::vector<std::vector<std::uint32_t>> want, got;
+	for (auto &e : expected)
+	{
+		want.push_back(e.second);
+	}
+	for (const TerrainTrees::Cluster &c : trees.clusters())
+	{
+		std::vector<std::uint32_t> m(c.members.begin(), c.members.end());
+		std::sort(m.begin(), m.end());
+		got.push_back(m);
+	}
+	std::sort(want.begin(), want.end());
+	std::sort(got.begin(), got.end());
+	CHECK(got.size() == want.size());
+	CHECK(got == want);
+	CHECK(want.size() < records.size()); // tolerance: the map has trees closer than the bound, so some cluster holds several (the exact grouping is checked above)
+	MESSAGE(records.size() << " trees in " << got.size() << " clusters");
 }
