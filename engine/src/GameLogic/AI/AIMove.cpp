@@ -369,7 +369,9 @@ bool AIMover::requestMeleeApproachPath(const Coord3D &target, bool bypassOffset)
 	{
 		dest.x = SimMath::addf32(dest.x, dx);
 		dest.y = SimMath::addf32(dest.y, dy);
-		const float h1 = m_host.groundHeightAt(dest.x, dest.y), h0 = m_host.groundHeightAt(target.x, target.y);
+		// lane WALLMELEE-1, RW 0x663AB4 .. 0x663AF8: the heights of the target's layer for the unit (RW 0x680A75(unit, target)) at the offset point and the target
+		const PathfindLayerEnum layer = m_pf.getLayerAt(obj, target);
+		const float h1 = m_pf.getLayerHeight(dest.x, dest.y, layer), h0 = m_pf.getLayerHeight(target.x, target.y, layer);
 		if (SimMath::absD((double)SimMath::subf32(h1, h0)) > 10.0)
 		{
 			dest = target;
@@ -380,7 +382,7 @@ bool AIMover::requestMeleeApproachPath(const Coord3D &target, bool bypassOffset)
 	{
 		return false;
 	}
-	m_pf.updateGoal(obj, &dest, LAYER_GROUND);
+	m_pf.updateGoal(obj, &dest, m_pf.getLayerAt(obj, dest)); // RW 0x68B3AB -> 0x8E28AC: the goal's layer for the unit (RW 0x680A75), lane WALLMELEE-1
 	const float ex = SimMath::subf32(pos.x, dest.x), ey = SimMath::subf32(pos.y, dest.y);
 	if (SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(ex, ey, 0.0f))) < 20.0f)
 	{
