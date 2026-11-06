@@ -782,10 +782,11 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
 		line("\tvec3 sel_ground = ALBEDO;");
 		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader);
-		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows
+		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows.
+		// Lane ECOCIRCLE-2: an additive decal has a == 0 and only rgb, so either share draws the pair
 		line("\tvec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);");
 		line("\tvec3 sel_over = vec3(0.0);");
-		line("\tif (sela.a > 0.0) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
+		line("\tif (sela.a > 0.0 || any(greaterThan(sela.rgb, vec3(0.0)))) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
 		line("\tALBEDO = mix(ALBEDO, w3d_to_linear(clamp(sel.rgb, 0.0, 1.0)), sel.a);");
 		line("\tfloat sel_keep = 1.0 - sel.a;");
 	}
