@@ -1322,7 +1322,7 @@ int CommandTranslator::evaluateCapture(Object *obj, const Coord3D *pos, Evaluate
 // a SIEGE_TOWER (+ 0x113 bit 5) without status DEPLOYED (0x3B, RW 0x44DDEC), able to use the button (RW 0x692A75: its power's module, the button in its
 // command set) and the button ready for it (RW 0x75CC3E: the power's module fully ready); then an object without an AI answers yes, and so does one whose
 // target has a SiegeDockingBehavior that gives it no approach point (dock interface slot 1, RW 0x85CA8A) or an approach point its AI reaches by a quick path
-// (RW 0x66403D -> RW 0x6F5BB0 clientSafeQuickDoesPathExist from the object's position with its locomotor set). evaluateContextCommand (RW 0x81E60B, after the
+// (RW 0x66403D -> RW 0x6F5BB0 quickDoesPathExist from the object's position with its locomotor set). evaluateContextCommand (RW 0x81E60B, after the
 // GUI command and the force-move tests, before the enter and attack tests): a hint is the attack hint (0xB1, the AttackObj cursor); a command is
 // MSG_DO_SPECIAL_POWER_AT_OBJECT (0x412) with Command_SpecialAbilitySiegeDeploy's power { the template id, the target, the button's options, no source, the
 // target's position } (the unit voice of the button, RW 0x8DD5FF, is the client's audio: not played).
@@ -1381,7 +1381,7 @@ bool CommandTranslator::canSiegeDeploy(const Object &target)
 			if (world && world->mapReady())
 			{
 				const PathfindLocomotorInfo loco = ai->locomotorInfo();
-				if (world->pathfinder().clientSafeQuickDoesPathExist(loco, o->getPosition(), &approach)) // RW 0x66403D -> RW 0x6F5BB0
+				if (world->pathfinder().quickDoesPathExist(ai->adapter(), o->getPosition(), &approach, &loco)) // RW 0x66403D -> RW 0x6F5BB0 (lane QPATH-1)
 				{
 					return true;
 				}

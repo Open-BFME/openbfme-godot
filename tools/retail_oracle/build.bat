@@ -72,9 +72,8 @@ if errorlevel 1 exit /b 1
 powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%helper_stale.ps1" -Name retail_oracle
 if errorlevel 2 exit /b 1
 if not errorlevel 1 echo up to date: retail_oracle & goto skip_host
-call "%VSDIR%\VC\Auxiliary\Build\vcvars32.bat" >nul
-if errorlevel 1 goto no_msvc
-cl /nologo /EHsc /O1 /GS- /arch:IA32 /W3 /Fo"%HERE%build\\" /Fe"%HERE%build\retail_oracle.exe" "%HERE%retail_oracle.cpp" /link /BASE:0x30000000 /FIXED /DYNAMICBASE:NO /STACK:0x100000 /SAFESEH:NO
+rem own shell: vcvars grows PATH on each call, and cmd refuses a line over 8191 characters
+cmd /c ""%VSDIR%\VC\Auxiliary\Build\vcvars32.bat" >nul && cl /nologo /EHsc /O1 /GS- /arch:IA32 /W3 /Fo"%HERE%build\\" /Fe"%HERE%build\retail_oracle.exe" "%HERE%retail_oracle.cpp" /link /BASE:0x30000000 /FIXED /DYNAMICBASE:NO /STACK:0x100000 /SAFESEH:NO"
 if errorlevel 1 exit /b 1
 :skip_host
 

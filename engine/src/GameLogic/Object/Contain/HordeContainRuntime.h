@@ -23,7 +23,7 @@
 // MOVEMENT (lane MOVE-1, GameLogic/Object/Contain/HordeMemberPass.cpp): in a game with an AIWorld update() is the movement part of HordeContain::update: the
 // TRANSPORT_MOVING mirror, the dirty flag, the member pass (snap, turn, walk to the slot, wait when ahead of it), the reform of the HORDE mover (greedy slot
 // reassignment). In a game without an AIWorld (the LOGIC-1 fixtures) update() sleeps forever and the members keep the slots they were given.
-// NOT PORTED (stop S-149 / S-222): the banner carriers, melee (M2), the flank history, the layer sync.
+// NOT PORTED (stop S-149 / S-222): the banner carriers, melee (M2), the flank history. Lane WALLHORDE-1: the layer sync is ported (RW 0x872EFC).
 
 #pragma once
 
@@ -417,6 +417,9 @@ public:
 	void bannerCarrierRemoved(const Object &member);
 	void expediteBannerRespawn() { if (m_bannerCountdown > 1) { m_bannerCountdown = 1; } } // RW 0x89ACC1
 	unsigned payloadCount() const; ///< RW interface slot 0x188: members, including those entering a garrison, without the banner.
+	// lane NECRODIE-1: RW 0x8705A6 (interface slot 0x114): the first contained member whose template lacks KindOf `kindOfBit`, else the first contained member;
+	// with nothing contained, the same pick over the members on their way into a garrison (interface + 0x54, by id); null when there is none
+	Object *firstMemberNotKindOf(unsigned kindOfBit) const;
 	unsigned lastMemberDamageFrame() const; ///< RW 0x86EB60, interface slot 0x26C.
 	// RW HordeContainInterface slot 0x18C (RW 0x873AE3): a new member of the payload template joins at `pos` facing `orientation` (the matrix), with the horde's
 	// weapon set flags, experience pool, attribute modifiers and lifetime (null when the horde is full or has no single payload template)

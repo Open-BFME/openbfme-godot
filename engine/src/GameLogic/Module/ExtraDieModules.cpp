@@ -89,8 +89,11 @@ const FieldParse kFireWeaponWhenDead[] = {
 	{ nullptr, nullptr, nullptr, 0 }
 };
 
+
+} // namespace
+
 // RW 0x70BFD1: a model-space point through the thing's transform (row-major basis, the translation is the position); the products are summed in RW's order
-Coord3D transformPoint(const Object &obj, const Coord3D &p)
+Coord3D ExtraDieModules::transformPoint(const Object &obj, const Coord3D &p)
 {
 	const float *m = obj.getBasis();
 	const Coord3D *t = obj.getPosition();
@@ -101,13 +104,6 @@ Coord3D transformPoint(const Object &obj, const Coord3D &p)
 	out.z = addf32(addf32(addf32(mulf32(m[8], p.z), mulf32(m[6], p.x)), mulf32(m[7], p.y)), t->z);
 	return out;
 }
-
-void reportAngle(const Object &obj, const char *cls)
-{
-	obj.logic().noteStop(std::string("[S-980] ") + cls + " of " + obj.getTemplate()->getName() +
-		": MinKillerAngle / MaxKillerAngle are not ported (the die applies as if the killer were in the window)");
-}
-} // namespace
 
 void CreateObjectDieModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
@@ -139,14 +135,9 @@ void FireWeaponWhenDeadBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p
 void CreateObjectDie::onDie(const DieModuleInterface::Event &event)
 {
 	Object *obj = getObject();
-	bool angle = false;
-	if (!m_data->m_dieMux.isDieApplicable(*obj, event, &angle))
+	if (!m_data->m_dieMux.isDieApplicable(*obj, event))
 	{
 		return;
-	}
-	if (angle)
-	{
-		reportAngle(*obj, "CreateObjectDie");
 	}
 	for (const std::string &name : m_data->m_upgradeRequired)
 	{
@@ -220,14 +211,9 @@ void FireWeaponWhenDeadBehavior::onDie(const DieModuleInterface::Event &event)
 	{
 		return;
 	}
-	bool angle = false;
-	if (!m_data->m_dieMux.isDieApplicable(*obj, event, &angle))
+	if (!m_data->m_dieMux.isDieApplicable(*obj, event))
 	{
 		return;
-	}
-	if (angle)
-	{
-		reportAngle(*obj, "FireWeaponWhenDeadBehavior");
 	}
 	static const int kBeingCanceled = ObjectTemplateInfoBuilder::objectStatusIndex("BUILD_BEING_CANCELED"); // RW status 0x56
 	if (kBeingCanceled >= 0 && obj->testStatus((unsigned)kBeingCanceled))
@@ -265,7 +251,7 @@ void FireWeaponWhenDeadBehavior::fire()
 	{
 		return; // RW: an unknown DeathWeapon parsed to NULL (RW 0x8860EE)
 	}
-	const Coord3D at = transformPoint(*obj, m_data->m_weaponOffset); // RW 0x70BFD1
+	const Coord3D at = ExtraDieModules::transformPoint(*obj, m_data->m_weaponOffset); // RW 0x70BFD1
 	ObjectWeapons::createAndFireTempWeapon(wt, obj, at); // RW 0x88611D: TheWeaponStore->createAndFireTempWeapon (RW 0x6CF530; lane DECOMP-1)
 	++m_shots;
 	(void)logic;
@@ -303,14 +289,9 @@ void FireWeaponWhenDeadBehavior::crc(StateHasher &hasher) const
 void UpgradeDie::onDie(const DieModuleInterface::Event &event)
 {
 	Object *obj = getObject();
-	bool angle = false;
-	if (!m_data->m_dieMux.isDieApplicable(*obj, event, &angle))
+	if (!m_data->m_dieMux.isDieApplicable(*obj, event))
 	{
 		return;
-	}
-	if (angle)
-	{
-		reportAngle(*obj, "UpgradeDie");
 	}
 	const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(m_data->m_upgradeToRemove) : nullptr; // RW 0x66F5E5
 	if (!u)
