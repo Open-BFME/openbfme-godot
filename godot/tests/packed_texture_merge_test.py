@@ -39,6 +39,7 @@ def run(command, cwd, records, name, env, allow_decoder_errors=False):
         'ERROR: Condition "buffer_size == 0" is true. Returning: ERR_INVALID_PARAMETER',
         "ERROR: Invalid or unsupported DDS texture file ''.",
         'ERROR: Failed to load DDS image.',
+        'ERROR: Packed texture RGBA8 image and mask byte counts differ',
     }
     errors = [line for line in output.splitlines() if line.startswith('ERROR:')]
     unexpected = [line for line in errors if not allow_decoder_errors or line not in decoder_errors]
@@ -60,7 +61,7 @@ def main():
     build, scratch = args.build_dir.resolve(), args.scratch.resolve()
     scratch.mkdir(parents=True, exist_ok=False)
     source = SOURCE.read_text()
-    call = 'mergePackedRgba8(image, png);'
+    call = 'if (!mergePackedRgba8(image, png))\n\t\t\treturn Ref<godot::Image>();'
     if source.count(call) != 1:
         raise RuntimeError('expected one bulk merge call; counterfactual refused')
     (scratch / 'Candidate.cpp').write_text(source)

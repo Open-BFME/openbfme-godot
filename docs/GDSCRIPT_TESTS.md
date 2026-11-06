@@ -40,7 +40,8 @@ On macOS it reuses the configured godot-cpp archive and builds a scratch extensi
 containing the actual packed loader. All 65,536 channel pairs are compared with
 Godot's previous C++ `get_pixel`/`set_pixel` Color operations, including PNG alpha
 replacement. Full JPEG/PNG loads at 256, 512 and 1024 pixels compare exact output
-bytes, RGB-only masks and nearest resizing. Read counters require supplied JPEG
+bytes, RGB-only masks and nearest resizing. Direct short/oversized mask checks
+require a named error and unchanged image/mask bytes at the internal RGBA8 boundary. Read counters require supplied JPEG
 bytes to avoid rereading the file; invalid supplied bytes must fail even when a
 valid file exists. Valid/corrupt DDS precedence, missing JPEGs and corrupt or
 unreadable companions are checked. Rounded RGB and multiplied-alpha alternatives
