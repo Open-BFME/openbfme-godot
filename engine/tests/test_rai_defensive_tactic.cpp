@@ -396,7 +396,7 @@ TEST_CASE("rai-def defensive tactic: a SimpleDefense team is sized from the AI t
 	target.position = ai.build.startPosition;
 	owner.targets.push_back(target);
 	AITactic tac;
-	tac.kindIndex = SIMPLE_DEFENSE;
+	tac.kindIndex = 9; // AITacticalAI::OffensiveKind SIMPLE_DEFENSE (RW 0x9B4F8F)
 	tac.kind = "SimpleDefense";
 	tac.id = owner.nextTacticId++;
 	tac.targetOwner = g.human->getPlayerIndex(); // the group's first AI (the chooser) is not the AI recruiting this team
