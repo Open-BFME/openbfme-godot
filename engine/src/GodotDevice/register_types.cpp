@@ -6,6 +6,7 @@
 #include "GodotDevice/GodotGammaComposite.h"
 #include "GodotDevice/GodotGameWorld.h"
 #include "GodotDevice/GodotInGameHud.h"
+#include "GodotDevice/MacOSTrackpad.h"
 #include "GodotDevice/GodotFXPlayer.h"
 #include "GodotDevice/GodotLogicClock.h"
 #include "GodotDevice/GodotMapObjectBuilder.h"
@@ -17,6 +18,7 @@
 #include "Common/ConsoleFilter.h"
 #include "Common/WindowsCrashDump.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 #include "GodotDevice/GodotVideoStream.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
@@ -36,6 +38,7 @@ static void initialize_openbfme(ModuleInitializationLevel p_level)
 		return;
 	}
 	GDREGISTER_CLASS(RetailFileSystem);
+	GDREGISTER_CLASS(ShaderBudget); // SHADER-BUDGET-1: the runtime varying guard
 	GDREGISTER_CLASS(W3DModelBuilder);
 	GDREGISTER_CLASS(MapTerrainBuilder);
 	GDREGISTER_CLASS(MapObjectBuilder);
@@ -64,6 +67,7 @@ static void uninitialize_openbfme(ModuleInitializationLevel p_level)
 {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE)
 	{
+		MacOSTrackpad::shutdown(); // no native callback may outlive the extension
 		WindowsCrashDump::uninstall();
 		ConsoleFilter::uninstall(); // RELEASE-1: the original stdout / stderr back before the extension's code goes
 		GammaComposite::shutdown();

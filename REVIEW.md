@@ -32,8 +32,9 @@ only. Authors follow the same rules, which also appear in `AGENTS.md`,
    attached to the pull request. Assertions state exact values; a bound needs
    a `// tolerance: <reason>` comment.
 7. **CI is not retail evidence.** Public CI has no game files, so retail tests
-   print SKIP there and count as passed. It runs no Godot tests and only
-   compiles Windows. A change to retail behaviour must say which retail tests
+   print SKIP there and count as passed. It runs the unit tests on Linux,
+   Windows and macOS and the Godot scripts that need no game files, but none
+   of the Godot gates. A change to retail behaviour must say which retail tests
    or games were run with the files present.
 8. **Game files.** Nothing from the games' installs enters the repository,
    including extracted or converted data.
