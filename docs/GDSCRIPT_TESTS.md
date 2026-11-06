@@ -30,6 +30,35 @@ this is neither a rendered HUD test nor a GPU timing benchmark. It reuses only
 the bindings archive and never replaces the game extension. Logs and results
 remain under the requested new scratch directory.
 
+The manual packed-texture CPU oracle is also separate from the GDScript runner:
+
+```sh
+python godot/tests/packed_texture_merge_test.py --build-dir engine/build --scratch workspace/packed-merge-check --godot "$GODOT"
+```
+
+On macOS it reuses the configured godot-cpp archive and builds a scratch extension
+containing the actual packed loader. All 65,536 channel pairs are compared with
+Godot's previous C++ `get_pixel`/`set_pixel` Color operations, including PNG alpha
+replacement. Full JPEG/PNG loads at 256, 512 and 1024 pixels compare exact output
+bytes, RGB-only masks and nearest resizing. Read counters require supplied JPEG
+bytes to avoid rereading the file; invalid supplied bytes must fail even when a
+valid file exists. Valid/corrupt DDS precedence, missing JPEGs and corrupt or
+unreadable companions are checked. Rounded RGB and multiplied-alpha alternatives
+must differ from the original oracle. `--baseline-ref <pre-change-ref>` loads the
+exact earlier loader, adding only an ignored fourth argument for the probe; the
+default counterfactual restores its per-pixel loop and JPEG reread. An optional
+`--bindings-source <godot-cpp-dir>` repairs moved bindings include paths.
+
+This manual fixture needs no retail files, window or GPU. It isolates HOME/XDG
+and game user directories, records commands/results under a new scratch folder,
+and never replaces the game's extension. Expected corrupt-image decoder errors
+are allowed explicitly; other engine/script errors fail. Diagnostic timings cover
+synthetic CPU decode/merge work only, with no performance threshold or gameplay
+frame-time claim. Both editions use this presentation path; the existing S-1482
+retail-merge inference remains unchanged. `packed_model_texture_test.gd` remains
+manual with private assets and covers model-builder/material-factory integration,
+corrupt JPEG/PNG retry and the S-1482 report.
+
 The launcher coverage gap is closed by the existing release pytest runners,
 including the resource-limited write-failure regression and the argument-aware
 social/OAuth fixtures. Every launcher entry point is listed below.
@@ -129,6 +158,7 @@ runner is claimed. All paths below are relative to the repository root.
 | Script | Runner/consumer | Scheduling decision |
 | --- | --- | --- |
 | `godot/tests/app_icon_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: bundled application icon resources; headless, 20 s timeout. |
+| `godot/tests/apt_view3d_visibility_test.gd` | Manual only; no generic pytest runner | Both editions: native paired View3D viewport visibility, retained cached/partial/empty canvas, tree exit/reentry, hidden pose uploads with unchanged instancer clocks, child-first teardown; private RotWK/BFME2 data, headless supported. |
 | `godot/tests/apt_canvas_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/audio_stress_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/audio_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |

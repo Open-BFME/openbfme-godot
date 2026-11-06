@@ -376,14 +376,14 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 	// Merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range, moves the AIs' play;
 	// measured once on the merged tree and at its merge point, NECRODIE-1 keeps the census): no CommandButtonHuntUpdate object; an AutoHealBehavior,
 	// HordeNotifyTargetsOfImminentProbableCrushingUpdate, HorseHordeContain and RepairSpecialPower object (112)
-	// pr/rai-defensive-tactic on the #217 / #214 main (measured on the merged tree; the DEFENSIVE target heuristic and SimpleDefense move the AIs' play):
-	// a CommandButtonHuntUpdate object; no HordeNotifyTargetsOfImminentProbableCrushingUpdate or HorseHordeContain object (111)
+	// Merge queue q42 (CASTLEATK-1: nothing attacks an object with the status UNATTACKABLE, RW 0x6C9207, with ATKSTATE-1a's attack-state gates, moves the
+	// AIs' play; measured once on the merged tree and at each merge point, #216, #220 and #225 keep the census): no
+	// HordeNotifyTargetsOfImminentProbableCrushingUpdate or HorseHordeContain object (110)
 	CHECK(classes == std::set<std::string>{
 		"AISpecialPowerUpdate", "ActiveBody", "ArmorUpgrade", "ArrowStormUpdate", "AttributeModifierAuraUpdate", "AttributeModifierPoolUpdate",
 		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoHealBehavior", "AutoPickUpUpdate",
 		"BannerCarrierUpdate", "BezierProjectileBehavior", "BloodthirstyUpdate", "BoredUpdate", "BuildableHeroListUpgrade", "BuildingBehavior",
 		"CastleBehavior", "CastleMemberBehavior", "CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower",
-		"CommandButtonHuntUpdate",
 		"CommandPointsUpgrade", "CommandSetUpgrade", "CostModifierUpgrade", "CreateObjectDie", "CritterEmitterUpdate", "DamageFilteredCreateObjectDie",
 		"DarknessSpecialPower", "DefectionHelper", "DelayedDeathBody", "DestroyDie", "DevastateSpecialPower", "DoCommandUpgrade", "DualWeaponBehavior",
 		"ElvenWoodSpecialPower", "EmotionTrackerUpdate", "FXListDie", "FiringTrackerHelper", "FoundationAIUpdate", "FreezingRainSpecialPower",
