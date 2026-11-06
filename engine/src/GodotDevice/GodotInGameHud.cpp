@@ -1183,7 +1183,14 @@ void HudDevice::applyCamera(const Vector2 &window, double alpha)
 	}
 	Transform3D t;
 	t.origin = eye;
-	t.basis = Basis::looking_at((target - eye).normalized(), Vector3(0, 1, 0));
+	const Vector3 dir = (target - eye).normalized();
+	Vector3 up = Vector3(0, 1, 0);
+	// lane FEAT-BLDFX-1: CameraShakerVolume's roll (DONOR BFME2 0x65B09's Z rotation) turns the camera's up vector around the view direction
+	if (cam && cam->cameraShakeRoll() != 0.0f && dir.length_squared() > 0.0f)
+	{
+		up = up.rotated(dir, cam->cameraShakeRoll());
+	}
+	t.basis = Basis::looking_at(dir, up);
 	// lane CAMANIM-1: in mode 4 the camera build (RW 0x502858) takes the animation's transform and the view plane its FOV as the horizontal angle
 	// (RW 0x48B919); the W3D camera looks down its -Z with Y up as Godot's does, so the matrix's columns map axis by axis (SAGE -> Godot)
 	Matrix3D tm;
@@ -3160,6 +3167,11 @@ void InGameHudNode::_process(double delta)
 			for (const LiveFX::ViewShake &v : fx->takeViewShakes())
 			{
 				d->cam->shake(v.epicenter, v.type, v.angle);
+			}
+			// lane FEAT-BLDFX-1: CameraShakerVolume (TARGET RW 0x5DFE90 / DONOR BFME2 0x65DAD): the view keeps them and adds their rotations per client frame
+			for (const CameraShakerFx &s : fx->takeCameraShakers())
+			{
+				d->cam->addCameraShake(s);
 			}
 		}
 	}
