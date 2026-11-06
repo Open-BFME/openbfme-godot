@@ -2,6 +2,7 @@
 // See GodotAptPlayer.h.
 
 #include "GodotDevice/GodotAptPlayer.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "Common/BuildVersion.h"
 #include "Common/PathIO.h"
 #include "Common/GameEdition.h"
@@ -5075,7 +5076,7 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 							if (material.is_null())
 							{
 								Ref<Shader> shader; shader.instantiate();
-								shader->set_code(String(aptImageModeShader(mode).c_str()));
+								SetShaderCode(shader.ptr(), String(aptImageModeShader(mode).c_str()), String("apt image mode ") + String(modeText.c_str()));
 								material.instantiate(); material->set_shader(shader);
 							}
 							rs->canvas_item_set_material(item, material->get_rid());

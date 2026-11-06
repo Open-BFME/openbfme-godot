@@ -64,7 +64,9 @@ inline RelayLogFile classicLog(std::uint64_t seed, NetworkConfig &config)
 				j.generation = g;
 				j.firstCommand = log.commands.size();
 				log.rejoins.push_back(j);
-				start += (std::uint32_t)(next(x) % 8) + ((next(x) % 10) == 0 ? 1000u : 0u);
+				// two statements: C++ leaves the order of a + b's operands open, and MSVC draws them the other way round
+				start += (std::uint32_t)(next(x) % 8);
+				start += (next(x) % 10) == 0 ? 1000u : 0u;
 			}
 			const std::uint32_t length = (std::uint32_t)(next(x) % 14);
 			for (std::uint32_t f = start; f < start + length; ++f)
@@ -173,7 +175,9 @@ inline RelayLogFile soloLog(std::uint64_t seed, NetworkConfig &config)
 		j.generation = g;
 		j.firstCommand = log.commands.size();
 		log.rejoins.push_back(j);
-		const std::uint32_t at = end + (std::uint32_t)(next(x) % 10) + ((next(x) % 8) == 0 ? 500u : 0u);
+		// two statements: as in classicLog, the draws' order must not be left to the compiler
+		const std::uint32_t delay = (std::uint32_t)(next(x) % 10);
+		const std::uint32_t at = end + delay + ((next(x) % 8) == 0 ? 500u : 0u);
 		NetCommandMsg r;
 		r.type = NETCOMMANDTYPE_REJOIN;
 		r.slot = (std::uint8_t)s;
