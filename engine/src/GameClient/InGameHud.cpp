@@ -721,12 +721,14 @@ void InGameHud::update(double seconds)
 		m_decalBuiltSettings = m_decalSettings;
 		m_decalLogic = &m_config.game.logic();
 		++m_decalBuilds;
+		markRaisedSelectionDecals();
 		++m_decalVersion;
 	}
 	else if (m_clientFrames != m_decalClientFrame && RefreshSelectionDecals(&m_config.game.drawables(), m_decalSettings, m_clientFrames, m_selectionDecals))
 	{
 		// lane SELPERF-1: once a client frame (30 a second of render time), as RadiusDecal::update runs (BFME2 decomp RadiusDecal.cpp: the throb counts
 		// client frames); INFERENCE: the markers follow their drawables at that rate too (retail draws at FramesPerSecondLimit 30, S-456)
+		markRaisedSelectionDecals();
 		++m_decalVersion;
 	}
 	m_decalClientFrame = m_clientFrames;
@@ -1532,8 +1534,8 @@ std::vector<std::string> InGameHud::stops() const
 				  "the radius > 110 flag are not used, the cursor texture is composited by the terrain shader alongside selection decals (S-2522)");
 	out.push_back(TerrainResourceFeedback::stopLine()); // lane OWNERFIX-2
 	out.push_back("[S-5032] placement ghost decal shadows (lane OWNERFIX-2): the ghost draws its model state's SHADOW_ALPHA_DECAL / SHADOW_ADDITIVE_DECAL "
-				  "(a well's / statue's area of effect) as a terrain decal at the texture's alpha; the shadow opacity fade and every other drawable's decal "
-				  "shadow are not drawn (S-3304)");
+				  "(a well's / statue's area of effect) with the selection decals (lane PLACEDECAL-1) at ShadowOpacityPeak; an additive one is refused; the "
+				  "_DYNAMIC types' opacity fade, addShadow's LOD gate and every other drawable's decal shadow are not ported (S-3304)");
 	for (const std::string &l : m_cursorStops)
 	{
 		out.push_back(l);
@@ -1729,4 +1731,12 @@ void InGameHud::presentBeacons()
 			}
 		}
 	}
+}
+
+// lane SELWALL-1: each selection decal's `raised` (SelectionDecals.h): the floor of its terrain part is the terrain's height at the decal's place (RotWK RW
+// 0x50C4DE .. 0x50C569: max(getLayerHeight(x, y, GROUND), the bridge's height + 1 or -100 without one); the port has no terrain bridges (S-161), so the
+// terrain alone). The logic is held here (RENDERWAIT-1: the HUD update runs in the held frame), so its terrain is read directly
+void InGameHud::markRaisedSelectionDecals()
+{
+	MarkRaisedSelectionDecals(m_selectionDecals, m_config.game.logic());
 }

@@ -367,7 +367,7 @@ void GateOpenAndCloseBehavior::setGeometry(bool openGeometry, bool scan)
 	AIWorld *ai = obj->logic().aiWorld();
 	if (ai)
 	{
-		ai->removeObjectFromPathfindMap(*obj); // RW 0x6E861E
+		ai->removeObjectFromPathfindMapKeepGateFlag(*obj); // RW 0x6E861E (lane WALLFOOT-1: the keeping removal, the box's bit 17 stays)
 	}
 	m_geometryState = wanted;
 	for (const std::string &n : m_data->m_geometryForOpen)
@@ -661,8 +661,8 @@ std::vector<std::string> GateModules::acceptanceStops()
 		"(RW 0x77BF7B / 0x77C037), the gate buttons (RW 0x9410D7 / 0x9436E9), AIGateUpdate (RW 0x8B4D34) and the push-out scan of the units in the gate's way "
 		"(RW 0x89C759, lane GATEPUSH-1) run; the collide interface's repel (RW 0x89C6F5, RepelCollidingUnits) is ported but meets no contact: the port's collision "
 		"pass pairs AI units only (S-581); not ported: the object interface call RW 0x68C3E6 at the start of the "
-		"update, the AI notification RW 0x68BE59(9), the pathfinder's gate-flag keeping removal (RW 0x6E861E: the plain removal here) and the skirmish AI's gate "
-		"list (TheSkirmishAIManager + 0xA74); FakePathfindPortalBehaviour runs since lane WALL-2 (PortalModules.h)",
+		"update, the AI notification RW 0x68BE59(9) and the skirmish AI's gate list (TheSkirmishAIManager + 0xA74); the pathfinder's gate-flag keeping removal "
+		"(RW 0x6E861E) runs since lane WALLFOOT-1 and FakePathfindPortalBehaviour since lane WALL-2 (PortalModules.h)",
 		"[S-1941] GateProxyBehavior and the Proxy link of GateOpenAndCloseBehavior (onObjectCreated RW 0x89CB19, Orthanc) are not ported: the messages and buttons find "
 		"only a GateOpenAndCloseBehavior",
 		"[S-1942] the gate sounds (SoundOpeningGateLoop / SoundFinishedOpeningGate / SoundClosingGateLoop / SoundFinishedClosingGate, RW 0x89C261 / 0x89C1A4) are "

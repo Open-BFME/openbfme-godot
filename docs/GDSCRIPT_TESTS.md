@@ -11,6 +11,54 @@ python -m pytest -q -rs tools/test_gdscript.py
 
 ## Scheduling policy
 
+The manual native HUD grayscale fixture is separate from the GDScript runner:
+
+```sh
+python godot/tests/hud_grayscale_test.py --bindings-build engine/build --scratch workspace/gray-check --godot "$GODOT"
+```
+
+On macOS with a configured native bindings build, it compiles a scratch extension
+and executes the production `grayTextureFor` body using real Godot CPU Images.
+A recording texture boundary checks that grayscale requests cause one grayscale
+upload and no color upload/readback; exact luminance/alpha, source immutability,
+cache identity, both request orders, mipmaps and missing/empty images are checked.
+Synthetic BC3/DXT5 mip blocks also pin exact decompressed grayscale/alpha bytes
+and verify that the cached compressed image's format and bytes stay unchanged.
+`--source-ref <old-ref>` runs the same assertions against a prior revision (the
+pre-fix code fails the upload/readback checks). No retail files or GPU are used;
+this is neither a rendered HUD test nor a GPU timing benchmark. It reuses only
+the bindings archive and never replaces the game extension. Logs and results
+remain under the requested new scratch directory.
+
+The manual packed-texture CPU oracle is also separate from the GDScript runner:
+
+```sh
+python godot/tests/packed_texture_merge_test.py --build-dir engine/build --scratch workspace/packed-merge-check --godot "$GODOT"
+```
+
+On macOS it reuses the configured godot-cpp archive and builds a scratch extension
+containing the actual packed loader. All 65,536 channel pairs are compared with
+Godot's previous C++ `get_pixel`/`set_pixel` Color operations, including PNG alpha
+replacement. Full JPEG/PNG loads at 256, 512 and 1024 pixels compare exact output
+bytes, RGB-only masks and nearest resizing. Read counters require supplied JPEG
+bytes to avoid rereading the file; invalid supplied bytes must fail even when a
+valid file exists. Valid/corrupt DDS precedence, missing JPEGs and corrupt or
+unreadable companions are checked. Rounded RGB and multiplied-alpha alternatives
+must differ from the original oracle. `--baseline-ref <pre-change-ref>` loads the
+exact earlier loader, adding only an ignored fourth argument for the probe; the
+default counterfactual restores its per-pixel loop and JPEG reread. An optional
+`--bindings-source <godot-cpp-dir>` repairs moved bindings include paths.
+
+This manual fixture needs no retail files, window or GPU. It isolates HOME/XDG
+and game user directories, records commands/results under a new scratch folder,
+and never replaces the game's extension. Expected corrupt-image decoder errors
+are allowed explicitly; other engine/script errors fail. Diagnostic timings cover
+synthetic CPU decode/merge work only, with no performance threshold or gameplay
+frame-time claim. Both editions use this presentation path; the existing S-1482
+retail-merge inference remains unchanged. `packed_model_texture_test.gd` remains
+manual with private assets and covers model-builder/material-factory integration,
+corrupt JPEG/PNG retry and the S-1482 report.
+
 The launcher coverage gap is closed by the existing release pytest runners,
 including the resource-limited write-failure regression and the argument-aware
 social/OAuth fixtures. Every launcher entry point is listed below.
@@ -110,6 +158,7 @@ runner is claimed. All paths below are relative to the repository root.
 | Script | Runner/consumer | Scheduling decision |
 | --- | --- | --- |
 | `godot/tests/app_icon_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: bundled application icon resources; headless, 20 s timeout. |
+| `godot/tests/apt_view3d_visibility_test.gd` | Manual only; no generic pytest runner | Both editions: native paired View3D viewport visibility, retained cached/partial/empty canvas, tree exit/reentry, hidden pose uploads with unchanged instancer clocks, child-first teardown; private RotWK/BFME2 data, headless supported. |
 | `godot/tests/apt_canvas_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/audio_stress_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/audio_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
@@ -155,6 +204,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/glow_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/hero_radius_cursor_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/hud_image_mode_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/hud_globe_visibility_test.gd` | Manual only; no generic pytest runner | Both editions: native Palantir viewport movie/player/HUD hide/reveal, cached canvas, empty canvas, visible teardown, shared-shell attach/detach and continued rendering, unchanged simulation; private RotWK/BFME2 data, headless supported. |
 | `godot/tests/hudredraw_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/install_paths_test.gd` | `tools/release/test_install_paths.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/language_warning_test.gd` | `tools/release/test_language_warning.py` | The unchecked-language warning box (#77): text, Copy details, the per-install dismissal and hostile `%` sequences; headless. |
@@ -254,6 +304,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 | `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
 | `godot/tests/map_water_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `water.ini` over a retail map. |
+| `godot/tests/macos_trackpad_test.gd` | Manual retail | Pan, pinch, rotation adapter, HUD/input guards and simulation hash; windowed macOS also checks native monitor installation. See `docs/MACOS_TRACKPAD.md`. |
 | `godot/tests/map_weather_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `weather.ini` over a retail map. |
 
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |

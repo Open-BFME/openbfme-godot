@@ -7,7 +7,7 @@
 // Sources, in priority order:
 //  * target fact (BFME1 retail, Open-BFME-1 BaseHeightMapGetClipHeight.cpp, retail 0x006C5B40):
 //      getClipHeight clamps the sample to the map and reads the 16-bit height.
-//  * target fact (BFME2 retail, Open-BFME-2 GameLogic/Map/TerrainLogic_parseWaypointData.cpp):
+//  * target fact (BFME2 retail, Open-BFME-2 GameLogic/Map/TerrainLogic.cpp parseWaypointDataChunk):
 //      the WaypointsList chunk is a count and pairs of waypoint ids (ZH skeleton verbatim).
 //  * donor (ZH): BaseHeightMap.cpp getHeightMapHeight :860-1000 (the SW-NE split used by LOGIC; the
 //      render split per cell is chosen by the blend flip and can differ, spec 2.2), TerrainLogic.cpp

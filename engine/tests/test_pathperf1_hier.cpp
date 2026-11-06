@@ -60,6 +60,26 @@ std::vector<Coord3D> nodes(const Path *p)
 	}
 	return out;
 }
+
+// lane PATH-REBUILD: a found path keeps its optimised nodes alone (the cells between them are gone), so a region is tested against the legs, 5 apart
+bool crosses(const Path *p, float xMin, float xMax, float yMin)
+{
+	const std::vector<Coord3D> pts = nodes(p);
+	for (size_t i = 0; i + 1 < pts.size(); ++i)
+	{
+		const float dx = pts[i + 1].x - pts[i].x, dy = pts[i + 1].y - pts[i].y;
+		const int steps = std::max(1, (int)(std::sqrt(dx * dx + dy * dy) / 5.0f));
+		for (int k = 0; k <= steps; ++k)
+		{
+			const float x = pts[i].x + dx * (float)k / (float)steps, y = pts[i].y + dy * (float)k / (float)steps;
+			if (x >= xMin && x <= xMax && y >= yMin)
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
 } // namespace
 
 TEST_CASE("pathperf1: costToHierGoal is RW 0x9345AA, floor(sqrt(dx*dx + dy*dy) * 10 + 0.5) of the cell index difference")
@@ -99,12 +119,7 @@ TEST_CASE("pathperf1: a detour around a wall runs inside the hierarchical corrid
 	CHECK(end.x == doctest::Approx(to.x).epsilon(0.001));
 	CHECK(end.y == doctest::Approx(to.y).epsilon(0.001));
 	// the path goes through the opening
-	bool throughGap = false;
-	for (const Coord3D &c : nodes(p.get()))
-	{
-		throughGap = throughGap || (c.x >= 640.0f && c.x <= 800.0f && c.y >= 480.0f);
-	}
-	CHECK(throughGap);
+	CHECK(crosses(p.get(), 640.0f, 800.0f, 480.0f));
 	// the corridor: the start's block is number 0, the goal's the last; a block on the far side of the wall's foot is off it
 	const int last = pf.hierarchicalLastIndex();
 	CHECK(last >= 2);
@@ -212,12 +227,7 @@ TEST_CASE("pathperf1: a wall inside one block splits it into two block zones: th
 	CHECK_FALSE(partial);
 	CHECK(pf.hierarchicalLastIndex() >= 2);
 	CHECK(pf.hierarchicalPositionOf(60, 56) >= 0); // tolerance: on the corridor at any index (-1 is off it); the opening's block is on the corridor
-	bool throughOpening = false;
-	for (const Coord3D &c : nodes(p.get()))
-	{
-		throughOpening = throughOpening || (c.x >= 600.0f && c.x <= 620.0f && c.y >= 520.0f);
-	}
-	CHECK(throughOpening);
+	CHECK(crosses(p.get(), 600.0f, 620.0f, 520.0f));
 	const Coord3D end = *p->getLastNode()->getPosition();
 	CHECK(end.x == doctest::Approx(to.x).epsilon(0.001));
 }
@@ -317,7 +327,7 @@ TEST_CASE("pathperf1: the S-162 and S-163 stop lines, whole (the inferences and 
 			  "(RW 0x938240) is the port's zone pair test (INFERRED equal); "
 			  "a goal inside the obstacle the unit ignores (a builder's own site) gets no corridor (INFERENCE: the port's builders aim inside the footprint)"));
 	// lane ATTACKPATH-1: findAttackPath's own corridor (RW 0x6FC4CB .. 0x6FC4F9) is ported and left the S-162 line
-	CHECK(has("S-163 a complete path skips the rebuild RW applies to it from the unit's facing (RW 0x767B0E, called at RW 0x6FDCDA; the path to the closest cell gets none), the closest cell's third test (RW 0x6EF3C3) and the search-free path of an object whose + 0x4AC flag is set (RW 0x6FD66D) are not ported"));
+	CHECK(has("S-163 the closest cell's third test (RW 0x6EF3C3) and the search-free path of an object whose + 0x4AC flag is set (RW 0x6FD66D) are not ported"));
 }
 
 // PR #111 (Uber profile only): an incomplete battalion corridor route is retried without the corridor. RW 0x6FE7CB has no second search, so the

@@ -11,6 +11,7 @@
 #include "GameLogic/Locomotor.h"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -103,6 +104,8 @@ struct Unit : AIMoveHost
 	Sim *sim;
 	TestObject obj;
 	LocoHostMock lh;
+	// lane BUMP-1: every model condition change the mover asks for (declared before `ai`: the mover's destructor still asks)
+	std::vector<std::pair<std::string, bool>> conditions;
 	std::unique_ptr<Locomotor> loco;
 	std::unique_ptr<AIMover> ai;
 	std::unique_ptr<AIMoveToState> state;
@@ -117,7 +120,8 @@ struct Unit : AIMoveHost
 	PathfindObject &pathfindObject() override { return obj; }
 	LocomotorHost &locomotorHost() override { return lh; }
 	Locomotor *locomotor() override { return loco.get(); }
-	PathfindLocomotorInfo locomotorInfo() const override { return groundLoco(); }
+	PathfindLocomotorInfo locoInfo = groundLoco(); // lane PATH-REBUILD: a test may give the unit a locomotor's facts for the path rebuild
+	PathfindLocomotorInfo locomotorInfo() const override { return locoInfo; }
 	unsigned frame() const override;
 	void setPosition(const Coord3D &p) override { obj.pos = p; lh.sync(); }
 	float orientation() const override { return angle; }
@@ -155,9 +159,33 @@ struct Unit : AIMoveHost
 	float closeEnoughDist() const override { return 10.0f; }
 	float locomotorSpeed() const override { return loco->speed(); }
 	bool movingBackwards() const override { return false; }
-	bool setModelCondition(const char *, bool) override { return true; }
+	bool isProjectile() const override { return false; }
+	bool treatAsAircraftForLocoDistToGoal() const override { return false; }
+	Coord3D machineGoal{};
+	Coord3D machineGoalPosition() const override { return machineGoal; }
+	bool setModelCondition(const char *name, bool on) override
+	{
+		conditions.emplace_back(name, on);
+		return true;
+	}
 	float relativeAngleTo(const Coord3D &p) const override { return std::atan2(p.y - obj.pos.y, p.x - obj.pos.x) - angle; }
 	const PathfindObject *findPathfindObject(PathfindObjectID id) override; // lane ATTACKPATH-1: the attack path's victim lookup
+	// lane BUMP-1: the object facts of RW 0x66D16E's gates, and the step aside's command (RW 0x66C4CA)
+	bool infantry = false, usingAbility = false, offMap = false, largeRectangle = false;
+	int formationId = 0;
+	float formationX = 0.0f;
+	bool isInfantryKind() const override { return infantry; }
+	bool isUsingSpecialAbility() const override { return usingAbility; }
+	bool isOffMapObject() const override { return offMap; }
+	bool isLargeRectanglePathfind() const override { return largeRectangle; }
+	int objectFormationId() const override { return formationId; }
+	float objectFormationOffsetX() const override { return formationX; }
+	int stepAsides = 0;
+	bool moveToPositionFromAI(const Coord3D &) override
+	{
+		++stepAsides;
+		return true;
+	}
 };
 
 struct Sim
@@ -605,7 +633,7 @@ TEST_CASE("ai move: the repath cadence: a path found from the queue is not asked
 	// onEnter queued one request; after the path came, update asked for none or one more (the quick path leaves pathGoal stale)
 	CHECK(u.state->pathRequests() <= 2);
 	CHECK(u.ai->path() != nullptr);
-	CHECK(AIMover::allStops().size() == 6);
+	CHECK(AIMover::allStops().size() == 5);
 	for (const std::string &s : AIMover::allStops())
 	{
 		CHECK(s.compare(0, 6, "S-166 ") == 0);
@@ -1157,7 +1185,7 @@ TEST_CASE("backlog5: the goal's movement check has the info radius 1 (RW 0x6FD34
 		std::unique_ptr<Path> p(sim.pf->findPathWithoutCorridor(&a.obj, groundLoco(), &from, &goal, &partial));
 		REQUIRE(p != nullptr);
 		CHECK(partial == (enemyByGoal == 1));
-		CHECK(p->nodeCount() == (enemyByGoal ? 1u : 59u));
+		CHECK(p->nodeCount() == (enemyByGoal ? 1u : 6u)); // lane PATH-REBUILD: the search's 59 cells rebuilt from its optimised nodes (the detour's corners rounded)
 		CHECK(p->getLastNode()->getPosition()->x == (enemyByGoal ? 285.0f : 405.0f));
 		CHECK(p->getLastNode()->getPosition()->y == 305.0f);
 	}
@@ -1213,12 +1241,12 @@ TEST_CASE("backlog5: S-163 remains reported while retail exit-production consume
 		a.stateIdValue = state;
 		a.obj.throughUnits = true;
 		REQUIRE(a.ai->computePath(Coord3D{ 405.0f, 105.0f, 0.0f }));
-		CHECK(a.ai->path()->nodeCount() == (state == 7 ? 2u : 29u));
+		CHECK(a.ai->path()->nodeCount() == (state == 7 ? 2u : 4u)); // lane PATH-REBUILD: the search's 29 cells rebuilt from its optimised nodes
 		CHECK(a.obj.throughUnits == (state != 7));
 		// The exit flag is one-shot: a subsequent search takes the ordinary path.
 		if (state == 7) {
 			REQUIRE(a.ai->computePath(Coord3D{405, 105, 0}));
-			CHECK(a.ai->path()->nodeCount() == 29u);
+			CHECK(a.ai->path()->nodeCount() == 4u);
 		}
 	}
 	// RW 0x666036 .. 0x66607C for a battalion member: state 7 with the flag takes ONE straight path (through the wall), the flag is dropped and the machine's goal is
@@ -1244,7 +1272,7 @@ TEST_CASE("backlog5: S-163 remains reported while retail exit-production consume
 		CHECK(a.exitQuickDest.x == dest.x);
 		CHECK(a.exitQuickDest.y == dest.y);
 		REQUIRE(a.ai->computePath(dest));
-		CHECK(a.ai->path()->nodeCount() == 29u); // one-shot: the second path goes around the wall (the ordinary search's pinned result above)
+		CHECK(a.ai->path()->nodeCount() == 4u); // one-shot: the second path goes around the wall (the ordinary search's pinned result above)
 		CHECK(a.exitQuickPaths == 1);
 		for (const std::string &line : a.ai->stops())
 		{
@@ -1294,4 +1322,291 @@ TEST_CASE("attackpath1: a failed attack path re-aims at the victim's position an
 	// tolerance: adjustToPossibleDestination may move the point off the victim's own cell, but only to a cell beside it, never back to the stale position
 	CHECK(std::fabs(d.x - v.obj.pos.x) <= 20.0f); // tolerance: a cell beside the victim's
 	CHECK(std::fabs(d.y - v.obj.pos.y) <= 20.0f); // tolerance: a cell beside the victim's
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// lane PATH-REBUILD: why the finish of a found path (Path::rebuild, RW 0x767B0E) matters to the blocked unit's detour. The detour (RW 0x6F7938,
+// Pathfinder::patchPath) aims at the point ahead on the OPTIMISED chain and lists the RAW nodes after that point's node as its further targets;
+// the splice (RW 0x767A66, Path::splicePatch) rejoins the RAW segment closest to the detour's end. A search's raw chain (every A* cell) can
+// run two cells off its optimised line; the detour's end then rejoins a raw cell behind it and the spliced path doubles back along one line,
+// which Path::updateClosestSegment (retail's tie: the earlier leg) never leaves: the Rivendell campaign's starting horde (upstream PR #182).
+// Retail frees that raw chain when the search ends (raw == optimised afterwards), so its splice rejoins the optimised leg ahead
+// ---------------------------------------------------------------------------------------------------------
+namespace
+{
+// the search's raw chain for a unit at (605, 1105) going to (705, 1205): the A* cells east along y = 1105 then north along x = 705; on the open
+// map the optimiser sees straight from the head to the tail, so the optimised chain is the diagonal and the raw cells lie up to 70 off it
+std::unique_ptr<Path> bulgingSearchPath(Pathfinder &pf, const PathfindObject &obj)
+{
+	std::vector<Coord3D> cells;
+	for (int x = 60; x <= 70; ++x)
+	{
+		cells.push_back(Coord3D{ (float)x * 10.0f + 5.0f, 1105.0f, 0.0f });
+	}
+	for (int y = 111; y <= 120; ++y)
+	{
+		cells.push_back(Coord3D{ 705.0f, (float)y * 10.0f + 5.0f, 0.0f });
+	}
+	std::unique_ptr<Path> p(new Path());
+	for (size_t i = cells.size(); i-- > 0;)
+	{
+		p->prependNode(&cells[i], LAYER_GROUND);
+	}
+	for (PathNode *n = p->getFirstNode(); n; n = n->getNext())
+	{
+		n->setCanOptimize(true); // as prependCells marks the search's cells
+	}
+	p->optimize(pf, &obj, groundLoco().validSurfaces, false, nullptr);
+	REQUIRE(p->getFirstNode()->getNextOptimized() == p->getLastNode()); // the diagonal
+	return p;
+}
+
+// the optimised chain's legs, head to tail
+std::vector<Coord3D> optimisedLegs(const Path &p)
+{
+	std::vector<Coord3D> legs;
+	for (const PathNode *n = p.getFirstNode(); n && n->getNextOptimized(); n = n->getNextOptimized())
+	{
+		const Coord3D *a = n->getPosition();
+		const Coord3D *b = n->getNextOptimized()->getPosition();
+		legs.push_back(Coord3D{ b->x - a->x, b->y - a->y, 0.0f });
+	}
+	return legs;
+}
+
+bool anyLegDoublesBack(const std::vector<Coord3D> &legs)
+{
+	for (size_t i = 1; i < legs.size(); ++i)
+	{
+		if (legs[i - 1].x * legs[i].x + legs[i - 1].y * legs[i].y < 0.0f)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// the blocked repath's detour and splice (AIMover::blockedRepath, RW 0x6631BF) for a unit on the path: the point 10 ahead on the optimised chain
+// is free on the open map, so the detour aims at it and is spliced in
+void detourAndSplice(Sim &sim, Unit &u, Path &path)
+{
+	path.updateClosestSegment(u.obj.pos);
+	const LocomotorPathPoint ahead = path.computePointAhead(10.0f);
+	const PathNode *node = path.lastAheadNode();
+	REQUIRE(node != nullptr);
+	Path *patch = sim.pf->patchPath(u.obj, groundLoco(), ahead.position, node);
+	REQUIRE(patch != nullptr);
+	path.splicePatch(patch);
+}
+} // namespace
+
+TEST_CASE("path rebuild: a detour spliced into a search's unrebuilt chain rejoins a raw cell behind its end and the path doubles back; the rebuilt chain "
+		  "(raw == optimised) rejoins the leg ahead")
+{
+	Sim sim(80, 130);
+	sim.build();
+	Unit &u = sim.add(1, 645.0f, 1145.0f); // on the diagonal, 40 along it
+	// today's chain before this lane: the raw cells kept
+	{
+		std::unique_ptr<Path> path = bulgingSearchPath(*sim.pf, u.obj);
+		detourAndSplice(sim, u, *path);
+		const std::vector<Coord3D> legs = optimisedLegs(*path);
+		REQUIRE(legs.size() == 17); // the detour, the leg back down, then the raw cells from (655, 1105): five east, ten north
+		CHECK(legs[0].x == 10.0f); // the detour: the unit to the point's cell (655, 1155)
+		CHECK(legs[0].y == 10.0f);
+		CHECK(legs[1].y == -50.0f); // the splice joined the raw cell (655, 1105) below: straight back down the map
+		CHECK(anyLegDoublesBack(legs));
+	}
+	// the chain retail has: rebuilt when the search ended
+	{
+		std::unique_ptr<Path> path = bulgingSearchPath(*sim.pf, u.obj);
+		Coord2D facing;
+		facing.x = 0.70710677f;
+		facing.y = 0.70710677f;
+		path->rebuild(*sim.pf, &u.obj, groundLoco(), facing, groundLoco().validSurfaces, false);
+		REQUIRE(path->nodeCount() == 2); // the diagonal alone: no corner to round, every raw cell gone
+		detourAndSplice(sim, u, *path);
+		const std::vector<Coord3D> legs = optimisedLegs(*path);
+		REQUIRE(legs.size() == 2);
+		CHECK(legs[0].x == 10.0f);
+		CHECK(legs[0].y == 10.0f);
+		CHECK(legs[1].x == 50.0f); // the splice joined the tail (705, 1205): on along the diagonal
+		CHECK(legs[1].y == 50.0f);
+		CHECK_FALSE(anyLegDoublesBack(legs));
+		CHECK(path->getFirstNode()->getNext()->getNext() == path->getLastNode());
+	}
+}
+
+TEST_CASE("path rebuild: the mover's quick path and a found path come back rebuilt (raw == optimised), a detour's patch does not")
+{
+	Sim sim(60, 40);
+	sim.build();
+	Unit &a = sim.add(2, 55.0f, 135.0f);
+	// the quick path (RW 0x665A83 .. 0x665BF5): two nodes, rebuilt from the unit's facing with its locomotor's turn radius; facing north toward a goal east,
+	// the bend's arc points show the rebuild ran (a plain two-node chain would be raw == optimised anyway)
+	a.locoInfo.present = true;
+	a.locoInfo.fastTurnRadius = 10.0f;
+	a.locoInfo.slowTurnRadius = 10.0f;
+	a.locoInfo.maxTurnWithoutReform = 3.0f;
+	a.locoInfo.turnThresholdHS = 3.0f;
+	a.setOrientation(1.5707964f);
+	REQUIRE(a.ai->computeQuickPath(Coord3D{ 255.0f, 135.0f, 0.0f }));
+	REQUIRE(a.ai->path() != nullptr);
+	CHECK(a.ai->path()->nodeCount() == 6); // the start, the quarter turn's three arc points (RW 0x765E00's count at radius 10), the bent head's copy, the goal
+	for (const PathNode *n = a.ai->path()->getFirstNode(); n; n = n->getNext())
+	{
+		CHECK(n->getNext() == n->getNextOptimized());
+	}
+	CHECK(a.ai->path()->getLastNode()->getPosition()->x == 255.0f);
+	a.locoInfo = groundLoco();
+	// a found path across the open map
+	Coord3D from = a.obj.pos;
+	Coord3D to{ 455.0f, 335.0f, 0.0f };
+	std::unique_ptr<Path> found(sim.pf->findPath(&a.obj, groundLoco(), &from, &to));
+	REQUIRE(found != nullptr);
+	CHECK(found->isOptimized());
+	for (const PathNode *n = found->getFirstNode(); n; n = n->getNext())
+	{
+		CHECK(n->getNext() == n->getNextOptimized());
+	}
+	// the detour's patch keeps its own cells (RW 0x6F7938 marks it optimised without a rebuild)
+	std::unique_ptr<Path> original(detourPath());
+	std::unique_ptr<Path> patch(sim.pf->patchPath(&a.obj, groundLoco(), original.get(), true));
+	REQUIRE(patch != nullptr);
+	CHECK(patch->nodeCount() > 2); // tolerance: the patch keeps the original's cells from the joined node on (backlog5 pins which); here only that they are kept matters
+}
+
+namespace
+{
+// lane BUMP-1: A (id 2) moves at a standing enemy B (id 7) with equal priority and overlaps it, as the priority case above; returns A's blocked flag after
+// one onCollide (frame 2: blockedFrames 1, not the cadence frame)
+bool bump1Blocked(const std::function<void(Unit &, Unit &)> &setup)
+{
+	Sim sim(40, 20);
+	sim.build();
+	Unit &a = sim.add(2, 55.0f, 105.0f);
+	Unit &b = sim.add(7, 70.0f, 105.0f, 1);
+	sim.order(a, 355.0f, 105.0f);
+	sim.step(false);
+	REQUIRE(a.ai->path() != nullptr);
+	a.obj.pos = Coord3D{ 55.0f, 105.0f, 0.0f };
+	a.lh.sync();
+	b.obj.pos = Coord3D{ 62.0f, 105.0f, 0.0f };
+	b.lh.sync();
+	setup(a, b);
+	++sim.frame;
+	sim.world.frame = sim.frame;
+	a.ai->onCollide(b.obj);
+	return a.ai->isBlocked();
+}
+} // namespace
+
+TEST_CASE("BUMP-1: RW 0x66D243, an INFANTRY unit in machine state 0x13 is never blocked; another state or a non-infantry unit is")
+{
+	CHECK(bump1Blocked([](Unit &, Unit &) {}));
+	CHECK_FALSE(bump1Blocked([](Unit &a, Unit &) {
+		a.infantry = true;
+		a.stateIdValue = 0x13;
+	}));
+	CHECK(bump1Blocked([](Unit &a, Unit &) { a.stateIdValue = 0x13; }));
+	CHECK(bump1Blocked([](Unit &a, Unit &) { a.infantry = true; }));
+}
+
+TEST_CASE("BUMP-1: RW 0x66D427, two units of one formation (Object + 0x42C): the one with the larger formation offset x (+ 0x430) is not blocked, "
+		  "whatever the priorities")
+{
+	// same formation, A's x above B's: not blocked (the priority rule alone would block: equal priorities)
+	CHECK_FALSE(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationId = b.formationId = 3;
+		a.formationX = 10.0f;
+		b.formationX = -10.0f;
+	}));
+	// same formation, A's x below or equal: blocked even with A's priority above B's
+	CHECK(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationId = b.formationId = 3;
+		a.formationX = -10.0f;
+		b.formationX = 10.0f;
+		a.priority = 50;
+	}));
+	CHECK(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationId = b.formationId = 3;
+		a.formationX = b.formationX = 5.0f;
+	}));
+	// formation 0 is no formation: the priority rule (A above B: not blocked)
+	CHECK_FALSE(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationX = 10.0f;
+		b.formationX = -10.0f;
+		a.priority = 50;
+		(void)b;
+	}));
+	// different formations: the priority rule
+	CHECK(bump1Blocked([](Unit &a, Unit &b) {
+		a.formationId = 3;
+		b.formationId = 4;
+		a.formationX = 10.0f;
+	}));
+}
+
+TEST_CASE("BUMP-1: RW 0x66D616, on a cadence frame a blocked unit that need not turn (RW 0x663F83) drops MOVING and BACKING_UP")
+{
+	Sim sim(40, 20);
+	sim.build();
+	Unit &a = sim.add(2, 55.0f, 105.0f);
+	Unit &b = sim.add(7, 70.0f, 105.0f, 1);
+	sim.order(a, 355.0f, 105.0f);
+	sim.step(false);
+	REQUIRE(a.ai->path() != nullptr);
+	b.obj.pos = Coord3D{ 62.0f, 105.0f, 0.0f };
+	b.lh.sync();
+	bool dropped = false;
+	for (int f = 0; f < 3; ++f)
+	{
+		++sim.frame;
+		sim.world.frame = sim.frame;
+		a.obj.pos = Coord3D{ 55.0f, 105.0f, 0.0f };
+		a.angle = 0.0f; // facing the goal along +x: no turn needed
+		a.lh.sync();
+		a.conditions.clear();
+		const int before = a.ai->blockedFrames();
+		a.ai->onCollide(b.obj);
+		// id 2: the cadence frame is blockedFrames 2 (2 % 5 == 2 % 5)
+		if (before == 2)
+		{
+			REQUIRE(a.conditions.size() == 2);
+			CHECK(a.conditions[0] == std::make_pair(std::string("MOVING"), false));
+			CHECK(a.conditions[1] == std::make_pair(std::string("BACKING_UP"), false));
+			dropped = true;
+		}
+		else
+		{
+			CHECK(a.conditions.empty());
+		}
+		a.ai->doLocomotor();
+	}
+	CHECK(dropped);
+}
+
+TEST_CASE("BUMP-1: RW 0x66D37A .. 0x66D3A2, a standing idle unit bumped by a standing enemy steps aside unless it uses a special ability (status 0x46), "
+		  "is OFF_MAP or is LARGE_RECTANGLE_PATHFIND")
+{
+	auto stepAsides = [](const std::function<void(Unit &)> &setup) {
+		Sim sim(40, 20);
+		sim.terrain.cliff.insert({ 6, 10 }); // B stands on a cliff cell: the possible destination (RW 0x6F3C87) moves it
+		sim.build();
+		Unit &a = sim.add(2, 62.0f, 105.0f);
+		Unit &b = sim.add(7, 62.0f, 105.0f, 1);
+		REQUIRE_FALSE(a.ai->isMoving());
+		REQUIRE_FALSE(b.ai->isMoving());
+		b.stateIdValue = 0;
+		setup(b);
+		++sim.frame;
+		sim.world.frame = sim.frame;
+		b.ai->onCollide(a.obj);
+		return b.stepAsides;
+	};
+	CHECK(stepAsides([](Unit &) {}) == 1);
+	CHECK(stepAsides([](Unit &b) { b.usingAbility = true; }) == 0);
+	CHECK(stepAsides([](Unit &b) { b.offMap = true; }) == 0);
+	CHECK(stepAsides([](Unit &b) { b.largeRectangle = true; }) == 0);
+	CHECK(stepAsides([](Unit &b) { b.idle = false; }) == 0);
 }

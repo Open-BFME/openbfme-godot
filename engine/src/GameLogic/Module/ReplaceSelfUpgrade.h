@@ -13,7 +13,7 @@
 //     from the object's position + across * total; for each piece: the step = -half * across (SSE, the binary's order) is added, then the objects within
 //     the piece's bounding circle radius (template + 0xB0) * 3.0 (RW 0xBDD42C) of the OBJECT's position (FROM_BOUNDINGSPHERE_3D, RW 0xA39340 on
 //     ThePartitionManager) that are any of WALL_UPGRADE / WALL_HUB (RW 0x46E72F(0, 0x96, 0x9C) -> 0x797E8D) and whose geometry overlaps the piece's at the
-//     object's position and angle (RW 0x67C5F3 -> RW 0xAD2CE0) refuse, unless the piece is a CASTLE_KEEP and the found one is not (template + 0x118 bit 28);
+//     object's position and angle (RW 0x67C5F3 -> RW 0xAD2CE0) refuse, unless the piece is a WALL_HUB and the found one is not (template + 0x118 bit 28: KindOf 156);
 //     every geometry shape of the piece (template + 0xA0, shapes of 0x24 bytes) placed at the piece's point (RW 0xAD2380 -> 0xAD22F0, x87 PC24: see
 //     shapePoint) must stand on ground (TheTerrainLogic vslot 0x18) within AllowedHeightVariationForBuilding (GlobalData + 0xA70, x87 fsub and the CRT
 //     fabs) of the object's height; then the step is added again (the shape's point is written into the step's three slots, so the second add uses the

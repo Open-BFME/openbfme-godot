@@ -67,8 +67,10 @@ float emotionRelAngle(const Object &obj, const Coord3D &p)
 	}
 	const float inv = SimMath::divf32(1.0f, len);
 	const float ux = SimMath::mulf32(inv, dx), uy = SimMath::mulf32(inv, dy);
-	const float *b = obj.getBasis(); // RW 0x70B9E0: the facing (cos, sin)
-	float c = SimMath::addf32(SimMath::mulf32(b[0], ux), SimMath::mulf32(b[3], uy));
+	// RW 0x70B9E0: the facing is the cached (fcos, fsin) of the orientation (Object + 0x44, RW 0x42F4E0 / 0x42F4D0, fstp dword at + 0x48 / + 0x4C), not the
+	// transform's X axis: for a unit tilted on a slope that axis is shorter in the plane (lane DECOMPFIX-1104B)
+	const float fx = SimMath::cosDet(obj.getOrientation()), fy = SimMath::sinDet(obj.getOrientation());
+	float c = SimMath::addf32(SimMath::mulf32(fx, ux), SimMath::mulf32(fy, uy));
 	if (c < -1.0f)
 	{
 		c = -1.0f;
@@ -78,7 +80,7 @@ float emotionRelAngle(const Object &obj, const Coord3D &p)
 		c = 1.0f;
 	}
 	float a = (float)SimMath::acosDet((double)c);
-	if (SimMath::subf32(SimMath::mulf32(b[0], uy), SimMath::mulf32(b[3], ux)) < 0.0f)
+	if (SimMath::subf32(SimMath::mulf32(fx, uy), SimMath::mulf32(fy, ux)) < 0.0f)
 	{
 		a = SimMath::subf32(0.0f, a);
 	}

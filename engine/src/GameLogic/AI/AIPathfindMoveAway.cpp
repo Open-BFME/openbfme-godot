@@ -220,7 +220,7 @@ Path *Pathfinder::getMoveAwayFromPath(const PathfindObject *obj, const PathfindL
 				checkDestination(obj, c->getXIndex(), c->getYIndex(), c->getLayer(), radius, center, &crowd, false) && crowd == 0)
 			{
 				m_isTunneling = false;
-				result = buildActualPath(obj, loco.validSurfaces, &pos, c, center, false);
+				result = buildActualPath(obj, loco, &pos, c, center, false, true); // RW 0x6FB661: faceDirection 1
 				break;
 			}
 		}

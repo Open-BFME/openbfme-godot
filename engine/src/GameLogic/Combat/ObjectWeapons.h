@@ -197,6 +197,8 @@ public:
 	int currentStatus() const;
 	// lane PLAY-2: RW 0x6CD142 (Weapon::computeStatus, no write-back) of one weapon of this set
 	int weaponStatus(const Weapon &w) { return w.getStatus(host()); }
+	// lane ATKRESET-1: RW 0x6CDCE7 (Weapon::getStatus with the write-back to + 0x10) of one weapon of this set
+	int weaponStatusWriteBack(Weapon &w) { return w.getStatusWriteBack(host()); }
 	// lane FACT-A: the status of the weapon in `slot` (RW 0x6CD142; the control bar's FIRE_WEAPON availability, RW 0x942733 case 0x17), WEAPON_OUT_OF_AMMO when none
 	int slotStatus(int slot) const;
 	// lane ANIM-1, RW 0x4BEE31 .. 0x4BEE91 (the draw's UseWeaponTiming, W3DScriptedModelDraw::apply): the current weapon's cycle in logic frames, the number

@@ -1,0 +1,22 @@
+{
+  "rules": [
+    {
+      "id": "editions",
+      "rule": "A change to a shared INI parser, data table, module or startup path must work on BFME1, BFME2 and RotWK data, or name the edition it leaves out and how that edition fails. Flag a typed parser that newly rejects a field another edition's data uses, because that stops the edition starting (PR 173 and PR 177). Missing or unknown data must be a named error, an unverified report line or a registered stop, never a silent default. See REVIEW.md rules 1 and 2.",
+      "severity": "high",
+      "scope": ["engine/src/**"]
+    },
+    {
+      "id": "golden-pins",
+      "rule": "A changed golden hash pin (engine/tests/data/**/*.hashes) must come with the gameplay change that explains it and a `// pin: <reason>` comment in a C++ test. Flag a re-measure with no cause, or a cause that does not fit the code change. See REVIEW.md rule 3.",
+      "severity": "high",
+      "scope": ["engine/tests/data/**", "engine/tests/**"]
+    },
+    {
+      "id": "determinism",
+      "rule": "Simulation code takes floating-point arithmetic, maths functions and float-to-integer conversions through SimMath.h; integer arithmetic, float comparisons and copies are fine. Simulation results must not depend on wall clocks, render state or unordered container order; network code may use clocks for pacing and timeouts. Work moved onto a job pool must produce the serial result, and a test must compare the two. See REVIEW.md rule 4.",
+      "severity": "high",
+      "scope": ["engine/src/GameLogic/**", "engine/src/GameNetwork/**"]
+    }
+  ]
+}

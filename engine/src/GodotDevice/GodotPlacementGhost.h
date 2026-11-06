@@ -16,10 +16,10 @@
 
 #include "GameClient/PlacementIcons.h"
 #include "GameClient/InGameUI.h"
+#include "GameClient/SelectionDecals.h"
 
 #include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
-#include <godot_cpp/classes/decal.hpp>
 #include <godot_cpp/classes/label.hpp>
 #include <godot_cpp/classes/standard_material3d.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
@@ -64,6 +64,8 @@ public:
 	double lastIconsMs() const { return m_lastIconsMs; } // lane FOGFX-1: the last sync's PlacementIcons::update and its icons' draw
 	double lastDrawMs() const { return m_lastDrawMs; }
 	const double *lastDrawParts() const { return m_partMs; } // the instances, update_now, the tint, the bib, the shadow decal
+	// lane PLACEDECAL-1: the shown icons' decal shadows, for the HUD's selection decal grid (GodotInGameHud.cpp drawSelectionDecals)
+	void appendShadowDecals(std::vector<SelectionDecal> &out) const;
 
 private:
 	double m_lastIconsMs = 0.0, m_lastDrawMs = 0.0;
@@ -88,8 +90,8 @@ private:
 		std::string bibTexture;
 		const ThingTemplate *bibTemplate = nullptr; ///< the template the bib quad was built for (a reused wall slot can change template)
 		// lane OWNERFIX-2: the decal shadow of the drawable's current model state (Shadow = SHADOW_ALPHA_DECAL ...: e.g. a well's or a statue's area
-		// of effect on its BUILD_PLACEMENT_CURSOR state)
-		uint64_t shadowDecalId = 0;
+		// of effect on its BUILD_PLACEMENT_CURSOR state); lane PLACEDECAL-1: drawn by the terrain and wall shaders with the selection decals
+		SelectionDecal shadowDecal; ///< valid while shadowTexture is not empty
 		std::string shadowTexture;
 		float shadowSizeX = 0.0f, shadowSizeY = 0.0f;
 		Color tint = Color(0, 0, 0, 0);
@@ -117,9 +119,9 @@ private:
 
 	const MappedImageCollection *m_images = nullptr;
 	const GameTextSource *m_text = nullptr;
-	Decal *m_resourceDecal = nullptr;
 	Label *m_resourceLabel = nullptr;
-	uint64_t m_resourceDecalId = 0, m_resourceLabelId = 0;
+	uint64_t m_resourceLabelId = 0;
+	bool m_shown = false; ///< lane PLACEDECAL-1: the icons are shown (placing with a ghost)
 	Node3D *m_parent = nullptr;
 	Ref<RetailFileSystem> m_fs;
 	std::unique_ptr<CastleTemplateStore> m_castles;

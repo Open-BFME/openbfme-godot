@@ -574,6 +574,7 @@ void W3DInstancer::ensure_occlusion_passes(MeshGpu &gpu, bool mark, bool color)
 		auto make = [&](int pass, int priority) {
 			W3DShaderKey k = base;
 			k.OcclusionPass = pass;
+			k.SelectionDecals = false; // lane SELWALL-1: a marker pass draws no decal
 			Ref<ShaderMaterial> m = gpu.Materials[i]->duplicate(); // the surface's textures and colours: the passes keep its alpha test
 			m->set_shader(Materials->Get_Shader(k));
 			m->set_render_priority(priority);
@@ -933,6 +934,24 @@ std::string W3DInstancer::Texture_Swap_Suffix(const std::vector<std::pair<std::s
 
 int64_t W3DInstancer::add_model(const String &model_name)
 {
+	if (PendingSelectionDecals)
+	{
+		// lane SELWALL-1: the wall model's meshes under their own name (after a colour set's suffix, before the texture swaps'), their factory flag on
+		PendingSelectionDecals = false;
+		const std::string savedSuffix = BuildSuffix;
+		BuildSuffix += "#sel";
+		if (Materials)
+		{
+			Materials->Set_Selection_Decals(true);
+		}
+		const int64_t id = add_model(model_name);
+		if (Materials)
+		{
+			Materials->Set_Selection_Decals(false);
+		}
+		BuildSuffix = savedSuffix;
+		return id;
+	}
 	if (PendingSwaps.empty())
 	{
 		return build_model(model_name);
@@ -2739,7 +2758,7 @@ void W3DInstancer::_notification(int what)
 void W3DInstancer::_process(double delta)
 {
 	if (Playing) GlobalTime += delta * TimeScale;
-	update_now();
+	if (PresentationUpdates) update_now();
 }
 
 Vector3 W3DInstancer::get_bone_position(int64_t instance, int bone) const
