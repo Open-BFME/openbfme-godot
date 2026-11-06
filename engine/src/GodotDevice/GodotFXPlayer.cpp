@@ -187,6 +187,10 @@ Dictionary FXPlayer::setup(const Ref<RetailFileSystem> &fs)
 	m_renderRandom->seed(1);
 	m_builder = std::make_unique<ParticleDrawBuilder>(*m_renderRandom);
 	m_quad = makeQuadMesh();
+	// lane GPUPERF-3 review: a second setup replaces the playback (and the builder) but the uploaded batches belong to the old one; the render nodes and
+	// the cache flags stay, so invalidate them: the next advance rebuilds from the new playback instead of keeping the old effects
+	m_built = false;
+	m_buildDirty = true;
 	result["ok"] = errors.is_empty();
 	result["errors"] = errors;
 	result["particle_systems"] = (int64_t)m_playback->particleTemplates().templateCount();
@@ -319,6 +323,9 @@ void FXPlayer::step_once()
 	}
 	const auto t0 = std::chrono::steady_clock::now();
 	m_playback->step();
+	// lane GPUPERF-3 review: a step taken by hand (a paused caller, a test) changes the particles and emitters outside advance()'s accumulator loop, so
+	// the next advance must rebuild even if it takes no step of its own; otherwise the picture stays at the last built frame
+	m_buildDirty = true;
 	m_stepUs = usSince(t0);
 }
 
