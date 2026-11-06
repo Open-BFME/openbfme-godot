@@ -44,6 +44,7 @@ public:
 		float radius = 0.0f;      ///< + 0x14
 		Coord3D center{};         ///< + 0x04
 		bool selected = false;    ///< + 0x00 (RW's per-insert mark)
+		bool used = false;        ///< + 0x18: only the terrain's tree index sets it (RW 0x9E7095); its owner hashes and saves it (TerrainTrees), not this class
 		std::vector<ObjectID> members; ///< + 0x1C
 	};
 	// the position of an object at the time it is inserted (retail asks the game for both objects, RW 0x8E3DD6 -> RW 0x8E4082's + 0x20)
@@ -55,6 +56,12 @@ public:
 	void remove(ObjectID id, const Position &position);
 	// RW 0x8E42C8
 	void insert(ObjectID id, const Position &position);
+	// RW 0x682F3D (the tree index's copy): destroy every group and drop the registrations
+	void clear()
+	{
+		m_members.clear();
+		m_groups.clear();
+	}
 
 	const std::vector<ObjectID> &members() const { return m_members; } ///< + 0x04
 	const std::vector<Group> &groups() const { return m_groups; }       ///< + 0x10

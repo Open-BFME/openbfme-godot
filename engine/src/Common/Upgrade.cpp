@@ -18,6 +18,7 @@
 #include "GameLogic/ObjectFilter.h"
 
 #include <cstddef>
+#include <optional>
 
 thread_local UpgradeCenter *TheUpgradeCenter = nullptr; // SMOOTH-1: per thread (the world context of each thread, RetailObjectWorld::ContextScope)
 
@@ -196,11 +197,27 @@ int UpgradeTemplate::calcCostToBuild(const Player *player, const Object *produce
 	{
 		factor = NumericState::pc24Add(player->getUpgradeCostChange(m_name), 1.0f); // fadd [1.0]; fstp
 	}
-	return SimMath::cvttss2si(SimMath::sseMul(SimMath::sseFromInt32(cost), factor));
+	cost = SimMath::cvttss2si(SimMath::sseMul(SimMath::sseFromInt32(cost), factor)); // RW 0x66F39C .. 0x66F3A8
+	// lane BRUTALAI-1, RW 0x66F3AC .. 0x66F3F4: the Brutal skirmish AI pays trunc((1.0 - m) * cost) (subss; cvtsi2ss; mulss; cvttss2si)
+	if (const std::optional<float> m = player->getBrutalBuildReduction(false))
+	{
+		return SimMath::cvttss2si(SimMath::sseMul(SimMath::sseSub(1.0f, *m), SimMath::sseFromInt32(cost)));
+	}
+	return cost;
 }
 
-int UpgradeTemplate::calcTimeToBuild(const Player *) const
+// RW 0x66F1A8 (BFME2 0x66EE30, decomp UpgradeRva0026EE30.cpp)
+int UpgradeTemplate::calcTimeToBuild(const Player *player) const
 {
+	// lane BRUTALAI-1, RW 0x66F1AF .. 0x66F201: the Brutal skirmish AI researches in trunc((1.0 - m) * BuildTime * 5.0) frames (subss; mulss [+ 0x30];
+	// cvtsi2ss LOGICFRAMES_PER_SECOND; mulss). RW calls Player::getDifficulty on the player unchecked; a null player (no caller passes one) gets no discount
+	if (player)
+	{
+		if (const std::optional<float> m = player->getBrutalBuildReduction(true))
+		{
+			return SimMath::cvttss2si(SimMath::sseMul(SimMath::sseMul(SimMath::sseSub(1.0f, *m), m_buildTime), SimMath::sseFromInt32(5)));
+		}
+	}
 	return SimMath::cvttss2si(SimMath::sseMul(SimMath::sseFromInt32(5), m_buildTime)); // RW 0x66F203: LOGICFRAMES_PER_SECOND (RW 0xD9F608) * BuildTime
 }
 

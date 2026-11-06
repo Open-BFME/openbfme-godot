@@ -574,16 +574,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // the mover hash covers the path's node chain, so the big battle and the allied blob differ from frame 0, the skirmish from frame 2.
 // Merge queue q37 re-measured once on the merged tree (OPENBFME_PERF1_REGEN=1), compared at each merge point: #187 on top of WARG-1's FindClosestPath
 // moves the big battle and the skirmish, and ATKRESET-1 (attack orders end the FiringDuration lock) moves both again; the allied blob keeps #187's vector.
-// Lane RAI-DEF re-measured the skirmish (OPENBFME_PERF1_REGEN=1 on the lane's tree): the player info record's position sampler (RW 0x8E4042)
-// is part of the skirmish AI's state hash from frame 0; the battle and the allied blob keep their vectors, and the Uber battle moves from frame 0 too.
-// The #217 / #214 main moved both upstream vectors; re-measured here on the merged tree: the skirmish 0x544c0108 -> 0x327cddbd (last 0x2b7337e7 ->
-// 0x58a3cf1e), the Uber battle 0xd4d54986 -> 0xf09814da (last 0xc044f68e -> 0xdc07c1c2).
-// pin: the player info record's position sampler (RW 0x8E4042) re-records the Uber battle vector from frame 0
-// pin: the skirmish AI player info record's position sampler (RW 0x8E4042) is hashed
-// pin: re-measured after the sampler's append order (RW 0x8E4082: radius + distance + padding) settled
-// pin: re-measured on the merged #217 / #214 main: the sampler is hashed from frame 0 in the skirmish and the Uber battle
-// pin: merge of main 1d43a17e (2026-11-06, lane PR-TEND-AI): the sampler still starts at frame 0; upstream's #225 / #220 / #216 changes move the
-//      vector on top of the old re-record, 0x544c0108 -> 0x327cddbd (first) and 0xd3318909 -> 0x4e00eb68 (last)
+// pin: merge queue q44 re-measured all three once on the merged tree (OPENBFME_PERF1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (the locomotor
+// update sets AIRBORNE_TARGET from the height above terrain, RW 0x66A472) moves the big battle and the allied blob from frame 0 and the skirmish from
+// frame 2; the Brutal discount and the garrison weapon set leave all three as they were.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

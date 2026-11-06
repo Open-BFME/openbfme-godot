@@ -141,6 +141,9 @@ private:
 	std::vector<std::pair<std::string, std::string>> TextureSwaps; // stop S-5015
 	bool AlphaOverride = false;
 	bool SelectionDecals = false; // lane SELWALL-1
+	// Shared entries live while a requesting factory owns them; the process lookup
+	// holds weak pointers and cannot keep GPU resources alive at shutdown.
+	std::vector<std::shared_ptr<const Ref<Shader>>> ShaderOwners;
 	std::map<std::string, Ref<Shader>> Shaders;
 	std::map<std::string, Ref<Texture2D>> Textures; // by virtual path
 	std::map<std::string, std::string> PackedHouseTextureNotes; // retain S-1482 on cache hits

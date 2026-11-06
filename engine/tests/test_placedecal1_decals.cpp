@@ -307,7 +307,7 @@ TEST_CASE("placedecal1: the terrain and wall shaders' sel_alpha_at reads the y s
 	ss << in.rdbuf();
 	const std::string s = ss.str();
 	CHECK(s.find("float sel_mask_at(int header, vec2 w)") != std::string::npos);
-	CHECK(s.find("if (wall && (rec3.w != 0.0 || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT)))") != std::string::npos);
+	CHECK(s.find("if (wall && ((rec3.w != 0.0 && rec3.w != -3.0) || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT)))") != std::string::npos);
 	CHECK(s.find("vec2 uv = vec2((d.x * co + d.y * si) / rec0.z + 0.5, (d.x * si - d.y * co) / rec3.z + 0.5);") != std::string::npos);
 	CHECK(s.find("a *= sel_mask_at(int(rec3.w), w.xy) / 255.0;") != std::string::npos);
 	CHECK(s.find("float fx = clamp(w.x / 10.0 - h.x, 0.0, float(mw - 1));") != std::string::npos);
