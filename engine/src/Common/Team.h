@@ -139,14 +139,14 @@ public:
 	}
 	bool isActive() const { return m_script.active; }
 
-	// lane RAI-POW: the team's special-power registry (Team + 0x140). Retail keeps a circular list of five-word records (the power's type, the
+	// lane RAI-POW: the team's special-power registry (Team + 0x140). Retail keeps a circular list of five-word records (the power template, the
 	// frame, two zeros and the caster's object id; RW 0x7A5582 appends one, RW 0x7A3EF5 looks one up and answers the caster the id resolves to).
 	// AIPOW-1's SOUL_FREEZE decision writes it, and RW 0x9E6941 (ATTACK_HEAL_AOE) reads it.
 	struct SpecialPowerRecord
 	{
-		int powerType = 0;             ///< + 0x08 (retail's decision + 0x08 is the SpecialPowerType, RW 0x8B714F stores SpecialPowerTemplate + 0x1C)
-		std::uint32_t frame = 0;       ///< + 0x0C
-		ObjectID caster = INVALID_ID;  ///< + 0x18 (the record's fifth word; the two between stay 0)
+		int powerType = 0;                           ///< + 0x08: the power's type (SpecialPowerTemplate + 0x1C, the decision's + 0x08 set by RW 0x8B714F)
+		std::uint32_t frame = 0;                      ///< + 0x0C
+		ObjectID caster = INVALID_ID;                 ///< + 0x18 (the record's fifth word; the two between stay 0)
 	};
 	// RW 0x7A3EF5: the first record of the power, in insertion order. `caster` null answers the object the record's id resolves to; a caster that
 	// does not match the record continues the walk (retail loops forever on that path, which no caller reaches: both pass null). The logic resolves
