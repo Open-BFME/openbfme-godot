@@ -1103,7 +1103,8 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 				continue;
 			}
 			std::string disk = absolute.u8string();
-			long long mtime = (long long)fs::last_write_time(absolute, ec).time_since_epoch().count();
+			// the found path, not absolute: lexically_normal breaks a long path's \\?\ prefix under libc++ (the shipped Windows build), though not under MSVC
+			long long mtime = (long long)fs::last_write_time(found->second, ec).time_since_epoch().count();
 			if (ec)
 			{
 				stepError(install.label + ": could not read the modification time of " + entry.path + ": " + ec.message());
