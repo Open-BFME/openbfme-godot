@@ -69,6 +69,7 @@ struct StructRow
 // Lane MOVE-2 r3 (the melee member pass: the contain runs the Amoeba update and moves the members to their melee destinations through the hub, RW 0x872EFC /
 // 0x870A1B / 0x877D89; blockedBy's step aside as the AI command RW 0x66C4CA; the stored orientation wrapped, RW 0x70C31E): 454 -> 468, 334 -> 344, 740 -> 714, 424 -> 460, 58 -> 76, 108 -> 128, 454 -> 468. Engine pins.
 const StructRow kRows[] = {
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): 396 -> 474, 410 -> 400, 602 -> 668, 370 -> 406, 64 -> 62, 104 -> 112, 396 -> 474. Engine pins
 	// Merge queue q35 (#132's ground-structure melee reach: the members swing from the footprint's obstacle ring; measured once on the merged tree and at each
 	// merge point, SIMSMALL-1, #178 and #179 keep the archive's values): 406 -> 396, 432 -> 410, 612 -> 602, 404 -> 370, 72 -> 74, 122 -> 104, 406 -> 396. Engine pins
 	// Merge MOD-4 + AUDIO-4: the death frames re-measured on the merged tree (MOD-4's powers / creeps and LargeGroupAudioUpdate's logic random draws both move them). Engine pins
@@ -100,13 +101,13 @@ const StructRow kRows[] = {
 	// 60 -> 58, 96 -> 110, 390 -> 388. Engine pins
 	// Merge queue q26 (community #73's slot tables centred on their hordes and #74's spiral with BANNER-1 and the rest, measured once on the merged tree):
 	// 388 -> 406, 330 -> 422, 604 -> 660, 426 -> 404, 58 -> 72, 110 -> 122, 388 -> 406. Engine pins
-	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 396 },
-	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 410 }, // no BountyValue line; 422 -> 432 (see below)
-	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 602 }, // 660 -> 612: fix/horde-contain-no-follow: a horde's move or turn no longer carries its members, they walk to their slots (RW 0x871536)
-	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 370 },
-	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 74 },
-	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 104 },
-	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 396 },
+	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 474 },
+	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 400 }, // no BountyValue line; 422 -> 432 (see below)
+	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 668 }, // 660 -> 612: fix/horde-contain-no-follow: a horde's move or turn no longer carries its members, they walk to their slots (RW 0x871536)
+	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 406 },
+	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 62 }, // 74 -> 64: lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E: the horde walks other lines); the hits are unchanged
+	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 112 },
+	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 474 },
 };
 
 // n * (n - 1) / 2 * 1.28 >= H, the first n

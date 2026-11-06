@@ -1,0 +1,88 @@
+# The unit tests that need no game files under Clang's sanitizers: memory errors and undefined behaviour in one job, data races in the other.
+# Not part of the check named CI, so a failure here is advice for now and blocks nothing. The rules are those of pr.yml: GitHub's runners, no
+# secrets, read-only. Only pushes save the compiler caches; pull requests restore main's.
+name: Sanitizers
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - "ci/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanitizers-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  sanitize:
+    name: Linux ${{ matrix.name }} sanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: address and undefined
+            key: asan
+            flags: -fsanitize=address,undefined -fsanitize-recover=address -fno-omit-frame-pointer -g1
+          - name: thread
+            key: tsan
+            flags: -fsanitize=thread -fno-omit-frame-pointer -g1
+    env:
+      CC: clang-18
+      CXX: clang++-18
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CCACHE_NOHASHDIR: "1"
+      FLAGS: ${{ matrix.flags }}
+      OPENBFME_AUDIO_FIXTURES: ${{ github.workspace }}/workspace/audio_fixtures
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the build tools
+        # the address space layout the thread sanitizer of Clang 18 can map
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends ninja-build ccache clang-18 libclang-rt-18-dev lame mpg123
+          sudo sysctl vm.mmap_rnd_bits=28
+      - name: Generate the reference MP3 streams
+        run: python3 tools/audio/gen_mp3_fixtures.py --out workspace/audio_fixtures
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.key }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.key }}-
+      - name: Configure
+        # -O1: GCC's -O3 build with both sanitizers did not finish in 90 minutes
+        run: >-
+          cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENBFME_BUILD_GODOT=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_FLAGS_RELEASE=-O1 -DCMAKE_CXX_FLAGS_RELEASE=-O1
+          "-DCMAKE_C_FLAGS=$FLAGS" "-DCMAKE_CXX_FLAGS=$FLAGS" "-DCMAKE_EXE_LINKER_FLAGS=$FLAGS" "-DCMAKE_SHARED_LINKER_FLAGS=$FLAGS"
+      - name: Build
+        run: |
+          ccache -z
+          cmake --build engine/build
+          ccache -s
+      - name: Save the compiler cache (pushes only)
+        if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.key }}-${{ github.sha }}
+      - name: Unit tests (the tests that need the game skip)
+        # die_after_fork=0: the console filter tests start a thread in a forked child, which this sanitizer refuses by default
+        # the first report ends the run; halt_on_error=0 lists them all, as the build allows it (-fsanitize-recover=address)
+        env:
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          TSAN_OPTIONS: die_after_fork=0
+        run: engine/build/openbfme_tests

@@ -67,7 +67,7 @@ Path *Pathfinder::findSafePath(const PathfindObject *obj, const PathfindLocomoto
 				checkDestination(obj, farthestCell->getXIndex(), farthestCell->getYIndex(), farthestCell->getLayer(), radius, center, &crowd, false) &&
 				crowd == 0)
 			{
-				result = buildActualPath(obj, loco.validSurfaces, &pos, farthestCell, center, false);
+				result = buildActualPath(obj, loco, &pos, farthestCell, center, false, true); // RW 0x6FD056: faceDirection 1 (RW's one call; the port's two branches share it)
 			}
 			break;
 		}
@@ -100,7 +100,7 @@ Path *Pathfinder::findSafePath(const PathfindObject *obj, const PathfindLocomoto
 		if (ok && checkDestination(obj, c->getXIndex(), c->getYIndex(), c->getLayer(), radius, center, &crowd, false) && crowd == 0)
 		{
 			markClosed(c);
-			result = buildActualPath(obj, loco.validSurfaces, &pos, c, center, false);
+			result = buildActualPath(obj, loco, &pos, c, center, false, true); // RW 0x6FD056: faceDirection 1
 			break;
 		}
 		markClosed(c);

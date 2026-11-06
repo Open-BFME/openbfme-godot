@@ -28,7 +28,8 @@ def run(repo: Path, *args: str) -> subprocess.CompletedProcess:
 def make_repo(tmp_path: Path, committed: dict[str, str]) -> Path:
     repo = tmp_path / "repo"
     (repo / "tools").mkdir(parents=True)
-    shutil.copy(HERE / "precommit.py", repo / "tools" / "precommit.py")
+    for name in ("precommit.py", "check_shader_varyings.py"):
+        shutil.copy(HERE / name, repo / "tools" / name)
     (repo / "tools" / "precommit_containers.txt").write_text("")
     run(tmp_path, "init", "-q", str(repo))
     for name, text in committed.items():

@@ -605,10 +605,10 @@ struct HordeMeleeApproachState : AIState
 		h.setPathExtraDistance(100.0f); // RW 0xBD88D8
 		m_goal = now;
 		m_failed = false;
-		// RW 0x74A6C2 .. 0x74A6DF: the lead needs a fleeing target AND a quick path from the horde to it (RW 0x6F5BB0, the port's clientSafeQuickDoesPathExist;
-		// lane ATTACKPATH-1: the port led every fleeing target)
+		// RW 0x74A6C2 .. 0x74A6E6: the lead needs a fleeing target AND a quick path from the horde to it (RW 0x6F5BB0(horde, its position, the target's, 0):
+		// Pathfinder::quickDoesPathExist with the horde and its AI's set, lane QPATH-1; lane ATTACKPATH-1: the port led every fleeing target)
 		if (targetFleeing(self, *goal) &&
-			(h.world().mapReady() && h.world().pathfinder().clientSafeQuickDoesPathExist(h.locomotorInfo(), self.getPosition(), goal->getPosition())))
+			(h.world().mapReady() && h.world().pathfinder().quickDoesPathExist(h.adapter(), self.getPosition(), goal->getPosition(), nullptr)))
 		{
 			const float lead = SimMath::addf32(SimMath::mulf32(CombatQueries::boundingCircleRadius(*goal), 2.0f), 60.0f);
 			m_goal.x = SimMath::addf32(m_goal.x, SimMath::mulf32(lead, SimMath::cosDet(goal->getOrientation())));
@@ -1337,6 +1337,7 @@ void HordeAIUpdate::recentreOnMembers()
 	const float cx = SimMath::mulf32(inv, sx), cy = SimMath::mulf32(sy, inv), cz = SimMath::mulf32(sz, inv);
 	float best = -1.0f; // RW 0xBD19DC
 	Coord3D pos = *horde->getPosition();
+	PathfindLayerEnum layer = LAYER_GROUND; // lane WALLHORDE-1: the winner's layer, the ground when none wins (RW 0x86F18F)
 	for (Object *m : ms)
 	{
 		Coord3D p = *m->getPosition();
@@ -1350,6 +1351,8 @@ void HordeAIUpdate::recentreOnMembers()
 		{
 			best = d;
 			pos = *m->getPosition();
+			const AIUpdateInterface *mai = m->getAIUpdateInterface();
+			layer = mai ? mai->adapter().getLayer() : LAYER_GROUND;
 		}
 	}
 	if (best >= 0.0f)
@@ -1366,6 +1369,7 @@ void HordeAIUpdate::recentreOnMembers()
 			hci->setLocomoting(false);
 		}
 	}
+	setLayer(layer); // lane WALLHORDE-1: RW 0x86F18F always sets the layer after the move (BFME2 0x86BEAC), the ground when no member qualified
 }
 
 // lane MOVE-2 r3: RW 0x870A1B (read with Ghidra)

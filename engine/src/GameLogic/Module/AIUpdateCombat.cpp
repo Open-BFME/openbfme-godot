@@ -321,6 +321,7 @@ bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source,
 	// setMaxShotCount); privateAttackPosition's ContinueAttackRange redirect passes its limit here (RW 0x66DF02 .. 0x66DF0C)
 	if (Weapon *cur = w->currentWeapon())
 	{
+		cur->clearWhenFiringEnds(); // lane ATKRESET-1, RW 0x66BE77: the old shot's FiringDuration lock ends; the next shot waits only for its delay (+ 0x18)
 		cur->setMaxShotCount(maxShotsToFire);
 		// lane TARGET-1, RW 0x66BE7D .. 0x66BE99: a player's or a script's order (source 0 / 1) with a MeleeWeapon current weapon (RW 0x441B59) remembers its
 		// target (AI + 0x1A4): the mood scan answers it while it lives (RW 0x66854F)
@@ -333,7 +334,7 @@ bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source,
 	return true;
 }
 
-bool AIUpdateInterface::aiForceAttackObject(Object *victim, CommandSourceType source)
+bool AIUpdateInterface::aiForceAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire)
 {
 	if (!acceptCommand(source, 0xC, victim))
 	{
@@ -343,6 +344,7 @@ bool AIUpdateInterface::aiForceAttackObject(Object *victim, CommandSourceType so
 		RoutedCommand c; // lane FLY-1
 		c.type = 0xC;
 		c.target = victim;
+		c.maxShots = maxShotsToFire;
 		c.source = source;
 		if (routeCommand(c))
 		{
@@ -371,6 +373,13 @@ bool AIUpdateInterface::aiForceAttackObject(Object *victim, CommandSourceType so
 	setLastCommandSource(source);
 	m_currentVictim = victim->getID();
 	m_machine->setState(AI_FORCE_ATTACK_OBJECT);
+	// lane ATKRESET-1, RW 0x66C00E .. 0x66C01E (privateForceAttackObject RW 0x66BF4C, BFME2 decomp AIUpdateInterfaceAttackObjectCommands.cpp:152): after the
+	// state's entry, the current weapon's FiringDuration lock (+ 0x20) ends and the command's shot limit goes on it (+ 0x34)
+	if (Weapon *cur = w->currentWeapon())
+	{
+		cur->clearWhenFiringEnds();
+		cur->setMaxShotCount(maxShotsToFire);
+	}
 	wakeUpNow();
 	return true;
 }
@@ -438,7 +447,7 @@ bool AIUpdateInterface::aiAttackPosition(const Coord3D &pos, int maxShotsToFire,
 		}
 	}
 	// RW 0x66E00D .. 0x66E04E: clear, destroy the path (RW 0x66276B), the clipped goal (RW 0x6654AD), the source (+ 0x48), state 9, no goal object, then the
-	// current weapon's shot limit (+ 0x34) and its shot counter (+ 0x20, INFERENCE: the port's weapon keeps no such counter apart from the timing fields)
+	// current weapon's shot limit (+ 0x34, RW 0x66E04B) and the end of its FiringDuration lock (+ 0x20 = 0, RW 0x66E04E: Weapon::m_whenFiringEnds, lane ATKRESET-1)
 	m_machine->clear();
 	m_mover->destroyPath();
 	Coord3D goal;
@@ -452,6 +461,7 @@ bool AIUpdateInterface::aiAttackPosition(const Coord3D &pos, int maxShotsToFire,
 	if (Weapon *cur = w ? w->currentWeapon() : nullptr)
 	{
 		cur->setMaxShotCount(maxShotsToFire);
+		cur->clearWhenFiringEnds();
 	}
 	// RW 0x66E051 .. 0x66E060: the attack voice for a PLAYER or SCRIPT order (RW 0x66B271) is the client's (UnitVoiceResponse on the message)
 	wakeUpNow();

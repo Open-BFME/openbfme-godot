@@ -122,7 +122,9 @@ bool ClickReactionBehavior::selectableForClick(const Object &obj)
 	if (obj.getProducerID() != INVALID_ID) // + 0x78
 	{
 		const Object *producer = obj.logic().findObjectByID(obj.getProducerID());
-		if (producer && producer->isKindOf((unsigned)b.horde) && obj.testStatus((unsigned)b.unselectable)) // RW 0x44DDEC(3) on the object (+ 0x94)
+		// KINDFIX-1: RW 0x6937E6 `push 3; mov ecx, eax; call 0x44DDEC`: status UNSELECTABLE on the producer (the horde), not on the member. Donor:
+		// Open-BFME-2 Object_isMassSelectable.cpp:81-84 (BFME2 0x692FAC; its status 3 name is UNDER_CONSTRUCTION); both editions
+		if (producer && producer->isKindOf((unsigned)b.horde) && producer->testStatus((unsigned)b.unselectable))
 		{
 			return false;
 		}

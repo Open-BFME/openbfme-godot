@@ -144,6 +144,7 @@ func run(p_game: Node, p_shots: String) -> int:
 		await bar_hits()
 		lap("bottom bar")
 		check("hit areas: controls probed at %s (fail closed)" % size_tag, probed > 0, "none")
+		button_kind()
 		await click_bar("cancel")
 		await game._step(90)
 	await keyboard_walk()
@@ -1492,6 +1493,14 @@ func top() -> String:
 
 func page() -> Dictionary:
 	return shell.openbfme_page_state()
+
+
+## A page row of the Button kind (the menus' own look, lane CHEAT-1) names its kind in the page state. The kind table named six of the seven
+## kinds, so a button row read past it (an out-of-bounds read: a crash on Windows).
+func button_kind() -> void:
+	var r: Dictionary = shell.openbfme_page_show({"tabs": ["Test"], "rows": [{"kind": "button", "key": "test_button", "label": "", "value_text": "TEST"}]})
+	var row: Dictionary = page().get("rows", {}).get("test_button", {})
+	check("the page state names a button row's kind", r.get("ok", false) and row.get("kind") == "button", "show %s, row %s" % [str(r), str(row)])
 
 
 func choose(key: String, value: int) -> void:

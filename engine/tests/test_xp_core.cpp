@@ -6,6 +6,10 @@
 #include "doctest.h"
 
 #include "IniTestUtil.h"
+#include "LogicTestUtil.h"
+#include "GameLogic/Module/VeterancyCrateCollide.h"
+#include "GameLogic/Object/ExperienceTracker.h"
+#include "GameLogic/Object/PartitionManager.h"
 
 #include "Common/INIException.h"
 #include "Common/Upgrade.h"
@@ -264,4 +268,53 @@ TEST_CASE("xp core: LevelUpFx and every ModifierList FX / EndFX name must be an 
 	CHECK(f.modifiers.find("GoodFX")->m_fx[0] == "BuffFX");
 	CHECK(f.modifiers.find("GoodEndFX3")->m_endFx[2] == "BuffFX");
 	CHECK(f.modifiers.find("NoneFX2")->m_fx[1].empty());
+}
+
+TEST_CASE("veterancy crates range: owner-only recipients include the boundary and ranks above the collector cap")
+{
+	// BFME2 VeterancyCrateCollide::executeCrateBehavior RVA 0x4BCFF0 uses only
+	// owner and not-collector filters. AffectsUpToLevel gates the collector,
+	// not recipients; gainExpForLevel retains the XP tracker's trainability gate.
+	XpFixture xp;
+	REQUIRE(xp.load(
+		"ExperienceLevel Range1\n TargetNames = RangeTroop RangeUntrainable\n RequiredExperience = 1\n Rank = 1\nEnd\n"
+		"ExperienceLevel Range2\n TargetNames = RangeTroop RangeUntrainable\n RequiredExperience = 100\n Rank = 2\nEnd\n"
+		"ExperienceLevel Range3\n TargetNames = RangeTroop RangeUntrainable\n RequiredExperience = 200\n Rank = 3\nEnd\n").empty());
+	logictest::LogicWorld world;
+	REQUIRE(world.w.load(
+		"Object RangeTroop\n KindOf = INFANTRY\n Geometry = SPHERE\n GeometryMajorRadius = 1\nEnd\n"
+		"ChildObject RangeUntrainable RangeTroop\n IsTrainable = No\nEnd\n"
+		"Object RangeCrate\n KindOf = CRATE\nEnd\n").empty());
+	world.logic->partition().setRegion(0, 0, 2000, 2000);
+	auto at = [&](const char *name, const char *owner, float x, float y) {
+		Object *obj = world.make(name, world.teamOf(owner));
+		const Coord3D position{ x, y, 0 };
+		obj->setPosition(&position);
+		return obj;
+	};
+	Object *collector = at("RangeTroop", "Alice", 500, 500);
+	Object *inside = at("RangeTroop", "Alice", 599, 500);
+	Object *boundary = at("RangeTroop", "Alice", 600, 500);
+	Object *outside = at("RangeTroop", "Alice", 601, 500);
+	Object *enemy = at("RangeTroop", "Bob", 510, 500);
+	Object *ranked = at("RangeTroop", "Alice", 500, 510);
+	Object *untrainable = at("RangeUntrainable", "Alice", 500, 520);
+	Object *crate = at("RangeCrate", "Bob", 500, 500);
+	REQUIRE(collector->getExperienceTracker()->getRank() == 1);
+	REQUIRE(ranked->getExperienceTracker()->gainExpForLevel(1, false, false));
+	REQUIRE(ranked->getExperienceTracker()->getRank() == 2);
+	world.logic->partition().update();
+	VeterancyCrateCollideModuleData data;
+	data.m_effectRange = 100;
+	data.m_affectsUpToLevel = 1;
+	VeterancyCrateCollide collide(crate, &data);
+	// Exercise the reward branch directly; collector collision validity is covered separately.
+	REQUIRE(collide.executeCrateBehavior(*collector));
+	CHECK(collector->getExperienceTracker()->getRank() == 1);
+	CHECK(inside->getExperienceTracker()->getRank() == 2);
+	CHECK(boundary->getExperienceTracker()->getRank() == 2);
+	CHECK(outside->getExperienceTracker()->getRank() == 1);
+	CHECK(enemy->getExperienceTracker()->getRank() == 1);
+	CHECK(ranked->getExperienceTracker()->getRank() == 3);
+	CHECK(untrainable->getExperienceTracker()->getRank() == 1);
 }

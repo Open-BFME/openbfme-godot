@@ -41,18 +41,24 @@ const char *const kLargeRectGoal =
 	"the fallback, RW 0x6FD2CD / 0x6FD3F8) is read but not applied: it was ported and a horde ordered north while facing east ended 20 west of its goal, because the goal slot's "
 	"angle is renewed only by the group move (test_move_horde: the final position and the 90 degree reform; test_camp1_missions moved too); the next step is S-166's: port the "
 	"binary-backed callers of the angle update RW 0x68B3CF, not a refresh on every direct order";
-const char *const kPartialRebuild =
-	"S-163 a complete path skips the rebuild RW applies to it from the unit's facing (RW 0x767B0E, called at RW 0x6FDCDA; the path to the closest cell gets none), the closest cell's third test (RW 0x6EF3C3) and the search-free path of an object whose + 0x4AC flag is set (RW 0x6FD66D) are not ported";
+const char *const kClosestCellThirdTest =
+	"S-163 the closest cell's third test (RW 0x6EF3C3) and the search-free path of an object whose + 0x4AC flag is set (RW 0x6FD66D) are not ported";
 const char *const kGroupDestination =
 	"S-163 adjustDestination with a group destination: the group tighten / path cost check (RW 0x6FDDE5, 0x6F70D5) is not ported";
 // S-164 footprints, reservations, queue
 const char *const kBaseSiteWindow =
 	"S-164 the BASE_SITE bit-17 window of the footprint routine is not modelled";
+// lane WALLFOOT-1
+const char *const kGroundTypeFilter =
+	"S-164 a footprint skips a ground cell that is not CLEAR / RUBBLE (insertion) or RUBBLE / OBSTACLE (removal): RotWK's box filters off-ground cells only "
+	"(RW 0x93707A) and its cylinder none (a type 5 cell takes the obstacle, bits 17 / 22 are written)";
+const char *const kWallFlagDrawable =
+	"S-164 the footprint's gate / wall flag ignores the drawable queries RW 0x6729A3 / 0x6729E9 (RW 0x936E21)";
 // S-4840 wall tops and ramps (lane WALL-1, AIPathfindWalls.cpp)
 const char *const kWallLayer =
 	"S-4840 wall tops and ramps come from the draw module's WallBoundsMesh / RampMesh1 / RampMesh2 of the default model state: a wall top is tested as "
 	"its mesh's triangles (retail: the outline polygon), a ramp's cells follow RotWK's ramp cell rule (RW 0x93527F) on the Bridge getRamp builds from its "
-	"mesh; a removed walkway sends its ramp joints back to the ground (INFERENCE), and ClassifyWall's pinch pass is not applied";
+	"mesh; a removed walkway sends its ramp joints back to the ground (INFERENCE); lane WALL-5 ported ClassifyWall's edge pass (the rim type 8) and its height-layer choice; the port stamps an earlier piece again when a new one meets it, keeps another structure's obstacle under a top and gives a removed top's cells their terrain class (INFERENCE)";
 const char *const kWallLayerCount =
 	"S-4840 more than 48 wall-top heights: the wall surface is left out of the pathfinder's map (RW allows 0x11 .. 0x40)";
 const char *const kRampNoHeight =
@@ -89,7 +95,7 @@ const char *const kQueueTime =
 	"S-164 processPathfindQueue ignores the wall-clock frame-time budget of RW 0x6F2364 (GameData +0x11C0, 0x6ED163 when exceeded): the cell budget alone decides, so the port stays deterministic";
 // S-165 path
 const char *const kPath =
-	"S-165 path nodes carry the waypoint ids of the portals the search crossed (RW 0x6EF591, lane WALL-2), the backward optimiser's dot >= 0.9 rule is ported as read from RW 0x7661A3 without an independent oracle, and the path rebuild RW 0x767B0E is not ported";
+	"S-165 path nodes carry the waypoint ids of the portals the search crossed (RW 0x6EF591, lane WALL-2), the backward optimiser's dot >= 0.9 rule is ported as read from RW 0x7661A3 without an independent oracle; the path rebuild RW 0x767B0E is ported (lane PATH-REBUILD) with SimMath's trigonometry and the IEEE inverse square root, not retail's CRT and fast rsqrt (S-167)";
 // S-167 numerics
 const char *const kNumerics =
 	"S-167 float32 operations are plain C++ float with no fused multiply-add, square roots are the IEEE sqrt and footprint rotation uses SimMath::sinCosDet (deterministic, not libm): Windows and Linux agree, but RW mixes x87 and SSE and calls the x87 / CRT trigonometry, so bit parity with retail is not established";

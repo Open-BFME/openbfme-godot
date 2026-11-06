@@ -249,6 +249,75 @@ bool Pathfinder::clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco,
 	return obj != nullptr && portalPathExists(obj, loco, z1, z2); // RW 0x6F5EDA .. 0x6F5EE7 (lane WALL-2)
 }
 
+bool Pathfinder::quickDoesPathExist(const PathfindObject &obj, const Coord3D *from, const Coord3D *to, const PathfindLocomotorInfo *overrideSet)
+{
+	// lane QPATH-1. TARGET RW 0x6F5BB0 (BFME2 0x6F477E, Open-BFME-2 58a44077a5 GameLogic/Pathfinder/pathfinder.cpp:2951); RotWK only moves Object's AI
+	// (+ 0x260, BFME2 + 0x258) and two template fields (+ 0x57C / + 0x644, BFME2 + 0x56C / + 0x634). The debug log lines are left out.
+	if (obj.isStatusImmobile())
+	{
+		return false; // RW 0x6F5C30: status 49 (IMMOBILE), "Failure 1"
+	}
+	if (obj.refusesPortals())
+	{
+		return true; // RW 0x6F5C63: RW 0x68C053 (Object + 0x4AC) == 1, "Success 1" (S-4851: nothing sets that byte in the port)
+	}
+	PathfindLocomotorInfo set; // RW 0x6F5C90 .. 0x6F5CCE: the caller's set, else the AI's (AI + 0x1CC); neither -> "Failure 2"
+	if (overrideSet)
+	{
+		set = *overrideSet;
+	}
+	else if (!obj.getAILocomotorInfo(set))
+	{
+		return false;
+	}
+	if ((set.validSurfaces & (LOCOMOTORSURFACE_GROUND | LOCOMOTORSURFACE_WATER | LOCOMOTORSURFACE_CLIFF | LOCOMOTORSURFACE_AIR | LOCOMOTORSURFACE_DEEP_WATER)) == 0)
+	{
+		return false; // RW 0x6F5CD4: set + 0x10 & 0x8F, "Failure 3"
+	}
+	// RW 0x6F5D06 / 0x6F5D16: both ends' layers from TerrainLogic::getLayerForDestination (RW 0x680A75, the port's getLayerAt), then their clamped cells
+	// (RW 0x6EA076) on them: a raised walkway's own grid, the ground grid for the ground, wall tops and ramps (the port keeps those as layers of the ground
+	// grid's cells: searchDestinationLayer)
+	const PathfindLayerEnum destLayer = getLayerAt(to->x, to->y, to->z);
+	PathfindCell *parentCell = getClippedCell(searchDestinationLayer(*from), from);
+	PathfindCell *goalCell = getClippedCell(searchDestinationLayer(*to), to);
+	if (parentCell == nullptr || goalCell == nullptr)
+	{
+		return false; // retail's clamped lookup always finds a cell; the port's raised layers can lack one there (no retail counterpart)
+	}
+	if (goalCell->getType() == PathfindCell::CELL_CLIFF)
+	{
+		return false; // RW 0x6F5D3A, "Failure 4"
+	}
+	// RW 0x6F5D62 .. 0x6F5D91: the movement (RW 0x6EA04D) of the set with !CanPathThroughGates (template + 0x644), SlopeLimitIndex - 1 (template + 0x57C) and the
+	// human test (RW 0x68B68A)
+	const PathfindMovement mv = makeMovement(&obj, set);
+	// RW 0x6F5DAA / 0x6F5DCD: each end's effective zone (RW 0x938D89); an OBSTACLE cell at either end makes both ends terrain(effective(terrain(zone)))
+	// (RW 0x6F5DEB .. 0x6F5E4D: RW 0x938939, 0x938D89, 0x938939).
+	// RW 0x938D89 is RW 0x93894B with force = 1: the table of count 2e + 1, an odd one. The zone update fills the odd tables from every adjacent zone pair
+	// (RW 0x93A530 -> 0x938E42(1, ..), the loop from count 1 in steps of 2) with the same type rules as the even, block-local ones; only the terrain table
+	// (getTerrainZone) lets OBSTACLE meet CLEAR. That is the port's table without the terrain flag (every adjacency, strict types), so the effective zone here
+	// is getEffectiveZone(mv, false, ..). INFERENCE (S-162): the port's "terrain variant" (getEffectiveZone(mv, true, ..)) is no retail table
+	zoneStorageType zone1 = m_zoneManager.getEffectiveZone(mv, false, parentCell->getZone());
+	zoneStorageType zone2 = m_zoneManager.getEffectiveZone(mv, false, goalCell->getZone());
+	if (parentCell->getType() == PathfindCell::CELL_OBSTACLE || goalCell->getType() == PathfindCell::CELL_OBSTACLE)
+	{
+		auto remap = [&](zoneStorageType raw) {
+			return m_zoneManager.getTerrainZone(m_zoneManager.getEffectiveZone(mv, false, m_zoneManager.getTerrainZone(raw)));
+		};
+		zone1 = remap(parentCell->getZone());
+		zone2 = remap(goalCell->getZone());
+	}
+	if (!validMovementPosition(&obj, set, destLayer, to))
+	{
+		return false; // RW 0x6F5E68: IsValidMovementPositionForObject (RW 0x6EA4E7) with the set's surfaces, "Failure 5"
+	}
+	if (zone1 == zone2)
+	{
+		return true; // RW 0x6F5E93, "Success 2"
+	}
+	return portalPathExists(&obj, set, zone1, zone2, false); // RW 0x6F5EE7: the portal search RW 0x6F5547 (lane WALL-2), its portals filed in the same table
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // line passability (RW 0x6F2FC3 / callback 0x6EE234)
 // ---------------------------------------------------------------------------------------------------------
@@ -325,7 +394,7 @@ bool Pathfinder::canApproachToTarget(const PathfindObject &obj, const PathfindLo
 				}
 				Coord3D point;
 				adjustCoordToCell(x, y, center, point, to->getLayer() == LAYER_INVALID ? LAYER_GROUND : to->getLayer()); // 5.
-				if (clientSafeQuickDoesPathExist(loco, &from, &point, &obj)) // RW 0x6F5BB0 with the unit (lane WALL-2)
+				if (quickDoesPathExist(obj, &from, &point, &loco)) // RW 0x6F625C -> 0x6F5BB0 (lane QPATH-1)
 				{
 					found = true;
 					return true;
@@ -647,7 +716,7 @@ bool Pathfinder::examineShortcutCell(PathfindCell *from, PathfindCell *to, int x
 		{
 			return true;
 		}
-		if (to->getLayer() == LAYER_GROUND && !m_zoneManager.isPassable(x, y))
+		if (isGroundLayer(to->getLayer()) && !m_zoneManager.isPassable(x, y)) // lane WALLSEARCH-1: RW 0x6F6EA4 / 0x6F6EBA under RW 0x76550F
 		{
 			return true;
 		}
@@ -887,7 +956,8 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 			}
 		}
 		const bool mvOK = validMovementPosition(mv, n);
-		const bool tl = m_isTunneling; // same layer: the ground only
+		// lane WALLSEARCH-1: tunnelling holds on the parent's layer only (RW 0x6F9B7E .. 0x6F9C28: (n ^ parent) & 0x3F0 == 0; BFME2 0x6F8728)
+		const bool tl = m_isTunneling && n->getLayer() == parentCell->getLayer();
 		if (!mvOK && !tl)
 		{
 			// the cell is marked closed at once and not counted
@@ -984,7 +1054,8 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 			// lane PATHPERF-1, TARGET RW 0x6F9DA7 .. 0x6F9DC4: the corridor's remaining length, (last index - the cell's position (RW 0x93AD93)) * 320
 			rem += (unsigned)((m_hierLast - hierarchicalPositionOf(nc.x, nc.y)) * 320);
 		}
-		if (n->getLayer() == LAYER_GROUND && !m_zoneManager.isPassable(nc.x, nc.y) && !n->getExtraPass())
+		// lane WALLSEARCH-1: any ground-grid layer, the ramp and the wall tops too (RW 0x6F9DC7 .. 0x6F9DFA under RW 0x76550F)
+		if (isGroundLayer(n->getLayer()) && !m_zoneManager.isPassable(nc.x, nc.y) && !n->getExtraPass())
 		{
 			X += 1000;
 		}
@@ -1022,7 +1093,7 @@ Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loc
 {
 	// TARGET RW 0x6FE7CB (lane PATHPERF-1, read from the disassembly; the old reading 0x6FE7FE is inside it):
 	//   * *partial = 0; isHuman: the controlling player is not a computer (RW 0x68B678, player + 0x5C == 1 -> 0);
-	//   * the goal copy; no quick path (RW 0x6F5BB0, the port's clientSafeQuickDoesPathExist) -> *partial = 1 and the goal steps back toward `from`:
+	//   * the goal copy; no quick path (RW 0x6FE8EE -> 0x6F5BB0 with the unit and the set: quickPathForSearch) -> *partial = 1 and the goal steps back toward `from`:
 	//     v = (goal - from) with z = 0, steps = -1 - _ftol2(|v| (RW 0x403111, the root left in the register) * -1/30 (RW 0xC1C4B4)), at most 5; v normalised
 	//     (RW 0x405553: 1 / |v| times each component) and times 30 (RW 0xBDAE54); the goal -= v until RW 0x6F5BB0 passes or the steps are used;
 	//   * the waypoint vector (+ 0x1C1CC) emptied, the block flags cleared (RW 0x937C23), FindClosestHierarchicalPath (RW 0x6F9829: the corridor and the
@@ -1033,7 +1104,7 @@ Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loc
 	*p = false;
 	const bool isHuman = obj ? !obj->isComputerControlled() : true;
 	Coord3D to = *rawTo;
-	if (!clientSafeQuickDoesPathExist(loco, from, &to, obj)) // RW 0x6F5BB0 with the unit (lane WALL-2: its portals)
+	if (!quickPathForSearch(obj, loco, from, &to)) // RW 0x6FE8EE
 	{
 		*p = true;
 		float dx = SimMath::subf32(to.x, from->x), dy = SimMath::subf32(to.y, from->y);
@@ -1050,7 +1121,7 @@ Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loc
 		{
 			to.x = SimMath::subf32(to.x, dx);
 			to.y = SimMath::subf32(to.y, dy);
-			if (clientSafeQuickDoesPathExist(loco, from, &to, obj))
+			if (quickPathForSearch(obj, loco, from, &to)) // RW 0x6FE9D1
 			{
 				break;
 			}
@@ -1118,7 +1189,7 @@ Path *Pathfinder::findPathWithoutCorridor(PathfindObject *obj, const PathfindLoc
 // decomp pathfinder.cpp Pathfinder::FindClosestPath, has the same stages (one body for both editions) and is the reading aid; ZH Pathfinder::findClosestPath
 // the donor of the shape). TARGET FACTS:
 //   * isHuman: the controlling player is not a computer (RW 0x68B678, player + 0x5C == 1 -> 0); no valid surfaces or a map not ready: null;
-//   * the goal copy steps back toward `from` while RW 0x6F5BB0 (QuickDoesPathExist, the port's clientSafeQuickDoesPathExist) refuses it: v = (goal - from) with
+//   * the goal copy steps back toward `from` while RW 0x6F5BB0 (QuickDoesPathExist, lane QPATH-1) refuses it: v = (goal - from) with
 //     z = 0, steps = -1 - _ftol2(|v| * -1/30 (RW 0xC1C4B4)), at most 5, v normalised (RW 0x405553) times 30 (RW 0xBDAE54); the same stage as findPath's (RW 0x6FE7CB);
 //   * the destination is the stepped goal, + 5 / + 5 (RW 0xBDAE58) for a footprint not centred in a cell; `from` is clipped against it (RW 0x6E8A14);
 //   * tunnelling (RW + 0x38) when the start cell is not a valid movement position (RW 0x6E8200) or the start's checkForMovement (RW 0x6EB792: the footprint,
@@ -1155,7 +1226,7 @@ Path *Pathfinder::findClosestPath(PathfindObject *obj, const PathfindLocomotorIn
 	bool centerInCell = true;
 	getRadiusAndCenter(obj, radius, centerInCell);
 	Coord3D stepped = *rawTo;
-	if (!clientSafeQuickDoesPathExist(loco, from, &stepped, obj)) // RW 0x6FB91B
+	if (!quickDoesPathExist(*obj, from, &stepped, &loco)) // RW 0x6FB91B
 	{
 		float dx = SimMath::subf32(stepped.x, from->x), dy = SimMath::subf32(stepped.y, from->y);
 		const double lenW = SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, 0.0f));
@@ -1171,7 +1242,7 @@ Path *Pathfinder::findClosestPath(PathfindObject *obj, const PathfindLocomotorIn
 		{
 			stepped.x = SimMath::subf32(stepped.x, dx);
 			stepped.y = SimMath::subf32(stepped.y, dy);
-			if (clientSafeQuickDoesPathExist(loco, from, &stepped, obj))
+			if (quickDoesPathExist(*obj, from, &stepped, &loco)) // RW 0x6FB9FB
 			{
 				break;
 			}
@@ -1280,7 +1351,7 @@ Path *Pathfinder::findClosestPath(PathfindObject *obj, const PathfindLocomotorIn
 			if (goalOnObstacle || closest == nullptr || throughUnits || destinationOK(c))
 			{
 				m_isTunneling = false;
-				Path *path = buildActualPath(obj, loco.validSurfaces, from, goalCell, centerInCell, blocked);
+				Path *path = buildActualPath(obj, loco, from, goalCell, centerInCell, blocked, true); // RW 0x6FC13F: faceDirection 1
 				cleanOpenAndClosedLists();
 				parentCell->releaseInfo(m_pool);
 				goalCell->releaseInfo(m_pool);
@@ -1357,7 +1428,7 @@ Path *Pathfinder::findClosestPath(PathfindObject *obj, const PathfindLocomotorIn
 	{
 		// RW 0x6FC078 .. 0x6FC0C2: the closest cell's centre (index * 10 + 5) goes to the local goal copy only; the caller's `rawTo` is not written (ZH writes it)
 		m_isTunneling = false;
-		Path *path = buildActualPath(obj, loco.validSurfaces, from, closest, centerInCell, blocked);
+		Path *path = buildActualPath(obj, loco, from, closest, centerInCell, blocked, true); // RW 0x6FC0C7: faceDirection 1
 		cleanOpenAndClosedLists();
 		goalCell->releaseInfo(m_pool);
 		return path;
@@ -1402,7 +1473,10 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		note(pathstops::kLargeRectGoal);
 	}
 	m_isTunneling = false;
-	const PathfindLayerEnum destinationLayer = searchDestinationLayer(*to); // ZH internalFindPath: TheTerrainLogic->getLayerForDestination(to)
+	// lane WALLSEARCH-1: the goal's layer is getLayerForDestination's (RW 0x6FD2B2: RW 0x680A75 without an object; BFME2 0x6FBE2E): a wall top's or the
+	// ramp's too, so checkDestination, the goal's checkForMovement and its validMovementPosition test (RW 0x6FD85D: approx) see the layer the unit will stand
+	// on, and a goal on a wall top is searched exactly
+	const PathfindLayerEnum destinationLayer = getLayerAt(to->x, to->y, to->z);
 	PathfindCell *goalCell = getCell(destinationLayer, to);
 	if (goalCell == nullptr)
 	{
@@ -1517,8 +1591,10 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		if (c == goalCell)
 		{
 			m_isTunneling = false;
-			note(pathstops::kPartialRebuild); // RW 0x6FDCDA: the rebuild of the complete path (RW 0x767B0E) is not ported
-			Path *path = buildActualPath(obj, loco.validSurfaces, from, goalCell, centerInCell, false);
+			note(pathstops::kClosestCellThirdTest);
+			// RW 0x6FDC40 builds with faceDirection 0, then RW 0x6FDCDA calls the rebuild (RW 0x767B0E) with the unit's facing itself: the same as faceDirection 1
+			// (between the two, RW 0x6FDC4E .. 0x6FDCB3 appends the mineshaft nodes of S-161, not ported: a port of those goes before the rebuild)
+			Path *path = buildActualPath(obj, loco, from, goalCell, centerInCell, false, true);
 			parentCell->releaseInfo(m_pool);
 			cleanOpenAndClosedLists();
 			c->releaseInfo(m_pool);
@@ -1573,7 +1649,8 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 				candidateAt = cellCount;
 				bestClose = key;
 				int out = 0;
-				if (checkDestination(obj, c->getXIndex(), c->getYIndex(), destinationLayer, radius, centerInCell, &out, false) && out == 0 &&
+				// lane WALLSEARCH-1: on the candidate cell's own layer (RW 0x6FDA97 / 0x6FDB2C, BFME2 0x6FC634 / 0x6FC6A8)
+				if (checkDestination(obj, c->getXIndex(), c->getYIndex(), c->getLayer(), radius, centerInCell, &out, false) && out == 0 &&
 					validMovementPosition(mv, c))
 				{
 					closest = c;
@@ -1615,8 +1692,11 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 			*partial = true;
 		}
 		m_isTunneling = false;
-		note(pathstops::kPartialRebuild);
-		Path *path = buildActualPath(obj, loco.validSurfaces, from, closest, centerInCell, false);
+		note(pathstops::kClosestCellThirdTest);
+		// RW 0x6FDD70: faceDirection 1, a literal (BFME2 decomp pathfinder.cpp:4639 BuildActualPath(.., false, true)); RW 0x6FDD8E (a partial exit the
+		// port folds into this one) passes 1 too. (The static byte RW 0xDA25B4 read at RW 0x6FE3E7 belongs to the ship's sideways attack search
+		// RW 0x6FDE38, not ported: S-784)
+		Path *path = buildActualPath(obj, loco, from, closest, centerInCell, false, true);
 		cleanOpenAndClosedLists();
 		goalCell->releaseInfo(m_pool);
 		return path;
@@ -1630,9 +1710,11 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 // ---------------------------------------------------------------------------------------------------------
 // path building
 // ---------------------------------------------------------------------------------------------------------
-Path *Pathfinder::buildActualPath(const PathfindObject *obj, unsigned acceptableSurfaces, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked)
+Path *Pathfinder::buildActualPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked,
+	bool faceDirection)
 {
 	note(pathstops::kPath);
+	const unsigned acceptableSurfaces = loco.validSurfaces;
 	Path *path = new Path(m_uberLimits); // lane UBER-PATH: the follower's later-leg tie in Uber
 	if (goalCell->getPinched() && goalCell->getParentCell() && !goalCell->getParentCell()->getPinched())
 	{
@@ -1640,6 +1722,19 @@ Path *Pathfinder::buildActualPath(const PathfindObject *obj, unsigned acceptable
 	}
 	prependCells(path, fromPos, goalCell, center);
 	path->optimize(*this, obj, acceptableSurfaces, blocked, nullptr);
+	if (faceDirection)
+	{
+		// RW 0x6F1AED .. 0x6F1B11 (lane PATH-REBUILD). RW always has an object here; the port's searches without one (a "does a path exist" query, the
+		// tests) face east, which only matters with a locomotor, and those have none
+		Coord2D facing;
+		facing.x = 1.0f;
+		facing.y = 0.0f;
+		if (obj)
+		{
+			facing = obj->getUnitDirection2D();
+		}
+		path->rebuild(*this, obj, loco, facing, acceptableSurfaces, blocked);
+	}
 	return path;
 }
 

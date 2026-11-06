@@ -27,5 +27,6 @@ set(OPENBFME_BUILD_TEST_SOURCES
     tests/test_build5_placement.cpp # lane BUILD-5
     tests/test_placement_text_style.cpp
     tests/test_bfme1_isolation.cpp # community PR #36
+    tests/test_bfme1_fields.cpp # BFME1 field names against its parsers (#173, #177)
     tests/test_bfme2mode0.cpp # lane BFME2MODE-0 (docs/EDITIONS.md)
 )
