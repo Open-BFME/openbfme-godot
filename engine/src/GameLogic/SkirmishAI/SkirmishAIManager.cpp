@@ -741,8 +741,8 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"the horde's turn is kept from carrying the members (the port's contain would place them); G2 measured, not solved: GondorFighterHorde engages 20 % of "
 		"its members on average against MordorFighterHorde (test_move2_slot_distance's MOVE2 MELEE report)",
 		"[S-893] skirmish ai targetless tactics (lane AI-2 r3): the 11 prototypes, FarmKillSquad's constructor draw, the per-frame pick RW 0x90C5E2 and FarmKillSquad's "
-		"applicability, setup, cleanup and update flow are ported, as is FlagCaptureSquad (RW 0x9BC39F / 0x9BC1A0 / 0x9BBFDC / 0x9BC3F4); the other 9 prototypes' applicability and bodies and FarmKillSquad's farm choice (RW 0x9BBA51 / "
-		"0x9BB5E4 and their draws) are not (a nearest-farm stand-in)",
+		"applicability, setup, cleanup and update flow are ported, as is FlagCaptureSquad (RW 0x9BC39F / 0x9BC1A0 / 0x9BBFDC / 0x9BC3F4); the other 9 prototypes' applicability and bodies are not; FarmKillSquad's farm and production choice "
+		"(RW 0x9BBA51 / 0x9BB5E4 and their draws) is ported (lane RAI-TL, the weighted candidate score and the path test)",
 		"[S-894] produced member of a destroyed horde (lane AI-2 r4): a member the queue exit hands to a horde that is already destroyed is destroyed with it "
 		"(HordeContain::acceptCreatedMember); RW's acceptance slot for a destroyed horde is not read",
 		"[S-895] skirmish ai offensive tactic bodies (lane AI-2 r5): Formation, Flank, Pincer, Feint and BasePenetration launch / update with their draws "

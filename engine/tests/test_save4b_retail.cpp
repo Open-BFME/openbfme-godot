@@ -379,9 +379,11 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 	// Merge queue q42 (CASTLEATK-1: nothing attacks an object with the status UNATTACKABLE, RW 0x6C9207, with ATKSTATE-1a's attack-state gates, moves the
 	// AIs' play; measured once on the merged tree and at each merge point, #216, #220 and #225 keep the census): no
 	// HordeNotifyTargetsOfImminentProbableCrushingUpdate or HorseHordeContain object (110)
+	// pin: merge of #235 on main 1d43a17e (2026-11-06, lane PR-TEND-AI): FarmKillSquad's farm and production choice moves the AIs' play at frame 3000:
+	// no AutoHealBehavior or RepairSpecialPower object (108 classes)
 	CHECK(classes == std::set<std::string>{
 		"AISpecialPowerUpdate", "ActiveBody", "ArmorUpgrade", "ArrowStormUpdate", "AttributeModifierAuraUpdate", "AttributeModifierPoolUpdate",
-		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoHealBehavior", "AutoPickUpUpdate",
+		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoPickUpUpdate",
 		"BannerCarrierUpdate", "BezierProjectileBehavior", "BloodthirstyUpdate", "BoredUpdate", "BuildableHeroListUpgrade", "BuildingBehavior",
 		"CastleBehavior", "CastleMemberBehavior", "CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower",
 		"CommandPointsUpgrade", "CommandSetUpgrade", "CostModifierUpgrade", "CreateObjectDie", "CritterEmitterUpdate", "DamageFilteredCreateObjectDie",
@@ -393,7 +395,7 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 		"LargeGroupAudioUpdate", "LargeGroupBonusUpdate", "LevelUpUpgrade", "LifetimeUpdate", "ModelConditionUpgrade", "MonitorConditionUpdate",
 		"OCLSpecialPower", "ObjectCreationUpgrade", "PassiveAreaEffectBehavior", "PhysicsBehavior", "PickupStuffUpdate", "PlayerHealSpecialPower",
 		"PlayerUpgradeSpecialPower", "PorcupineFormationBodyModule", "ProductionSpeedBonus", "ProductionUpdate", "QueueProductionExitUpdate",
-		"RebuildHoleExposeDie", "RecoveryHelper", "RefundDie", "RepairSpecialPower", "SMCHelper", "ScavengerSpecialPower", "ShareExperienceBehavior",
+		"RebuildHoleExposeDie", "RecoveryHelper", "RefundDie", "SMCHelper", "ScavengerSpecialPower", "ShareExperienceBehavior",
 		"SiegeDeployHordeSpecialPower", "SlaughterHordeContain", "SlaveWatcherBehavior", "SlavedUpdate", "SlowDeathBehavior", "SpawnBehavior",
 		"SpawnPointProductionExitUpdate", "SpawnUnitBehavior", "SpecialAbilityUpdate", "SpecialPowerModule", "SpellRechargeModifierUpgrade",
 		"SquishCollide", "StancesBehavior", "StatusBitsUpgrade", "StealthDetectorUpdate", "StructureBody", "StructureCollapseUpdate", "SubObjectsUpgrade",

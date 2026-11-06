@@ -2026,6 +2026,9 @@ Object *weighedChoice(GameLogic &logic, std::map<int, Object *> &choices, std::u
 
 // RW 0x9BBA51: the farm target among the enemy's economy list (record + 0xC -> + 4). Without a fortress the first branch draws up to three ids and
 // returns the last object even when it is invalid (RW 0x9BBE37); with one, every candidate is scored and the weighted choice runs.
+// BFME2 1.06's AIFarmKillSquad::findFarmTarget (0x5AD404, Open-BFME-2 Code/GameEngine/Source/GameLogic/SkirmishAI/AITacticalAI/AITacticsGenerator/
+// TargetlessTactics/AIFarmKillSquad.cpp) differs: the reachable tracked farm farthest (beyond 300) from the line through the centre and the enemy fortress,
+// a random tracked farm without a fortress; no per-candidate weight, no production attribute and no draws. The BFME2 edition runs this RotWK selector.
 Object *selectFarmTarget(GameLogic &logic, const AITactic &tac, int enemyIndex)
 {
 	Player *enemy = playerOf(logic, enemyIndex);
@@ -2122,6 +2125,8 @@ Object *selectFarmTarget(GameLogic &logic, const AITactic &tac, int enemyIndex)
 }
 
 // RW 0x9BB5E4: the production target among the enemy's structure list (record + 8 -> + 4); the same score and weighted choice as the farm one.
+// BFME2 1.06's production target (0x5AD243, AIFarmKillSquad.cpp) is the same finder's alternative candidate, not a second scored list; the BFME2 edition runs
+// this RotWK selector.
 Object *selectProductionTarget(GameLogic &logic, const AITactic &tac, int enemyIndex)
 {
 	Player *enemy = playerOf(logic, enemyIndex);
@@ -2218,7 +2223,8 @@ Object *selectProductionTarget(GameLogic &logic, const AITactic &tac, int enemyI
 }
 
 // RW 0x9BBF4C .. 0x9BBF9E: the farm choice first; the production choice replaces it one time in five (GetGameLogicRandomValue(0, 4), line 0x8B), and
-// without a farm only the production choice can answer. Null: the tactic ends.
+// without a farm only the production choice can answer. Null: the tactic ends. BFME2 1.06's update (0x5AD5DD) draws 0 .. 2 at line 135 to pick between the
+// two finders; those are different draw sites and a different rule, and the BFME2 edition runs this RotWK one.
 Object *chooseFarmKillTarget(GameLogic &logic, const AITactic &tac, int enemy)
 {
 	Object *target = selectFarmTarget(logic, tac, enemy);
