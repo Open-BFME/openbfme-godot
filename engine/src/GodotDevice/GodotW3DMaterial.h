@@ -79,7 +79,8 @@ Ref<Image> Load_Asset_Pack_Image(const AssetPacks *packs, const std::string &nam
 // The decoded archive textures the material factories of one RetailFileSystem mount share (RetailFileSystem::w3dTextureCache), by the factory's
 // texture cache key. Every W3DInstancer has its own factory (the world, the placement ghost's views, each Apt 3D view, the WotR maps), and each
 // decoded and uploaded the same textures again. Entries are weak (instance ids): a texture lives while a factory holds it, as before. Only
-// textures are shared: materials carry an instancer's palette and mapper state. Presentation only, main thread only.
+// textures are shared: materials carry an instancer's palette and mapper state. An asset pack's replacement stays per factory (its "pack:" key is
+// looked up before these). Presentation only, main thread only.
 struct W3DTextureCache
 {
 	struct Entry
@@ -88,6 +89,7 @@ struct W3DTextureCache
 		std::string PackedNote; // its S-1482 note, if any
 	};
 	std::map<std::string, Entry> Entries;
+	std::size_t SweepAt = 256; // Export_Texture drops the dead entries when Entries reaches this size
 };
 
 // Builds materials and caches shaders and textures. Textures are read through the mounted archives.

@@ -29,6 +29,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 #include <cstring>
 
@@ -396,8 +397,7 @@ bool W3DMaterialFactory::Reduce_Image(Ref<Image> &image, int reduction)
 
 void W3DMaterialFactory::Import_Texture(const std::string &key, std::map<std::string, std::string> &notes)
 {
-	// loose files (-preferLocalFiles) keep being read per factory: a modder's edited file shows in the next viewer, as before
-	if (!SharedTextures || Fs.preferLocalFiles() || Textures.count(key)) return;
+	if (!SharedTextures || Textures.count(key)) return;
 	const auto it = SharedTextures->Entries.find(key);
 	if (it == SharedTextures->Entries.end()) return;
 	Texture2D *texture = Object::cast_to<Texture2D>(ObjectDB::get_instance(it->second.Id));
@@ -412,11 +412,21 @@ void W3DMaterialFactory::Import_Texture(const std::string &key, std::map<std::st
 
 void W3DMaterialFactory::Export_Texture(const std::string &key, const std::map<std::string, std::string> &notes)
 {
-	if (!SharedTextures || Fs.preferLocalFiles()) return;
+	if (!SharedTextures) return;
 	const auto texture = Textures.find(key);
 	if (texture == Textures.end() || texture->second.is_null()) return;
+	std::map<std::string, W3DTextureCache::Entry> &entries = SharedTextures->Entries;
+	if (entries.size() >= SharedTextures->SweepAt)
+	{
+		// a key nobody asks for again (another house colour set, a finished preview) would stay forever: drop the dead ones, at most once per doubling
+		for (auto it = entries.begin(); it != entries.end();)
+		{
+			it = ObjectDB::get_instance(it->second.Id) ? std::next(it) : entries.erase(it);
+		}
+		SharedTextures->SweepAt = std::max<std::size_t>(256, entries.size() * 2);
+	}
 	const auto note = notes.find(key);
-	SharedTextures->Entries[key] = { texture->second->get_instance_id(), note == notes.end() ? std::string() : note->second };
+	entries[key] = { texture->second->get_instance_id(), note == notes.end() ? std::string() : note->second };
 }
 
 Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing, std::vector<std::string> *notes)

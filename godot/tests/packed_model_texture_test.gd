@@ -129,7 +129,10 @@ func _check_shared_textures(fs: RefCounted, first: Node) -> void:
 	for key in all:
 		if str(key).begins_with("GUGdfHrs_SKN_"): # the first renderer also drew GUGdfHrs_SKNL
 			original[key] = all[key]
-	_check(not original.is_empty(), str(all.keys()))
+	var expected := ["GUGdfHrs_SKN_GUGDFHRS_SKN_GANDALF_W:0", "GUGdfHrs_SKN_GUGDFHRS_SKN_GUHORSE:0"] # the rider and the horse
+	var got := original.keys()
+	got.sort()
+	_check(got == expected, str(all.keys()))
 	var remounted: RefCounted = ClassDB.instantiate("RetailFileSystem")
 	if not _check(remounted.mount_retail().ok):
 		return
