@@ -1025,7 +1025,7 @@ TEST_CASE("RAI-POW: SOUL_FREEZE (RW 0x9E9B37) bins the enemies into retail's 3x3
 	a.advance(1);
 	REQUIRE(sf->decision());
 	CHECK(sf->data()->m_commandButtonName == "Command_NecromancerSoulFreeze");
-	CHECK(sf->decision()->powerTemplate == TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze"));
+	CHECK(sf->decision()->powerType == TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze")->getSpecialPowerType());
 	CHECK(sf->decision()->range == 300.0f); // ANGMAR_NECRO_SOUL_FREEZE_START_RANGE through SpecialPowerRange
 	const Coord3D at = *necro->getPosition();
 	// no enemy in the scan -> no
@@ -1083,12 +1083,12 @@ TEST_CASE("RAI-POW: the team's special-power registry (RW 0x7A3EF5 / 0x7A5582): 
 	REQUIRE(team->specialPowerRecords().empty());
 	REQUIRE(sf->decideNow() == true);
 	REQUIRE(team->specialPowerRecords().size() == 1);
-	CHECK(team->specialPowerRecords()[0].power == sf->decision()->powerTemplate);
+	CHECK(team->specialPowerRecords()[0].powerType == sf->decision()->powerType);
 	CHECK(team->specialPowerRecords()[0].frame == a.logic->getFrame());
 	CHECK(team->specialPowerRecords()[0].caster == necro->getID());
-	CHECK(team->findSpecialPowerRecord(sf->decision()->powerTemplate, nullptr, *a.logic) == necro);
-	CHECK(team->findSpecialPowerRecord(sf->decision()->powerTemplate, necro, *a.logic) == necro);
-	CHECK(team->findSpecialPowerRecord(sf->decision()->powerTemplate, nullptr, *a.logic)->getID() == necro->getID());
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerType, nullptr, *a.logic) == necro);
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerType, necro, *a.logic) == necro);
+	CHECK(team->findSpecialPowerRecord(sf->decision()->powerType, nullptr, *a.logic)->getID() == necro->getID());
 	// the same caster passes the gate again (retail compares the record's id with the caster), a second unit of the team does not
 	CHECK(sf->decideNow() == true);
 	Object *other = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
@@ -1137,12 +1137,12 @@ TEST_CASE("RAI-POW end to end: a Hard computer's Angmar Necromancer runs Soul Fr
 	}
 	MESSAGE("Soul Freeze ran after " << frame << " frames");
 	// engine pin (seed 5203): the module's 25-frame counter (RW 0x99302D) from its first update and the roll above Hard's chance pass on this frame
-	CHECK(frame == 26);
+	CHECK(frame == 23); // merge of main 1d43a17e (the AI update order) moved this from 26; the module's 25-frame counter and the roll are unchanged
 	CHECK(AISpecialPowerUpdate::stats().executedByType[44] == 1);
 	REQUIRE(necro->getTeam());
 	const std::vector<Team::SpecialPowerRecord> &records = necro->getTeam()->specialPowerRecords();
 	REQUIRE(!records.empty());
-	CHECK(records[0].power == sf->decision()->powerTemplate);
+	CHECK(records[0].powerType == sf->decision()->powerType);
 	CHECK(records[0].caster == necro->getID());
 	for (const Team::SpecialPowerRecord &r : records)
 	{
@@ -1159,12 +1159,13 @@ TEST_CASE("RAI-POW: the team special-power registry round-trips through a snapsh
 	OPENBFME_REQUIRE_START(s);
 	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze");
 	REQUIRE(t);
+	const int powerType = t->getSpecialPowerType();
 	TeamFactory f;
 	TeamPrototype *proto = f.initTeam("RAI-POW registry", nullptr, false, nullptr);
 	REQUIRE(proto);
 	Team *saved = f.createTeam(proto);
 	REQUIRE(saved);
-	saved->addSpecialPowerRecord(t, 7, 42);
+	saved->addSpecialPowerRecord(powerType, 7, 42);
 	XferSave save;
 	saved->xfer(save);
 	REQUIRE(!save.data().empty());
@@ -1174,7 +1175,7 @@ TEST_CASE("RAI-POW: the team special-power registry round-trips through a snapsh
 	XferLoad load(save.data());
 	loaded->xfer(load);
 	REQUIRE(loaded->specialPowerRecords().size() == 1);
-	CHECK(loaded->specialPowerRecords()[0].power == t);
+	CHECK(loaded->specialPowerRecords()[0].powerType == powerType);
 	CHECK(loaded->specialPowerRecords()[0].frame == 7);
 	CHECK(loaded->specialPowerRecords()[0].caster == 42);
 	// a team with no record writes version 1, and a version 1 load clears a record the target team already had
@@ -1186,8 +1187,54 @@ TEST_CASE("RAI-POW: the team special-power registry round-trips through a snapsh
 	CHECK(save1.data()[0] == 1);
 	Team *loaded1 = f.createTeam(proto);
 	REQUIRE(loaded1);
-	loaded1->addSpecialPowerRecord(t, 9, 43);
+	loaded1->addSpecialPowerRecord(powerType, 9, 43);
 	XferLoad load1(save1.data());
 	loaded1->xfer(load1);
 	CHECK(loaded1->specialPowerRecords().empty());
+}
+
+TEST_CASE("RAI-POW: a loaded Soul Freeze decision keeps its power type and still decides (the registry is keyed by the type)")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5204, &err), err);
+	REQUIRE(a.logic->shroud());
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *necro = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	AISpecialPowerUpdate *sf = aiPowerOfType(*necro, 44);
+	REQUIRE(sf);
+	a.advance(1);
+	REQUIRE(sf->decision());
+	XferSave save;
+	sf->xfer(save);
+	REQUIRE(!save.data().empty());
+	// the only caster of its team (the registry refuses a second one, RW 0x7A3EF5): remove it after the save so the loaded module is the team's first
+	a.logic->destroyObject(necro);
+	// a second caster loads the saved module: the saved power type must survive (RW 0x8B714F stores SpecialPowerTemplate + 0x1C at decision + 0x08;
+	// the team registry lookup RW 0x7A3EF5 compares that word, not the template pointer)
+	Object *necro2 = a.make("AngmarNecromancerHorde", a.human, 0.0f, 0.0f); // the other team: its registry cannot hold the AI team's record
+	AISpecialPowerUpdate *sf2 = aiPowerOfType(*necro2, 44);
+	REQUIRE(sf2);
+	a.advance(1);
+	Object *loadedEnemy = a.make("GondorFighterHorde", a.ai, 290.0f, 0.0f);
+	REQUIRE(loadedEnemy); // Arena::make already settles the partition
+	MESSAGE("pre-load decide " << sf2->decideNow());
+	XferLoad load(save.data());
+	sf2->xfer(load);
+	REQUIRE(sf2->decision());
+	MESSAGE("necro2 at " << necro2->getPosition()->x << "," << necro2->getPosition()->y << "; enemy at " << loadedEnemy->getPosition()->x << ","
+		<< loadedEnemy->getPosition()->y << "; loaded range " << sf2->decision()->range << " power " << sf2->decision()->powerType
+		<< " button " << (sf2->decision()->button ? sf2->decision()->button->m_name : std::string("null")));
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze");
+	REQUIRE(t);
+	CHECK(sf2->decision()->powerType == t->getSpecialPowerType());
+	REQUIRE(sf2->decideNow() == true); // before the fix the restored decision had a null template and always answered no
+	REQUIRE(necro2->getTeam());
+	REQUIRE(!necro2->getTeam()->specialPowerRecords().empty());
+	CHECK(necro2->getTeam()->specialPowerRecords().back().powerType == t->getSpecialPowerType());
+	CHECK(necro2->getTeam()->specialPowerRecords().back().caster == necro2->getID());
 }

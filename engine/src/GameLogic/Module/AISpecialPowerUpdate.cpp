@@ -213,14 +213,12 @@ void AISpecialPowerUpdate::init()
 	}
 	int powerType = 0;
 	float range = 0.0f;
-	const SpecialPowerTemplate *powerTemplate = nullptr;
 	if (found)
 	{
 		m_active = true;
 		const SpecialPowerTemplate *t = TheSpecialPowerStore && !found->m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(found->m_specialPowerName) : nullptr;
 		if (t)
 		{
-			powerTemplate = t;
 			powerType = t->getSpecialPowerType(); // RW 0x688D3C -> + 0x1C
 			for (const std::unique_ptr<BehaviorModule> &m : obj->modules()) // RW 0x68C461: behaviour slot 0x64, its vslot 4, the power's type (RW 0x851D10)
 			{
@@ -283,7 +281,6 @@ void AISpecialPowerUpdate::init()
 				m_decision->range = m_data->m_specialPowerRange;
 			}
 			m_decision->powerType = powerType;
-			m_decision->powerTemplate = powerTemplate;
 		}
 	}
 	m_initialized = true;

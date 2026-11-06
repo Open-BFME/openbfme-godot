@@ -768,11 +768,11 @@ bool AISpecialPowerUpdate::decideSoulFreeze(Object &obj)
 	// skips every hit's accounting, which leaves the enemy total 0.
 	Team *team = obj.getTeam();
 	const Player *player = obj.getControllingPlayer();
-	if (!team || !m_decision->powerTemplate || !player)
+	if (!team || !player)
 	{
 		return false;
 	}
-	Object *registered = team->findSpecialPowerRecord(m_decision->powerTemplate, nullptr, obj.logic());
+	Object *registered = team->findSpecialPowerRecord(m_decision->powerType, nullptr, obj.logic());
 	if (registered && registered != &obj)
 	{
 		return false;
@@ -790,15 +790,15 @@ bool AISpecialPowerUpdate::decideSoulFreeze(Object &obj)
 		return false;
 	}
 	// the cell width: __ftol2(x87(radius * the double 2/3, RW 0xC8E360)), not a float32 2/3
-	const int width = (int)SimMath::ftol2(SimMath::pc24MulW((double)radius, 2.0 / 3.0));
+	const int width = (int)SimMath::ftol2(SimMath::pc24MulW((double)radius, 0.66666666666666663)); // 0x3FE5555555555555
 	if (width == 0)
 	{
 		throw std::logic_error("AISpecialPowerUpdate SOUL_FREEZE (RW 0x9E9B37): the range " + std::to_string(radius) + " gives a zero cell width (retail divides by zero)");
 	}
 	const Coord3D origin{ SimMath::subf32(obj.getPosition()->x, radius), SimMath::subf32(obj.getPosition()->y, radius), obj.getPosition()->z };
 	// retail's two 3x3 grids are 0x24 bytes apart and index x * 3 + y without a bound: a hit at the far edge bins x == 3, so the enemies' indexes 9 ..
-	// 11 land in the allies' cells 0 .. 2 (RW 0x9E9D79); the allies' own 9 .. 11 land in the partition iterator's dead alive filter, so they are
-	// dropped here. Both max searches read only cells 0 .. 8 of each grid.
+	// 11 land in the allies' cells 0 .. 2 (RW 0x9E9D79); the allies' own 9 .. 10 land in the partition iterator's dead alive filter and 11 hits the saved
+	// team pointer (EBP-0x38), so they are dropped here. Both max searches read only cells 0 .. 8 of each grid.
 	int otherCell[9] = {};
 	int alliedCell[9] = {};
 	unsigned alliedTotal = 0, otherTotal = 0;
@@ -915,6 +915,6 @@ bool AISpecialPowerUpdate::decideSoulFreeze(Object &obj)
 		return false;
 	}
 	// RW 0x9EA028: the five-word record joins the team's registry after the location was accepted
-	team->addSpecialPowerRecord(m_decision->powerTemplate, obj.logic().getFrame(), obj.getID());
+	team->addSpecialPowerRecord(m_decision->powerType, obj.logic().getFrame(), obj.getID());
 	return true;
 }

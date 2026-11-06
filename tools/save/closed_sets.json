@@ -53,6 +53,7 @@
  "Common/Team.cpp::Team::xfer::destroyThreshold#1": "open: a script counter of the team",
  "Common/Team.cpp::Team::xfer::m_currentWaypoint#1": "open: the waypoint id of the team's path; looked up by id when used (a missing waypoint ends the path)",
  "Common/Team.cpp::Team::xfer::m_teamTarget#1": "open: the team id a hunt targets; looked up when used (a team gone since targets nothing)",
+ "Common/Team.cpp::Team::xfer::powerType#1": "open: the power's SpecialPowerType (RW 0x7A5C06 saves retail's registry word as an int), compared with the decisions' types, never an index",
  "Common/Upgrade.cpp::xferUpgradeMask::words#1": "checked by checkLoadedUpgradeMask in Common/Upgrade.cpp: every mask this helper loads (lane MODS-3's activeWords; StealthUpdate's and InvisibilityNugget's masks go through it) holds only this game's upgrades",
  "GameLogic/AI/AIAttackSnapshot.cpp::AIAttackState::xfer::m_lockedSlotOnEnter#1": "open: -1 or the weapon slot locked when the state began (compared with the current slot only)",
  "GameLogic/AI/AIAttackSnapshot.cpp::AIAttackState::xfer::m_victimTeam#1": "open: the victim's team id when the attack began (compared with the victim's team now, RW AIAttack)",
@@ -329,5 +330,6 @@
  "GameLogic/System/ShroudManagerSnapshot.cpp::ShroudManager::xferState::m_unlookPersist#1": "open: frames",
  "GameLogic/System/ShroudManagerSnapshot.cpp::ShroudManager::xferState::x#1": "open: a cell coordinate of the look centre (the reveal clips to the grid, ShroudManager RW 0xB4EB70)",
  "GameLogic/System/ShroudManagerSnapshot.cpp::ShroudManager::xferState::y#1": "open: a cell coordinate of the look centre (clipped)",
- "GameLogic/System/ShroudManagerSnapshot.cpp::xferU64::w#1": "open: a statistic counter"
+ "GameLogic/System/ShroudManagerSnapshot.cpp::xferU64::w#1": "open: a statistic counter",
+ "Common/Team.cpp::Team::xfer::powerType#2": "open: the power's SpecialPowerType (RW 0x7A5C06 saves retail's registry word as an int), compared with the decisions' types, never an index"
 }

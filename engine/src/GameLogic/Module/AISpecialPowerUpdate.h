@@ -111,8 +111,7 @@ struct AISpecialPowerDecision
 	};
 	int type = -1;
 	int kind = KIND_SELF;                 ///< + 0x04
-	int powerType = 0;                    ///< + 0x08 in retail is the power template pointer; the port keeps its type beside it
-	const SpecialPowerTemplate *powerTemplate = nullptr; ///< + 0x08 (the team registry of SOUL_FREEZE is keyed by it)
+	int powerType = 0;                    ///< + 0x08 (RW 0x8B714F stores SpecialPowerTemplate + 0x1C here; the team registry is keyed by it)
 	const CommandButton *button = nullptr; ///< + 0x0C
 	unsigned counter = 0;                 ///< + 0x10
 	float range = 0.0f;                   ///< + 0x14
