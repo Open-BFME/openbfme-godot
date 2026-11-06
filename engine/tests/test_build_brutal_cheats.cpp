@@ -1,6 +1,6 @@
 // OpenBFME unit tests. GPL-3.0.
-// Lane FEAT-BRUTAL-1: the Brutal skirmish AI's build cost and time reductions, ported from ThingTemplate::calcCostToBuild (RW 0x73C25F) and
-// ThingTemplate::calcTimeToBuild (RW 0x73C39E) into Common/BuildAssistant.cpp.
+// Community PR #247 (admiraly): the Brutal skirmish AI's build cost and time reductions of ThingTemplate::calcCostToBuild (RW 0x73C25F) and
+// ThingTemplate::calcTimeToBuild (RW 0x73C39E) (ported by lane BRUTALAI-1, test_brutalai1.cpp; these cases add retail numbers and the truncation order).
 //
 // Expected values: the arithmetic is retail's, read from the binary (caveat S-001):
 //   * the condition is Player::getDifficulty (RW 0x6AA61B: the player's AI's difficulty, else the script engine's) == 3 (BRUTAL) and

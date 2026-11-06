@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <algorithm>
@@ -95,10 +96,6 @@ public:
 	// the skirmish AI level of the side (skirmishDifficulty: 0 easy .. 3 brutal), -1 for a side without one; the AI lane reads it
 	int getSkirmishDifficulty() const { return m_skirmishDifficulty; }
 	void setSkirmishDifficulty(int d) { m_skirmishDifficulty = d; }
-	// lane FEAT-BRUTAL-1: RW 0x6AA61B == 3 and RW 0x6A950B (a skirmish AI exists for the player): TheSkirmishAIData's BrutalDifficultyCheats
-	// percentages (+ 0x94C cost, + 0x950 time); 0 for any other player, so BuildAssistant's factor is 1.0
-	float brutalBuildCostReduction() const;
-	float brutalBuildTimeReduction() const;
 	// lane OWNERFIX-2: RW Player + 0x29C, the lobby handicap (0, -5 .. -95): Player::initFromDict (RW 0x6B09C2 .. 0x6B09DE) stores the side's playerHandicap
 	// (Dict::getInt: 0 when absent); Object::friend_initObject (RW 0x6940DB) reads it. Set once at the start, never changed: a save's start message sets it
 	// again before the snapshot loads, so it is not in the snapshot (xfer); hashed only when not 0 so a game without a handicap keeps its hash
@@ -249,6 +246,8 @@ public:
 	bool canAffordCommandPoints(const ThingTemplate &tt) const;      // RW 0x6A7F79
 	bool hasObjectMatching(const ObjectFilter &filter, bool completedOnly) const; // RW 0x6ABD0B
 	float getProductionCostChangeBasedOnKindOf(const ThingTemplate &tt, bool slaughter = false) const; // RW 0x6AD8A7
+	// lane BRUTALAI-1: the Brutal skirmish AI's cost (`time` false) or time reduction m = min(1.0, r) when it applies (PlayerEconomyHost::brutalReduction)
+	std::optional<float> getBrutalBuildReduction(bool time) const;
 	int applyHandicapMoney(int amount) const;                        // RW 0x6AA858
 
 	// ---- lane UPGRADE-1: the player's upgrades -------------------------------------------------------------------------------------

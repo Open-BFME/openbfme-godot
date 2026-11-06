@@ -6,5 +6,9 @@
   "cf38c5d40de8423efd24472fbbfb3ddbb6e57933": [[164], [], [], [], [], [], [133], [166]],
   "c57fbb1ccad4f09c9b695c0996c2c1f8ae47462e": [[171], [], [], [160], [161], []],
   "83c1a0476f5a51a433f3e73ce53aa0aa6fd9ad78": [[], [], [], [178, 179], [132]]
+ },
+ "_not_carried": "not_carried: merges that name or cherry-picked a pull request they do not ship (it was merged, then reverted inside the merge). Key: the merge's full commit id; value: those pull request numbers. No Release-note line has to credit them.",
+ "not_carried": {
+  "26c08791b5a3fd07e869efbdf710dbc979e21fc1": [229]
  }
 }

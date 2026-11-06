@@ -76,10 +76,6 @@ public:
 	int applyIncomeMultipliers(const Player &owner, float amountF) const;
 	// RW 0x6AA858 (PlayerEconomyHost): the campaign handicap, identity in a skirmish
 	int applyHandicapMoney(const Player &player, int amount) const override;
-	// lane FEAT-BRUTAL-1 (PlayerEconomyHost): RW 0x6AA61B == 3 (BRUTAL) and RW 0x6A950B (an AI exists for the player): TheSkirmishAIData's
-	// BrutalDifficultyCheats (+ 0x94C cost, + 0x950 time); 0 for every other player
-	float brutalBuildCostReduction(const Player &player) const override;
-	float brutalBuildTimeReduction(const Player &player) const override;
 
 	// an integer object field of a template (CommandPoints, CommandPointBonus, BountyValue, BuildCost, ...): 0 when the template never set it (the template's
 	// default), an error when the field is not an integer
@@ -103,6 +99,8 @@ public:
 	void updateUpgradeModulesOfPlayer(const Player &player) override;
 	void removeUpgradeFromObjectsOfPlayer(const Player &player, const UpgradeTemplate &upgrade) override;
 	void reportUpgradeEva(const Player &player, const UpgradeTemplate &upgrade, bool gained) override;
+	// lane BRUTALAI-1 (PlayerEconomyHost): RW 0x6AA61B == 3 and RW 0x6A950B -> min(1.0, BrutalDifficultyCheats' reduction)
+	std::optional<float> brutalReduction(const Player &player, bool time) const override;
 
 	// ---- what the players ask the world --------------------------------------------------------------------------------------
 	bool hasObjectMatching(const Player &player, const ObjectFilter &filter, bool completedOnly) const override;   // RW 0x6ABD0B

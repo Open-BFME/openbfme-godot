@@ -16,6 +16,8 @@
 #include "GameLogic/SimMath.h"
 #include "Common/Xfer.h"
 
+#include <optional>
+
 const HeroRecord *PlayerHeroList::at(int index) const
 {
 	if (index < 0 || (size_t)index >= m_records.size())
@@ -123,18 +125,38 @@ int PlayerHeroList::recordFrames(GameLogic &logic, const Player &owner, const He
 	return SimMath::truncToInt32(NumericState::pc24Mul((float)frames, m));
 }
 
-// RW 0x780AD3 (the record's own second Brutal factor of RW 0x780AF1 .. 0x780B5C is stop S-855; the ThingTemplate factor inside calcCostToBuild is S-204's, ported)
+namespace
+{
+// lane BRUTALAI-1, RW 0x780AF2 .. 0x780B5A / 0x780B91 .. 0x780BF9: the difficulty gate reads the PRODUCER's controlling player (RW 0x68B678 on the second
+// argument, not the record's owner); the record's value (whose calcCostToBuild / calcTimeToBuild already took the discount once: retail discounts a Brutal
+// AI's revival twice) becomes trunc((1.0 - m) * value) (subss; cvtsi2ss; mulss; cvttss2si). RW reads the producer unchecked; a null producer (only the
+// port's UI callers pass one) gets no discount
+int brutalHeroValue(const Object *producer, bool time, int value)
+{
+	const Player *p = producer ? producer->getControllingPlayer() : nullptr;
+	if (p)
+	{
+		if (const std::optional<float> m = p->getBrutalBuildReduction(time))
+		{
+			return SimMath::cvttss2si(SimMath::sseMul(SimMath::sseFromInt32(value), SimMath::sseSub(1.0f, *m)));
+		}
+	}
+	return value;
+}
+} // namespace
+
+// RW 0x780AD3 (BFME2 decomp Common/RTS/UnitRevivalEntry.cpp:511)
 int PlayerHeroList::costAt(GameLogic &logic, const Player &owner, int index, const Object *producer) const
 {
 	const HeroRecord *r = at(index);
-	return r ? recordCost(logic, owner, *r, producer) : 0;
+	return r ? brutalHeroValue(producer, false, recordCost(logic, owner, *r, producer)) : 0;
 }
 
-// RW 0x780B72 (the record's own second Brutal time factor of RW 0x780BDE .. 0x780BF9 is stop S-855)
+// RW 0x780B72 (BFME2 decomp Common/RTS/UnitRevivalEntry.cpp:551)
 int PlayerHeroList::framesForProductionID(GameLogic &logic, const Player &owner, std::uint32_t id, const Object *producer) const
 {
 	const HeroRecord *r = findByProductionID(id);
-	return r ? recordFrames(logic, owner, *r, producer) : 0;
+	return r ? brutalHeroValue(producer, true, recordFrames(logic, owner, *r, producer)) : 0;
 }
 
 // RW 0x780C11

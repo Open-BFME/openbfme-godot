@@ -329,20 +329,14 @@ bool Player::hasObjectMatching(const ObjectFilter &filter, bool completedOnly) c
 	return host().hasObjectMatching(*this, filter, completedOnly);
 }
 
+std::optional<float> Player::getBrutalBuildReduction(bool time) const
+{
+	return host().brutalReduction(*this, time);
+}
+
 float Player::getProductionCostChangeBasedOnKindOf(const ThingTemplate &tt, bool slaughter) const
 {
 	return host().productionCostChange(*this, tt, slaughter);
-}
-
-// lane FEAT-BRUTAL-1: the host answers the world question (the skirmish AI manager's record and TheSkirmishAIData's BrutalDifficultyCheats)
-float Player::brutalBuildCostReduction() const
-{
-	return host().brutalBuildCostReduction(*this);
-}
-
-float Player::brutalBuildTimeReduction() const
-{
-	return host().brutalBuildTimeReduction(*this);
 }
 
 int Player::applyHandicapMoney(int amount) const
