@@ -13,7 +13,9 @@
 #include <godot_cpp/classes/geometry_instance3d.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
+#include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/aabb.hpp>
@@ -114,6 +116,8 @@ void FXPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("advance", "delta"), &FXPlayer::advance);
 	ClassDB::bind_method(D_METHOD("step_once"), &FXPlayer::step_once);
 	ClassDB::bind_method(D_METHOD("rebuild"), &FXPlayer::rebuild);
+	ClassDB::bind_method(D_METHOD("get_scorch_count"), &FXPlayer::scorchCount); // lane FEAT-BLDFX-1
+	ClassDB::bind_method(D_METHOD("get_decal_count"), &FXPlayer::decalCount);   // lane FEAT-BLDFX-1
 	ClassDB::bind_method(D_METHOD("set_paused", "paused"), &FXPlayer::set_paused);
 	ClassDB::bind_method(D_METHOD("is_paused"), &FXPlayer::is_paused);
 	ClassDB::bind_method(D_METHOD("set_max_particles", "count"), &FXPlayer::set_max_particles);
@@ -172,6 +176,23 @@ Dictionary FXPlayer::setup(const Ref<RetailFileSystem> &fs)
 	m_preloadQueue.clear();
 	m_preloadNext = 0;
 	m_preloadQueued = false;
+	if (m_decalRoot)
+	{
+		// lane FEAT-BLDFX-1: the previous data's decal nodes and their state go with the previous playback
+		for (auto &kv : m_decalNodes)
+		{
+			kv.second->queue_free();
+		}
+		m_decalNodes.clear();
+		if (m_scorchNode)
+		{
+			m_scorchNode->queue_free();
+		}
+		m_scorchVersion = 0;
+		m_scorchNode = nullptr;
+		m_scorchMesh.unref();
+		m_hadDecals = false;
+	}
 	m_playback = std::make_unique<FXPlayback>(*fs->archive(), RandomAlgorithm::RotWK_GameDat_LCG);
 	for (const std::string &e : m_playback->loadRetailData())
 	{
@@ -266,7 +287,9 @@ void FXPlayer::clear()
 		m_playback->emitters().clear();
 		m_playback->particles().reset();
 		m_playback->clearEvents();
+		m_playback->clearClientEffects(); // lane FEAT-BLDFX-1: scorches, decals and light pulses belong to the game that is going
 	}
+	updateClientEffects();
 	rebuild();
 }
 
@@ -306,6 +329,275 @@ void FXPlayer::step_once()
 	const auto t0 = std::chrono::steady_clock::now();
 	m_playback->step();
 	m_stepUs = usSince(t0);
+	updateClientEffects();
+}
+
+const ScorchBuffer &FXPlayer::scorches() const
+{
+	static const ScorchBuffer empty;
+	return m_playback ? m_playback->scorches() : empty;
+}
+
+size_t FXPlayer::decalCount() const
+{
+	return m_playback ? m_playback->decals().size() : 0;
+}
+
+// lane FEAT-BLDFX-1: the terrain decals. Retail draws the scorches as one terrain-conforming grid per scorch in a 3 x 3 atlas cell
+// (DONOR BFME2 0x678BB) and the dynamic decals as projected quads with the opacity envelope of DONOR BFME2 0x10C785. Both are client-only presentation;
+// this renderer batches each texture into one ArrayMesh and never feeds anything back into the simulation.
+void FXPlayer::updateClientEffects()
+{
+	if (!m_playback)
+	{
+		return;
+	}
+	if (!m_decalRoot)
+	{
+		m_decalRoot = memnew(Node3D);
+		m_decalRoot->set_name("TerrainDecals");
+		add_child(m_decalRoot);
+	}
+	// ---- scorches (TARGET RW 0x5E0045; DONOR BFME2 0x67EA3 / 0x678BB) ----
+	const ScorchBuffer &scorches = m_playback->scorches();
+	if (scorches.version() != m_scorchVersion)
+	{
+		m_scorchVersion = scorches.version();
+		if (!m_scorchNode)
+		{
+			m_scorchMaterial.instantiate();
+			Ref<Shader> shader;
+			shader.instantiate();
+			shader->set_code("shader_type spatial;\n"
+							 "render_mode blend_mix, depth_draw_never, cull_disabled, unshaded, shadows_disabled;\n"
+							 "uniform sampler2D decal_tex : filter_linear_mipmap, repeat_disable;\n"
+							 "void fragment() {\n"
+							 "\tvec4 t = texture(decal_tex, UV);\n"
+							 "\tALBEDO = t.rgb * COLOR.rgb;\n"
+							 "\tALPHA = t.a * COLOR.a;\n"
+							 "}\n");
+			m_scorchMaterial->set_shader(shader);
+			m_scorchMaterial->set_shader_parameter("decal_tex", particleTexture("exscorch01.tga"));
+			m_scorchNode = memnew(MeshInstance3D);
+			m_scorchNode->set_name("Scorches");
+			m_scorchNode->set_material_override(m_scorchMaterial);
+			m_scorchNode->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			m_decalRoot->add_child(m_scorchNode);
+		}
+		const int kCells = 4; // 4 x 4 cells per scorch: the retail grid's 10-unit cells are finer; 4 keeps 500 scorches at 12.5k vertices
+		PackedVector3Array verts;
+		PackedVector2Array uvs;
+		PackedColorArray colors;
+		PackedInt32Array indices;
+		for (const ScorchFx &s : scorches.entries())
+		{
+			if (!(s.radius > 0.0f))
+			{
+				continue;
+			}
+			const int type = s.type < 0 || s.type >= 9 ? 0 : s.type; // DONOR BFME2 0x678BB: a type outside 0 .. 8 draws SCORCH_1
+			const float u0 = (float)(type % 3) / 3.0f;
+			const float v0 = (float)(type / 3) / 3.0f;
+			const int32_t base = (int32_t)verts.size();
+			for (int j = 0; j <= kCells; ++j)
+			{
+				for (int i = 0; i <= kCells; ++i)
+				{
+					const float fx = (float)i / (float)kCells;
+					const float fy = (float)j / (float)kCells;
+					const float x = s.position.x + (fx * 2.0f - 1.0f) * s.radius;
+					const float y = s.position.y + (fy * 2.0f - 1.0f) * s.radius;
+					const float z = m_playback->groundHeight(x, y) + 1.0f; // DONOR BFME2 0x678BB: the scorch sits one unit above the terrain
+					verts.push_back(toGodotSpace(Coord3D{ x, y, z }));
+					uvs.push_back(Vector2(u0 + fx / 3.0f, v0 + fy / 3.0f));
+					colors.push_back(Color(1, 1, 1, 1));
+				}
+			}
+			for (int j = 0; j < kCells; ++j)
+			{
+				for (int i = 0; i < kCells; ++i)
+				{
+					const int32_t a = base + j * (kCells + 1) + i;
+					const int32_t b = a + 1;
+					const int32_t c = a + (kCells + 1);
+					const int32_t d = c + 1;
+					indices.push_back(a); indices.push_back(b); indices.push_back(c);
+					indices.push_back(b); indices.push_back(d); indices.push_back(c);
+				}
+			}
+		}
+		Ref<ArrayMesh> mesh;
+		mesh.instantiate();
+		if (!verts.is_empty())
+		{
+			Array arrays;
+			arrays.resize(Mesh::ARRAY_MAX);
+			arrays[Mesh::ARRAY_VERTEX] = verts;
+			arrays[Mesh::ARRAY_TEX_UV] = uvs;
+			arrays[Mesh::ARRAY_COLOR] = colors;
+			arrays[Mesh::ARRAY_INDEX] = indices;
+			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+		}
+		m_scorchMesh = mesh;
+		m_scorchNode->set_mesh(m_scorchMesh);
+	}
+	// ---- dynamic decals (TARGET RW 0x5E05AB; DONOR BFME2 0x1E0E43 / 0x10C785) ----
+	const std::vector<DecalFx> &decals = m_playback->decals();
+	if (decals.empty() && !m_hadDecals)
+	{
+		return;
+	}
+	m_hadDecals = !decals.empty();
+	// three materials: ALPHA (0), ADDITIVE (1) and SUBTRACT (2), the DynamicDecal Shader field (DONOR BFME2 0x1E0E43's shader bits)
+	for (int shader = 0; shader < 3; ++shader)
+	{
+		if (m_decalShaders[shader].is_valid())
+		{
+			continue;
+		}
+		const char *mode = shader == 1 ? "blend_add" : (shader == 2 ? "blend_sub" : "blend_mix");
+		Ref<Shader> s;
+		s.instantiate();
+		const std::string code = std::string("shader_type spatial;\nrender_mode ") + mode
+			+ ", depth_draw_never, cull_disabled, unshaded, shadows_disabled;\n"
+			  "uniform sampler2D decal_tex : filter_linear_mipmap, repeat_disable;\n"
+			  "void fragment() {\n"
+			  "\tvec4 t = texture(decal_tex, UV);\n"
+			  "\tALBEDO = t.rgb * COLOR.rgb;\n"
+			  "\tALPHA = t.a * COLOR.a;\n"
+			  "}\n";
+		s->set_code(toGodot(code));
+		m_decalShaders[shader] = s;
+	}
+	std::map<DecalKey, std::vector<const DecalFx *>> groups;
+	for (const DecalFx &d : decals)
+	{
+		const int shader = d.desc.shader < 0 || d.desc.shader > 2 ? 0 : d.desc.shader;
+		groups[DecalKey{ d.desc.name, shader }].push_back(&d);
+	}
+	for (auto &kv : groups)
+	{
+		MeshInstance3D *node = nullptr;
+		auto it = m_decalNodes.find(kv.first);
+		if (it != m_decalNodes.end())
+		{
+			node = it->second;
+		}
+		else
+		{
+			node = memnew(MeshInstance3D);
+			node->set_name(toGodot(kv.first.name));
+			Ref<ShaderMaterial> mat;
+			mat.instantiate();
+			mat->set_shader(m_decalShaders[kv.first.shader]);
+			mat->set_shader_parameter("decal_tex", particleTexture(kv.first.name));
+			node->set_material_override(mat);
+			node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			m_decalRoot->add_child(node);
+			m_decalNodes[kv.first] = node;
+		}
+		PackedVector3Array verts;
+		PackedVector2Array uvs;
+		PackedColorArray colors;
+		PackedInt32Array indices;
+		for (const DecalFx *d : kv.second)
+		{
+			const float opacity = (float)d->opacityAt(m_playback->clientFrame()) / 255.0f;
+			const float r = (float)((d->desc.color >> 16) & 0xff) / 255.0f;
+			const float g = (float)((d->desc.color >> 8) & 0xff) / 255.0f;
+			const float b = (float)(d->desc.color & 0xff) / 255.0f;
+			const float h = d->desc.size; // ShadowTypeInfo's sizeX / sizeY: the decal quad's half extents
+			const float c = std::cos(d->desc.yaw), s = std::sin(d->desc.yaw);
+			const int32_t base = (int32_t)verts.size();
+			const float corner[4][2] = { { -h, -h }, { h, -h }, { h, h }, { -h, h } };
+			for (int k = 0; k < 4; ++k)
+			{
+				const float lx = corner[k][0], ly = corner[k][1];
+				const float x = d->desc.position.x + lx * c - ly * s;
+				const float y = d->desc.position.y + lx * s + ly * c;
+				const float z = m_playback->groundHeight(x, y) + 1.0f;
+				verts.push_back(toGodotSpace(Coord3D{ x, y, z }));
+				colors.push_back(Color(r, g, b, opacity));
+				uvs.push_back(k == 0 ? Vector2(0, 0) : k == 1 ? Vector2(1, 0) : k == 2 ? Vector2(1, 1) : Vector2(0, 1));
+			}
+			indices.push_back(base); indices.push_back(base + 1); indices.push_back(base + 2);
+			indices.push_back(base); indices.push_back(base + 2); indices.push_back(base + 3);
+		}
+		Ref<ArrayMesh> mesh;
+		mesh.instantiate();
+		if (!verts.is_empty())
+		{
+			Array arrays;
+			arrays.resize(Mesh::ARRAY_MAX);
+			arrays[Mesh::ARRAY_VERTEX] = verts;
+			arrays[Mesh::ARRAY_TEX_UV] = uvs;
+			arrays[Mesh::ARRAY_COLOR] = colors;
+			arrays[Mesh::ARRAY_INDEX] = indices;
+			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+		}
+		node->set_mesh(mesh);
+		node->set_visible(!verts.is_empty());
+	}
+	// a texture / shader group that no longer has a decal
+	for (auto it = m_decalNodes.begin(); it != m_decalNodes.end();)
+	{
+		if (groups.find(it->first) == groups.end())
+		{
+			it->second->queue_free();
+			it = m_decalNodes.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+
+}
+
+void FXPlayer::updateLightPulseUniforms()
+{
+	if (!m_playback)
+	{
+		return;
+	}
+	W3D_Ensure_Light_Globals(); // the four pulse names must exist before the first set (the material factory usually registers them first)
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (!rs)
+	{
+		return;
+	}
+	// the shader's lights are view-space (the object shaders light in view space); the camera is the one the next frame draws
+	Transform3D view;
+	bool haveView = false;
+	if (Viewport *vp = get_viewport())
+	{
+		if (Camera3D *c = vp->get_camera_3d())
+		{
+			view = c->get_global_transform().affine_inverse();
+			haveView = true;
+		}
+	}
+	size_t used = 0;
+	for (const LightPulseFx &l : m_playback->lightPulses().lights())
+	{
+		if (!l.enabled || used >= 4)
+		{
+			continue;
+		}
+		const Vector3 world = toGodotSpace(l.position);
+		const Vector3 pos = haveView ? view.xform(world) : world;
+		const RGBColor c = l.colorNow();
+		const String base = String("w3d_pulse") + String::num_int64((int64_t)used);
+		rs->global_shader_parameter_set(StringName(base), Vector4(pos.x, pos.y, pos.z, l.range()));
+		rs->global_shader_parameter_set(StringName(base + String("_col")), Vector4(c.red, c.green, c.blue, 0.0f));
+		++used;
+	}
+	for (size_t i = used; i < 4; ++i)
+	{
+		const String base = String("w3d_pulse") + String::num_int64((int64_t)i);
+		rs->global_shader_parameter_set(StringName(base), Vector4());
+		rs->global_shader_parameter_set(StringName(base + String("_col")), Vector4());
+	}
 }
 
 void FXPlayer::advance(double delta)
@@ -330,6 +622,7 @@ void FXPlayer::advance(double delta)
 			m_accumulator = 0.0; // never spiral
 		}
 	}
+	updateLightPulseUniforms();
 	rebuild();
 }
 

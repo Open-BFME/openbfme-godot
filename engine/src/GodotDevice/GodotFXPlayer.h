@@ -70,6 +70,13 @@ public:
 	void advance(double delta);
 	void step_once();
 	void rebuild();
+	// lane FEAT-BLDFX-1: rebuilds the terrain decal meshes (scorches, RW 0x5E0045 / DONOR BFME2 0x67EA3; DynamicDecal, RW 0x5E05AB / DONOR BFME2 0x10C785) from the playback's client
+	// effect state. Called by step_once; a viewer that plays a list without stepping calls it itself.
+	void updateClientEffects();
+	void updateLightPulseUniforms(); // lane FEAT-BLDFX-1: the active pulses as the object shaders' four dynamic lights
+	const ScorchBuffer &scorches() const;
+	size_t decalCount() const;
+	int64_t scorchCount() const { return (int64_t)scorches().entries().size(); }
 	void set_paused(bool paused) { m_paused = paused; }
 	// lane FX-3 round 2: soft particles (fade by the depth distance to the opaque scene; presentation beyond retail). false: retail's exact look
 	void set_soft_particles(bool enabled);
@@ -147,6 +154,21 @@ private:
 	std::unique_ptr<FXPlayback> m_playback;
 	std::unique_ptr<W3DClientRandom> m_renderRandom;
 	std::unique_ptr<FXParticleSystem::ParticleDrawBuilder> m_builder;
+	// lane FEAT-BLDFX-1: the terrain decal renderer (a Node3D with one scorch mesh and one mesh per dynamic decal texture / shader)
+	struct DecalKey
+	{
+		std::string name;
+		int shader = 0;
+		bool operator<(const DecalKey &o) const { return name != o.name ? name < o.name : shader < o.shader; }
+	};
+	Node3D *m_decalRoot = nullptr;
+	MeshInstance3D *m_scorchNode = nullptr;
+	Ref<ArrayMesh> m_scorchMesh;
+	Ref<ShaderMaterial> m_scorchMaterial;
+	std::uint64_t m_scorchVersion = 0;
+	std::map<DecalKey, MeshInstance3D *> m_decalNodes;
+	Ref<Shader> m_decalShaders[3];
+	bool m_hadDecals = false;
 	std::map<std::string, Ref<Texture2D>> m_textures;
 	std::map<std::string, Ref<Shader>> m_shaders;
 	std::vector<Batch> m_batches;
