@@ -578,6 +578,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // is part of the skirmish AI's state hash from frame 0; the battle and the allied blob keep their vectors, and the Uber battle moves from frame 0 too.
 // The #217 / #214 main moved both upstream vectors; re-measured here on the merged tree: the skirmish 0x544c0108 -> 0x327cddbd (last 0x2b7337e7 ->
 // 0x58a3cf1e), the Uber battle 0xd4d54986 -> 0xf09814da (last 0xc044f68e -> 0xdc07c1c2).
+// pin: merge of #239 on main 1d43a17e (2026-11-06, lane PR-TEND-AI): a 4-player skirmish AI casts Devastation in the 6000-frame run, so the
+//      tree killer's used clusters join the state hash: the skirmish moves from frame 4649, last 0x4e00eb68 -> 0xee4f18cc; the Uber battle keeps
+//      0x97423000 / 0xe3b4187f
 // pin: the player info record's position sampler (RW 0x8E4042) re-records the Uber battle vector from frame 0
 // pin: the skirmish AI player info record's position sampler (RW 0x8E4042) is hashed
 // pin: re-measured after the sampler's append order (RW 0x8E4082: radius + distance + padding) settled

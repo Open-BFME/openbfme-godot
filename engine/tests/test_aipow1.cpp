@@ -1160,10 +1160,10 @@ TEST_CASE("RAI-POW-3: the tree-cluster index's grouping: the 100 cutoff, a bridg
 	trees.setExtent(0.0f, 0.0f, 10000.0f, 10000.0f);
 	const ThingTemplate *tmpl = a.logic->trees().records().empty() ? nullptr : a.logic->trees().records()[0].tmpl;
 	REQUIRE(tmpl != nullptr);
-	// a and b share a group (100 apart, inside sqrt(2) * 100); c is 350 from the first group's centre (outside) and starts a second; d joins c;
-	// e at 1250 is inside the bound of both groups, so it joins the first and the second is merged into it in member order
-	for (const Coord3D &p : { Coord3D{ 1000.0f, 1000.0f, 0.0f }, Coord3D{ 1100.0f, 1000.0f, 0.0f }, Coord3D{ 1400.0f, 1000.0f, 0.0f },
-		 Coord3D{ 1500.0f, 1000.0f, 0.0f }, Coord3D{ 1250.0f, 1000.0f, 0.0f } })
+	// a and b share a group (100 apart, inside sqrt(2) * 100); c is 150 from b (outside the bound) and starts a second; d joins c; e at 1175 is inside
+	// the bound of both groups (75 from b and c), so it joins the first and the second is merged into it in member order
+	for (const Coord3D &p : { Coord3D{ 1000.0f, 1000.0f, 0.0f }, Coord3D{ 1100.0f, 1000.0f, 0.0f }, Coord3D{ 1250.0f, 1000.0f, 0.0f },
+		 Coord3D{ 1350.0f, 1000.0f, 0.0f }, Coord3D{ 1175.0f, 1000.0f, 0.0f } })
 	{
 		REQUIRE(trees.addTree(*tmpl, p, (std::uint32_t)trees.records().size() + 1));
 	}
@@ -1171,8 +1171,8 @@ TEST_CASE("RAI-POW-3: the tree-cluster index's grouping: the 100 cutoff, a bridg
 	const TerrainTrees::Cluster &merged = trees.clusters()[0];
 	// the members are record indices in the map's add order: 0, 1, then the bridge 4, then the merged group's 2, 3
 	CHECK(merged.members == (std::vector<ObjectID>{ 0, 1, 4, 2, 3 }));
-	CHECK(merged.radius == 450.0f); // 200, 250, 325 (the bridge), 400 and 450 as each member is appended (RW 0x8E418E)
-	CHECK(merged.center.x == 1250.0f);
+	CHECK(merged.radius == 275.0f); // 100, 150, 187.5 (the bridge), 225 and 275 as each member is appended (RW 0x8E418E)
+	CHECK(merged.center.x == 1175.0f);
 	CHECK(merged.center.y == 1000.0f);
 	CHECK(merged.center.z == 0.0f);
 }
@@ -1186,8 +1186,8 @@ TEST_CASE("RAI-POW-3: a used cluster alone changes the game hash (the Devastatio
 	TerrainTrees &trees = a.logic->trees();
 	REQUIRE(!trees.clusters().empty());
 	REQUIRE(!trees.anyChanged()); // the map starts with no changed record
-	const std::uint32_t before = a.logic->hashState(nullptr, nullptr);
+	const std::uint32_t before = a.logic->computeStateHash();
 	trees.clusters()[0].used = true; // what decideTreeKiller does before setLocationIfValid (RW 0x9E7095)
-	const std::uint32_t after = a.logic->hashState(nullptr, nullptr);
+	const std::uint32_t after = a.logic->computeStateHash();
 	CHECK(before != after);
 }
