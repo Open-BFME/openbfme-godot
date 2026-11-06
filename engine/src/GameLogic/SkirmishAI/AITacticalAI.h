@@ -84,10 +84,11 @@
 //     RW 0x9B5042, started update RW 0x9B52BD: a plain structure request for "MenFortress" (whatever the side; RW 0x9B51E9 -> ctor RW 0x97DA21, vtable
 //     RW 0xC85750, priority 3000) at the target, the team attack-moves there once the request is in progress, a complete request adds a base at the target
 //     (RW 0x9B5020 -> RW 0x90D3C7, AIBaseBuilder::addBase), a failed one ends the tactic (0, 0)). All ported.
-// Historical initial-lane limitations (the current S-417 / S-418 runtime reports and docs/FEATURE-MAP.md track subsequent ports): the other 8 offensive tactics, the
+// Historical initial-lane limitations (the current S-417 / S-418 runtime reports and docs/FEATURE-MAP.md track subsequent ports; all 8 offensive bodies, the two
+// siege ones included, and RW 0x9EF9AF's path check are ported now): the then-unported offensive tactics, the
 // OPPORTUNITY heuristic and the targetless tactics (RW 0x90C5E2: FarmBuilder, StructureCreep, ...), the AIThreatFinder (threat
 // taken as 0: no draw at RW 0x90B2A0), RW 0x6C7344, RW 0x90CCCB, RW 0x8F144C (the teams' AIGroup step) and RW 0x8F2784's retreat (no threat finder), the other tactics'
-// launch / update bodies, the end's merge of the teams, the AI team objects (members stay in the player's team), the pathfinder check of RW 0x9EF9AF (taken as reachable), the filters
+// launch / update bodies, the end's merge of the teams, the AI team objects (members stay in the player's team), the filters
 // RW 0x97D425 / 0x97CC29 / 0x9A24FC in full (RW 0x88B897: lane DECOMP-3, AIStatCollector).
 
 #pragma once
@@ -107,6 +108,7 @@
 class GameLogic;
 class AIStatCollector;
 struct AIBuildRequest;
+class Object;
 class Player;
 class StateHasher;
 struct AISkirmishPlayer;
@@ -171,7 +173,7 @@ struct AITactic
 	Coord3D origin;                  ///< + 0x44: the first such centre after the start (RW 0x8F2955), where a retreat goes (RW 0x8F243A)
 	bool retreated = false;          ///< + 0x50
 	bool targetless = false;         ///< lane AI-2 r3: a clone of a targetless prototype (generator list + 0x58)
-	ObjectID squadTarget = INVALID_ID; ///< FarmKillSquad / FlagCaptureSquad + 0x58: the attack or capture target
+	ObjectID squadTarget = INVALID_ID; ///< + 0x58: FarmKillSquad's / FlagCaptureSquad's target, the siege tactics' wall target (RW 0x9EF829)
 	// lane AI-2 r5: the offensive bodies' own state (the tactic's + 0x58 object / fields)
 	int step = 0;                    ///< FormationAttack state (+ 0x58 -> + 0); FlankAttack waypoint index; PincerAttack team 0's waypoint index
 	int step2 = 0;                   ///< PincerAttack team 1's waypoint index
@@ -228,6 +230,11 @@ namespace AITacticalAI
 // lane DECOMP-3: the player info record (RW 0x6A9999, GameLogic/SkirmishAI/AIStatCollector.h) of the player with index `playerIndex`; an empty record when it
 // has none (RW would read through a null record)
 const AIStatCollector &recordOf(GameLogic &logic, int playerIndex);
+// RW 0x6C7807: the current enemy player index of the AI (the group's first AI's brain, else its own), -1 when none
+int enemyOfGroup(const AISkirmishPlayer &ai);
+// RW 0x6AA5F5 -> 0x8F47EB: the AIPlayer's enemy player (Player + 0x2FC vslot 0x30). The answer is cached for 25 logic frames; when the cache is due the
+// port runs the acquire (RW 0x8F457D). Null when the AI has no enemy
+const Player *enemyPlayer(GameLogic &logic, AISkirmishPlayer &ai);
 // AIPlayer + 0x90's update (RW 0x9A3366): recruiting and hand-over of the tactic teams
 void updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai);
 // the brain's update (RW 0x6C74C2); `first` is the group's first AI (the target chooser's owner)
@@ -242,9 +249,19 @@ void makeGenerator(GameLogic &logic, AISkirmishPlayer &ai);
 void flankWaypointsForTest(GameLogic &logic, AITactic &tac, const AITarget &t, const Coord3D &start);
 // test hook (lane AI-3): RW 0x6C720A(pos, -1) on the AI's attacked-at list
 void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos);
-// test hook (lane RAI-DEF): RW 0x8F21F7's team setup, with the recruiting player's index separate from the target chooser's (as an allied brain's
-void startTacticForTest(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targetIndex, int playerIndex);
 // test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
+// test hook (lane RAI-SIEGE): an offensive prototype's vslot 1 applicability by its name, RW 0x9EF9AF's common path-to-object check included
+bool offensiveAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const char *kind, const AITarget &target);
+// test hooks (lane RAI-TL): FarmKillSquad's farm / production target choice (RW 0x9BBA51 / 0x9BB5E4), and the whole choice with its line-0x8B draw;
+// `enemy` is a player index
+Object *farmTargetForTest(GameLogic &logic, const AITactic &tac, int enemy);
+Object *productionTargetForTest(GameLogic &logic, const AITactic &tac, int enemy);
+Object *farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy);
+// test hooks (lane RAI-SIEGE): one tactic's launch (vslot 0x18) and started update (vslot 0x1C) on the target `tac.targetIndex` of `owner`
+void launchTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner);
+void updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner);
+// test hook (lane RAI-SIEGE): RW 0x9B3453's stand-back point, wall position + normalise(team 0's first member - wall) * 500 (RW 0xC894AC)
+Coord3D siegeStandBackPointForTest(const Coord3D &leader, const Coord3D &wall);
 } // namespace AITacticalAI

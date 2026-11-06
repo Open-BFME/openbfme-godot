@@ -370,40 +370,238 @@ TEST_CASE("rai-def defensive tactic: an enemy at two outlying AI structures give
 			<< ", started " << startedFrame << ", ended " << endedFrame << "; members " << members.size());
 }
 
-TEST_CASE("rai-def defensive tactic: a SimpleDefense team is sized from the AI that recruits it, not the group's target chooser (RW 0x6C74F6 / 0x8F21F7 / 0x9B4F17)")
+// review probe (PR #231, prtrkt): RW 0x6C74C2 passes the brain's own player (brain + 8, RW 0x6C74F6) to the dispatch RW 0x90CB9F -> 0x90C436; the start
+// RW 0x8F21F7 stores it at the tactic's + 0x24 and SimpleDefense's setup RW 0x9B4EF0 sizes a large-target team from THAT player's record (RW 0x9B4F17), i.e.
+// the allied AI that recruits the team, not the group's first AI that owns the target. Two allied computers, the chooser with 2 extra hordes and its ally
+// with 8; three chooser structures under attack (defense size 2); the DEFENSIVE target allows two teams (a mod's MaxTeamsPerTarget; retail data has 1)
+TEST_CASE("rai-def review probe: an allied AI's SimpleDefense team is sized from its own army (RW 0x6C74F6 / 0x8F21F7 / 0x9B4F17)")
 {
 	OPENBFME_REQUIRE_START(s);
-	DefenseGame g;
-	loadUdun(*s, g);
-	GameLogic &logic = g.game->logic();
-	AISkirmishPlayer &ai = *g.ai;
-	// three extra hordes make the recruiting AI's army big enough for the half-army size; the human has no player info record at all, which is the
-	// mismatched chooser the allied bug used (its army count 0 left the maximum unset)
+	static std::vector<MapCacheEntry> cache;
+	std::string error;
+	if (cache.empty())
+	{
+		REQUIRE_MESSAGE(IniSkirmishSetupSource::loadMapCache(*s->mount->fs, cache, &error), error);
+	}
+	NewGameMessage m;
+	m.game.mapName = "maps/map mp fall back 8p/map mp fall back 8p.map";
+	m.game.seed = 1234;
+	m.game.startingCash = 1500;
+	const char *factions[3] = { "FactionMordor", "FactionMen", "FactionMen" };
 	for (int i = 0; i < 3; ++i)
 	{
-		std::string error;
-		const Coord3D at{ ai.build.startPosition.x + (float)(i * 40), ai.build.startPosition.y, logic.getGroundHeight(ai.build.startPosition.x, ai.build.startPosition.y) };
-		Object *unit = g.game->createObject("GondorFighterHorde", g.computer->getPlayerIndex(), at, 0.0f, &error);
-		REQUIRE_MESSAGE(unit, error);
+		SkirmishGameSlot &slot = m.game.slots[i];
+		slot.state = i == 0 ? SLOT_PLAYER : SLOT_MED_AI;
+		slot.name = i == 0 ? u"Human" : i == 1 ? u"Chooser" : u"Ally";
+		slot.playerTemplate = factionIndex(s->world->playerTemplates(), factions[i]);
+		REQUIRE(slot.playerTemplate >= 0); // tolerance: a precondition (the faction exists)
+		slot.startPos = i;
+		slot.color = i;
+		slot.teamNumber = i == 0 ? 0 : 1;
 	}
-	AIBrainState owner;
-	AITarget target;
-	target.type = 1; // DEFENSIVE
-	target.inactive = false;
-	target.defenseSize = 2; // a large base: half the army
-	target.maxTeams = 1;
-	target.teams = 0;
-	target.position = ai.build.startPosition;
-	owner.targets.push_back(target);
-	AITactic tac;
-	tac.kindIndex = 9; // AITacticalAI::OffensiveKind SIMPLE_DEFENSE (RW 0x9B4F8F)
-	tac.kind = "SimpleDefense";
-	tac.id = owner.nextTacticId++;
-	tac.targetOwner = g.human->getPlayerIndex(); // the group's first AI (the chooser) is not the AI recruiting this team
-	AITacticalAI::startTacticForTest(logic, tac, owner, 0, ai.playerIndex);
-	REQUIRE(tac.teams.size() == 1u);
-	const size_t army = AITacticalAI::recordOf(logic, ai.playerIndex).army().size();
-	REQUIRE(army > 1u); // tolerance: the map's starting army is not pinned; the test needs more than one unit for the half-army branch
-	CHECK(tac.teams[0].maximum == (int)(army / 2));
-	CHECK(tac.teams[0].maximum != -1); // the pre-fix code read the human's empty record and left the unlimited default
+	DefenseGame g;
+	g.start = std::make_unique<NewGameStart>(RandomAlgorithm::ZH_CarryChain);
+	REQUIRE_MESSAGE(NewGame::prepareNewGame(m, s->world->playerTemplates(), s->settings, cache, RandomAlgorithm::ZH_CarryChain, *g.start, &error), error);
+	g.source = std::make_unique<ArchiveW3DFileSource>(*s->mount->fs);
+	g.assets = std::make_unique<WW3DAssetManager>(*g.source);
+	g.game = std::make_unique<LiveGame>(*s->world, *s->mount->fs, *g.assets, s->options);
+	LiveGame::Options o;
+	o.start = g.start.get();
+	REQUIRE_MESSAGE(g.game->load(o, &error), error);
+	GameLogic &logic = g.game->logic();
+	AISkirmishPlayer *chooser = nullptr, *ally = nullptr;
+	for (const auto &grp : logic.skirmishAI().groups())
+	{
+		for (auto &kv : grp->players)
+		{
+			(kv.second->brain.chooser ? chooser : ally) = kv.second.get();
+		}
+	}
+	REQUIRE(chooser != nullptr);
+	REQUIRE(ally != nullptr);
+	REQUIRE(ally->groupFirst == chooser);
+	for (int i = 0; i < logic.players().getPlayerCount(); ++i)
+	{
+		Player *p = logic.players().getNthPlayer(i);
+		if (p && p->getPlayerTemplate() && p->getPlayerTemplate()->m_playableSide && p->getMultiplayerStartIndex() == 0)
+		{
+			g.human = p;
+		}
+	}
+	REQUIRE(g.human != nullptr);
+	g.computer = logic.players().getNthPlayer(chooser->playerIndex);
+	REQUIRE(g.computer != nullptr);
+	g.ai = chooser;
+	// the extra hordes wait at each AI's base: 2 for the chooser, 8 for the ally
+	for (AISkirmishPlayer *who : { chooser, ally })
+	{
+		const Coord3D base = who->build.startPosition;
+		for (int i = 0; i < (who == chooser ? 2 : 8); ++i)
+		{
+			const Coord3D at{ base.x + (float)(i * 40), base.y, logic.getGroundHeight(base.x + (float)(i * 40), base.y) };
+			REQUIRE_MESSAGE(g.game->createObject("GondorFighterHorde", who->playerIndex, at, 0.0f, &error), error);
+		}
+	}
+	// three chooser structures 900 from its base towards the human: one group of three (defense size 2, the half-army maximum)
+	const Waypoint *humanStart = logic.terrain()->findWaypointByName("Player_1_Start");
+	REQUIRE(humanStart != nullptr);
+	const Coord3D aiStart = chooser->build.startPosition;
+	float ux = humanStart->location.x - aiStart.x, uy = humanStart->location.y - aiStart.y;
+	const float ulen = std::sqrt(ux * ux + uy * uy);
+	REQUIRE(ulen > 0.0f); // tolerance: a precondition (the two start points differ)
+	ux /= ulen;
+	uy /= ulen;
+	const float farX = aiStart.x + ux * 900.0f, farY = aiStart.y + uy * 900.0f;
+	const float z = logic.getGroundHeight(farX, farY);
+	for (int i = 0; i < 3; ++i)
+	{
+		makeBuilding(g, "GondorBarracks", farX + (float)(i * 100), farY, z);
+	}
+	for (AISkirmishPlayer *who : { chooser, ally })
+	{
+		if (AIStatCollector *live = logic.skirmishAI().record(who->playerIndex))
+		{
+			live->update(logic);
+		}
+	}
+	logic.partition().update();
+	// the chooser makes its targets on its first brain update; then the DEFENSIVE one allows two teams
+	for (int f = 0; f < 600 && !chooser->brain.chooserInitialised; ++f)
+	{
+		g.game->advance(0.2);
+	}
+	REQUIRE(chooser->brain.chooserInitialised);
+	for (AITarget &t : chooser->brain.targets)
+	{
+		if (t.type == 1)
+		{
+			t.maxTeams = 2;
+		}
+	}
+	Team *enemyTeam = enemyTeamOf(logic, *g.computer, *g.human);
+	REQUIRE(enemyTeam != nullptr);
+	const ThingTemplate *hero = logic.things().findTemplate("MordorWitchKing");
+	REQUIRE(hero != nullptr);
+	Object *raider = logic.newObject(hero, enemyTeam, ObjectStatusMaskType{});
+	REQUIRE(raider != nullptr);
+	const Coord3D raiderPos{ farX + 100.0f, farY + 10.0f, z };
+	raider->setPosition(&raiderPos);
+	logic.partition().update();
+	bool seen[2] = { false, false };
+	for (int f = 0; f < 1500 && !(seen[0] && seen[1]); ++f)
+	{
+		g.game->advance(0.2);
+		for (int k = 0; k < 2; ++k)
+		{
+			AISkirmishPlayer *who = k == 0 ? chooser : ally;
+			for (const AITactic &tac : who->brain.tactics)
+			{
+				if (seen[k] || tac.kind != "SimpleDefense" || tac.teams.empty())
+				{
+					continue;
+				}
+				seen[k] = true;
+				// the frame the tactic started: its setup read the record's army list in this frame's brain update
+				const size_t own = AITacticalAI::recordOf(logic, who->playerIndex).army().size();
+				const size_t first = AITacticalAI::recordOf(logic, chooser->playerIndex).army().size();
+				MESSAGE(std::string(k == 0 ? "chooser" : "ally") << " SimpleDefense on frame " << logic.getFrame() << ": maximum " << tac.teams[0].maximum
+						<< ", own army " << own << ", chooser army " << first);
+				REQUIRE(own > 1u); // tolerance: a precondition (the half-army branch, RW 0x9B4F2C)
+				CHECK(tac.teams[0].maximum == (int)(own / 2u)); // RW 0x9B4F17: the recruiting AI's own record
+			}
+		}
+	}
+	const int checked = (seen[0] ? 1 : 0) + (seen[1] ? 1 : 0);
+	REQUIRE(checked == 2); // tolerance: a precondition (both allies started a SimpleDefense on the shared target)
+}
+
+TEST_CASE("rai-pow-2 review probe: an enemy acquire asks every other skirmish AI for its enemy, units or not (RW 0x8F46C7 / 0x6AA5B3 / 0x6AA5F5)")
+{
+	// RW 0x8F457D's inner loop gates the other player only on Player + 0x2FC's vslot 0x2C (RW 0x6AA5B3; 1 for a skirmish AI, RW 0x8BD372), then calls its
+	// getEnemy (RW 0x6AA5F5 -> 0x8F47EB), which refreshes that AI's due cache. A computer that lost every unit but keeps its buildings is still asked
+	OPENBFME_REQUIRE_START(s);
+	static std::vector<MapCacheEntry> cache;
+	std::string error;
+	if (cache.empty())
+	{
+		REQUIRE_MESSAGE(IniSkirmishSetupSource::loadMapCache(*s->mount->fs, cache, &error), error);
+	}
+	NewGameMessage m;
+	m.game.mapName = "maps/map mp fall back 8p/map mp fall back 8p.map";
+	m.game.seed = 1234;
+	m.game.startingCash = 1500;
+	const char *factions[3] = { "FactionMordor", "FactionMen", "FactionMen" };
+	for (int i = 0; i < 3; ++i)
+	{
+		SkirmishGameSlot &slot = m.game.slots[i];
+		slot.state = i == 0 ? SLOT_PLAYER : SLOT_MED_AI;
+		slot.name = i == 0 ? u"Human" : i == 1 ? u"Asker" : u"Unitless";
+		slot.playerTemplate = factionIndex(s->world->playerTemplates(), factions[i]);
+		REQUIRE(slot.playerTemplate >= 0); // tolerance: a precondition (the faction exists)
+		slot.startPos = i;
+		slot.color = i;
+		slot.teamNumber = i; // three sides, all enemies
+	}
+	DefenseGame g;
+	g.start = std::make_unique<NewGameStart>(RandomAlgorithm::ZH_CarryChain);
+	REQUIRE_MESSAGE(NewGame::prepareNewGame(m, s->world->playerTemplates(), s->settings, cache, RandomAlgorithm::ZH_CarryChain, *g.start, &error), error);
+	g.source = std::make_unique<ArchiveW3DFileSource>(*s->mount->fs);
+	g.assets = std::make_unique<WW3DAssetManager>(*g.source);
+	g.game = std::make_unique<LiveGame>(*s->world, *s->mount->fs, *g.assets, s->options);
+	LiveGame::Options o;
+	o.start = g.start.get();
+	REQUIRE_MESSAGE(g.game->load(o, &error), error);
+	GameLogic &logic = g.game->logic();
+	std::vector<AISkirmishPlayer *> ais;
+	for (const auto &grp : logic.skirmishAI().groups())
+	{
+		for (auto &kv : grp->players)
+		{
+			ais.push_back(kv.second.get());
+		}
+	}
+	REQUIRE(ais.size() == 2);
+	std::sort(ais.begin(), ais.end(), [](const AISkirmishPlayer *a, const AISkirmishPlayer *b) { return a->playerIndex < b->playerIndex; });
+	AISkirmishPlayer *asker = ais[0], *unitless = ais[1];
+	const Player *unitlessPlayer = logic.players().getNthPlayer(unitless->playerIndex);
+	REQUIRE(unitlessPlayer != nullptr);
+	// the second computer loses every non-structure object; its buildings stay
+	std::vector<ObjectID> doomed;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == unitlessPlayer && !o->isKindOfName("STRUCTURE"))
+		{
+			doomed.push_back(o->getID());
+		}
+	}
+	REQUIRE(!doomed.empty()); // tolerance: a precondition (the computer starts with a builder)
+	for (ObjectID id : doomed)
+	{
+		if (Object *o = logic.findObjectByID(id))
+		{
+			logic.destroyObject(o);
+		}
+	}
+	g.game->advance(0.2);
+	bool hasStructure = false;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == unitlessPlayer && !o->isEffectivelyDead())
+		{
+			REQUIRE(o->isKindOfName("STRUCTURE")); // tolerance: a precondition (only buildings are left)
+			hasStructure = true;
+		}
+	}
+	REQUIRE(hasStructure);
+	// both caches due and empty; the asker acquires
+	asker->enemyIndex = -1;
+	asker->enemyRefreshFrame = 0;
+	unitless->enemyIndex = -1;
+	unitless->enemyRefreshFrame = 0;
+	const std::uint32_t now = logic.getFrame();
+	REQUIRE(AITacticalAI::enemyPlayer(logic, *asker) != nullptr);
+	CHECK(asker->enemyRefreshFrame == now + 25);
+	// retail asked the unitless computer too: its cache refreshed in the asker's acquire
+	CHECK(unitless->enemyRefreshFrame == now + 25);
+	CHECK(unitless->enemyIndex >= 0); // tolerance: which of its two enemies is nearer depends on the map; the point is that it acquired one
 }

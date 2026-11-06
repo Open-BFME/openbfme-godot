@@ -41,67 +41,6 @@
 
 namespace
 {
-// RW 0x6F5F65 (lane GARRISON-2): the path test to a container whose entry point lies in its footprint. The container's cell is not an obstacle: the quick path
-// test to its position (RW's second probe at the position plus the template's first offset, RW 0xAD1AE0(0), is not read: S-1107). An obstacle: from the centre
-// cell (RW 0x6E8CE6, centred) a line (RW 0x6E94B2) of d = 2 - (int)(bounding circle radius x -0.1) cells in each of the four directions (+x, -x, +y, -y, RW
-// 0x6F5EF3) finds the first cell of another obstacle id (RW 0x6E86D2); its zone (the terrain variant RW 0x938D89 of the locomotor) must be the unit's zone, or the
-// portal search RW 0x6F5547 joins the two (lane WALL-2; the movement is the unit's, as QuickDoesPathExist builds it)
-bool quickPathToContainer(Pathfinder &pf, const PathfindLocomotorInfo &loco, const Coord3D &from, const Object &container, const PathfindObject *unit)
-{
-	Coord3D to = *container.getPosition();
-	ICoord2D centre;
-	pf.worldToCell(&to, true, &centre);
-	const PathfindCell *goal = pf.getCell(LAYER_GROUND, centre.x, centre.y);
-	if (!goal)
-	{
-		return false;
-	}
-	if (goal->getType() != PathfindCell::CELL_OBSTACLE)
-	{
-		if (!unit)
-		{
-			throw std::logic_error("GarrisonContain: RW 0x6F6070 (QuickDoesPathExist) without the unit");
-		}
-		return pf.quickDoesPathExist(*unit, &from, &to, nullptr); // RW 0x6F6070 (lane QPATH-1; both callers of RW 0x6F5F65 give it no set)
-	}
-	const PathfindMovement mv = Pathfinder::makeMovement(unit, loco);
-	const PathfindCell *fromCell = pf.getClippedCell(LAYER_GROUND, &from);
-	if (!fromCell)
-	{
-		return false;
-	}
-	const zoneStorageType fromZone = pf.zoneManager().getEffectiveZone(mv, true, fromCell->getZone());
-	const PathfindObjectID obstacle = goal->getObstacleID();
-	const int d = 2 - SimMath::truncToInt32(NumericState::pc24Mul(CombatQueries::boundingCircleRadius(container), -0.1f));
-	const int dirs[4][2] = { { d, 0 }, { -d, 0 }, { 0, d }, { 0, -d } };
-	for (const auto &dir : dirs)
-	{
-		// RW 0x6E94B2: Bresenham from the centre to the end cell, both included
-		const int x0 = centre.x, y0 = centre.y, x1 = centre.x + dir[0], y1 = centre.y + dir[1];
-		const int steps = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
-		for (int k = 0; k <= steps; ++k)
-		{
-			const int x = steps == 0 ? x0 : x0 + (x1 - x0) * k / steps;
-			const int y = steps == 0 ? y0 : y0 + (y1 - y0) * k / steps;
-			const PathfindCell *c = pf.getCell(LAYER_GROUND, x, y);
-			if (!c)
-			{
-				break; // off the grid: this direction finds nothing
-			}
-			if (c->getObstacleID() != obstacle)
-			{
-				const zoneStorageType z = pf.zoneManager().getEffectiveZone(mv, true, c->getZone());
-				if (z == fromZone || (unit && pf.portalPathExists(unit, loco, fromZone, z)))
-				{
-					return true;
-				}
-				break;
-			}
-		}
-	}
-	return false;
-}
-
 const char *const kStopRuntime =
 	"[S-1100] GarrisonContain / HordeGarrisonContain (lane GARRISON-1): ported from RW 0x86603B / 0x87B8C5 / 0x87D0E0 (who may enter; the CHUNK_VENDOR / ROCK_VENDOR "
 	"entry as the body's GrabObject, RW 0x8660F0, lane BACKLOG-1), 0x8674C2 / 0x87CFEB / 0x990DEA (enter: a horde and then its members), 0x87BEC8 / 0x87BFA6 (on "
@@ -376,7 +315,8 @@ bool GarrisonContain::isValidContainerFor(const Object &obj, bool checkCapacity,
 			getEntryOffset(to);
 			Coord3D from = *obj.getPosition();
 			Pathfinder &pf = ai->world().pathfinder();
-			if (!pf.quickDoesPathExist(ai->adapter(), &from, &to, nullptr) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject(), &ai->adapter()))
+			if (!pf.quickDoesPathExist(ai->adapter(), &from, &to, nullptr) &&
+				!pf.pathToObject(ai->adapter(), ai->locomotorInfo(), from, ai->world().adapterFor(*getObject())))
 			{
 				return false;
 			}
@@ -495,7 +435,42 @@ void GarrisonContain::onContaining(Object *obj, bool wasSelected)
 		obj->setDrawableHidden(true); // RW 0x87BF38
 	}
 	recalcApparentControllingPlayer(); // RW 0x87BF41: slot 0x50
-	// RW 0x87BF44 .. 0x87BF9F: the rider's DISABLED type 0x14 (none in the port's 11 types) is cleared on it and its members: no type 0x14 exists (S-148)
+	// lane GARRISONWEAPON-1, RW 0x87BF44 .. 0x87BF9D: a rider whose template has a CONTAINED weapon set (RW 0x691014(20)) takes the weapon set flag CONTAINED
+	// (RW 0x691059(20): Object + 0x38C bit 20, the weapon set update, the mapped model condition), then so does every member of its horde that has one
+	if (hasContainedWeaponSet(*obj))
+	{
+		obj->setWeaponSetFlag(kWeaponSetContained, true);
+		setContainedOnHordeMembers(*obj);
+	}
+}
+
+// RW 0x691014(20): the object's template has a weapon set for WeaponSetType CONTAINED
+bool GarrisonContain::hasContainedWeaponSet(const Object &obj)
+{
+	const ObjectWeapons *w = obj.getWeapons();
+	return w && w->hasWeaponSetFor(kWeaponSetContained);
+}
+
+// RW 0x87BF5D .. 0x87BF9D / 0x87C225 .. 0x87C267: the rider's horde interface (RW 0x68C866: Object + 0x258 slot 0x7C), its member list (horde slot 0x108)
+// in order; each member with a CONTAINED weapon set takes the flag (RW 0x691059(20)). Both the entry and the exit SET it on the members (retail's own
+// bytes); a member's own exit through onRemoving clears its flag
+void GarrisonContain::setContainedOnHordeMembers(Object &rider)
+{
+	ContainModuleInterface *contain = rider.getContain();
+	if (!contain || !contain->getHordeContainInterface())
+	{
+		return;
+	}
+	if (const ContainModuleInterface::ContainedItemsList *members = contain->getContainedItemsList())
+	{
+		for (Object *m : *members)
+		{
+			if (m && hasContainedWeaponSet(*m))
+			{
+				m->setWeaponSetFlag(kWeaponSetContained, true);
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -581,6 +556,13 @@ void GarrisonContain::onRemoving(Object *obj)
 	{
 		++m_openStats.ridersDestroyedOnDeath;
 		container->logic().reportError("GarrisonContain of " + container->getTemplate()->getName() + ": the KillPassengersOnDeath branch of RW 0x87BFA6 is not ported (S-1100)");
+	}
+	// lane GARRISONWEAPON-1, RW 0x87C20E .. 0x87C267 (both branches end here, RW 0x87C0BD / 0x87C202): a rider with a CONTAINED weapon set loses the flag
+	// (RW 0x691106(20)), then its horde's members with one take it (RW 0x691059(20), as on the entry)
+	if (hasContainedWeaponSet(*obj))
+	{
+		obj->setWeaponSetFlag(kWeaponSetContained, false);
+		setContainedOnHordeMembers(*obj);
 	}
 }
 
@@ -1476,7 +1458,8 @@ bool CitadelSlaughterHordeContain::isValidContainerFor(const Object &obj, bool, 
 			const Coord3D from = *obj.getPosition();
 			Pathfinder &pf = ai->world().pathfinder();
 			// RotWK's citadel test RW 0x88397F asks RW 0x6F5BB0 (RW 0x8839FF) with no set (the AI's), then RW 0x6F5F65 (lane QPATH-1)
-			if (!pf.quickDoesPathExist(ai->adapter(), &from, &entry, nullptr) && !quickPathToContainer(pf, ai->locomotorInfo(), from, *getObject(), &ai->adapter()))
+			if (!pf.quickDoesPathExist(ai->adapter(), &from, &entry, nullptr) &&
+				!pf.pathToObject(ai->adapter(), ai->locomotorInfo(), from, ai->world().adapterFor(*getObject())))
 				return false;
 		}
 	return true;
