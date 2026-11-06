@@ -889,6 +889,7 @@ add_executable(openbfme_tests
     tests/test_mod5_user_maps.cpp
     tests/RetailTestMount.cpp
     tests/test_md5_json.cpp
+    tests/test_md5_kernel.cpp
     tests/test_textfile.cpp
     tests/test_ini_core.cpp
     tests/test_ini_scanners.cpp
@@ -1037,3 +1038,7 @@ endif()
 
 # the contract holds for every target that carries simulation code or links it: nothing added to a target after its registration may override it
 openbfme_sim_check_targets()
+
+# Instruction-level MD5 kernel bench. Header only: it does not link openbfme_core.
+add_executable(md5_kernel_bench tests/md5_kernel_bench.cpp)
+target_include_directories(md5_kernel_bench PRIVATE src)
