@@ -6,6 +6,8 @@
 
 #include "doctest.h"
 
+#include "Common/SimulationProfile.h"
+
 #include "HudTestUtil.h"
 #include "PathfindTestUtil.h"
 #include "StartTestUtil.h"
@@ -489,10 +491,13 @@ TEST_CASE("wall1 walls: a ground unit's path to the wall top climbs the ramp (gr
 	// a straight line from the ground onto the wall top is not passable; along the top it is
 	CHECK_FALSE(w.pf->isLinePassable(u, LOCOMOTORSURFACE_GROUND, LAYER_GROUND, Coord3D{ 200.0f, 140.0f, 0.0f }, Coord3D{ 200.0f, 100.0f, 0.0f }, false, true));
 	CHECK(w.pf->isLinePassable(v, LOCOMOTORSURFACE_GROUND, LAYER_WALL_FIRST, Coord3D{ 165.0f, 100.0f, 60.0f }, Coord3D{ 235.0f, 100.0f, 60.0f }, false, true));
-	// a ground unit is not at a valid position on the wall top; a wall unit is
+	// lane WALLSEARCH-1: RW 0x6EA4E7 tests a wall layer only, exactly: a ground unit's test takes the wall top's cell (it is valid there and searches from it
+	// without tunnelling), a wall unit is valid on the top and not on a ground cell
 	Coord3D onTop{ 200.0f, 100.0f, 60.0f };
-	CHECK_FALSE(w.pf->validMovementPosition(u, groundLoco(), LAYER_GROUND, &onTop));
+	Coord3D offTop{ 200.0f, 160.0f, 0.0f };
+	CHECK(w.pf->validMovementPosition(u, groundLoco(), LAYER_GROUND, &onTop));
 	CHECK(w.pf->validMovementPosition(v, groundLoco(), LAYER_WALL_FIRST, &onTop));
+	CHECK_FALSE(w.pf->validMovementPosition(v, groundLoco(), LAYER_WALL_FIRST, &offTop));
 }
 
 TEST_CASE("wall1 walls: a unit's layer follows the path node it is on (Pathfinder::UpdateLayer): onto the ramp inside the ramp, onto the wall off it near the top")
@@ -932,7 +937,7 @@ struct WallGame
 	ArchiveW3DFileSource source;
 	WW3DAssetManager assets;
 	std::unique_ptr<LiveGame> game;
-	explicit WallGame(Shared &sh) : s(sh), source(*sh.mount->fs), assets(source)
+	explicit WallGame(Shared &sh, SimulationProfile profile = SimulationProfile::Faithful) : s(sh), source(*sh.mount->fs), assets(source)
 	{
 		std::string error;
 		static std::vector<MapCacheEntry> cache;
@@ -940,7 +945,9 @@ struct WallGame
 		{
 			REQUIRE_MESSAGE(IniSkirmishSetupSource::loadMapCache(*s.mount->fs, cache, &error), error);
 		}
-		REQUIRE_MESSAGE(NewGame::prepareNewGame(helmsDeep(s), s.world->playerTemplates(), s.settings, cache, RandomAlgorithm::ZH_CarryChain, start, &error), error);
+		NewGameMessage m = helmsDeep(s);
+		m.game.simulationProfile = profile; // lane WALLSEARCH-1: the Uber profile's search too
+		REQUIRE_MESSAGE(NewGame::prepareNewGame(m, s.world->playerTemplates(), s.settings, cache, RandomAlgorithm::ZH_CarryChain, start, &error), error);
 		game = std::make_unique<LiveGame>(*s.world, *s.mount->fs, assets, s.options);
 		LiveGame::Options o;
 		o.start = &start;
@@ -1567,4 +1574,118 @@ TEST_CASE("wall3 walls retail: the move hint stands 2.5 above a Helm's Deep wall
 	const Coord3D &s = startWp->location;
 	REQUIRE(pf.getLayerAt(s.x, s.y, logic.getGroundHeight(s.x, s.y)) == LAYER_GROUND);
 	CHECK(logic.getAlignOnTerrainHeight(s.x, s.y, logic.getGroundHeight(s.x, s.y)) == logic.getGroundHeight(s.x, s.y));
+}
+
+// lane WALLSEARCH-1: a goal on a wall top or ramp is searched on its own layer (internalFindPath RW 0x6FD2B2 -> RW 0x680A75; BFME2 0x6FBE2E), so the goal's
+// validMovementPosition test (RW 0x6FD85D) passes and the search is exact: a long order from across the map reaches the top it was given
+namespace
+{
+// every 97th inner wall-top cell, its count and how many of them a full path from `from` reaches. The goal is the cell's centre; internalFindPath adds 5 for an
+// even footprint (the hero's), so the cell searched is the next one up and right, which the "inner" filter keeps on the same top
+void wallTopsFrom(Pathfinder &pf, PathfindObject &unit, const PathfindLocomotorInfo &loco, const Coord3D &from, int &tried, int &reached)
+{
+	tried = reached = 0;
+	const ICoord2D *ext = pf.getExtent();
+	int k = 0;
+	for (int x = 0; x <= ext->x; ++x)
+	{
+		for (int y = 0; y <= ext->y; ++y)
+		{
+			const PathfindCell *c = pf.cellAt(x, y);
+			if (!c || !isWallLayer(c->getLayer()) || c->getConnectLayer() != LAYER_INVALID || c->getType() != PathfindCell::CELL_CLEAR)
+			{
+				continue;
+			}
+			bool inner = true;
+			for (int dx = -1; dx <= 1 && inner; ++dx)
+			{
+				for (int dy = -1; dy <= 1; ++dy)
+				{
+					const PathfindCell *n = pf.cellAt(x + dx, y + dy);
+					inner = inner && n && n->getLayer() == c->getLayer();
+				}
+			}
+			if (!inner || (k++ % 97) != 0)
+			{
+				continue;
+			}
+			++tried;
+			Coord3D to{ (float)x * 10.0f + 5.0f, (float)y * 10.0f + 5.0f, pf.getLayerHeight((float)x * 10.0f + 5.0f, (float)y * 10.0f + 5.0f, c->getLayer()) };
+			Coord3D f = from;
+			bool partial = true;
+			Path *path = pf.findPath(&unit, loco, &f, &to, &partial);
+			reached += path && !partial && path->getLastNode()->getLayer() == c->getLayer() ? 1 : 0;
+			delete path;
+		}
+	}
+}
+} // namespace
+
+TEST_CASE("wallsearch1 retail: on Helm's Deep a hero ordered from the enemy's start onto sampled wall tops gets a full path to 32 of 35 (before #220: 19, Uber 5)")
+{
+	OPENBFME_REQUIRE_START(s);
+	for (const SimulationProfile profile : { SimulationProfile::Faithful, SimulationProfile::Uber })
+	{
+		WallGame g(*s, profile);
+		g.frames(2);
+		Player *me = g.human();
+		REQUIRE(me);
+		Pathfinder &pf = g.game->ai().pathfinder();
+		REQUIRE(g.game->logic().simulationProfile() == profile);
+		const Waypoint *far = g.game->logic().terrain()->findWaypointByName("Player_2_Start");
+		REQUIRE(far);
+		// review r1: on a clear ground cell next to the start (the first in the smallest ring around it; the waypoint's own cell is an obstacle, which gets no
+		// hierarchical corridor, RW 0x6F8601)
+		Coord3D at = far->location;
+		{
+			const int cx = (int)(at.x / 10.0f), cy = (int)(at.y / 10.0f);
+			bool found = false;
+			for (int r = 0; r < 30 && !found; ++r)
+			{
+				for (int dy = -r; dy <= r && !found; ++dy)
+				{
+					for (int dx = -r; dx <= r && !found; ++dx)
+					{
+						const PathfindCell *c = pf.cellAt(cx + dx, cy + dy);
+						if (c && c->getType() == PathfindCell::CELL_CLEAR && c->getLayer() == LAYER_GROUND)
+						{
+							at = { (float)(cx + dx) * 10.0f + 5.0f, (float)(cy + dy) * 10.0f + 5.0f, 0.0f };
+							found = true;
+						}
+					}
+				}
+			}
+			REQUIRE(found);
+		}
+		std::string error;
+		Object *hero = g.game->createObject("GondorBoromir", me->getPlayerIndex(), at, 0.0f, &error);
+		REQUIRE_MESSAGE(hero, error);
+		g.frames(2);
+		AIUpdateInterface *ai = hero->getAIUpdateInterface();
+		REQUIRE(ai);
+		int tried = 0, reached = 0;
+		wallTopsFrom(pf, ai->adapter(), ai->locomotorInfo(), *hero->getPosition(), tried, reached);
+		MESSAGE("wallsearch1: profile " << (int)profile << ", from " << hero->getPosition()->x << ", " << hero->getPosition()->y << ": " << reached << " of "
+										<< tried << " wall tops reached by a full path");
+		CHECK(tried == 35); // every 97th inner wall-top cell
+		// main before lane WALLSEARCH-1 (measured once, from the same start): 18 of the 35 (Faithful) and 5 (Uber, whose stall cut-off ends the approximate
+		// searches): the goal searched on the ground layer, approximate. The two left end partial for reasons not traced from this start
+		// pin: #220, measured once on the merged tree with #207 (the wall tops' impassable rims, RW 0x936686) and #211: 33 (public main + #220) -> 32 of 35, both profiles; the archive before #220, measured once from the same start: 19 (Faithful) and 5 (Uber)
+		CHECK(reached == 32);
+	}
+}
+
+TEST_CASE("wallsearch1: validMovementPosition tests a wall layer only, exactly (RW 0x6EA4E7): the ramp and the ground take any cell of their grid")
+{
+	WallWorld w;
+	LayeredUnit *u = w.unit(1, 200.0f, 160.0f, 0.0f, LAYER_GROUND);
+	const Coord3D ground{ 200.0f, 160.0f, 0.0f }, top{ 200.0f, 100.0f, 60.0f };
+	REQUIRE(w.cell(20, 16).getLayer() == LAYER_GROUND);
+	REQUIRE(w.cell(20, 10).getLayer() == LAYER_WALL_FIRST);
+	CHECK(w.pf->validMovementPosition(u, groundLoco(), LAYER_RAMP, &ground)); // a goal on a ramp polygon over a ground cell: no layer test
+	CHECK(w.pf->validMovementPosition(u, groundLoco(), LAYER_RAMP, &top));
+	CHECK(w.pf->validMovementPosition(u, groundLoco(), LAYER_GROUND, &top));
+	CHECK(w.pf->validMovementPosition(u, groundLoco(), LAYER_WALL_FIRST, &top));
+	CHECK_FALSE(w.pf->validMovementPosition(u, groundLoco(), LAYER_WALL_FIRST, &ground));
+	CHECK_FALSE(w.pf->validMovementPosition(u, groundLoco(), (PathfindLayerEnum)((int)LAYER_WALL_FIRST + 1), &top)); // another wall's layer
 }

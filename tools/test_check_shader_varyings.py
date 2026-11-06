@@ -46,6 +46,14 @@ def test_includes_count_once_and_res_paths_are_not_comments():
     assert len(found) == 1 and "30 varyings" in found[0] and "v_inc" in found[0]
 
 
+def test_declarations_sharing_a_line_all_count():
+    one_line = "shader_type spatial;\n" + " ".join(f"varying vec4 v{i};" for i in range(15)) + "\nvoid fragment() {}\n"
+    assert csv.shader_usage("a.gdshader", lambda _: one_line)[1] == 30
+    found = check({"a.gdshader": one_line})
+    assert len(found) == 1 and "30 varyings" in found[0]
+    assert csv.shader_usage("a.gdshader", lambda _: spatial(0, "float my_varying_x;"))[1] == 15
+
+
 def test_commented_varyings_do_not_count():
     code = spatial(14, "// varying vec4 gone;\n/* varying vec4 also_gone;\n*/")
     assert check({"a.gdshader": code}) == []
@@ -129,6 +137,20 @@ def test_gdscript_inline_shader_includes_count():
     found = csv.inline_problems({"scripts/a.gd": code}, lambda rel: "varying vec2 one;\nvarying vec2 two;\n" if rel == "shaders/inc.gdshaderinc" else "")
     assert len(found) == 1
     assert "scripts/a.gd:1 (inline shader): 30 varyings" in found[0]
+
+
+def test_cli_reports_projects_without_inline_shaders_or_without_shader_files(tmp_path, capsys):
+    (tmp_path / "files").mkdir()
+    (tmp_path / "files" / "a.gdshader").write_text(spatial(2))
+    assert csv.main(["check", str(tmp_path / "files")]) == 0
+    assert "1 shaders and 0 inline shaders, the most is 17/29 (a.gdshader)" in capsys.readouterr().out
+    (tmp_path / "inline").mkdir()
+    (tmp_path / "inline" / "a.gd").write_text('var code := """shader_type canvas_item;\nvarying vec4 a;\n"""\n')
+    assert csv.main(["check", str(tmp_path / "inline")]) == 0
+    assert "0 shaders and 1 inline shaders, the most is 10/29 (a.gd:1 (inline shader))" in capsys.readouterr().out
+    (tmp_path / "none").mkdir()
+    assert csv.main(["check", str(tmp_path / "none")]) == 0
+    assert "0 shaders and 0 inline shaders, the most is 0/29 (no shaders)" in capsys.readouterr().out
 
 
 def test_gate_refuses_a_staged_gdscript_inline_shader_over_budget(repo):

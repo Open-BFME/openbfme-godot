@@ -1131,6 +1131,27 @@ PathfindLayerEnum Pathfinder::getLayerAt(const PathfindObject &obj, const Coord3
 	return c && (isWallLayer(c->getLayer()) || c->getLayer() == LAYER_RAMP) ? c->getLayer() : LAYER_GROUND;
 }
 
+PathfindLayerEnum Pathfinder::objectLayerAt(const PathfindObject &obj, const Coord3D &pos) const
+{
+	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	{
+		return LAYER_GROUND;
+	}
+	float x = pos.x, y = pos.y;
+	if ((footprintSize(&obj) & 1) == 0)
+	{
+		x = SimMath::addf32(x, 5.0f); // RW 0x6EE62D .. 0x6EE64C (5.0 at RW 0xBDAE58, the parity RW 0x6ECFC5)
+		y = SimMath::addf32(y, 5.0f);
+	}
+	const PathfindLayerEnum raised = raisedLayerAtPoint(x, y, pos.z);
+	if (raised != LAYER_INVALID)
+	{
+		return raised;
+	}
+	const PathfindCell *c = cellAt(SimMath::floorToInt(SimMath::mulf32(x, 0.1f)), SimMath::floorToInt(SimMath::mulf32(y, 0.1f)));
+	return c ? c->getLayer() : LAYER_GROUND; // the cell's raw layer field (RW: cell + 0xC >> 4 & 0x3F), 1 without a cell
+}
+
 float Pathfinder::getLayerHeight(float x, float y, PathfindLayerEnum layer) const
 {
 	const float terrain = m_terrain ? m_terrain->getGroundHeight(x, y) : 0.0f;

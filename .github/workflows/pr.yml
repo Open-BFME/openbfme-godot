@@ -265,6 +265,67 @@ jobs:
         run: |
           GODOT="$(cygpath -w "$RUNNER_TEMP/godot/Godot_v4.7.2-stable_win64_console.exe")" python -m pytest -q -rs tools/test_gdscript.py
 
+  msvc:
+    name: Windows MSVC build and unit tests (build.bat)
+    # the build contributors run on Windows (the release ships llvm-mingw, so no other job compiles with MSVC), from a fresh clone
+    runs-on: windows-2025
+    needs: fixtures
+    # a cold compiler cache took 37 and 64 minutes (2026-11-05), a warm one 3, and the unit tests take 2 more
+    timeout-minutes: 90
+    env:
+      CCACHE_DIR: ${{ github.workspace }}\.ccache
+      CCACHE_MAXSIZE: 3G
+      CCACHE_NOHASHDIR: "1"
+      # cl.exe's timestamp differs between runners, and ccache's default check then misses every compile
+      CCACHE_COMPILERCHECK: content
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      OPENBFME_AUDIO_FIXTURES: ${{ github.workspace }}\workspace\audio_fixtures
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Download ccache 4.14.2 (the SHA-256 its release page publishes)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ccache"
+          cd "$RUNNER_TEMP/ccache"
+          curl -fsSLo ccache.zip https://github.com/ccache/ccache/releases/download/v4.14.2/ccache-4.14.2-windows-x86_64.zip
+          echo "6993ce645e53192cec592ee23186200b574ac4c59097ecde8d9cfd681b47ae84  ccache.zip" | sha256sum -c --strict
+          unzip -q -j ccache.zip
+          cygpath -w "$PWD" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: mp3-reference-fixtures
+          path: workspace/audio_fixtures
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-msvc-${{ github.sha }}
+          restore-keys: ccache-msvc-
+      - name: Build (build.bat)
+        shell: pwsh
+        run: |
+          ccache -z
+          ./build.bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ccache -s
+      - name: Save the compiler cache (pushes only)
+        # a push to main saves the cache pull requests restore; a ci/** branch's cache is visible to that branch only
+        if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-msvc-${{ github.sha }}
+      - name: Unit tests (the tests that need the game skip)
+        shell: bash
+        run: engine/build/openbfme_tests.exe
+
   macos:
     name: macOS arm64 build and unit tests
     # the configuration of the Mac package (tools/release/package_macos.py cmake_configure_args) without the export
@@ -321,7 +382,7 @@ jobs:
     name: CI
     # the one required check: it runs even when a job it needs failed or was cancelled, and passes only when every one succeeded
     if: always()
-    needs: [lint, gate, fixtures, linux, windows, windows-tests, macos]
+    needs: [lint, gate, fixtures, linux, windows, windows-tests, msvc, macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -332,7 +393,7 @@ jobs:
           python3 - <<'EOF'
           import json, os, sys
           needs = json.loads(os.environ["RESULTS"])
-          want = {"lint", "gate", "fixtures", "linux", "windows", "windows-tests", "macos"}
+          want = {"lint", "gate", "fixtures", "linux", "windows", "windows-tests", "msvc", "macos"}
           bad = sorted(f"{k}: {v['result']}" for k, v in needs.items() if v["result"] != "success")
           if set(needs) != want:
               bad.append(f"the jobs are {sorted(needs)}, not {sorted(want)}")

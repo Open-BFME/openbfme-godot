@@ -31,7 +31,8 @@ MATRIX_SLOTS = {"mat2": 2, "mat3": 3, "mat4": 4}
 _COMMENT = re.compile(r'"(?:[^"\\\n]|\\.)*"|//[^\n]*|/\*.*?\*/', re.S)  # strings first: "res://" is no comment
 _INCLUDE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.M)
 _TYPE = re.compile(r"^\s*shader_type\s+(\w+)\s*;", re.M)
-_VARYING = re.compile(r"^\s*varying\s+(?:(?:flat|smooth)\s+)?(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+([^;]+);", re.M)
+# anywhere, not only at a line start: `varying float a; varying float b;` declares two (Greptile, PR #241)
+_VARYING = re.compile(r"(?<![\w.])varying\s+(?:(?:flat|smooth)\s+)?(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+([^;]+);")
 _NAME = re.compile(r"^\s*(\w+)\s*(?:\[\s*(\d+)\s*\])?\s*$")
 
 Loader = Callable[[str], str]  # project-relative posix path -> text
@@ -213,10 +214,9 @@ def main(argv: list[str]) -> int:
     for line in found:
         print(line)
     if not found:
-        worst = max((shader_usage(rel, load)[1], rel) for rel in shaders)
-        worst_inline = max((_shader_usage(code, name, load)[1], name) for name, _line, code in inline)
-        if worst_inline[0] > worst[0]:
-            worst = worst_inline
+        # a project may have no shader files or no inline shaders (Greptile / Devin, PR #242): max() of an empty list raised
+        worst = max([(shader_usage(rel, load)[1], rel) for rel in shaders] +
+                    [(_shader_usage(code, name, load)[1], name) for name, _line, code in inline], default=(0, "no shaders"))
         print(f"shader varyings ok: {len(shaders)} shaders and {len(inline)} inline shaders, "
               f"the most is {worst[0]}/{MAX_VARYINGS} ({worst[1]})")
     return 1 if found else 0
