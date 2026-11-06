@@ -329,6 +329,11 @@ bool Player::hasObjectMatching(const ObjectFilter &filter, bool completedOnly) c
 	return host().hasObjectMatching(*this, filter, completedOnly);
 }
 
+std::optional<float> Player::getBrutalBuildReduction(bool time) const
+{
+	return host().brutalReduction(*this, time);
+}
+
 float Player::getProductionCostChangeBasedOnKindOf(const ThingTemplate &tt, bool slaughter) const
 {
 	return host().productionCostChange(*this, tt, slaughter);
