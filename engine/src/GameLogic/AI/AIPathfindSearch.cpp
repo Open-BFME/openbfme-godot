@@ -716,7 +716,7 @@ bool Pathfinder::examineShortcutCell(PathfindCell *from, PathfindCell *to, int x
 		{
 			return true;
 		}
-		if (to->getLayer() == LAYER_GROUND && !m_zoneManager.isPassable(x, y))
+		if (isGroundLayer(to->getLayer()) && !m_zoneManager.isPassable(x, y)) // lane WALLSEARCH-1: RW 0x6F6EA4 / 0x6F6EBA under RW 0x76550F
 		{
 			return true;
 		}
@@ -956,7 +956,8 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 			}
 		}
 		const bool mvOK = validMovementPosition(mv, n);
-		const bool tl = m_isTunneling; // same layer: the ground only
+		// lane WALLSEARCH-1: tunnelling holds on the parent's layer only (RW 0x6F9B7E .. 0x6F9C28: (n ^ parent) & 0x3F0 == 0; BFME2 0x6F8728)
+		const bool tl = m_isTunneling && n->getLayer() == parentCell->getLayer();
 		if (!mvOK && !tl)
 		{
 			// the cell is marked closed at once and not counted
@@ -1053,7 +1054,8 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 			// lane PATHPERF-1, TARGET RW 0x6F9DA7 .. 0x6F9DC4: the corridor's remaining length, (last index - the cell's position (RW 0x93AD93)) * 320
 			rem += (unsigned)((m_hierLast - hierarchicalPositionOf(nc.x, nc.y)) * 320);
 		}
-		if (n->getLayer() == LAYER_GROUND && !m_zoneManager.isPassable(nc.x, nc.y) && !n->getExtraPass())
+		// lane WALLSEARCH-1: any ground-grid layer, the ramp and the wall tops too (RW 0x6F9DC7 .. 0x6F9DFA under RW 0x76550F)
+		if (isGroundLayer(n->getLayer()) && !m_zoneManager.isPassable(nc.x, nc.y) && !n->getExtraPass())
 		{
 			X += 1000;
 		}
@@ -1471,7 +1473,10 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		note(pathstops::kLargeRectGoal);
 	}
 	m_isTunneling = false;
-	const PathfindLayerEnum destinationLayer = searchDestinationLayer(*to); // ZH internalFindPath: TheTerrainLogic->getLayerForDestination(to)
+	// lane WALLSEARCH-1: the goal's layer is getLayerForDestination's (RW 0x6FD2B2: RW 0x680A75 without an object; BFME2 0x6FBE2E): a wall top's or the
+	// ramp's too, so checkDestination, the goal's checkForMovement and its validMovementPosition test (RW 0x6FD85D: approx) see the layer the unit will stand
+	// on, and a goal on a wall top is searched exactly
+	const PathfindLayerEnum destinationLayer = getLayerAt(to->x, to->y, to->z);
 	PathfindCell *goalCell = getCell(destinationLayer, to);
 	if (goalCell == nullptr)
 	{
@@ -1644,7 +1649,8 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 				candidateAt = cellCount;
 				bestClose = key;
 				int out = 0;
-				if (checkDestination(obj, c->getXIndex(), c->getYIndex(), destinationLayer, radius, centerInCell, &out, false) && out == 0 &&
+				// lane WALLSEARCH-1: on the candidate cell's own layer (RW 0x6FDA97 / 0x6FDB2C, BFME2 0x6FC634 / 0x6FC6A8)
+				if (checkDestination(obj, c->getXIndex(), c->getYIndex(), c->getLayer(), radius, centerInCell, &out, false) && out == 0 &&
 					validMovementPosition(mv, c))
 				{
 					closest = c;

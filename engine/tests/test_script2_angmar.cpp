@@ -133,11 +133,15 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		// #172 keeps it): wolf rider hits 1006 -> 1016, banner carrier hits 83 -> 88, the last sling hit takes 1111 (955)
 		// merge queue q41 (measured once on the merged tree and at its merge point; DECOMPFIX-1104B's aim and give-way rules, AIMAIM-1 RW 0x75232F and BUMP-1,
 		// move it, NECRODIE-1 keeps it): wolf rider hits 1016 -> 982, banner carrier hits 88 -> 97, the last sling hit takes 1285 (1111)
-		// pr-banner-carrier on the #217 / #214 main (measured on the merged tree; BannerCarrierDestroyHordeOnDeath RW 0x871915 kills the wolf-rider hordes'
-		// members with their banner carrier): wolf rider hits 982 -> 595, banner carrier hits 97 -> 77, the last sling hit takes 264 (1285), four full 1350
-		// hits instead of three and five 50s instead of four. Engine pins, not retail values.
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 77 }, { "AngmarTrollSling dealt 1350 taken 264", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 595 } };
+		// merge of main be3856ac (2026-11-04; on top of q38): BannerCarrierDestroyHordeOnDeath (RW 0x871915; measured on the merged tree) kills the Angmar
+		// wolf-rider hordes' members with their banner carrier, so their melee hits on the citadel fall (1016 -> 447 and 88 -> 48) and the slings do the rest:
+		// four full 1350 hits instead of three, five 50s instead of four, and the last 1350 takes 894. Engine pins, not retail values.
+		// pin: merge queue q42 (measured once on the merged tree and at each merge point): #216's banner rule on top of q41 gives wolf rider hits 982 -> 595,
+		// banner carrier hits 97 -> 77, four full sling hits and five 50s, the last sling hit taking 264 (#220 keeps it); CASTLEATK-1 (nothing attacks the
+		// UNATTACKABLE castle flag, RW 0x6C9207) moves it again: wolf rider hits 595 -> 401, banner carrier hits 77 -> 48, the last sling hit takes 1318
+		// (#225 keeps it)
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 48 }, { "AngmarTrollSling dealt 1350 taken 1318", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 401 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)
