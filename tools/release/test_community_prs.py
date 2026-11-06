@@ -658,7 +658,7 @@ def test_the_ci_script_fails_on_every_non_success(tmp_path):
     body = script.split("<<'EOF'\n", 1)[1].rsplit("EOF", 1)[0]
     f = tmp_path / "ci.py"
     f.write_text(body)
-    names = ("lint", "gate", "fixtures", "linux", "windows", "macos")
+    names = ("lint", "gate", "fixtures", "linux", "windows", "windows-tests", "msvc", "macos")
 
     def ci(results):
         env = {**os.environ, "RESULTS": json.dumps({k: {"result": v, "outputs": {}} for k, v in results.items()})}

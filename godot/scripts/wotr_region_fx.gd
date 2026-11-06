@@ -124,7 +124,9 @@ func update_gamma() -> void:
 func overlay_material(blend: String, diffuse: Color, ambient: Color, emissive: Color, opacity: float, tex: Texture2D, priority: int) -> ShaderMaterial:
 	if not _shaders.has(blend):
 		var sh := Shader.new()
-		sh.code = OVERLAY_SHADER % blend
+		var code := OVERLAY_SHADER % blend
+		ShaderBudget.check(code, "wotr_region_fx overlay " + blend)
+		sh.code = code
 		_shaders[blend] = sh
 	var m := ShaderMaterial.new()
 	m.shader = _shaders[blend]

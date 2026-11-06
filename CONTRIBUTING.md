@@ -71,9 +71,13 @@ Every pull request runs `.github/workflows/pr.yml` on GitHub's own runners, with
   no secrets, actions pinned by commit, GitHub's runners only);
 - actionlint and zizmor on the workflows;
 - a Linux build of the engine and its unit tests without game files;
-- a Windows build (the release's llvm-mingw cross build), compile only;
-- a macOS arm64 build of the game library and unit test executable, followed by the console filter regression tests;
+- a Windows build (the release's llvm-mingw cross build), whose unit tests and asset-free Godot scripts then run on real Windows;
+- a Windows build with MSVC through `build.bat`, followed by the unit tests without game files;
+- a macOS arm64 build of the game library and unit test executable, followed by the unit tests without game files;
 - the Python tests that need no game files.
+
+`.github/workflows/sanitizers.yml` also runs the Linux unit tests under the memory, undefined behaviour and thread sanitizers. It is not
+part of **CI**, so it does not block a pull request yet.
 
 Greptile, Devin and Macroscope review each pull request against `REVIEW.md`. Their comments are advice. Check each one against the code,
 fix the real ones, and answer the others with a written reason. Do not resolve a thread silently.

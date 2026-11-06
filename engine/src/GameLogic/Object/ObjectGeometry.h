@@ -13,7 +13,7 @@
 //     (getNextTokenOrNull) or "" is the label; appended (RW 0xAD3C80) to the 16 byte records of GeometryInfo + 0x38 / + 0x3C (x, y, z, the label string at + 0xC).
 //   * getBestContactPoint (RW 0xAD30E0) with mode 0 and a caller position (the only mode lane BUILD-3 ports): over the points whose label equals the asked one
 //     (StringBase compare RW 0x406585: exact bytes), z clamped to getMaxHeightAbovePosition (x87 fcomp: when the height is below z), the overlap test RW 0xAD2CE0
-//     unless `preferred` is set (the dozer's call sets it; not ported otherwise), the smallest x87 PC24 distance (dx^2 + dy^2) + dz^2 strictly below the best (start
+//     unless `preferred` is set (the dozer's call sets it; lane AIMAIM-1 ported the test: the sphere of radius 2 at the point, RW 0xAD3415), the smallest x87 PC24 distance (dx^2 + dy^2) + dz^2 strictly below the best (start
 //     FLT_MAX, RW 0x7F7FFFFF); the winner's z is clamped to the height again, then raised to height * 0.1f (RW 0xBD83D4, x87 PC24) when it lies below that.
 //   * lane HUD-5: GeometryName (RW 0xAD16B0) parses an AsciiString (INI::parseAsciiString) into the LAST shape's name (+ 0x1C); GeometryInfo::setActive(name, flag)
 //     (RW 0xAD3520, RotWK only: the gates' GeometryForOpen / GeometryForClosed) sets the active byte of every shape whose name equals `name` exactly (byte
@@ -71,7 +71,7 @@ struct ContactPoint
 };
 // the template's contact points in row order; throws std::logic_error on a row that does not parse
 std::vector<ContactPoint> contactPointsOf(const ThingTemplate &tt);
-// RW 0xAD30E0, mode 0 with a caller position (object space) and `preferred` set (the only call lane BUILD-3 ports: the overlap test of the other case throws).
+// RW 0xAD30E0, mode 0 with a caller position (object space); without `preferred` a point must touch the geometry (lane AIMAIM-1).
 // false when no point carries the label (the result is then the geometry's first-shape-free default, RW + 0x50, which this port does not keep: left unchanged)
 bool getBestContactPoint(const std::vector<Shape> &shapes, const std::vector<ContactPoint> &points, const Coord3D &callerPos, const std::string &label, bool preferred,
                          Coord3D &out);

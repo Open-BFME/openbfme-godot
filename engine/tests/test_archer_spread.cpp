@@ -536,6 +536,7 @@ TEST_CASE("archer1 (HORDEPOS-1): a HordeAttackNugget fired at a position with no
 	{
 		shots += a->getWeapons()->stats().shotsFired;
 	}
-	CHECK(shots == 18); // pinned: six archers, 20 frames of BowBombard (DelayBetweenShots 800 ms)
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): 18 -> 6 shots in the 20 frames
+	CHECK(shots == 6); // pinned: six archers, 20 frames of BowBombard (DelayBetweenShots 800 ms)
 }
 

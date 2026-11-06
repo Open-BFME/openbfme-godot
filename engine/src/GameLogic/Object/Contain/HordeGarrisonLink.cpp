@@ -219,8 +219,8 @@ void HordeContain::exitContainer(Object *container, int source)
 // sum + position for the list; commutative), the centroid is the sum times 1 / count (RW 0xBD1908 = 1.0 divided by the count's cvtsi2ss); the best distance
 // starts at RW 0xBD19DC = -1.0 and the best position at `about`'s. The members on the way are candidates as they stand; a list member only on a valid
 // movement position for `about`'s locomotor set (RW 0x6EA4E7 with `about`'s AI + 0x1DC and layer); distance (dz * dz + dy * dy) + dx * dx, a candidate wins
-// while the best is negative or strictly greater. `about` is moved there (RW 0x70C201) and takes the winner's layer (RW 0x68BB9D: every 2.01 map has the ground
-// layer only, the port's objects carry none). The same function as HordeAIUpdate::recentreOnMembers (the melee caller, which has no members on the way).
+// while the best is negative or strictly greater. `about` is moved there (RW 0x70C201) and takes the winner's layer (RW 0x68BB9D; lane WALLHORDE-1: the ground
+// when none wins). The same function as HordeAIUpdate::recentreOnMembers (the melee caller, which has no members on the way).
 void HordeContain::recentreOnMembers(Object *about)
 {
 	if (!about)
@@ -263,18 +263,24 @@ void HordeContain::recentreOnMembers(Object *about)
 	const float cx = SimMath::mulf32(inv, sx), cy = SimMath::mulf32(sy, inv), cz = SimMath::mulf32(sz, inv);
 	float best = -1.0f; // RW 0xBD19DC
 	Coord3D pos = *about->getPosition();
-	const auto consider = [&](const Coord3D &p) {
+	PathfindLayerEnum layer = LAYER_GROUND;
+	const auto layerOf = [](const Object &o) {
+		const AIUpdateInterface *a = o.getAIUpdateInterface();
+		return a ? a->adapter().getLayer() : LAYER_GROUND;
+	};
+	const auto consider = [&](const Coord3D &p, PathfindLayerEnum l) {
 		const float dx = SimMath::subf32(p.x, cx), dy = SimMath::subf32(p.y, cy), dz = SimMath::subf32(p.z, cz);
 		const float d = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
 		if (best < 0.0f || best > d)
 		{
 			best = d;
 			pos = p;
+			layer = l;
 		}
 	};
 	for (Object *m : onTheWay)
 	{
-		consider(*m->getPosition());
+		consider(*m->getPosition(), layerOf(*m));
 	}
 	AIUpdateInterface *ai = about->getAIUpdateInterface();
 	for (Object *m : listed)
@@ -288,7 +294,7 @@ void HordeContain::recentreOnMembers(Object *about)
 		{
 			continue;
 		}
-		consider(*m->getPosition());
+		consider(*m->getPosition(), layerOf(*m));
 	}
 	// RW 0x70C201: only `about` moves; a horde's contain would carry its members along unless it is told the move is the horde's own (HordeAIUpdate's rule)
 	HordeContainInterface *hci = about->getContain() ? about->getContain()->getHordeContainInterface() : nullptr;
@@ -300,6 +306,10 @@ void HordeContain::recentreOnMembers(Object *about)
 	if (hci)
 	{
 		hci->setLocomoting(false);
+	}
+	if (ai)
+	{
+		ai->setLayer(layer); // lane WALLHORDE-1: RW 0x86F4DD .. 0x86F4E2, Object::setLayer (RW 0x68BB9D) after the move: the winner's layer, the ground if none won
 	}
 }
 
