@@ -483,6 +483,7 @@ public:
 	void draw_test_ops(const Array &ops);
 
 protected:
+	void _notification(int what);
 	static void _bind_methods();
 
 private:

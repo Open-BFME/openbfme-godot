@@ -2,6 +2,7 @@
 // See GodotHud6Draw.h (lane HUD-6).
 
 #include "GodotDevice/GodotHud6Draw.h"
+#include "GodotDevice/GodotShaderBudget.h"
 
 #include "GameClient/GUI/AptScreens/AptImageMode.h"
 
@@ -194,9 +195,9 @@ void Hud6Draw::drawRadial(RID parent)
 		// INFERENCE (S-2701): radial cameos use the ellipse as their mask. Their texture alpha masks foreground art;
 		// the RGB underneath contains the full button background (notably builders and heroes).
 		// Keep the rim/clock on the ordinary alpha-blended item.
-		m_grayShader->set_code(String(aptImageModeShader(APT_IMAGE_SOLID_GRAYSCALE).c_str()));
+		SetShaderCode(m_grayShader.ptr(), String(aptImageModeShader(APT_IMAGE_SOLID_GRAYSCALE).c_str()), "HUD6 grayscale cameo");
 		m_iconShader.instantiate();
-		m_iconShader->set_code(String(aptImageModeShader(APT_IMAGE_SOLID).c_str()));
+		SetShaderCode(m_iconShader.ptr(), String(aptImageModeShader(APT_IMAGE_SOLID).c_str()), "HUD6 icon");
 		m_iconMaterial.instantiate();
 		m_iconMaterial->set_shader(m_iconShader);
 		m_iconItem = rs->canvas_item_create();

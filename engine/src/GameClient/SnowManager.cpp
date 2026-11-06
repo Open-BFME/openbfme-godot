@@ -13,7 +13,7 @@
 namespace
 {
 // RW 0x492AC8 -> 0x492AAD: (float)fmod((double)a, (double)b)
-float fmodf32(float a, float b) { return (float)std::fmod((double)a, (double)b); }
+float fmodFloat(float a, float b) { return (float)std::fmod((double)a, (double)b); }
 
 // rotwk_crt_ftol2: truncation toward zero of the x87 value
 int ftol(double v) { return (int)v; }
@@ -106,7 +106,7 @@ void SnowManager::advanceTime(std::uint32_t elapsedMs)
 		ms += 4294967296.0L;
 	}
 	m_time = (float)(ms * (long double)0.001f + (long double)m_time);
-	m_time = fmodf32(m_time, m_fullTimePeriod);
+	m_time = fmodFloat(m_time, m_fullTimePeriod);
 	m_heightTraveled = (m_time - old) * m_velocity + m_heightTraveled;
 	m_driftX = (m_time - old) * m_windX + m_driftX;
 	m_driftY = (m_time - old) * m_windY + m_driftY;

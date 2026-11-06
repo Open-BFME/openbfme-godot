@@ -2543,7 +2543,7 @@ void W3DInstancer::_notification(int what)
 void W3DInstancer::_process(double delta)
 {
 	if (Playing) GlobalTime += delta * TimeScale;
-	update_now();
+	if (PresentationUpdates) update_now();
 }
 
 Vector3 W3DInstancer::get_bone_position(int64_t instance, int bone) const
