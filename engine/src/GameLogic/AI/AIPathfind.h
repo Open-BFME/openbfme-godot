@@ -320,20 +320,23 @@ enum PathfindOccupantKind
 class PathfindCellInfo
 {
 public:
-	PathfindCellInfo *m_nextOpen, *m_prevOpen; // the closed list's links (the open list is the heap)
-	PathfindCellInfo *m_pathParent;            // also the free-list link while the record is free
+	// lane PERF-SIM-1: the search's hot fields (the closed-list link, the parent, the cell, the flags) first, the
+	// occupant pointers last: releaseClosedList and the heap reach them before the record's tail, and the record is
+	// 88 bytes (it was 104).
+	PathfindCellInfo *m_nextOpen;              // the closed list's link (the open list is the heap)
+	PathfindCellInfo *m_pathParent;
 	PathfindCell *m_cell;
-	std::uint16_t m_totalCost, m_costSoFar;    // 16 bit, like retail: a search that costs more than 65535 wraps
-	std::uint16_t m_viaPortal;                 // lane WALL-2: RW info + 0xC, the portal waypoint (its slot + 1, 0: none) the search crossed to reach the cell
-	ICoord2D m_pos;
-	PathfindObjectID m_obstacleID;             // RW info+0x28
-	PathfindOccupant *m_occupants[OCC_KIND_COUNT];
 	std::uint32_t m_isFree : 1;
 	std::uint32_t m_blockedByAlly : 1;         // RW info+0x2C bit 0
 	std::uint32_t m_obstacleIsFence : 1;       // bit 1
 	std::uint32_t m_obstacleIsTransparent : 1; // bit 2
 	std::uint32_t m_open : 1;                  // bit 3
 	std::uint32_t m_closed : 1;                // bit 4
+	std::uint16_t m_totalCost, m_costSoFar;    // 16 bit, like retail: a search that costs more than 65535 wraps
+	std::uint16_t m_viaPortal;                 // lane WALL-2: RW info + 0xC, the portal waypoint (its slot + 1, 0: none) the search crossed to reach the cell
+	ICoord2D m_pos;
+	PathfindObjectID m_obstacleID;             // RW info+0x28
+	PathfindOccupant *m_occupants[OCC_KIND_COUNT];
 };
 
 // The pool of PathfindCellInfo records and occupant nodes (per Pathfinder here so two pathfinders never share).
@@ -409,10 +412,8 @@ public:
 
 	// the closed list (cells already expanded; the open list is PathfindOpenHeap)
 	PathfindCell *putOnClosedList(PathfindCell *list);
-	PathfindCell *removeFromClosedList(PathfindCell *list);
 	static int releaseClosedList(PathfindCellInfoPool &pool, PathfindCell *list);
 
-	PathfindCell *getNextOpen() { return m_info->m_nextOpen ? m_info->m_nextOpen->m_cell : nullptr; }
 	PathfindCellInfo *info() { return m_info; }
 	const PathfindCellInfo *info() const { return m_info; }
 	unsigned short getXIndex() const { return (unsigned short)m_info->m_pos.x; }

@@ -34,7 +34,6 @@ void PathfindCellInfoPool::addBlock(int count)
 	{
 		PathfindCellInfo &info = block[i];
 		info.m_nextOpen = nullptr;
-		info.m_prevOpen = nullptr;
 		info.m_pathParent = (i + 1 < count) ? &block[i + 1] : m_firstFree;
 		info.m_cell = nullptr;
 		info.m_totalCost = 0;
@@ -89,7 +88,6 @@ PathfindCellInfo *PathfindCellInfoPool::get(PathfindCell *cell, const ICoord2D &
 		info->m_cell = cell;
 		info->m_pos = pos;
 		info->m_nextOpen = nullptr;
-		info->m_prevOpen = nullptr;
 		info->m_pathParent = nullptr;
 		info->m_costSoFar = 0;
 		info->m_totalCost = 0;
@@ -191,7 +189,6 @@ void PathfindCell::reset(PathfindCellInfoPool *pool)
 bool PathfindCell::startPathfind(PathfindCell *goalCell)
 {
 	m_info->m_nextOpen = nullptr;
-	m_info->m_prevOpen = nullptr;
 	m_info->m_pathParent = nullptr;
 	m_info->m_viaPortal = 0;
 	m_info->m_costSoFar = 0;
@@ -251,7 +248,7 @@ void PathfindCell::releaseInfo(PathfindCellInfoPool &pool)
 	if (m_info)
 	{
 		// ZH: a record still linked into a list is never released ("better leak than crash")
-		if (m_info->m_prevOpen || m_info->m_nextOpen || m_info->m_open || m_info->m_closed)
+		if (m_info->m_nextOpen || m_info->m_open || m_info->m_closed)
 		{
 			return;
 		}
@@ -399,7 +396,6 @@ int PathfindCell::releaseClosedList(PathfindCellInfoPool &pool, PathfindCell *li
 		PathfindCellInfo *curInfo = list->m_info;
 		list = curInfo->m_nextOpen ? curInfo->m_nextOpen->m_cell : nullptr;
 		curInfo->m_nextOpen = nullptr;
-		curInfo->m_prevOpen = nullptr;
 		curInfo->m_closed = 0;
 		cur->releaseInfo(pool);
 	}
@@ -411,36 +407,12 @@ PathfindCell *PathfindCell::putOnClosedList(PathfindCell *list)
 	if (m_info->m_closed == 0)
 	{
 		m_info->m_closed = 1;
-		m_info->m_prevOpen = nullptr;
 		m_info->m_nextOpen = list ? list->m_info : nullptr;
-		if (list)
-		{
-			list->m_info->m_prevOpen = this->m_info;
-		}
 		list = this;
 	}
 	return list;
 }
 
-PathfindCell *PathfindCell::removeFromClosedList(PathfindCell *list)
-{
-	if (m_info->m_nextOpen)
-	{
-		m_info->m_nextOpen->m_prevOpen = m_info->m_prevOpen;
-	}
-	if (m_info->m_prevOpen)
-	{
-		m_info->m_prevOpen->m_nextOpen = m_info->m_nextOpen;
-	}
-	else
-	{
-		list = getNextOpen();
-	}
-	m_info->m_closed = 0;
-	m_info->m_nextOpen = nullptr;
-	m_info->m_prevOpen = nullptr;
-	return list;
-}
 
 // ---- costs ----
 unsigned PathfindCell::costToGoal(const PathfindCell *goal) const
