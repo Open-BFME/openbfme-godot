@@ -301,6 +301,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
 | `godot/tests/w3d_shader_reuse_test.gd` | `godot/tests/w3d_shader_reuse_test.py` | Dedicated scratch native extension; real material factories, resource identity, sampler/permutation isolation, independent uniforms and owner lifetimes. Headless; no retail assets or GPU required. |
+| `godot/tests/draw_cull_test.gd` | Manual only; no generic pytest runner | GPU rendering and a frame_pre_draw; retail soldier models. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 | `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
 | `godot/tests/map_water_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `water.ini` over a retail map. |

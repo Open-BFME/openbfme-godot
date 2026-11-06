@@ -1191,6 +1191,15 @@ unsigned AIMover::doLocomotor()
 	{
 		m_blockedFrames = 1;
 	}
+	if (loco)
+	{
+		// lane AIRBORNE-1, RW 0x66A472 .. 0x66A4A0 (BFME2 0x66A3A0 doLocomotor, decomp AIUpdateInterface_doLocomotor.cpp:678, tier A): every pass with a
+		// locomotor, also one that does not work when dead (RW 0x6699D3 jumps to RW 0x66A45B), sets AIRBORNE_TARGET to height above terrain (RW 0x70B8AE) >
+		// the current locomotor template's AirborneTargetingHeight (+ 0xC0, an int): fild; fcomip; jbe (an unordered height clears it). Without a
+		// locomotor retail jumps past this tail (RW 0x6699B9 -> RW 0x66A4B5)
+		const int airborneHeight = loco->getTemplate().m_airborneTargetingHeight;
+		m_host.setAirborneTarget((double)obj.getHeightAboveTerrain() > (double)airborneHeight);
+	}
 	m_curMaxBlockedSpeed = AI_FAST_SPEED;
 	m_host.updateSailModelConditions(); // RW 0x66A4B7 (BFME2 0x66AF25): after the blocked-speed reset, before the sleep test
 	return (loco && m_goalType == AIGOAL_NONE && !m_doFinalPosition && !m_isBlocked && !requiresConstantCalling) ? AI_SLEEP_FOREVER : 1u;

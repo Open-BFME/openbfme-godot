@@ -17,6 +17,7 @@
 #include "Common/XferSave.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/GateModules.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
@@ -681,4 +682,184 @@ TEST_CASE("skirmish ai capture squad: allied flags do not start a squad; a neutr
 		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
 		CHECK(ai->brain.tactics.empty());
 	}
+}
+
+TEST_CASE("skirmish ai farm choice: the farm and production selectors' draws (RW 0x9BBA51 / 0x9BB5E4 / 0x9BBF4C)")
+{
+	// The binary facts: RW 0x9BBA51 selects from the enemy record's economy list (record + 0xC -> + 4), RW 0x9BB5E4 from its structure list
+	// (record + 8 -> + 4); both take the enemy fortress as the first DOZER_FACTORY in that structure list (RW 0x9B58BF, no status test), score each
+	// candidate (base 5000 when the base is nearer than 5000, RW 0xC8A1D8; reject within 275 of the base, RW 0xC8A1D0; the production attribute
+	// RW 0x68C82D 13 halves above 2; x 0.01, RW 0xBE5600; a floor of 5), and a first draw of 0 among 0 .. 3 (line 0x203 / 0x186) takes a weighted
+	// draw 0 .. total (line 0x20A / 0x18D); anything else takes the highest weight. The caller draws 0 .. 4 at line 0x8B and lets the production
+	// choice replace a farm only on 0. Without a fortress the selectors draw up to three ids (line 0x21D / 0x1A0) and return the last object.
+	AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
+	GateModules::registerAll(fx.w.modules); // GateOpenAndCloseBehavior, for the production choice's open-gate filter
+	AIUpdateInterface::registerClasses(fx.w.modules);
+	pathtest::SyntheticTerrain terrain(100, 100);
+	AIWorldConfig config;
+	config.pathfind = pathtest::testConfig();
+	AIWorld world(*fx.logic, config, fx.w.fx.env.macros);
+	world.attach();
+	world.newMap(terrain);
+	LocomotorStore locomotors;
+	struct LocomotorScope
+	{
+		GameLogic &logic;
+		LocomotorStore *saved = TheLocomotorStore;
+		~LocomotorScope()
+		{
+			logic.reset();
+			TheLocomotorStore = saved;
+		}
+	} locomotorScope{ *fx.logic };
+	TheLocomotorStore = &locomotors;
+	fx.w.fx.env.blocks.registerBlock("Locomotor", [](INI *ini) { LocomotorStore::parseLocomotorTemplateDefinitionGlobal(ini); });
+	REQUIRE(fx.w.load(movetest::kLocomotors).empty());
+	const std::string recruitError = fx.w.load(
+		"Object Recruit\n KindOf = CAN_ATTACK INFANTRY\n"
+		" Body = ActiveBody ModuleTag_Body\n MaxHealth = 100\n InitialHealth = 100\n End\n"
+		" Behavior = AIUpdateInterface ModuleTag_AI\n End\n"
+		" LocomotorSet\n Locomotor = WalkerLoco\n Condition = SET_NORMAL\n Speed = 55\n End\nEnd\n");
+	REQUIRE_MESSAGE(recruitError.empty(), recruitError);
+	const std::string fortressError = fx.w.load(
+		"Object TestFortress\n KindOf = STRUCTURE DOZER_FACTORY IMMOBILE\n"
+		" Geometry = CYLINDER\n GeometryMajorRadius = 30\n GeometryMinorRadius = 30\n GeometryHeight = 60\nEnd\n");
+	REQUIRE_MESSAGE(fortressError.empty(), fortressError);
+	const std::string farmError = fx.w.load(
+		"Object TestFarm\n KindOf = STRUCTURE ECONOMY_STRUCTURE IMMOBILE\n"
+		" Geometry = CYLINDER\n GeometryMajorRadius = 20\n GeometryMinorRadius = 20\n GeometryHeight = 40\nEnd\n");
+	REQUIRE_MESSAGE(farmError.empty(), farmError);
+	const std::string gateError = fx.w.load(
+		"Object TestGate\n KindOf = STRUCTURE BLOCKING_GATE IMMOBILE\n"
+		" Geometry = CYLINDER\n GeometryMajorRadius = 20\n GeometryMinorRadius = 20\n GeometryHeight = 40\n"
+		" Behavior = GateOpenAndCloseBehavior ModuleTag_Gate\n  OpenByDefault = Yes\n End\nEnd\n");
+	REQUIRE_MESSAGE(gateError.empty(), gateError);
+	const std::string wallError = fx.w.load(
+		"Object TestWallSegment\n KindOf = STRUCTURE WALL_SEGMENT IMMOBILE\n"
+		" Geometry = CYLINDER\n GeometryMajorRadius = 20\n GeometryMinorRadius = 20\n GeometryHeight = 40\nEnd\n");
+	REQUIRE_MESSAGE(wallError.empty(), wallError);
+	auto &manager = fx.logic->skirmishAI();
+	REQUIRE(manager.newGame(true) == 1);
+	const int me = fx.indexOf("C"), enemy = fx.indexOf("H");
+	auto *ai = const_cast<AISkirmishPlayer *>(manager.findAI(me));
+	REQUIRE(ai);
+	Object *squad = fx.make("Recruit", fx.teamOf("C"));
+	REQUIRE(squad);
+	Coord3D squadPos{ 100.0f, 100.0f, 0.0f };
+	squad->teleportTo(&squadPos, true);
+	Object *fortress = fx.make("TestFortress", fx.teamOf("H"));
+	REQUIRE(fortress);
+	Coord3D fortressPos{ 700.0f, 700.0f, 0.0f };
+	fortress->teleportTo(&fortressPos, true);
+	Object *farmA = fx.make("TestFarm", fx.teamOf("H"));
+	Object *farmB = fx.make("TestFarm", fx.teamOf("H"));
+	REQUIRE(farmA);
+	REQUIRE(farmB);
+	Coord3D farmAPos{ 1000.0f, 400.0f, 0.0f }, farmBPos{ 300.0f, 900.0f, 0.0f };
+	farmA->teleportTo(&farmAPos, true);
+	farmB->teleportTo(&farmBPos, true);
+	// the records are the manager's; both farms are in the economy list, the fortress is in the structure list
+	CHECK(AITacticalAI::recordOf(*fx.logic, enemy).economy() == std::vector<ObjectID>{ farmA->getID(), farmB->getID() });
+	CHECK(AITacticalAI::recordOf(*fx.logic, enemy).structures() == std::vector<ObjectID>{ fortress->getID() });
+	// base (700,700), team centre (100,100), direction (600,600), distance 848.53, baseline 5000; farm A: toBase 424.26, toTeam 948.68,
+	// projection 1.0 (the line test: 424.26 > 275, kept) -> trunc((5000 + 424.26 - 948.68) * 0.01) = trunc(44.76) = 44; farm B: toBase 447.21,
+	// toTeam 824.62, projection 0.83 -> trunc((5000 + 447.21 - 824.62) * 0.01) = trunc(46.23) = 46; total 90
+	AITactic tac;
+	tac.targetless = true;
+	tac.kind = "FarmKillSquad";
+	tac.kindIndex = 101; // kTargetlessBase (100) + TL_FARM_KILL (1)
+	tac.id = 1;
+	AITacticTeam team;
+	team.name = "TARGETLESS_FarmKillSquad_1_0";
+	team.type = 4;
+	team.index = 0;
+	team.members = { squad->getID() };
+	team.handedOver = true;
+	tac.teams.push_back(team);
+	ai->brain.currentEnemy = enemy;
+	ai->brain.namedCounters["FarmKillSquad::IsRunning"] = 1; // the per-frame picker adds no second squad
+	ai->brain.tactics.push_back(tac);
+	fx.logic->runLogicFrame(); // frame 1: the ready frame cannot be 0 (RW 0x8F11DA stores it and tests it against 0)
+	REQUIRE(fx.logic->getFrame() == 1);
+	fx.logic->random().enableCallLog(true);
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai); // the ready frame
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai); // started
+	REQUIRE(ai->brain.tactics.size() == 1);
+	REQUIRE(ai->brain.tactics[0].started);
+	fx.logic->random().clearCallLog();
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai); // the started FarmKillSquad body
+	REQUIRE(ai->brain.tactics.size() == 1);
+	AITactic &active = ai->brain.tactics[0];
+	const auto &calls = fx.logic->random().callLog();
+	REQUIRE(!calls.empty());
+	CHECK(calls[0].file == "AIFarmKillSquad.cpp");
+	CHECK(calls[0].line == 0x203);
+	CHECK(calls[0].lo == 0);
+	CHECK(calls[0].hi == 3);
+	Object *expected = farmB; // the highest weight, 46
+	if (calls[0].result == 0)
+	{
+		REQUIRE(calls.size() == 3); // 0x203, the weighted 0x20A, 0x8B
+		CHECK(calls[1].line == 0x20A);
+		CHECK(calls[1].lo == 0);
+		CHECK(calls[1].hi == 90);
+		expected = calls[1].result < 44 ? farmA : farmB; // the first cumulative weight past the draw, else the last
+	}
+	CHECK(calls.size() == (calls[0].result == 0 ? 3u : 2u)); // 0x203, the 0x20A only on 0, then 0x8B
+	CHECK(active.squadTarget == expected->getID());
+	// the caller's one-in-five production replacement draw comes last (the production list holds the fortress alone and it is within 275 of the base)
+	CHECK(calls.back().file == "AIFarmKillSquad.cpp");
+	CHECK(calls.back().line == 0x8B);
+	CHECK(calls.back().lo == 0);
+	CHECK(calls.back().hi == 4);
+
+	// RW 0x9BB5E4's two extra filters: an open BLOCKING_GATE (its GateOpenAndCloseBehavior slot 0x18, isOpen RW 0x8DC9AB) and a WALL_SEGMENT without
+	// CAN_ATTACK are skipped; the closed gate is the one production candidate left (the fortress is within 275 of the base)
+	Object *openGate = fx.make("TestGate", fx.teamOf("H"));
+	Object *closedGate = fx.make("TestGate", fx.teamOf("H"));
+	Object *wall = fx.make("TestWallSegment", fx.teamOf("H"));
+	REQUIRE(openGate);
+	REQUIRE(closedGate);
+	REQUIRE(wall);
+	Coord3D openPos{ 1000.0f, 400.0f, 0.0f }, closedPos{ 300.0f, 900.0f, 0.0f }, wallPos{ 400.0f, 1000.0f, 0.0f };
+	openGate->teleportTo(&openPos, true);
+	closedGate->teleportTo(&closedPos, true);
+	wall->teleportTo(&wallPos, true);
+	GateOpenAndCloseBehavior::findGate(*closedGate)->close();
+	REQUIRE(openGate->isKindOfName("BLOCKING_GATE"));
+	GateOpenAndCloseBehavior *openBehavior = GateOpenAndCloseBehavior::findGate(*openGate);
+	GateOpenAndCloseBehavior *closedBehavior = GateOpenAndCloseBehavior::findGate(*closedGate);
+	REQUIRE(openBehavior != nullptr);
+	REQUIRE(closedBehavior != nullptr);
+	CHECK(openBehavior->isOpen());
+	CHECK_FALSE(closedBehavior->isOpen());
+	fx.logic->random().clearCallLog();
+	CHECK(AITacticalAI::productionTargetForTest(*fx.logic, tac, enemy) == closedGate);
+	{
+		const auto &prod = fx.logic->random().callLog();
+		REQUIRE(!prod.empty());
+		CHECK(prod[0].file == "AIFarmKillSquad.cpp");
+		CHECK(prod[0].line == 0x186);
+		CHECK(prod[0].lo == 0);
+		CHECK(prod[0].hi == 3);
+	}
+
+	// without a fortress RW 0x9BBA51 draws an id from the economy list (line 0x21D, 0 .. size - 1) and returns it
+	for (Object *o : { fortress, openGate, closedGate, wall })
+	{
+		o->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+		manager.objectRemoved(*o);
+	}
+	REQUIRE(AITacticalAI::recordOf(*fx.logic, enemy).structures().empty());
+	active.squadTarget = INVALID_ID;
+	fx.logic->random().clearCallLog();
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+	const auto &after = fx.logic->random().callLog();
+	REQUIRE(after.size() == 2); // the 0x21D id draw and the caller's 0x8B
+	CHECK(after[0].file == "AIFarmKillSquad.cpp");
+	CHECK(after[0].line == 0x21D);
+	CHECK(after[0].lo == 0);
+	CHECK(after[0].hi == 1);
+	CHECK(active.squadTarget == (after[0].result == 0 ? farmA : farmB)->getID());
+	CHECK(after.back().line == 0x8B);
 }

@@ -477,3 +477,23 @@ def test_the_credits_file_names_real_merges_line_by_line():
         r = nn.subprocess.run(["git", "-C", str(nn.HERE), "log", "-1", "--format=%b", sha], capture_output=True, text=True)
         assert not r.returncode, f"{sha[:10]} is not a commit of this repository"
         assert len(nn.ar.release_note_texts(r.stdout)) == len(lines), sha[:10]
+
+
+def test_a_reverted_pull_request_the_merge_names_is_not_carried(monkeypatch):
+    # MERGEQ-43 (2026-11-06) merged #229, reverted it inside the queue and says "without #229" in its subject: nightly_credits.json's
+    # not_carried row drops #229 from the merge's carried pull requests, so the fail-closed credit check passes; without it, it fails.
+    mq = "26c08791b5a3fd07e869efbdf710dbc979e21fc1"
+    commits = [{"sha": mq, "subject": "Merge MERGEQ-43: the AI series (#226-#239 without #229)",
+                "body": "Release-note: Necromancers cast Soul Freeze. (#226)\nRelease-note: Devastation on trees. (#239)\n",
+                "files": ["engine/src/x.cpp"]}]
+    monkeypatch.setattr(nn.ar, "first_parent_commits", lambda g, a, b: commits)
+    monkeypatch.setattr(nn, "inner_commits", lambda g, s: [])
+    monkeypatch.setitem(AUTHORS, 226, "admiraly")
+    monkeypatch.setitem(AUTHORS, 229, "admiraly")
+    monkeypatch.setitem(AUTHORS, 239, "admiraly")
+    with pytest.raises(SystemExit, match="carries #229"):
+        nn.build_context(None, "a", "b", FakeGitHub())
+    rows = nn.load_not_carried(nn.HERE / "nightly_credits.json")
+    assert rows[mq] == {229}
+    ctx = nn.build_context(None, "a", "b", FakeGitHub(), None, rows)
+    assert [c["sha"] for c in ctx["changes"]] == [mq]
