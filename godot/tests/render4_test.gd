@@ -118,7 +118,7 @@ func _run() -> int:
 	map.visible = false
 	var ramp := MeshInstance3D.new()
 	var ramp_mesh := QuadMesh.new()
-	ramp_mesh.size = Vector2(4000, 4000)
+	ramp_mesh.size = Vector2(100, 60) # the camera's view at z -30 is 82 x 46: the ramp fills it, so the whole gradient is visible
 	ramp.mesh = ramp_mesh
 	var ramp_mat := ShaderMaterial.new()
 	ramp_mat.shader = Shader.new()
@@ -130,21 +130,59 @@ func _run() -> int:
 	vp.add_child(keeper)
 	var veil := MeshInstance3D.new()
 	var veil_mesh := QuadMesh.new()
-	veil_mesh.size = Vector2(4000, 4000)
+	veil_mesh.size = Vector2(30, 40) # the left half of the view at z -20 (54 x 31), with a margin
 	veil.mesh = veil_mesh
 	var veil_mat := ShaderMaterial.new()
 	veil_mat.shader = Shader.new()
 	veil_mat.shader.code = "shader_type spatial; render_mode unshaded, fog_disabled, blend_mix, depth_draw_never, cull_disabled; void fragment() { ALBEDO = vec3(1.0); ALPHA = 0.25; }"
 	veil.material_override = veil_mat
 	cam.add_child(veil)
-	veil.position = Vector3(0, 0, -20)
-	veil.scale = Vector3(0.5, 1.0, 1.0) # half the picture: the ramp alone and under the veil
+	veil.position = Vector3(-14.0, 0, -20) # left half of the picture: the ramp alone on the right
 	await _frames(6)
 	var f0: Dictionary = host.get_post_effect_stats()
 	await _frames(6)
 	var f1: Dictionary = host.get_post_effect_stats()
+	# tolerance: one fused pass per rendered frame; the six awaited main-loop frames are not guaranteed to render six SubViewport frames on a shared,
+	# loaded machine, so the fused count is a lower bound (a regression that fused twice per frame would still show >= 6, but it would break the
+	# pixel comparison below, and f3 == f2 pins the separate path)
 	_check(int(f1.fused_passes) - int(f0.fused_passes) >= 6, "fall back: the grade takes over the gamma decode (%d fused passes in 6 frames)" % (int(f1.fused_passes) - int(f0.fused_passes)))
 	var fused: Image = vp.get_texture().get_image()
+	# the ramp's whole gradient is in view and the veil lies on its left half only (review: with 4000-unit quads 20-30 units from the camera the test
+	# sampled a few units around the ramp's centre, and the half-width veil still covered every pixel)
+	veil.visible = false
+	await _frames(4)
+	var bare: Image = vp.get_texture().get_image()
+	veil.visible = true
+	await _frames(4)
+	var lo := 1.0
+	var hi := 0.0
+	var worst_left := 0.0
+	var worst_right := 0.0
+	for y in range(10, bare.get_height() - 10, 7):
+		for x in range(10, bare.get_width() - 10, 7):
+			var b: Color = bare.get_pixel(x, y)
+			lo = minf(lo, b.r)
+			hi = maxf(hi, b.r)
+			var f: Color = fused.get_pixel(x, y)
+			if x < 140:
+				# tolerance: the veil adds 25 % of white in retail's gamma space; the engine's encode/decode round trip is approximate (largest residual
+				# 9 / 255 at the darkest reds), 10 / 255 still rejects a missing veil, a veil over the wrong half, or another alpha (0.5 would be ~64)
+				var d := Color(f.r - b.r, f.g - b.g, f.b - b.b)
+				var e := Color(0.25 * (1.0 - b.r), 0.25 * (1.0 - b.g), 0.25 * (1.0 - b.b))
+				worst_left = maxf(worst_left, maxf(absf(d.r - e.r), maxf(absf(d.g - e.g), absf(d.b - e.b))))
+			elif x > 180:
+				worst_right = maxf(worst_right, maxf(absf(f.r - b.r), maxf(absf(f.g - b.g), absf(f.b - b.b))))
+	# tolerance: the ramp's red channel is a seven-period sawtooth across the whole view, so its sampled span is 0.33 .. 0.99; half of that range is the
+	# floor for a camera that sees most of the quad
+	_check(hi - lo > 0.5, "fall back: the ramp spans its gradient (%0.2f .. %0.2f), not one colour" % [lo, hi])
+	# tolerance: see the loop's note (the gamma encode/decode round trip leaves up to 9 / 255 at the darkest reds)
+	_check(worst_left < 10.0 / 255.0, "fall back: the veil covers the left half and adds a quarter white (largest error %.2f / 255)" % (worst_left * 255.0))
+	# tolerance: the right half is outside the veil: the same frame's pixels, so only readback rounding can differ
+	_check(worst_right < 2.0 / 255.0, "fall back: the ramp outside the veil is unchanged (largest error %.2f / 255)" % (worst_right * 255.0))
+	var shot := OS.get_environment("RENDER4_SHOT")
+	if not shot.is_empty():
+		_check(fused.save_png(shot) == OK, "fall back: screenshot saved to %s" % shot)
+		_check(bare.save_png(shot.get_basename() + "-bare.png") == OK, "fall back: bare screenshot saved")
 	var through_script := GDScript.new()
 	through_script.source_code = "extends CompositorEffect\nfunc _init():\n\teffect_callback_type = EFFECT_CALLBACK_TYPE_POST_TRANSPARENT\nfunc _render_callback(_t, _d):\n\tpass\n"
 	through_script.reload()
@@ -156,6 +194,8 @@ func _run() -> int:
 	var f2: Dictionary = host.get_post_effect_stats()
 	await _frames(6)
 	var f3: Dictionary = host.get_post_effect_stats()
+	# tolerance: the extra pass-through effect produces one decode pass per rendered frame; the frame count itself can vary on a loaded machine, so the
+	# count only has to be strictly greater (the fused count staying exactly the same pins that this pair did not fuse)
 	_check(int(f3.fused_passes) == int(f2.fused_passes) and int(f3.passes) > int(f2.passes), "fall back: with an effect between them the decode and the grade run apart (%d fused)" % (int(f3.fused_passes) - int(f2.fused_passes)))
 	var apart: Image = vp.get_texture().get_image()
 	var worst := 0.0
