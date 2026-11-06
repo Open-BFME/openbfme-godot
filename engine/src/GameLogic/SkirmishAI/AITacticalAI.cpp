@@ -12,7 +12,11 @@
 #include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/AI/AIGroup.h"
+#include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Module/GateModules.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/SkirmishAIEditionRules.h"
@@ -38,24 +42,27 @@ constexpr int kLogicFramesPerSecond = 5;        // RW 0xD9F608
 // TheAITargetHeuristicLibrary's heuristic types in library order (RW 0x82EF7B)
 constexpr int kHeuristicTypes[] = { 1, 0, 3, 2, 2, 0 };
 constexpr int kEnemyStructure = 0, kDefensive = 1, kOpportunity = 2, kExpansion = 3;
-// the generator's active lists in RW's order (RW 0x90B8C7 updates, RW 0x90BA94 drops, RW 0x8F157F searches them so): + 0x10 offensive, + 0x28 defensive (not
-// ported: never filled), + 0x40 expansion, + 0x58 targetless; the port keeps one list and walks it once per RW list
-constexpr int kTacticLists[] = { 0, 2, 3 };
+// the generator's active lists in RW's order (RW 0x90B8C7 updates, RW 0x90BA94 drops, RW 0x8F157F searches them so): + 0x10 offensive, + 0x28 defensive,
+// + 0x40 expansion, + 0x58 targetless; the port keeps one list and walks it once per RW list
+constexpr int kTacticLists[] = { 0, 1, 2, 3 };
 constexpr int kSimpleExpansionIndex = 8; // AITactic::kindIndex of SimpleExpansion (OffensiveKind SIMPLE_EXPANSION)
+constexpr int kSimpleDefenseIndex = 9;   // AITactic::kindIndex of SimpleDefense (OffensiveKind SIMPLE_DEFENSE)
 int tacticList(const AITactic &t)
 {
-	return t.targetless ? 3 : t.kindIndex == kSimpleExpansionIndex ? 2 : 0;
+	return t.targetless ? 3 : t.kindIndex == kSimpleExpansionIndex ? 2 : t.kindIndex == kSimpleDefenseIndex ? 1 : 0;
 }
 constexpr float kAttackedAtRadius = 300.0f;      // RW 0xC16764
 constexpr float kAttackedAtNearSq = 90000.0f;    // RW 0xC16768
 constexpr float kAttackedAtMergeSq = 360000.0f;  // RW 0xC16784
+constexpr float kDefenseTargetRadius = 200.0f;   // RW 0xBE4170 (AITarget::setTarget's radius in RW 0x97D74F)
 // the offensive prototypes of the generator (RW 0x90BE31); only SimpleAttack is ported (S-417)
 
 // the KindOf bits the AI reads (TheKindOfNames RW 0xDA0E68; the names are the binary's, looked up once)
 struct Kinds
 {
 	int unattackable, immobile, structure, ship, canAttack, hero, support, dozer, expansionPad, notAutoAcquirable, rebuildHole, economyStructure, linkedToFlag,
-		baseSite, ignoresSelectAll, dozerFactory, walkOnTopOfWall, defensiveWall, wallUpgrade, ignoreForVictory, wallGate, baseFoundation, wallHub, wallSegment;
+		baseSite, ignoresSelectAll, dozerFactory, walkOnTopOfWall, defensiveWall, wallUpgrade, ignoreForVictory, wallGate, baseFoundation, wallHub, wallSegment,
+		blockingGate;
 };
 
 const Kinds &kinds()
@@ -66,7 +73,7 @@ const Kinds &kinds()
 		KindOfTokens::indexOf("ECONOMY_STRUCTURE"), KindOfTokens::indexOf("LINKED_TO_FLAG"), KindOfTokens::indexOf("BASE_SITE"),
 		KindOfTokens::indexOf("IGNORES_SELECT_ALL"), KindOfTokens::indexOf("DOZER_FACTORY"), KindOfTokens::indexOf("WALK_ON_TOP_OF_WALL"),
 		KindOfTokens::indexOf("DEFENSIVE_WALL"), KindOfTokens::indexOf("WALL_UPGRADE"), KindOfTokens::indexOf("IGNORE_FOR_VICTORY"), KindOfTokens::indexOf("WALL_GATE"),
-		KindOfTokens::indexOf("BASE_FOUNDATION"), KindOfTokens::indexOf("WALL_HUB"), KindOfTokens::indexOf("WALL_SEGMENT") };
+		KindOfTokens::indexOf("BASE_FOUNDATION"), KindOfTokens::indexOf("WALL_HUB"), KindOfTokens::indexOf("WALL_SEGMENT"), KindOfTokens::indexOf("BLOCKING_GATE") };
 	return k;
 }
 
@@ -314,6 +321,63 @@ void heuristicDozers(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState 
 	}
 }
 
+// RW 0x97D74F (DEFENSIVE heuristic RW 0xC85684): for every group of the chooser's position sampler (record + 0x10, RW 0x8E4042), the first
+// object in the group's radius (2D scan, ITER_FASTEST) that is the player's ENEMY (relationship 1), alive, with CAN_ATTACK, HERO or SUPPORT and none of
+// UNATTACKABLE, SHIP, NEUTRALGOLLUM or PASS_EXPERIENCE_TO_CONTAINER; one group with a hit is drawn at AITargetHeuristicBaseDefense.cpp line 0x57. The
+// group's member count (RW 0x97D700) is the target's defence size (+ 0x2C): 1 -> 0, 2 -> 1, else 2; a count of 1 only goes on when the second draw at
+// line 0x60 is below 30. The target is the object with a 200 radius (RW 0xBE4170, AITarget::setTarget RW 0x6C6A09)
+void heuristicBaseDefense(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState &b, AITarget &t)
+{
+	const Player *player = playerOf(logic, ai.playerIndex);
+	if (!player)
+	{
+		return;
+	}
+	struct Found
+	{
+		const Object *object;
+		size_t members;
+	};
+	std::vector<Found> found;
+	static const int excluded[] = { KindOfTokens::indexOf("UNATTACKABLE"), KindOfTokens::indexOf("SHIP"), KindOfTokens::indexOf("NEUTRALGOLLUM"),
+		KindOfTokens::indexOf("PASS_EXPERIENCE_TO_CONTAINER") };
+	const AIStatCollector &record = AITacticalAI::recordOf(logic, ai.playerIndex);
+	for (const AIPositionSampler::Group &g : record.positions().groups())
+	{
+		PartitionFilterFn enemy([&](Object &o) { return player->getRelationship(o.getTeam()) == ENEMIES; });
+		PartitionFilterFn eligible([&](Object &o) {
+			if (o.isEffectivelyDead() || !(is(o, kinds().canAttack) || is(o, kinds().hero) || is(o, kinds().support)))
+			{
+				return false;
+			}
+			for (int bit : excluded)
+			{
+				if (is(o, bit))
+				{
+					return false;
+				}
+			}
+			return true;
+		});
+		const PartitionHits hits = logic.partition().iterateObjectsInRange(g.center, g.radius, FROM_CENTER_2D, { &enemy, &eligible }, ITER_FASTEST);
+		if (!hits.empty())
+		{
+			found.push_back({ (*hits.begin()).object, g.members.size() }); // RW 0x97D700: the group's member count
+		}
+	}
+	if (found.empty())
+	{
+		return;
+	}
+	const Found &pick = found[(size_t)logic.random().getValue(0, (int)found.size() - 1, "AITargetHeuristicBaseDefense.cpp", 0x57)];
+	t.defenseSize = pick.members == 1 ? 0 : pick.members == 2 ? 1 : 2;
+	if (pick.members == 1 && logic.random().getValue(0, 100, "AITargetHeuristicBaseDefense.cpp", 0x60) >= 30)
+	{
+		return;
+	}
+	setTarget(logic, b, t, *pick.object, kDefenseTargetRadius, *player);
+}
+
 // RW 0x97CE90 (OPPORTUNITY heuristic RW 0xC85584, the capture flags) is NOT ported (S-417): it walks the manager's + 0xA68 list, which RW 0x6A9D9C fills when
 // an object with KindOf CAPTUREFLAG is created and which then holds objects that have since lost that KindOf (a captured flag); a scan of the current
 // flags cannot reproduce it (retail needs the historical registration)
@@ -519,7 +583,7 @@ void updateChooser(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b)
 		}
 		else
 		{
-			++b.unportedTypes; // DEFENSIVE (RW 0x97D74F): S-417
+			heuristicBaseDefense(logic, ai, b, t); // DEFENSIVE (RW 0x97D74F): library index 0
 		}
 	}
 }
@@ -769,32 +833,54 @@ enum OffensiveKind
 	SIMPLE_SIEGE,       // RW 0x9B33B2 "SimpleSiege" (RW 0xC894B0)
 	SIEGE_GATES,        // RW 0x9B3282 "SiegeGates" (RW 0xC89460)
 	// lane AIEXPAND-1: the generator's one EXPANSION prototype (+ 0x34, made by RW 0x90C09E), not an offensive one
-	SIMPLE_EXPANSION    // RW 0x9B5190 "SimpleExpansion" (RW 0xC898D4)
+	SIMPLE_EXPANSION,   // RW 0x9B5190 "SimpleExpansion" (RW 0xC898D4)
+	// lane RAI-DEF: the generator's one DEFENSIVE prototype (+ 0x1C, made by RW 0x90C04E), not an offensive one
+	SIMPLE_DEFENSE      // RW 0x9B4F8F "SimpleDefense" (RW 0xC89890)
 };
 constexpr OffensiveKind kOffensivePrototypes[] = { SIMPLE_ATTACK, SIMPLE_ATTACK, FORMATION_ATTACK, FORMATION_ATTACK, FLANK_ATTACK, PINCER_ATTACK, FEINT_ATTACK,
 	BASE_PENETRATION, SIMPLE_SIEGE, SIEGE_GATES };
 const char *const kOffensiveNames[] = { "SimpleAttack", "FormationAttack", "FlankAttack", "PincerAttack", "FeintAttack", "AIBasePenetrationTroopsTactic",
-	"SimpleSiege", "SiegeGates", "SimpleExpansion" };
+	"SimpleSiege", "SiegeGates", "SimpleExpansion", "SimpleDefense" };
 const char *const kExpansionBuilding = "MenFortress"; // RW 0x9B51E9: the literal RW 0xC899B4, whatever the AI's side
 constexpr float kExpansionPriority = 3000.0f;       // RW 0x9B51E9: + 4 = [RW 0xC1EE14]
 static_assert(SIMPLE_EXPANSION == kSimpleExpansionIndex, "AITactic::kindIndex of SimpleExpansion");
 constexpr float kFlankMinDistanceSq = 2000000.0f; // RW 0xC89630
 
 // RW 0x9EF9AF (AITactic's common check): a unit of the AI's army list (CAN_ATTACK or SUPPORT, not IMMOBILE, not IGNORES_SELECT_ALL) that can path to the target
-// (S-418: taken as reachable); the tactic's vslot 0x34 (true for the siege tactics RW 0x8BD372, false for the others RW 0x9188EB) equal to that answer refuses;
-// an EASY AI in the Rush phase refuses a living DOZER_FACTORY target
+// (RW 0x6F5BB0 to the target's position, or RW 0x6F5F65 to the target object when the target has one); the tactic's vslot 0x34 (true for the siege tactics
+// RW 0x8BD372, false for the others RW 0x9188EB) equal to that answer refuses; an EASY AI in the Rush phase refuses a living DOZER_FACTORY target
 bool commonApplies(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const AITarget &t, const Player &player, bool siegeTactic)
 {
 	const Kinds &k = kinds();
+	Object *target = t.object != INVALID_ID ? logic.findObjectByID(t.object) : nullptr;
+	AIWorld *world = logic.aiWorld();
 	bool reachable = false;
 	const Object *last = nullptr;
 	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
 	{
-		const Object *o = logic.findObjectByID(id);
+		Object *o = logic.findObjectByID(id);
 		last = o;
-		if (o && (is(*o, k.canAttack) || is(*o, k.support)) && !is(*o, k.immobile) && !is(*o, k.ignoresSelectAll))
+		if (!o || !(is(*o, k.canAttack) || is(*o, k.support)) || is(*o, k.immobile) || is(*o, k.ignoresSelectAll))
 		{
-			reachable = true; // RW 0x6F5BB0 / 0x6F5F65 (S-418)
+			continue;
+		}
+		AIUpdateInterface *u = o->getAIUpdateInterface();
+		if (!u || !world)
+		{
+			continue; // RW 0x6F5F6F / 0x6F5F7C: no AI and no locomotor set, no path
+		}
+		Pathfinder &pf = world->pathfinder();
+		const PathfindLocomotorInfo loco = u->locomotorInfo();
+		if (target)
+		{
+			reachable = pf.pathToObject(u->adapter(), loco, *o->getPosition(), world->adapterFor(*target)); // RW 0x6F5F65
+		}
+		else
+		{
+			reachable = pf.quickDoesPathExist(u->adapter(), o->getPosition(), &t.position, &loco); // RW 0x6F5BB0
+		}
+		if (reachable)
+		{
 			break;
 		}
 	}
@@ -802,7 +888,6 @@ bool commonApplies(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainSt
 	{
 		return false;
 	}
-	const Object *target = t.object != INVALID_ID ? logic.findObjectByID(t.object) : nullptr;
 	if (ai.build.phase == 0 && player.getSkirmishDifficulty() == 0 && target && is(*target, k.dozerFactory) && alive(target))
 	{
 		return false;
@@ -877,7 +962,7 @@ bool tacticApplies(GameLogic &logic, OffensiveKind kind, const AISkirmishPlayer 
 // vslot 4: the number of teams (RW 0x490AC4 = 1, RW 0x64DFDA = 2)
 int teamCountOf(OffensiveKind kind)
 {
-	return kind == PINCER_ATTACK || kind == FEINT_ATTACK || kind == SIMPLE_SIEGE ? 2 : 1;
+	return kind == PINCER_ATTACK || kind == FEINT_ATTACK || kind == SIMPLE_SIEGE ? 2 : 1; // SimpleDefense: RW 0x490AC4
 }
 
 // a KindOf bit by its binary name (TheKindOfNames RW 0xDA0E68); the setups below cite the byte and bit RW sets
@@ -892,8 +977,8 @@ int kindBit(const char *name)
 }
 
 // vslot 3: a team's sizes (+ 0x2D4 minimum, + 0x2D0 maximum, -1 = no maximum) and its KindOf masks (lane DECOMP-2: + 0x2E0 required, + 0x2FC forbidden, the
-// masks the recruit test RW 0x9A24FC applies)
-void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &t, AITacticTeam &team)
+// masks the recruit test RW 0x9A24FC applies); `playerIndex` is the AI whose player info record a SimpleDefense team sizes itself from
+void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &t, AITacticTeam &team, int playerIndex)
 {
 	switch (kind)
 	{
@@ -951,6 +1036,26 @@ void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &
 	case SIMPLE_EXPANSION: // RW 0x9B5081: + 0x2D0 = GetGameLogicRandomValue(2, 2) (AISimpleExpansionTactic.cpp line 0xA0); the minimum stays the pool's 1
 		team.maximum = logic.random().getValue(2, 2, "AISimpleExpansionTactic.cpp", 0xA0);
 		break;
+	case SIMPLE_DEFENSE: // RW 0x9B4EF0: the recruit origin is the target's position; the maximum is 1, 3 or half the army list (RW 0x945ADA)
+		team.hasRecruitOrigin = true;
+		team.recruitOrigin = t.position;
+		if (t.defenseSize == 0)
+		{
+			team.maximum = 1;
+		}
+		else if (t.defenseSize == 1)
+		{
+			team.maximum = 3;
+		}
+		else
+		{
+			const size_t count = AITacticalAI::recordOf(logic, playerIndex).army().size();
+			if (count > 1)
+			{
+				team.maximum = SimMath::truncToInt32(SimMath::pc24MulW(SimMath::fildU32((std::uint32_t)count), 0.5));
+			}
+		}
+		break;
 	}
 }
 
@@ -988,7 +1093,10 @@ void endTactic(AITactic &tac, AIBrainState &owner, bool success)
 }
 
 // RW 0x8F21F7
-void startTactic(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targetIndex)
+// `playerIndex` is the AI that runs the tactic: RW 0x6C74C2 passes the brain's own player (brain + 8, RW 0x6C74F6) to RW 0x90CB9F, and the start
+// RW 0x8F21F7 keeps it at the tactic's + 0x24, the player whose record SimpleDefense's setup reads (RW 0x9B4F17). In an AI group that is the ally
+// itself, not the group's first AI that holds the target (tac.targetOwner)
+void startTactic(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targetIndex, int playerIndex)
 {
 	AITarget &t = owner.targets[(size_t)targetIndex];
 	if (t.teams >= t.maxTeams)
@@ -1005,7 +1113,7 @@ void startTactic(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targe
 		team.name = std::string(targetTypeName(t.type)) + "_" + tac.kind + "_" + std::to_string(tac.id) + "_" + std::to_string(i); // "%s_%s_%u_%u"
 		team.type = t.type;
 		team.index = i;
-		setupTeam(logic, kind, i, t, team);
+		setupTeam(logic, kind, i, t, team, playerIndex);
 		tac.teams.push_back(team);
 	}
 	t.teams += 1;
@@ -1038,7 +1146,7 @@ void enemyStructureTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &
 	tac.kind = kOffensiveNames[kind];
 	tac.id = b.nextTacticId++;
 	tac.targetOwner = ownerIndex;
-	startTactic(logic, tac, owner, targetIndex);
+	startTactic(logic, tac, owner, targetIndex, ai.playerIndex);
 	++b.tacticsByKind[tac.kind];
 	b.tactics.push_back(tac);
 	++b.tacticsStarted;
@@ -1068,7 +1176,24 @@ void expansionTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 	tac.kind = kOffensiveNames[kind];
 	tac.id = b.nextTacticId++;
 	tac.targetOwner = ownerIndex;
-	startTactic(logic, tac, owner, targetIndex);
+	startTactic(logic, tac, owner, targetIndex, ai.playerIndex);
+	++b.tacticsByKind[tac.kind];
+	b.tactics.push_back(tac);
+	++b.tacticsStarted;
+}
+
+// RW 0x90C436 (lane RAI-DEF): no difficulty gate; the generator's defensive prototypes (+ 0x1C, one SimpleDefense made by RW 0x90C04E) are asked
+// (vslot 1: always true), one is drawn at AITacticsGenerator.cpp line 0x177, cloned (vslot 0x30), started on the target (RW 0x8F21F7) and joins the
+// defensive active list (+ 0x28)
+void defensiveTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AIBrainState &owner, int targetIndex, int ownerIndex)
+{
+	(void)logic.random().getValue(0, 0, "AITacticsGenerator.cpp", 0x177);
+	AITactic tac;
+	tac.kindIndex = SIMPLE_DEFENSE;
+	tac.kind = kOffensiveNames[SIMPLE_DEFENSE];
+	tac.id = b.nextTacticId++;
+	tac.targetOwner = ownerIndex;
+	startTactic(logic, tac, owner, targetIndex, ai.playerIndex);
 	++b.tacticsByKind[tac.kind];
 	b.tactics.push_back(tac);
 	++b.tacticsStarted;
@@ -1134,7 +1259,7 @@ int namedCounter(AIBrainState &b, const char *name)
 
 int enemyOfGroup(const AISkirmishPlayer &ai)
 {
-	return ai.groupFirst ? ai.groupFirst->brain.currentEnemy : ai.brain.currentEnemy; // RW 0x6C7807
+	return AITacticalAI::enemyOfGroup(ai); // RW 0x6C7807
 }
 
 // vslot 1 (applies) of targetless prototype `index` (the prototype's + 0x24 player is the AI's: RW 0x90C623)
@@ -1815,6 +1940,269 @@ void teamAttackObject(GameLogic &logic, AITacticTeam &team, Object &target)
 	team.idleFrames = 0;
 }
 
+// ---- lane RAI-SIEGE: the two siege tactic bodies (RW 0x9B3548 SimpleSiege, RW 0x9B31E6 SiegeGates) ------------------------------------------------------
+constexpr float kSiegeStandBack = 500.0f; // RW 0xC894AC: the point team 1 waits at, 500 from the wall target toward team 0's first member
+
+// RW 0x9EF946: the tactic's wall target (+ 0x58, the field FarmKillSquad's squad target also uses)
+Object *wallTargetOf(GameLogic &logic, const AITactic &tac)
+{
+	return tac.squadTarget != INVALID_ID ? logic.findObjectByID(tac.squadTarget) : nullptr;
+}
+
+// RW 0x7A11FF: the team's first object (RW 0x66362D walks the team's object list, which never holds a destroyed object). The port keeps a dead member's id in
+// `members` until the whole team is gone (updateTactic), so this is the first member that still exists; null when none does
+const Object *firstMemberOf(GameLogic &logic, const AITacticTeam &team)
+{
+	for (ObjectID id : team.members)
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && !o->isDestroyed())
+		{
+			return o;
+		}
+	}
+	return nullptr;
+}
+
+// RW 0x9EF955: the wall target is gone (RW 0x449681 finds none) or effectively dead (+ 0x458 bit 0)
+bool wallTargetGone(GameLogic &logic, const AITactic &tac)
+{
+	return !alive(wallTargetOf(logic, tac));
+}
+
+// RW 0x9EF829: team 0's first member finds the nearest living enemy WALL_GATE, or WALL_SEGMENT that is not WALK_ON_TOP_OF_WALL, never
+// NOT_AUTOACQUIRABLE (the enemy's structures list, RW 0x6A9999 + 8; 2D squared distance, the first on ties); kept at + 0x58
+bool findWallTarget(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, AITactic &tac)
+{
+	const Kinds &k = kinds();
+	const AITacticTeam *team0 = teamByIndex(tac, 0);
+	const Object *leader = team0 ? firstMemberOf(logic, *team0) : nullptr;
+	if (!leader)
+	{
+		return false;
+	}
+	const int enemy = ai.groupFirst ? ai.groupFirst->brain.currentEnemy : b.currentEnemy; // RW 0x6C7807
+	if (enemy < 0)
+	{
+		return false;
+	}
+	Object *best = nullptr;
+	float bestDist = 0.0f;
+	for (ObjectID id : AITacticalAI::recordOf(logic, enemy).structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (!alive(o) || is(*o, k.notAutoAcquirable))
+		{
+			continue;
+		}
+		if (!is(*o, k.wallGate) && !(is(*o, k.wallSegment) && !is(*o, k.walkOnTopOfWall)))
+		{
+			continue;
+		}
+		const float dx = SimMath::subf32(o->getPosition()->x, leader->getPosition()->x);
+		const float dy = SimMath::subf32(o->getPosition()->y, leader->getPosition()->y);
+		const float d = SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
+		if (!best || d < bestDist) // RW 0x9EF90B: the first candidate (JZ on TEST EDI, EDI), else strictly nearer (COMISS JBE: ties and NaN keep the earlier)
+		{
+			best = o;
+			bestDist = d;
+		}
+	}
+	if (!best)
+	{
+		return false;
+	}
+	tac.squadTarget = best->getID();
+	return true;
+}
+
+// RW 0x9B3184: the wall target (RW 0x9EF829), attacked by team 0 (RW 0x8F1792)
+bool siegeWallTarget(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, AITactic &tac)
+{
+	if (!findWallTarget(logic, ai, b, tac))
+	{
+		return false;
+	}
+	Object *wall = wallTargetOf(logic, tac);
+	AITacticTeam *team0 = teamByIndex(tac, 0);
+	if (!wall || !team0)
+	{
+		return false;
+	}
+	teamAttackObject(logic, *team0, *wall);
+	return true;
+}
+
+// RW 0x9EF783: team 0's first CAN_ATTACK / HERO / SUPPORT member not IGNORES_SELECT_ALL paths to the tactic's target object, else to its position
+bool siegePathToTarget(GameLogic &logic, AITactic &tac, const AITarget *t)
+{
+	if (!t)
+	{
+		return false;
+	}
+	const Kinds &k = kinds();
+	const AITacticTeam *team0 = teamByIndex(tac, 0);
+	if (!team0)
+	{
+		return false;
+	}
+	const Object *unit = nullptr;
+	for (ObjectID id : team0->members)
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && (is(*o, k.canAttack) || is(*o, k.hero) || is(*o, k.support)) && !is(*o, k.ignoresSelectAll))
+		{
+			unit = o;
+			break;
+		}
+	}
+	const AIUpdateInterface *u = unit ? unit->getAIUpdateInterface() : nullptr;
+	AIWorld *world = logic.aiWorld();
+	if (!u || !world)
+	{
+		return false;
+	}
+	Object *target = t->object != INVALID_ID ? logic.findObjectByID(t->object) : nullptr;
+	const PathfindLocomotorInfo loco = u->locomotorInfo();
+	if (target)
+	{
+		return world->pathfinder().pathToObject(u->adapter(), loco, *unit->getPosition(), world->adapterFor(*target)); // RW 0x6F5F65
+	}
+	return world->pathfinder().quickDoesPathExist(u->adapter(), unit->getPosition(), &t->position, &loco); // RW 0x6F5BB0
+}
+
+// RW 0x9B3453 (SimpleSiege stage 0): the wall target (RW 0x9EF829), team 0 attacks it (RW 0x8F1792), team 1 attack-moves to the wall's position
+// stepped 500 toward team 0's first member (RW 0x7A11FF, RW 0xC894AC, RW 0x8F17EE)
+Coord3D siegeStandBackPoint(const Coord3D &leader, const Coord3D &wall)
+{
+	Coord3D away{ SimMath::subf32(leader.x, wall.x), SimMath::subf32(leader.y, wall.y), SimMath::subf32(leader.z, wall.z) };
+	normalize3(away);
+	return Coord3D{ SimMath::addf32(wall.x, SimMath::mulf32(away.x, kSiegeStandBack)), SimMath::addf32(wall.y, SimMath::mulf32(away.y, kSiegeStandBack)),
+		SimMath::addf32(wall.z, SimMath::mulf32(away.z, kSiegeStandBack)) };
+}
+
+bool simpleSiegeStageZero(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, AITactic &tac)
+{
+	if (!siegeWallTarget(logic, ai, b, tac))
+	{
+		return false;
+	}
+	Object *wall = wallTargetOf(logic, tac);
+	AITacticTeam *team0 = teamByIndex(tac, 0);
+	const AITacticTeam *team1 = teamByIndex(tac, 1);
+	const Object *leader = team0 ? firstMemberOf(logic, *team0) : nullptr;
+	if (!wall || !team0 || !team1 || !leader)
+	{
+		return false;
+	}
+	teamAttackMove(logic, tac, 1, siegeStandBackPoint(*leader->getPosition(), *wall->getPosition())); // RW 0x8F17EE(1, pos)
+	return true;
+}
+
+// RW 0x9B3380: SimpleSiege's start (state 0)
+void startSimpleSiege(AITactic &tac)
+{
+	tac.step = 0;
+}
+
+// RW 0x9B31C5: SiegeGates' start: team 0's wall target, else the end (0, 0)
+void startSiegeGates(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (!teamByIndex(tac, 0))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false); // RW 0x9B31DB
+		return;
+	}
+	siegeWallTarget(logic, ai, b, tac); // RW 0x9B31D6 -> 0x9B3184
+}
+
+// RW 0x9B3548: SimpleSiege's started update (the target inactive ends it with success; teams 1 and 0 needed; stage + 0x5C 0 .. 3)
+void updateSimpleSiege(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner, AITarget *t)
+{
+	if (!tac.started)
+	{
+		return;
+	}
+	if (!t || t->inactive)
+	{
+		endAnyTactic(logic, ai, b, tac, owner, true);
+		return;
+	}
+	if (!teamByIndex(tac, 1) || !teamByIndex(tac, 0))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	switch (tac.step)
+	{
+	case 0: // RW 0x9B3453: the wall, else the end (0, 0)
+		if (simpleSiegeStageZero(logic, ai, b, tac))
+		{
+			tac.step = 1;
+		}
+		else
+		{
+			endAnyTactic(logic, ai, b, tac, owner, false);
+		}
+		break;
+	case 1: // RW 0x9EF783: the path through the breach
+		if (siegePathToTarget(logic, tac, t))
+		{
+			tac.step = 2;
+		}
+		break;
+	case 2: // RW 0x8F17EE(1, target): team 1 goes in
+		teamAttackMove(logic, tac, 1, t->position);
+		tac.step = 3;
+		break;
+	case 3: // RW 0x8F1725(1): team 1 idle ends it with success
+		if (teamDone(ai, tac, 1))
+		{
+			endAnyTactic(logic, ai, b, tac, owner, true);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+// RW 0x9B31E6: SiegeGates' started update (team 0; stage 0: the path opens -> every team attack-moves to the target and + 0x5C = 1; else a dead wall
+// target or every team idle picks/attacks the wall again; stage 1: every team idle ends it with success)
+void updateSiegeGates(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner, AITarget *t)
+{
+	if (!tac.started)
+	{
+		return;
+	}
+	if (!teamByIndex(tac, 0))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false); // RW 0x9B31FB
+		return;
+	}
+	if (tac.step == 0)
+	{
+		if (siegePathToTarget(logic, tac, t))
+		{
+			if (t)
+			{
+				for (const AITacticTeam &team : tac.teams)
+				{
+					teamAttackMove(logic, tac, team.index, t->position); // RW 0x8F19E9
+				}
+			}
+			tac.step = 1;
+		}
+		else if (wallTargetGone(logic, tac) || allTeamsDone(ai, tac))
+		{
+			siegeWallTarget(logic, ai, b, tac); // RW 0x9B3184
+		}
+	}
+	else if (allTeamsDone(ai, tac))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9B3249
+	}
+}
+
 // FlagCaptureSquad update RW 0x9BC3F4, nearest flag RW 0x9BC213, command RW 0x8F1933.
 void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
@@ -1894,9 +2282,326 @@ void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, 
 	endAnyTactic(logic, ai, b, tac, owner, true);
 }
 
+// ---- lane RAI-TL: FarmKillSquad's farm and production target choice (RW 0x9BBA51 / 0x9BB5E4) ------------------------------------------------
+// RW 0x9BB2A7 (Coord3D::length RW 0x403111): the 3D distance, the sum (x*x + y*y) + z*z in float and the correctly rounded sqrt of its double
+float distance3d(const Coord3D &a, const Coord3D &b)
+{
+	return (float)SimMath::length3d(SimMath::subf32(a.x, b.x), SimMath::subf32(a.y, b.y), SimMath::subf32(a.z, b.z));
+}
+
+// RW 0x9BB2EA: the distance from p to the infinite line through a and b (not a clamped segment): t = ((b - a) . (p - a)) / |b - a|^2, the
+// projection a + t * (b - a), and the 3D distance from p to it. The dot sums z + y first, then x (RW 0x9BB338 .. 0x9BB350).
+float lineDistance3d(const Coord3D &p, const Coord3D &a, const Coord3D &b)
+{
+	const float dx = SimMath::subf32(b.x, a.x), dy = SimMath::subf32(b.y, a.y), dz = SimMath::subf32(b.z, a.z);
+	const float px = SimMath::subf32(p.x, a.x), py = SimMath::subf32(p.y, a.y), pz = SimMath::subf32(p.z, a.z);
+	const float dot = SimMath::addf32(SimMath::addf32(SimMath::mulf32(pz, dz), SimMath::mulf32(py, dy)), SimMath::mulf32(px, dx));
+	const float len = distance3d(a, b);
+	const float lenSq = SimMath::mulf32(len, len);
+	const float t = SimMath::divf32(dot, lenSq);
+	const Coord3D q{ SimMath::addf32(a.x, SimMath::mulf32(dx, t)), SimMath::addf32(a.y, SimMath::mulf32(dy, t)), SimMath::addf32(a.z, SimMath::mulf32(dz, t)) };
+	return distance3d(p, q);
+}
+
+// RW 0x9BB578: the squad's object (+ 0x5C; this port never stores one) or the first living CAN_ATTACK member of team 0
+Object *farmFinder(GameLogic &logic, const AITactic &tac)
+{
+	if (tac.teams.empty())
+	{
+		return nullptr;
+	}
+	const int canAttack = kinds().canAttack;
+	for (ObjectID id : tac.teams[0].members)
+	{
+		Object *o = logic.findObjectByID(id);
+		if (alive(o) && is(*o, canAttack))
+		{
+			return o;
+		}
+	}
+	return nullptr;
+}
+
+// RW 0x9B58BF: the first DOZER_FACTORY of the enemy's structure list (record + 8 -> + 4); neither the status nor a dead flag is read
+Object *findEnemyFortress(GameLogic &logic, int enemyIndex)
+{
+	const int dozerFactory = kinds().dozerFactory;
+	for (ObjectID id : AITacticalAI::recordOf(logic, enemyIndex).structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (o && is(*o, dozerFactory))
+		{
+			return o;
+		}
+	}
+	return nullptr;
+}
+
+// The candidate filter both selectors share (RW 0x9BB6FB .. 0x9BB7AC / 0x9BBB68 .. 0x9BBBC0): a linked-to-flag, destroyed or dead object is skipped.
+// RW 0x9BB5E4 adds two more: a BLOCKING_GATE whose GateOpenAndCloseBehavior is open (vslot 0x18), and a WALL_SEGMENT that cannot attack.
+bool farmChoiceCandidate(const Object *o, bool production)
+{
+	if (!o || is(*o, kinds().linkedToFlag) || o->isDestroyed() || o->isEffectivelyDead())
+	{
+		return false;
+	}
+	if (production)
+	{
+		if (is(*o, kinds().blockingGate))
+		{
+			const GateOpenAndCloseBehavior *gate = GateOpenAndCloseBehavior::findGate(*o);
+			if (gate && gate->isOpen())
+			{
+				return false;
+			}
+		}
+		if (is(*o, kinds().wallSegment) && !is(*o, kinds().canAttack))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// The weighted choice both selectors share (RW 0x9BB918 .. 0x9BB9C9 / 0x9BB8E0 .. 0x9BB996): an empty map answers null; a draw of 0 among 0 .. 3
+// draws 0 .. total and returns the first key whose cumulative weight passes it, else (and for any other first draw) the highest weight.
+// Equal weights keep the first inserted object and still add to the total (std::map::insert, RW 0x77532D).
+Object *weighedChoice(GameLogic &logic, std::map<int, Object *> &choices, std::uint32_t total, int firstLine, int drawLine)
+{
+	if (choices.empty())
+	{
+		return nullptr;
+	}
+	if (logic.random().getValue(0, 3, kFarmKillFile, firstLine) == 0)
+	{
+		const std::uint32_t draw = (std::uint32_t)logic.random().getValue(0, (int)total, kFarmKillFile, drawLine);
+		std::uint32_t cumulative = 0;
+		for (const auto &choice : choices)
+		{
+			cumulative += (std::uint32_t)choice.first;
+			if (draw < cumulative)
+			{
+				return choice.second;
+			}
+		}
+	}
+	return (--choices.end())->second;
+}
+
+// RW 0x9BBA51: the farm target among the enemy's economy list (record + 0xC -> + 4). Without a fortress the first branch draws up to three ids and
+// returns the last object even when it is invalid (RW 0x9BBE37); with one, every candidate is scored and the weighted choice runs.
+Object *selectFarmTarget(GameLogic &logic, const AITactic &tac, int enemyIndex)
+{
+	Player *enemy = playerOf(logic, enemyIndex);
+	if (!enemy)
+	{
+		return nullptr;
+	}
+	const AIStatCollector &record = AITacticalAI::recordOf(logic, enemyIndex);
+	if (tac.teams.empty())
+	{
+		return nullptr;
+	}
+	Coord3D centre{ 0.0f, 0.0f, 0.0f };
+	teamCentre(logic, tac.teams[0], centre);
+	std::vector<ObjectID> ids = record.economy();
+	Object *fortress = findEnemyFortress(logic, enemyIndex);
+	if (!fortress)
+	{
+		// RW 0x9BBDC3 .. 0x9BBE43: no reachability test in this branch
+		if (ids.empty())
+		{
+			return nullptr;
+		}
+		Object *result = nullptr;
+		for (int attempt = 0; attempt < 3; ++attempt)
+		{
+			const int i = logic.random().getValue(0, (int)ids.size() - 1, kFarmKillFile, 0x21D);
+			result = logic.findObjectByID(ids[(size_t)i]);
+			if (farmChoiceCandidate(result, false))
+			{
+				break;
+			}
+		}
+		return result;
+	}
+	const Coord3D base = *fortress->getPosition();
+	const float distance = distance3d(centre, base);
+	const Coord3D direction{ SimMath::subf32(base.x, centre.x), SimMath::subf32(base.y, centre.y), SimMath::subf32(base.z, centre.z) };
+	const int baseline = SimMath::truncToInt32(distance < 5000.0f ? 5000.0f : distance); // RW 0xC8A1D8
+	Object *finder = farmFinder(logic, tac);
+	AIWorld *world = logic.aiWorld();
+	AIUpdateInterface *unit = finder ? finder->getAIUpdateInterface() : nullptr;
+	std::map<int, Object *> choices;
+	std::uint32_t total = 0;
+	for (ObjectID id : ids)
+	{
+		Object *farm = logic.findObjectByID(id);
+		if (!farmChoiceCandidate(farm, false))
+		{
+			continue;
+		}
+		if (!unit || !world)
+		{
+			continue; // RW 0x6F5F65 answers no without a unit AI / locomotor set
+		}
+		const PathfindLocomotorInfo loco = unit->locomotorInfo();
+		if (!world->pathfinder().pathToObject(unit->adapter(), loco, *finder->getPosition(), world->adapterFor(*farm)))
+		{
+			continue;
+		}
+		const Coord3D *p = farm->getPosition();
+		const float toBase = distance3d(*p, base);
+		if (!(toBase > 275.0f)) // RW 0xC8A1D0
+		{
+			continue;
+		}
+		const float toTeam = distance3d(*p, centre);
+		const float dot = SimMath::addf32(
+			SimMath::addf32(SimMath::mulf32(SimMath::subf32(p->z, centre.z), direction.z), SimMath::mulf32(SimMath::subf32(p->y, centre.y), direction.y)),
+			SimMath::mulf32(SimMath::subf32(p->x, centre.x), direction.x));
+		float attribute = 1.0f;
+		farm->attributeModifierProduct(ATTRIBUTE_PRODUCTION, nullptr, true, attribute); // RW 0x68C82D
+		const float factor = attribute > 2.0f ? SimMath::mulf32(attribute, 0.5f) : 1.0f; // RW 0xBD889C / 0xBD869C
+		const float projection = SimMath::divf32(dot, SimMath::mulf32(distance, distance));
+		if (!(projection < 1.0f) && lineDistance3d(*p, centre, base) < 275.0f)
+		{
+			continue;
+		}
+		float score = SimMath::subf32(SimMath::addf32((float)baseline, toBase), toTeam);
+		score = SimMath::mulf32(score, factor);
+		score = SimMath::mulf32(score, 0.01f); // RW 0xBE5600
+		int weight = SimMath::truncToInt32(score);
+		if (weight < 5)
+		{
+			weight = 5;
+		}
+		if (weight > 0)
+		{
+			choices.insert(std::make_pair(weight, farm));
+			total += (std::uint32_t)weight;
+		}
+	}
+	return weighedChoice(logic, choices, total, 0x203, 0x20A);
+}
+
+// RW 0x9BB5E4: the production target among the enemy's structure list (record + 8 -> + 4); the same score and weighted choice as the farm one.
+Object *selectProductionTarget(GameLogic &logic, const AITactic &tac, int enemyIndex)
+{
+	Player *enemy = playerOf(logic, enemyIndex);
+	if (!enemy)
+	{
+		return nullptr;
+	}
+	const AIStatCollector &record = AITacticalAI::recordOf(logic, enemyIndex);
+	if (tac.teams.empty())
+	{
+		return nullptr;
+	}
+	Coord3D centre{ 0.0f, 0.0f, 0.0f };
+	teamCentre(logic, tac.teams[0], centre);
+	std::vector<ObjectID> ids = record.structures();
+	Object *fortress = findEnemyFortress(logic, enemyIndex);
+	if (!fortress)
+	{
+		// RW 0x9BB9CC .. 0x9BBA4C: the same three-draw branch as the farm selector (line 0x1A0), without the two extra filters
+		if (ids.empty())
+		{
+			return nullptr;
+		}
+		Object *result = nullptr;
+		for (int attempt = 0; attempt < 3; ++attempt)
+		{
+			const int i = logic.random().getValue(0, (int)ids.size() - 1, kFarmKillFile, 0x1A0);
+			result = logic.findObjectByID(ids[(size_t)i]);
+			if (farmChoiceCandidate(result, false))
+			{
+				break;
+			}
+		}
+		return result;
+	}
+	const Coord3D base = *fortress->getPosition();
+	const float distance = distance3d(centre, base);
+	const Coord3D direction{ SimMath::subf32(base.x, centre.x), SimMath::subf32(base.y, centre.y), SimMath::subf32(base.z, centre.z) };
+	const int baseline = SimMath::truncToInt32(distance < 5000.0f ? 5000.0f : distance);
+	Object *finder = farmFinder(logic, tac);
+	AIWorld *world = logic.aiWorld();
+	AIUpdateInterface *unit = finder ? finder->getAIUpdateInterface() : nullptr;
+	std::map<int, Object *> choices;
+	std::uint32_t total = 0;
+	for (ObjectID id : ids)
+	{
+		Object *structure = logic.findObjectByID(id);
+		if (!farmChoiceCandidate(structure, true))
+		{
+			continue;
+		}
+		if (!unit || !world)
+		{
+			continue;
+		}
+		const PathfindLocomotorInfo loco = unit->locomotorInfo();
+		if (!world->pathfinder().pathToObject(unit->adapter(), loco, *finder->getPosition(), world->adapterFor(*structure)))
+		{
+			continue;
+		}
+		const Coord3D *p = structure->getPosition();
+		const float toBase = distance3d(*p, base);
+		if (!(toBase > 275.0f))
+		{
+			continue;
+		}
+		const float toTeam = distance3d(*p, centre);
+		const float dot = SimMath::addf32(
+			SimMath::addf32(SimMath::mulf32(SimMath::subf32(p->z, centre.z), direction.z), SimMath::mulf32(SimMath::subf32(p->y, centre.y), direction.y)),
+			SimMath::mulf32(SimMath::subf32(p->x, centre.x), direction.x));
+		float attribute = 1.0f;
+		structure->attributeModifierProduct(ATTRIBUTE_PRODUCTION, nullptr, true, attribute);
+		const float factor = attribute > 2.0f ? SimMath::mulf32(attribute, 0.5f) : 1.0f;
+		const float projection = SimMath::divf32(dot, SimMath::mulf32(distance, distance));
+		if (!(projection < 1.0f) && lineDistance3d(*p, centre, base) < 275.0f)
+		{
+			continue;
+		}
+		float score = SimMath::subf32(SimMath::addf32((float)baseline, toBase), toTeam);
+		score = SimMath::mulf32(score, factor);
+		score = SimMath::mulf32(score, 0.01f);
+		int weight = SimMath::truncToInt32(score);
+		if (weight < 5)
+		{
+			weight = 5;
+		}
+		if (weight > 0)
+		{
+			choices.insert(std::make_pair(weight, structure));
+			total += (std::uint32_t)weight;
+		}
+	}
+	return weighedChoice(logic, choices, total, 0x186, 0x18D);
+}
+
+// RW 0x9BBF4C .. 0x9BBF9E: the farm choice first; the production choice replaces it one time in five (GetGameLogicRandomValue(0, 4), line 0x8B), and
+// without a farm only the production choice can answer. Null: the tactic ends.
+Object *chooseFarmKillTarget(GameLogic &logic, const AITactic &tac, int enemy)
+{
+	Object *target = selectFarmTarget(logic, tac, enemy);
+	if (target)
+	{
+		if (logic.random().getValue(0, 4, kFarmKillFile, 0x8B) == 0)
+		{
+			if (Object *production = selectProductionTarget(logic, tac, enemy))
+			{
+				target = production;
+			}
+		}
+		return target;
+	}
+	return selectProductionTarget(logic, tac, enemy);
+}
+
 void updateFarmKill(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
-	static const int canAttack = KindOfTokens::indexOf("CAN_ATTACK"), economy = KindOfTokens::indexOf("ECONOMY_STRUCTURE");
 	// RW 0x9BB27E: no team with index 0 (RW 0x8F128B(0)) ends it (0, 0)
 	if (tac.teams.empty())
 	{
@@ -1905,55 +2610,37 @@ void updateFarmKill(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AIT
 	}
 	if (tac.squadTarget != INVALID_ID && !allTeamsDone(ai, tac))
 	{
-		// RW 0x9BBE8B ..: a gone, DESTROYED or dead target is dropped; a BLOCKING_GATE target is also dropped when its GateOpenAndCloseBehavior (vslot 0x18) says so (the
-		// gate behaviour is not ported: a gate is kept, S-893)
+		// RW 0x9BBE8B .. 0x9BBF18: a gone, DESTROYED or dead target is dropped; a BLOCKING_GATE target is also dropped when its GateOpenAndCloseBehavior
+		// (vslot 0x18, isOpen RW 0x8DC9AB) says it is open
 		const Object *t = logic.findObjectByID(tac.squadTarget);
 		if (!alive(t))
 		{
 			tac.squadTarget = INVALID_ID;
 		}
+		else if (is(*t, kinds().blockingGate))
+		{
+			const GateOpenAndCloseBehavior *gate = GateOpenAndCloseBehavior::findGate(*t);
+			if (gate && gate->isOpen())
+			{
+				tac.squadTarget = INVALID_ID;
+			}
+		}
 		return;
 	}
 	// RW 0x9BB578: the squad's object (+ 0x5C) or the first living CAN_ATTACK member of team 0
-	const Object *unit = nullptr;
-	for (ObjectID id : tac.teams[0].members)
-	{
-		const Object *o = logic.findObjectByID(id);
-		if (alive(o) && is(*o, canAttack))
-		{
-			unit = o;
-			break;
-		}
-	}
+	const Object *unit = farmFinder(logic, tac);
 	const int enemy = enemyOfGroup(ai);
 	if (!unit || enemy < 0)
 	{
 		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9BBFB8 / 0x9BBFBA: (1, 0)
 		return;
 	}
-	// RW 0x9BBF4C ..: the farm choice RW 0x9BBA51 (a weighted pick among the enemy's farms by path and distance, draws AIFarmKillSquad.cpp 0x203 / 0x20A / 0x21D),
-	// GetGameLogicRandomValue(0, 4) (line 0x8B) between it and RW 0x9BB5E4 (draws 0x186 / 0x18D / 0x1A0) is NOT ported (S-893). Stand-in: the enemy's living
-	// ECONOMY_STRUCTURE nearest to the squad's unit (2D, object list order on ties); no draw
-	const Player *them = playerOf(logic, enemy);
-	Object *target = nullptr;
-	float best = 0.0f;
-	for (Object *o = logic.getFirstObject(); o && them; o = o->getNextObject())
-	{
-		if (o->getControllingPlayer() != them || !alive(o) || !is(*o, economy))
-		{
-			continue;
-		}
-		const float dx = SimMath::subf32(o->getPosition()->x, unit->getPosition()->x), dy = SimMath::subf32(o->getPosition()->y, unit->getPosition()->y);
-		const float d = SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
-		if (!target || d < best)
-		{
-			target = o;
-			best = d;
-		}
-	}
+	// RW 0x9BBF4C .. 0x9BBF9E: the farm choice RW 0x9BBA51; a farm takes it unless GetGameLogicRandomValue(0, 4) (AIFarmKillSquad.cpp line 0x8B) draws 0,
+	// when RW 0x9BB5E4 (the production choice) may replace it; without a farm only the production choice can answer
+	Object *target = chooseFarmKillTarget(logic, tac, enemy);
 	if (!target)
 	{
-		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9BBF94: (1, 0)
+		endAnyTactic(logic, ai, b, tac, owner, true); // RW 0x9BBFB4 .. 0x9BBFBD: (1, 0)
 		return;
 	}
 	tac.squadTarget = target->getID();
@@ -1966,7 +2653,8 @@ void launchOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 	const Player *player = playerOf(logic, ai.playerIndex);
 	switch ((OffensiveKind)tac.kindIndex)
 	{
-	case SIMPLE_ATTACK: // RW 0x9B4DDA -> RW 0x8F19E9: every team attack-moves to the target position
+	case SIMPLE_ATTACK:  // RW 0x9B4DDA -> RW 0x8F19E9: every team attack-moves to the target position
+	case SIMPLE_DEFENSE: // the same launch (RW 0xC89890's slot 0x18 = 0x9B4DDA)
 		if (t)
 		{
 			for (AITacticTeam &team : tac.teams)
@@ -2031,8 +2719,11 @@ void launchOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 		}
 		return;
 	}
-	case SIMPLE_SIEGE: // RW 0x9B3380 (nothing) and RW 0x9B31C5: never reached, the siege tactics do not apply in the port (RW 0x9EF9AF's path check, S-418)
-	case SIEGE_GATES:
+	case SIMPLE_SIEGE: // RW 0x9B3380: state 0 (team 1 attacks the wall on the first update)
+		startSimpleSiege(tac);
+		return;
+	case SIEGE_GATES: // RW 0x9B31C5: team 0's wall target at the start
+		startSiegeGates(logic, ai, b, tac, owner);
 		return;
 	}
 }
@@ -2238,9 +2929,20 @@ void updateOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 			endAnyTactic(logic, ai, b, tac, owner, false);
 		}
 		return;
+	case SIMPLE_SIEGE: // RW 0x9B3548: the wall, the breach, team 1 through it, then the end on team 1's idle
+		updateSimpleSiege(logic, ai, b, tac, owner, t);
+		return;
+	case SIEGE_GATES: // RW 0x9B31E6: the wall until the path opens, every team to the target, then the end on every team's idle
+		updateSiegeGates(logic, ai, b, tac, owner, t);
+		return;
+	case SIMPLE_DEFENSE: // RW 0x9B4EB7: no team 0 ends it (0, 0); else every team done (RW 0x8F175A) or the target inactive ends it with success
+		if (!teamByIndex(tac, 0))
+		{
+			endAnyTactic(logic, ai, b, tac, owner, false);
+			return;
+		}
+		[[fallthrough]];
 	case SIMPLE_ATTACK:
-	case SIMPLE_SIEGE: // never started in the port (S-418)
-	case SIEGE_GATES:
 	default:
 		// SimpleAttack RW 0x9B4DE7: every team done (RW 0x8F175A) or the target inactive ends it with success
 		if (allTeamsDone(ai, tac) || targetGone)
@@ -2634,11 +3336,241 @@ void AITacticalAI::pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const
 	pincerWaypoints(logic, tac, start, target);
 }
 
+bool AITacticalAI::offensiveAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const char *kind, const AITarget &target)
+{
+	const Player *player = playerOf(logic, ai.playerIndex);
+	if (!player)
+	{
+		return false;
+	}
+	for (int i = 0; i <= (int)SIMPLE_EXPANSION; ++i)
+	{
+		if (kind == std::string(kOffensiveNames[i]))
+		{
+			return tacticApplies(logic, (OffensiveKind)i, ai, b, target, *player);
+		}
+	}
+	throw std::logic_error(std::string("AITacticalAI: no offensive prototype named ") + kind);
+}
+
+Object *AITacticalAI::farmTargetForTest(GameLogic &logic, const AITactic &tac, int enemy)
+{
+	return selectFarmTarget(logic, tac, enemy);
+}
+
+Object *AITacticalAI::productionTargetForTest(GameLogic &logic, const AITactic &tac, int enemy)
+{
+	return selectProductionTarget(logic, tac, enemy);
+}
+
+Object *AITacticalAI::farmKillTargetForTest(GameLogic &logic, const AITactic &tac, int enemy)
+{
+	return chooseFarmKillTarget(logic, tac, enemy);
+}
+
+void AITacticalAI::launchTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	AITarget *t = tac.targetIndex >= 0 && tac.targetIndex < (int)owner.targets.size() ? &owner.targets[(size_t)tac.targetIndex] : nullptr;
+	launchOffensive(logic, ai, b, tac, owner, t);
+}
+
+void AITacticalAI::updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	updateTactic(logic, ai, b, tac, owner);
+}
+
+Coord3D AITacticalAI::siegeStandBackPointForTest(const Coord3D &leader, const Coord3D &wall)
+{
+	return siegeStandBackPoint(leader, wall);
+}
+
 const AIStatCollector &AITacticalAI::recordOf(GameLogic &logic, int playerIndex)
 {
 	static const AIStatCollector kNone(-1);
 	const AIStatCollector *r = logic.skirmishAI().record(playerIndex);
 	return r ? *r : kNone;
+}
+
+int AITacticalAI::enemyOfGroup(const AISkirmishPlayer &ai)
+{
+	// RW 0x6C7807: AI + 0x164 (the brain) -> + 0xC -> + 4 (the enemy manager) -> + 0x14 the current enemy; the group's first AI holds it for the group
+	return ai.groupFirst ? ai.groupFirst->brain.currentEnemy : ai.brain.currentEnemy;
+}
+
+namespace
+{
+// RW 0x7A07D8 (Team::hasAnyObjects, over every team of the player): a member that is not dead (Object + 0x458 bit 0), not destroyed (+ 0x94 bit 0),
+// not a STRUCTURE, not a PROJECTILE (KindOf bit 25) and not IGNORE_FOR_VICTORY (bit 148)
+bool hasAnyUnits(GameLogic &logic, const Player &player)
+{
+	static const int kStructure = KindOfTokens::indexOf("STRUCTURE"), kProjectile = KindOfTokens::indexOf("PROJECTILE"),
+	                 kIgnore = KindOfTokens::indexOf("IGNORE_FOR_VICTORY");
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() != &player || o->isEffectivelyDead() || o->isDestroyed())
+		{
+			continue;
+		}
+		if (is(*o, kStructure) || is(*o, kProjectile) || is(*o, kIgnore))
+		{
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
+// RW 0x7A0956 with argument 0 (through the player's RW 0x6ABDF7): a member that is not dead/destroyed, not a PROJECTILE, not INERT (bit 89) and not
+// IGNORE_FOR_VICTORY (bit 148)
+bool hasAnyLiveObject(GameLogic &logic, const Player &player)
+{
+	static const int kProjectile = KindOfTokens::indexOf("PROJECTILE"), kInert = KindOfTokens::indexOf("INERT"), kIgnore = KindOfTokens::indexOf("IGNORE_FOR_VICTORY");
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() != &player || o->isEffectivelyDead() || o->isDestroyed())
+		{
+			continue;
+		}
+		if (is(*o, kProjectile) || is(*o, kInert) || is(*o, kIgnore))
+		{
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
+// RW 0x7A1129 (Team::hasAnyObjectOfClass): a member whose template ThingClass (RW + 0x5F6) is not 0. INFERENCE: the port has no ThingClass parser, so
+// every object is taken as classified and any object of the player answers yes (a mod with classless objects differs)
+bool hasAnyClassified(GameLogic &logic, const Player &player)
+{
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == &player)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// RW 0x8F6511: the 2D box over the player's STRUCTURE objects (template + 0x108 bit 7), in object list order; zero when it has none. `min` / `max` are
+// (x, y).
+void baseBounds(GameLogic &logic, const Player &player, Coord3D &min, Coord3D &max)
+{
+	static const int kStructure = KindOfTokens::indexOf("STRUCTURE");
+	min = Coord3D{};
+	max = Coord3D{};
+	bool first = true;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() != &player || !is(*o, kStructure))
+		{
+			continue;
+		}
+		const Coord3D *p = o->getPosition();
+		if (first)
+		{
+			min.x = max.x = p->x;
+			min.y = max.y = p->y;
+			first = false;
+			continue;
+		}
+		min.x = p->x < min.x ? p->x : min.x;
+		min.y = p->y < min.y ? p->y : min.y;
+		max.x = p->x > max.x ? p->x : max.x;
+		max.y = p->y > max.y ? p->y : max.y;
+	}
+}
+
+// RW 0x8F457D (AIPlayer::acquireEnemy): the enemy player is the nearest candidate base whose player is an ENEMY with live objects, is not PlyrCreeps,
+// has units and classified objects (else it counts as unreachable), adjusted by the other AIs' current enemies: +250000 for each AI that already targets it,
+// -625 for each AI that targets this AI's player (never below 0). Ties keep the earlier player index
+void acquireEnemy(GameLogic &logic, AISkirmishPlayer &ai)
+{
+	const float kInitial = 999999995904.0f;   // RW 0xC1C4AC
+	const float kUnreachable = 499999997952.0f; // RW 0xC798D4
+	const float kRivalBonus = 250000.0f;      // RW 0xC798D0
+	const float kAllyMalus = 625.0f;          // RW 0xC798CC
+	const Player *me = logic.players().getNthPlayer(ai.playerIndex);
+	if (!me)
+	{
+		return;
+	}
+	const Player *current = ai.enemyIndex >= 0 ? logic.players().getNthPlayer(ai.enemyIndex) : nullptr;
+	if (current && hasAnyUnits(logic, *current) && hasAnyClassified(logic, *current))
+	{
+		return; // RW 0x8F45A8 .. 0x8F45C0: the cached enemy is still valid (RW 0x6ABD44 -> 0x7A07D8, RW 0x6ABE2C -> 0x7A1129)
+	}
+	int best = -1;
+	float bestDistance = kInitial;
+	for (int i = 0; i < logic.players().getPlayerCount(); ++i)
+	{
+		const Player *candidate = logic.players().getNthPlayer(i);
+		if (!candidate || me->getRelationship(candidate) != ENEMIES) // RW 0x6ADBEB == 0
+		{
+			continue;
+		}
+		if (!hasAnyLiveObject(logic, *candidate) || candidate->getPlayerName() == "PlyrCreeps") // RW 0x6ABDF7 / 0xBFD514
+		{
+			continue;
+		}
+		const bool reachable = hasAnyUnits(logic, *candidate) && hasAnyClassified(logic, *candidate);
+		Coord3D min{}, max{};
+		baseBounds(logic, *candidate, min, max);
+		const float cx = SimMath::addf32(SimMath::mulf32(SimMath::subf32(max.x, min.x), 0.5f), min.x);
+		const float cy = SimMath::addf32(SimMath::mulf32(SimMath::subf32(max.y, min.y), 0.5f), min.y);
+		const float dx = SimMath::subf32(cx, ai.build.startPosition.x), dy = SimMath::subf32(cy, ai.build.startPosition.y);
+		float distance = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx)); // SSE 2D squared
+		if (!reachable)
+		{
+			distance = kUnreachable;
+		}
+		for (int j = 0; j < logic.players().getPlayerCount(); ++j)
+		{
+			if (j == i)
+			{
+				continue;
+			}
+			// RW 0x8F46C7: the only gate is Player + 0x2FC's vslot 0x2C (RW 0x6AA5B3), 1 for a skirmish AI (RW 0x8BD372); its getEnemy (RW 0x6AA5F5)
+			// refreshes that AI's due cache whether or not it still has units
+			AISkirmishPlayer *otherAI = logic.skirmishAI().findAI(j);
+			const Player *otherEnemy = otherAI ? AITacticalAI::enemyPlayer(logic, *otherAI) : nullptr;
+			if (otherEnemy == candidate)
+			{
+				distance = SimMath::addf32(distance, kRivalBonus);
+			}
+			if (otherEnemy == me)
+			{
+				distance = SimMath::subf32(distance, kAllyMalus);
+				if (distance < 0.0f)
+				{
+					distance = 0.0f;
+				}
+			}
+		}
+		if (bestDistance > distance)
+		{
+			best = i;
+			bestDistance = distance;
+		}
+	}
+	if (best >= 0 && best != ai.enemyIndex)
+	{
+		ai.enemyIndex = best; // RW 0x8F4772 (+ 0xA0), then the debug log RW 0x9E... (not ported: a report line)
+	}
+}
+} // namespace
+
+const Player *AITacticalAI::enemyPlayer(GameLogic &logic, AISkirmishPlayer &ai)
+{
+	// RW 0x8F47EB: the refresh frame is written BEFORE the acquire (a nested getEnemy of another AI sees the old value)
+	if (logic.getFrame() >= ai.enemyRefreshFrame)
+	{
+		ai.enemyRefreshFrame = logic.getFrame() + (std::uint32_t)(kLogicFramesPerSecond * 5); // RW 0xD9F608 * 5
+		acquireEnemy(logic, ai);
+	}
+	return ai.enemyIndex >= 0 ? logic.players().getNthPlayer(ai.enemyIndex) : nullptr;
 }
 
 namespace
@@ -2754,10 +3686,34 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 			}
 			const std::uint32_t maximum = (std::uint32_t)team.maximum;
 			std::uint32_t count = teamUnitCount(logic, team); // RW 0x9A32C1 -> RW 0x9A24A6
+			// RW 0x9A2E6A -> 0x9A2CA5: a team with a recruit origin (SimpleDefense RW 0x9B4EF0) takes the army list ordered by squared 3D distance
+			// from the origin; equal distances keep the registration order (the ordered map's insert)
+			std::vector<ObjectID> recruits = army;
+			if (team.hasRecruitOrigin)
+			{
+				std::multimap<float, ObjectID> ordered;
+				for (ObjectID id : army)
+				{
+					const Object *unit = logic.findObjectByID(id);
+					if (!unit)
+					{
+						continue;
+					}
+					const Coord3D &p = *unit->getPosition();
+					const float dx = SimMath::subf32(team.recruitOrigin.x, p.x), dy = SimMath::subf32(team.recruitOrigin.y, p.y),
+								dz = SimMath::subf32(team.recruitOrigin.z, p.z);
+					ordered.emplace(SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx)), id);
+				}
+				recruits.clear();
+				for (const auto &entry : ordered)
+				{
+					recruits.push_back(entry.second);
+				}
+			}
 			// RW 0x9A2E06: the army list in order while count < maximum (unsigned; -1: no maximum): a CAN_ATTACK or SUPPORT unit that RW 0x9A24FC accepts joins
 			// (Object::setTeam RW 0x69954A); a SUPPORT unit only when the team holds a member that is neither SUPPORT nor HORDE, its maximum is above 1 and it holds
 			// no SUPPORT HORDE (RW 0x9A2F0A .. 0x9A2FA4, RW 0x7A0555 twice)
-			for (ObjectID id : army)
+			for (ObjectID id : recruits)
 			{
 				if (!(count < maximum))
 				{
@@ -2781,7 +3737,7 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 			// RW 0x9A2FC0: an ENEMY_STRUCTURE or DEFENSIVE team (+ 0x2CC 0 / 1) takes every HERO (template + 0x113 bit 2) RW 0x9A24FC accepts, with no maximum
 			if (team.type == kEnemyStructure || team.type == kDefensive)
 			{
-				for (ObjectID id : army)
+				for (ObjectID id : recruits)
 				{
 					const Object *o = logic.findObjectByID(id);
 					if (o && is(*o, k.hero) && recruitable(logic, b, team, *o))
@@ -2839,7 +3795,7 @@ void AITacticalAI::updateBrain(GameLogic &logic, AISkirmishPlayer &ai, AISkirmis
 		updateEnemies(logic, ai, b);
 		updateChooser(logic, ai, b);
 	}
-	// RW 0x90CB85: RW 0x90BA94 (ended tactics leave), RW 0x90B8C7 (each tactic: the offensive list + 0x10, the defensive + 0x28 (empty: S-417), the expansion
+	// RW 0x90CB85: RW 0x90BA94 (ended tactics leave), RW 0x90B8C7 (each tactic: the offensive list + 0x10, the defensive + 0x28, the expansion
 	// + 0x40 (lane AIEXPAND-1), the targetless + 0x58), RW 0x90C5E2 (the targetless pick, lane AI-2 r3)
 	b.tactics.erase(std::remove_if(b.tactics.begin(), b.tactics.end(), [](const AITactic &t) { return t.ended; }), b.tactics.end());
 	for (int list : kTacticLists)
@@ -2878,13 +3834,13 @@ void AITacticalAI::updateBrain(GameLogic &logic, AISkirmishPlayer &ai, AISkirmis
 	{
 		enemyStructureTactic(logic, ai, b, owner->brain, best, owner->playerIndex, *player);
 	}
+	else if (type == kDefensive)
+	{
+		defensiveTactic(logic, ai, b, owner->brain, best, owner->playerIndex); // RW 0x90C436 (lane RAI-DEF)
+	}
 	else if (type == kExpansion)
 	{
 		expansionTactic(logic, ai, b, owner->brain, best, owner->playerIndex, *player); // RW 0x90C50C (lane AIEXPAND-1)
-	}
-	else
-	{
-		++b.unportedTypes; // DEFENSIVE RW 0x90C436: S-417
 	}
 	// RW 0x90CCCB: not ported (S-417)
 }
@@ -2951,6 +3907,7 @@ void AITacticalAI::crc(const AIBrainState &b, StateHasher &h)
 		h.addFloat(t.finderPosition.y);
 		h.addFloat(t.finderPosition.z);
 		h.addFloat(t.threat);
+		h.addI32(t.defenseSize); // lane RAI-DEF: + 0x2C
 		h.addU32(t.object);
 		h.addU32(t.id);
 	}
@@ -3026,6 +3983,13 @@ void AITacticalAI::crc(const AIBrainState &b, StateHasher &h)
 			h.addFloat(team.lastPosition.z);
 			h.addI32(team.idleFrames);
 			h.addI32(team.index);
+			h.addBool(team.hasRecruitOrigin);
+			if (team.hasRecruitOrigin)
+			{
+				h.addFloat(team.recruitOrigin.x);
+				h.addFloat(team.recruitOrigin.y);
+				h.addFloat(team.recruitOrigin.z);
+			}
 			h.addU32((std::uint32_t)team.members.size());
 			for (ObjectID id : team.members)
 			{

@@ -158,7 +158,7 @@ bool Pathfinder::isGroundPathPassable(const Coord3D &start, PathfindLayerEnum la
 
 bool Pathfinder::isLineBlocked(const PathfindObject *obj, unsigned surfaces, PathfindLayerEnum layer, const Coord3D &from, const Coord3D &to)
 {
-	// RW 0x6F2F8F with the line callback of BFME2 0x6ED01E (decomp PathfinderRva002ED15ACellCallback.cpp): radius 0, centred, flags 0x0C
+	// RW 0x6F2F8F with the line callback of BFME2 0x6ED01E (decomp AIPathfind.cpp): radius 0, centred, flags 0x0C
 	PathfindCheckMovement info;
 	info.radius = 0;
 	info.center = true;

@@ -1867,6 +1867,13 @@ bool AIUpdateInterface::setModelCondition(const char *name, bool on)
 	return true;
 }
 
+// lane AIRBORNE-1: the AIRBORNE_TARGET status write of doLocomotor (RW 0x66A49E: push 6; call 0x62684D Object::setStatus)
+void AIUpdateInterface::setAirborneTarget(bool on)
+{
+	static const int kAirborneTarget = CombatNames::status("AIRBORNE_TARGET");
+	getObject()->setStatus((unsigned)kAirborneTarget, on);
+}
+
 // lane SAILS-1: RW 0x666FA3 (BFME2 0x66717B), the sails of a SHIP from its facing. The decomp misnames the body: its row sits in
 // AIUpdateInterface_computeAttackPath.cpp (lines 251-264) as rva0026717B, it is not computeAttackPath. Called from doLocomotor (RW 0x66A4B7).
 // The wind is a function static (0.5, 0.5, 0) that the retail Vector3::Normalize (BFME2 0x405A70, length BFME2 0x405A26) scales IN PLACE on every
