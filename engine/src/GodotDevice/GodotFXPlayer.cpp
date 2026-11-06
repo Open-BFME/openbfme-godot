@@ -10,6 +10,8 @@
 #include "Libraries/WWVegas/WW3D2/fxshadergen.h"
 
 #include <godot_cpp/classes/camera3d.hpp>
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/geometry_instance3d.hpp>
 #include <godot_cpp/classes/geometry_instance3d.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
@@ -126,6 +128,9 @@ void FXPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_soft_particles", "enabled"), &FXPlayer::set_soft_particles);
 	ClassDB::bind_method(D_METHOD("get_soft_particles"), &FXPlayer::get_soft_particles);
 	ClassDB::bind_method(D_METHOD("set_batch_summary", "enabled"), &FXPlayer::set_batch_summary); // lane RENDER-4
+	ClassDB::bind_method(D_METHOD("set_extra_pose_frustum", "planes"), &FXPlayer::set_extra_pose_frustum); // lane GPUPERF-3 (caster_pip.gd calls it)
+	ClassDB::bind_method(D_METHOD("set_frustum_culling", "enabled"), &FXPlayer::set_frustum_culling);
+	ClassDB::bind_method(D_METHOD("get_frustum_culling"), &FXPlayer::get_frustum_culling);
 	ClassDB::bind_method(D_METHOD("get_batch_summary"), &FXPlayer::get_batch_summary);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "soft_particles"), "set_soft_particles", "get_soft_particles");
 }
@@ -137,6 +142,7 @@ void FXPlayer::set_soft_particles(bool enabled)
 		return;
 	}
 	m_soft = enabled;
+	m_buildDirty = true;
 	for (Batch &b : m_batches)
 	{
 		b.key.clear(); // every slot rebuilds its node and material with the other shader at the next upload
@@ -181,6 +187,10 @@ Dictionary FXPlayer::setup(const Ref<RetailFileSystem> &fs)
 	m_renderRandom->seed(1);
 	m_builder = std::make_unique<ParticleDrawBuilder>(*m_renderRandom);
 	m_quad = makeQuadMesh();
+	// lane GPUPERF-3 review: a second setup replaces the playback (and the builder) but the uploaded batches belong to the old one; the render nodes and
+	// the cache flags stay, so invalidate them: the next advance rebuilds from the new playback instead of keeping the old effects
+	m_built = false;
+	m_buildDirty = true;
 	result["ok"] = errors.is_empty();
 	result["errors"] = errors;
 	result["particle_systems"] = (int64_t)m_playback->particleTemplates().templateCount();
@@ -220,11 +230,15 @@ int64_t FXPlayer::play_particle_system(const String &name, const Vector3 &positi
 	{
 		return 0;
 	}
+	m_buildDirty = true;
+	m_playGen.fetch_add(1, std::memory_order_relaxed);
 	return (int64_t)m_playback->playParticleSystem(toNative(name), toSage(position));
 }
 
 bool FXPlayer::play_fx_list(const String &name, const Vector3 &position, bool as_object)
 {
+	m_buildDirty = true;
+	m_playGen.fetch_add(1, std::memory_order_relaxed);
 	return m_playback && m_playback->playFXList(toNative(name), toSage(position), as_object);
 }
 
@@ -236,6 +250,8 @@ Array FXPlayer::define_ini(const String &name, const String &text)
 		errors.push_back("FXPlayer.setup has not run");
 		return errors;
 	}
+	m_buildDirty = true;
+	m_playGen.fetch_add(1, std::memory_order_relaxed);
 	for (const std::string &e : m_playback->loadIniText(toNative(name), toNative(text)))
 	{
 		errors.push_back(toGodot(e));
@@ -253,6 +269,8 @@ Dictionary FXPlayer::play_w3d_emitter(const String &name, const Vector3 &positio
 		return d;
 	}
 	std::string error;
+	m_buildDirty = true;
+	m_playGen.fetch_add(1, std::memory_order_relaxed);
 	ParticleEmitterInstance *e = m_playback->playW3DEmitter(toNative(name), toSage(position), &error);
 	d["ok"] = e != nullptr;
 	d["error"] = toGodot(error);
@@ -305,6 +323,9 @@ void FXPlayer::step_once()
 	}
 	const auto t0 = std::chrono::steady_clock::now();
 	m_playback->step();
+	// lane GPUPERF-3 review: a step taken by hand (a paused caller, a test) changes the particles and emitters outside advance()'s accumulator loop, so
+	// the next advance must rebuild even if it takes no step of its own; otherwise the picture stays at the last built frame
+	m_buildDirty = true;
 	m_stepUs = usSince(t0);
 }
 
@@ -314,6 +335,7 @@ void FXPlayer::advance(double delta)
 	{
 		return;
 	}
+	bool stepped = false;
 	if (!m_paused)
 	{
 		m_accumulator += delta;
@@ -329,8 +351,86 @@ void FXPlayer::advance(double delta)
 		{
 			m_accumulator = 0.0; // never spiral
 		}
+		stepped = steps > 0;
+	}
+	// lane GPUPERF-3 (presentation only): the batches are a function of the particles (changed by a step, or by the live game's effect calls between
+	// steps: the playback signature), the cameras (the billboards' sides, the sort, the culling) and the draw settings; a render frame with none of
+	// them changed keeps the batches it has (retail draws once per particle step: its 30 Hz Display::draw), so the render stream is not drawn from
+	// either (the GpuDraw alpha keys are sampled once per built frame, RW 0x5f66b7)
+	if (!stepped && m_built && !m_buildDirty && !m_summaryEnabled)
+	{
+		Transform3D cam;
+		if (Viewport *vp = get_viewport())
+		{
+			if (Camera3D *c = vp->get_camera_3d())
+			{
+				cam = c->get_global_transform();
+			}
+		}
+		if (cam == m_builtCamera && (m_frustumCulling ? cullPlanes() : std::vector<Plane>()) == m_builtPlanes && playbackSignature() == m_builtSignature)
+		{
+			++m_rebuildsSkipped;
+			return;
+		}
 	}
 	rebuild();
+}
+
+bool FXPlayer::set_extra_pose_frustum(const TypedArray<Plane> &planes)
+{
+	if (planes.size() != 0 && planes.size() != 6)
+	{
+		return false;
+	}
+	m_extraFrustum.clear();
+	for (int64_t i = 0; i < planes.size(); ++i)
+	{
+		m_extraFrustum.push_back(planes[i]);
+	}
+	return true;
+}
+
+std::vector<Plane> FXPlayer::cullPlanes() const
+{
+	std::vector<Plane> out;
+	Viewport *vp = is_inside_tree() ? get_viewport() : nullptr;
+	Camera3D *c = vp ? vp->get_camera_3d() : nullptr;
+	if (!c)
+	{
+		return out; // no camera: nothing is culled
+	}
+	const TypedArray<Plane> main = c->get_frustum();
+	if (main.size() != 6)
+	{
+		return out;
+	}
+	for (int64_t k = 0; k < main.size(); ++k)
+	{
+		out.push_back(main[k]);
+	}
+	for (const Plane &pl : m_extraFrustum)
+	{
+		out.push_back(pl);
+	}
+	return out;
+}
+
+uint64_t FXPlayer::playbackSignature() const
+{
+	// lane GPUPERF-3: what changes the batches between particle steps is a play call (the live game's effect calls, on the logic thread): a counter,
+	// not a walk of the playback's containers, which the logic thread may be adding to while the render thread reads them
+	return m_playGen.load(std::memory_order_relaxed);
+}
+
+void FXPlayer::setNodeAabb(Batch &b, GeometryInstance3D *node, const AABB &box)
+{
+	if (!node || (b.haveAabb && b.lastAabb == box))
+	{
+		return;
+	}
+	node->set_custom_aabb(box);
+	b.lastAabb = box;
+	b.haveAabb = true;
 }
 
 Ref<Texture2D> FXPlayer::loadTexture(const std::string &name)
@@ -596,6 +696,45 @@ void FXPlayer::rebuild()
 			cam.forward = toSage(-t.basis.get_column(2));
 		}
 	}
+	// lane GPUPERF-3: the systems no camera can see are not built (ParticleDrawBuilder::setVisibilityTest); the boxes are SAGE space, the planes Godot's
+	const std::vector<Plane> planes = m_frustumCulling ? cullPlanes() : std::vector<Plane>();
+	if (planes.size() >= 6)
+	{
+		m_builder->setVisibilityTest([planes](const float lo[3], const float hi[3]) {
+			// SAGE (x, y, z) -> Godot (x, z, -y)
+			const Vector3 gmin(lo[0], lo[2], -hi[1]), gmax(hi[0], hi[2], -lo[1]);
+			const Vector3 c = (gmin + gmax) * 0.5f, e = (gmax - gmin) * 0.5f;
+			auto inside = [&](size_t first, size_t last) {
+				for (size_t k = first; k < last; ++k)
+				{
+					const Plane &pl = planes[k];
+					const real_t r = std::abs(pl.normal.x) * e.x + std::abs(pl.normal.y) * e.y + std::abs(pl.normal.z) * e.z;
+					if (pl.distance_to(c) > r)
+					{
+						return false;
+					}
+				}
+				return true;
+			};
+			return inside(0, 6) || (planes.size() >= 12 && inside(6, 12));
+		});
+	}
+	else
+	{
+		m_builder->setVisibilityTest(nullptr);
+	}
+	m_builtPlanes = planes;
+	m_builtSignature = playbackSignature();
+	m_builtCamera = Transform3D();
+	if (Viewport *vp = get_viewport())
+	{
+		if (Camera3D *c = vp->get_camera_3d())
+		{
+			m_builtCamera = c->get_global_transform();
+		}
+	}
+	m_built = true;
+	m_buildDirty = false;
 	const auto t0 = std::chrono::steady_clock::now();
 	std::vector<DrawBatch> batches = m_builder->build(m_playback->particles(), cam);
 	m_emitterStops = BuildEmitterBatches(m_playback->emitters(), cam, batches);
@@ -661,12 +800,24 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 		std::vector<const DrawBatch *> parts;
 	};
 	std::vector<Merged> merged;
+	// lane GPUPERF-3: a culled batch (nothing of it in view) takes no slot, but it still separates its neighbours: two batches a drawn one stood
+	// between are not merged, so the depth-sorted ones keep their order
+	bool separated = false;
+	m_culledBatches = 0;
 	for (const DrawBatch &b : batches)
 	{
+		if (b.culled)
+		{
+			separated = true;
+			++m_culledBatches;
+			continue;
+		}
+		const bool joinable = !separated;
+		separated = false;
 		if (b.kind == DrawBatch::SPRITES)
 		{
 			const std::string key = "S|" + b.texture + "|" + std::to_string(b.shader) + "|" + (b.groundAligned ? "g" : "b") + (b.volume ? "v" : "") + "|" + (b.deferred ? "d" : "n");
-			if (!merged.empty() && merged.back().key == key)
+			if (joinable && !merged.empty() && merged.back().key == key)
 			{
 				merged.back().parts.push_back(&b);
 			}
@@ -714,8 +865,8 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 				bp->multiNode->set_multimesh(bp->multi);
 				bp->multiNode->set_material_override(bp->material);
 				bp->multiNode->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
-				bp->multiNode->set_custom_aabb(AABB(Vector3(-1e5f, -1e5f, -1e5f), Vector3(2e5f, 2e5f, 2e5f)));
 				add_child(bp->multiNode);
+				bp->haveAabb = false;
 			}
 			applyOrder(*bp, order);
 			// gather: VOLUME_PARTICLE re-submits the set in 6 layers shifted toward the camera (RW 0x57efb0, depth 6, 0.1 / depth)
@@ -767,6 +918,21 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 				}
 			}
 			setBufferIfChanged(*bp, buf);
+			// lane GPUPERF-3: the batch's box (Godot culls it per camera): the centres written, grown by 3 x the largest size (the billboard corners
+			// reach size / sqrt(2), the ground-aligned ones sqrt(2) x size)
+			{
+				AABB box;
+				float big = 0.0f;
+				for (size_t i = 0; i < n; ++i)
+				{
+					const float *o = w + i * 20;
+					const AABB pt(Vector3(o[3], o[7], o[11]), Vector3());
+					box = i == 0 ? pt : box.merge(pt);
+					big = std::max(big, std::fabs(o[16]));
+				}
+				box = box.grow(3.0f * big + 1.0f);
+				setNodeAabb(*bp, bp->multiNode, box);
+			}
 			m_sprites += count;
 		}
 		else if (m.kind == DrawBatch::GPU)
@@ -893,6 +1059,16 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 				bp->lastTexture = tex;
 			}
 			applyOrder(*bp, order);
+			// lane GPUPERF-3: the same geometry as the last build keeps its mesh (no new ArrayMesh, nothing uploaded)
+			const bool same = bp->meshNode->get_mesh().is_valid() && d.vertices.size() == bp->lastVertices.size() && d.indices == bp->lastIndices &&
+				(d.vertices.empty() || std::memcmp(d.vertices.data(), bp->lastVertices.data(), d.vertices.size() * sizeof(MeshVertex)) == 0);
+			if (same)
+			{
+				m_vertices += d.vertices.size();
+				continue;
+			}
+			bp->lastVertices = d.vertices;
+			bp->lastIndices = d.indices;
 			PackedVector3Array v;
 			PackedVector2Array uv;
 			PackedColorArray col;
@@ -921,7 +1097,14 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 			Ref<ArrayMesh> am;
 			am.instantiate();
 			am->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
-			am->set_custom_aabb(AABB(Vector3(-1e5f, -1e5f, -1e5f), Vector3(2e5f, 2e5f, 2e5f)));
+			// lane GPUPERF-3: the vertices' own box (they are world positions), so Godot culls the batch per camera
+			AABB box;
+			for (int64_t i = 0; i < v.size(); ++i)
+			{
+				const AABB pt(v[i], Vector3());
+				box = i == 0 ? pt : box.merge(pt);
+			}
+			am->set_custom_aabb(box.grow(1.0f));
 			bp->meshNode->set_mesh(am);
 			m_vertices += d.vertices.size();
 		}
@@ -977,6 +1160,8 @@ Dictionary FXPlayer::get_stats() const
 	}
 	d["missing_textures"] = missing;
 	d["soft_particles"] = m_soft; // lane FX-3 round 2
+	d["culled_batches"] = (int64_t)m_culledBatches;  // lane GPUPERF-3: systems of the last build not built (out of every camera's view)
+	d["rebuilds_skipped"] = m_rebuildsSkipped;       // advances that kept the batches (no step, no change)
 	return d;
 }
 
@@ -1033,6 +1218,7 @@ Array FXPlayer::get_events() const
 
 void FXPlayer::clearTextureCache()
 {
+	m_buildDirty = true;
 	m_textures.clear();
 	m_preloaded.clear();
 	m_preloadQueue.clear();
