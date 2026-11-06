@@ -22,6 +22,36 @@ HEADER = MATERIAL.with_suffix('.h')
 TESTS = Path(__file__).resolve().parent
 
 
+def validate_material_source(entry, material=MATERIAL):
+    # Mount aliases can have different resolved paths but identify the same file.
+    source = Path(entry['directory']) / entry['file']
+    if not source.samefile(material):
+        raise RuntimeError('build must come from this checkout')
+
+
+def test_validate_material_source(tmp_path):
+    material = tmp_path / 'GodotW3DMaterial.cpp'
+    material.write_text('source')
+    alias = tmp_path / 'second-mount' / material.name
+    alias.parent.mkdir()
+    alias.hardlink_to(material)
+    assert alias.resolve() != material.resolve()
+    validate_material_source({'directory': str(tmp_path), 'file': str(material)}, material)
+    validate_material_source({'directory': str(tmp_path), 'file': str(alias)}, material)
+    validate_material_source({'directory': str(alias.parent), 'file': alias.name}, material)
+    symlink = tmp_path / 'symlink.cpp'
+    symlink.symlink_to(material)
+    validate_material_source({'directory': str(tmp_path), 'file': str(symlink)}, material)
+    other = tmp_path / 'other-checkout.cpp'
+    shutil.copyfile(material, other)
+    try:
+        validate_material_source({'directory': str(tmp_path), 'file': str(other)}, material)
+    except RuntimeError as error:
+        assert str(error) == 'build must come from this checkout'
+    else:
+        raise AssertionError('a separate checkout with identical bytes was accepted')
+
+
 def extract_link_command(command):
     """Select the compiler operation, never execute CMake's post-build chain."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|<>')
@@ -113,8 +143,7 @@ def main():
         env[key] = str(directory)
     entry = next(c for c in json.loads((build / 'compile_commands.json').read_text())
                  if c['file'].endswith('/GodotW3DMaterial.cpp'))
-    if Path(entry['file']).resolve() != MATERIAL:
-        raise RuntimeError('build must come from this checkout')
+    validate_material_source(entry)
     compile_command = shlex.split(entry['command'])
     compile_command.insert(1, '-I' + str(ROOT / 'engine/src'))
     original_object = (build / compile_command[compile_command.index('-o') + 1]).resolve()
