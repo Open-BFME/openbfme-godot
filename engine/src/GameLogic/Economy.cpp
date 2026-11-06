@@ -19,6 +19,8 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/SkirmishAI/SkirmishAIData.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include <stdexcept>
 #include <utility>
@@ -245,6 +247,22 @@ int Economy::awardBounty(Player &killerOwner, Object *killer, const Object &vict
 	return amount;
 }
 
+namespace
+{
+// lane FEAT-BRUTAL-1: RW 0x6AA61B answers a player with an AI (+ 0x2FC) with the AI's difficulty (+ 0x30, the skirmish level), any other player with the
+// script engine's (+ 0x1A5C4); RW 0x6A950B is TheSkirmishAIManager's (RW 0xDE4938) lookup of the player's AI. Only BRUTAL (3) with an AI found takes the
+// reduction branch of RW 0x73C25F / RW 0x73C39E. The port's AI difficulty is Player::getSkirmishDifficulty (SkirmishSides sets it on AI slots only).
+const SkirmishAIData *brutalAIData(const GameLogic &logic, const Player &player)
+{
+	if (player.getSkirmishDifficulty() != 3)
+	{
+		return nullptr;
+	}
+	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(player.getPlayerIndex());
+	return ai && ai->store ? &ai->store->data() : nullptr;
+}
+} // namespace
+
 int Economy::applyHandicapMoney(const Player &, int amount) const
 {
 	// RW 0x6AA858: the handicap acts when GameLogic + 0x114 != 3 or the Living World flag is set (RW 0x602E64); the slot's percentage (RW 0x6E1F2F) is a campaign
@@ -254,6 +272,18 @@ int Economy::applyHandicapMoney(const Player &, int amount) const
 		return amount;
 	}
 	return amount; // reported by report(): the campaign handicap is not applied
+}
+
+float Economy::brutalBuildCostReduction(const Player &player) const
+{
+	const SkirmishAIData *data = brutalAIData(m_logic, player);
+	return data ? data->brutalCheats.buildCostReduction : 0.0f;
+}
+
+float Economy::brutalBuildTimeReduction(const Player &player) const
+{
+	const SkirmishAIData *data = brutalAIData(m_logic, player);
+	return data ? data->brutalCheats.buildTimeReduction : 0.0f;
 }
 
 // ---- command points ---------------------------------------------------------------------------------------------------------------

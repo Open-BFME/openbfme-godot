@@ -26,6 +26,11 @@ public:
 	virtual float productionCostChange(const Player &player, const ThingTemplate &tt, bool slaughter) const = 0;
 	// RW 0x6AA858: the money handicap of the game kind (identity outside campaign handicaps)
 	virtual int applyHandicapMoney(const Player &player, int amount) const = 0;
+	// lane FEAT-BRUTAL-1 (S-204): RW 0x6AA61B == 3 (BRUTAL: the player's AI's difficulty, else the script engine's) and RW 0x6A950B
+	// (TheSkirmishAIManager has an AI for the player): TheSkirmishAIData's BrutalDifficultyCheats percentages (+ 0x94C cost, + 0x950 time, RW 0x6A93AF).
+	// 0 for every other player: retail takes the branch on the difficulty and the AI's existence, then scales by 1 - the percentage.
+	virtual float brutalBuildCostReduction(const Player &player) const = 0;
+	virtual float brutalBuildTimeReduction(const Player &player) const = 0;
 	// RW 0x6A7F79 with the template's CommandPoints / ARMY_OF_DEAD read from the template
 	virtual bool canAffordCommandPoints(const Player &player, const ThingTemplate &tt) const = 0;
 	// lane UPGRADE-1. RW 0x6AE483 onUpgradeCompleted: Object::updateUpgradeModules (RW 0x6936FE) on every object of the player's teams

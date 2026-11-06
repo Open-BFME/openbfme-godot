@@ -334,6 +334,17 @@ float Player::getProductionCostChangeBasedOnKindOf(const ThingTemplate &tt, bool
 	return host().productionCostChange(*this, tt, slaughter);
 }
 
+// lane FEAT-BRUTAL-1: the host answers the world question (the skirmish AI manager's record and TheSkirmishAIData's BrutalDifficultyCheats)
+float Player::brutalBuildCostReduction() const
+{
+	return host().brutalBuildCostReduction(*this);
+}
+
+float Player::brutalBuildTimeReduction() const
+{
+	return host().brutalBuildTimeReduction(*this);
+}
+
 int Player::applyHandicapMoney(int amount) const
 {
 	return host().applyHandicapMoney(*this, amount);

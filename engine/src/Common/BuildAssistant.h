@@ -9,13 +9,27 @@
 //   calcCostToBuild(player, producer, override) RW 0x73C25F: cost = override == -1 ? BuildCost (u16) : override; no player -> cost; then
 //     r = (float)(((double)cost * handicap) * X * P) at x87 PC24 with X = (1.0 + ProductionCostChange) * the CostModifierUpgrade factor (RW 0x6AD8A7,
 //     Player::getProductionCostChangeBasedOnKindOf: wired by UPGRADE-1) and P the
-//     producer's ProductionModifier cost multiplier (ProductionUpdate slot 26); the result is truncated to int (Brutal AI: times 1 - BuildCostReduction).
+//     producer's ProductionModifier cost multiplier (ProductionUpdate slot 26); the result is truncated to int. Lane FEAT-BRUTAL-1 (RW 0x73C344 ..
+//     0x73C390): when Player::getDifficulty (RW 0x6AA61B: the player's AI's + 0x30, else TheScriptEngine + 0x1A5C4) is 3 (BRUTAL) and RW 0x6A950B
+//     (TheSkirmishAIManager RW 0xDE4938) finds the player's AI, the stored float32 product is scaled by 1 - min(BuildCostReduction, 1.0f)
+//     (TheSkirmishAIData + 0x94C = manager + 0x95C; comiss 1.0 at RW 0x73C370, SSE subss / mulss at RW 0x73C383 / 0x73C387) and the one cvttss2si
+//     truncates the discounted value (RW 0x73C38C). Every other player truncates the product as it stands.
 //   calcTimeToBuild(player, producer, override) RW 0x73C39E: SECONDS are truncated to whole numbers at several steps: t = (int)BuildTime; t = ftol(handicap *
 //     t); t = ftol((1.0 + ProductionTimeChange) * t); t = ftol(P * t) (slot 27); sec = (int)((float)t / lowEnergyRate); the multi-factory and multiplayer
-//     speed factors (GameData MultipleFactory, MultiPlayUnitSpeedMult / MultiPlayBuildingSpeedMult MPn) scale sec; frames = 5 * sec.
+//     speed factors (GameData MultipleFactory, MultiPlayUnitSpeedMult / MultiPlayBuildingSpeedMult MPn) scale sec; frames = 5 * sec. Lane FEAT-BRUTAL-1
+//     (RW 0x73C567 .. 0x73C5CB): under the same Brutal condition x87 computes frames * (1 - min(BuildTimeReduction, 1.0f)) (TheSkirmishAIData + 0x950 =
+//     manager + 0x960; fsub RW 0x73C5B5, fmulp RW 0x73C5B8) and MSVCR71 floor truncates it (RW 0x73C5BD calls [0xBD0580] = floor, NOT [0xBD0588] ceil):
+//     floor(75 * 0.85) = 63 frames for a 15 s Farm, where the raw seconds would give 60. The normal branch floors too (identity on the integer 5 * sec).
+//   Key bytes (PE image base 0x400000, .text; cost): 83 F8 03 (cmp eax, 3) 0x73C349; 8B 0D 38 49 DE 00 (mov ecx, [0xDE4938]) 0x73C34E; E8 B1 D1 F6 FF
+//     (call 0x6A950B) 0x73C355; F3 0F 10 05 08 19 BD 00 (movss xmm0, 1.0f) 0x73C363; 05 5C 09 00 00 (add eax, 0x95C) 0x73C36B; 0F 2F 00 (comiss)
+//     0x73C370; F3 0F 5C C1 (subss) 0x73C383; F3 0F 59 45 10 (mulss) 0x73C387; F3 0F 2C C0 (cvttss2si) 0x73C38C. Time: 83 F8 03 0x73C56E;
+//     E8 8C CF F6 FF (call 0x6A950B) 0x73C57A; 05 60 09 00 00 (add eax, 0x960) 0x73C590; DB 45 08 (fild frames) 0x73C5AE; D9 E8 (fld1) 0x73C5B2;
+//     D8 65 10 (fsub reduction) 0x73C5B5; DE C9 (fmulp) 0x73C5B8; DD 1C 24 (fstp qword) 0x73C5BA; FF 15 80 05 BD 00 (call [0xBD0580] = floor)
+//     0x73C5BD; D9 5D 10 (fstp dword) 0x73C5C4; DB 5D 08 (fistp) 0x73C5CB.
 //   A vanilla unit with BuildTime 20.0 therefore takes 100 frames; BuildTime 7.5 takes 35, not 37.5.
-// Not ported (stop S-204): the handicap table (lobby handicap, 1.0), the energy ratio (no energy system: 1.0), the Brutal AI reductions, the MultipleFactory count for BuildCompletion APPEARS_AT_RALLY_POINT templates
-// (reported when GameData's MultipleFactory is not 1.0), the Create-A-Hero surcharge.
+// Not ported (stop S-204): the handicap table (lobby handicap, 1.0), the energy ratio (no energy system: 1.0), the MultipleFactory count for BuildCompletion APPEARS_AT_RALLY_POINT templates
+// (reported when GameData's MultipleFactory is not 1.0). The hero record's own second factor (PlayerHeroList RW 0x780AD3 / 0x780B72) and the upgrade cost/time
+// scaling (UpgradeTemplate RW 0x66F2C8 / 0x66F1A8) are S-855 / S-204's.
 
 #pragma once
 

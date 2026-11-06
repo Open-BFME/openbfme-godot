@@ -113,7 +113,16 @@ int BuildAssistant::calcCostToBuild(const ThingTemplate &tt, const Player *playe
 	X = NumericState::pc24Mul(K, X);
 	const float h = 1.0f;                               // the handicap table RW 0x7B19BF (S-204)
 	const float r = NumericState::pc24Mul(NumericState::pc24Mul(NumericState::pc24Mul((float)cost, h), X), P);
-	return truncToInt(r);                               // cvttss2si; the Brutal AI discount (RW 0x6AA61B) is not ported (S-204)
+	// lane FEAT-BRUTAL-1 (S-204), RW 0x73C344 .. 0x73C390: a BRUTAL skirmish AI's player (RW 0x6AA61B == 3 and RW 0x6A950B) scales the stored float product
+	// in SSE by 1 - BuildCostReduction (TheSkirmishAIData + 0x94C, comiss-clamped to 1.0 at RW 0x73C370), then the one cvttss2si truncates. Any other
+	// player truncates the product as it stands.
+	const float costReduction = player->brutalBuildCostReduction();
+	if (costReduction != 0.0f)
+	{
+		const float reduction = costReduction < 1.0f ? costReduction : 1.0f; // comiss + jbe: 1.0 and a NaN both keep 1.0
+		return truncToInt(SimMath::mulf32(SimMath::subf32(1.0f, reduction), r));
+	}
+	return truncToInt(r);
 }
 
 // RW 0x73C39E
@@ -190,7 +199,20 @@ int BuildAssistant::calcTimeToBuild(const ThingTemplate &tt, const Player *playe
 		}
 		sec = truncToInt(NumericState::pc24Mul((float)sec, f));
 	}
-	return (int)LOGICFRAMES_PER_SECOND * sec; // RW 0xD9F608: 5
+	// RW 0xD9F608: 5
+	const int speedFrames = (int)LOGICFRAMES_PER_SECOND * sec;
+	// lane FEAT-BRUTAL-1 (S-204), RW 0x73C567 .. 0x73C5CB: the same BRUTAL skirmish AI condition (RW 0x6AA61B == 3 and RW 0x6A950B), with
+	// BuildTimeReduction (TheSkirmishAIData + 0x950, comiss-clamped to 1.0 at RW 0x73C595): fild frames; fld1; fsub reduction; fmulp; fstp qword;
+	// MSVCR71 floor (RW 0x73C5BD calls [0xBD0580] = floor, not ceil [0xBD0588]); fstp dword; fld; fistp, i.e. floor(frames * (1 - reduction)).
+	// The normal branch floors too (RW 0x73C5E3), which is the identity on the integer 5 * sec.
+	const float timeReduction = player ? player->brutalBuildTimeReduction() : 0.0f;
+	if (timeReduction != 0.0f)
+	{
+		const float reduction = timeReduction < 1.0f ? timeReduction : 1.0f; // comiss + jbe: 1.0 and a NaN both keep 1.0
+		const double product = NumericState::pc24MulW((double)speedFrames, (double)NumericState::pc24Sub(1.0f, reduction));
+		return SimMath::fistp32((float)SimMath::floorD(product)); // the retail fstp dword before the final fld / fistp
+	}
+	return speedFrames;
 }
 
 int BuildAssistant::maxSimultaneousOfType(const ThingTemplate &tt) { return (int)(integerField(tt, "MaxSimultaneousOfType") & 0xFFFF); }

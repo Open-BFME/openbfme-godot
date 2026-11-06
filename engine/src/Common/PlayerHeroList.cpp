@@ -123,14 +123,14 @@ int PlayerHeroList::recordFrames(GameLogic &logic, const Player &owner, const He
 	return SimMath::truncToInt32(NumericState::pc24Mul((float)frames, m));
 }
 
-// RW 0x780AD3 (the Brutal AI discount of RW 0x780AF1 .. 0x780B5C is stop S-204)
+// RW 0x780AD3 (the record's own second Brutal factor of RW 0x780AF1 .. 0x780B5C is stop S-855; the ThingTemplate factor inside calcCostToBuild is S-204's, ported)
 int PlayerHeroList::costAt(GameLogic &logic, const Player &owner, int index, const Object *producer) const
 {
 	const HeroRecord *r = at(index);
 	return r ? recordCost(logic, owner, *r, producer) : 0;
 }
 
-// RW 0x780B72 (Brutal AI: S-204)
+// RW 0x780B72 (the record's own second Brutal time factor of RW 0x780BDE .. 0x780BF9 is stop S-855)
 int PlayerHeroList::framesForProductionID(GameLogic &logic, const Player &owner, std::uint32_t id, const Object *producer) const
 {
 	const HeroRecord *r = findByProductionID(id);

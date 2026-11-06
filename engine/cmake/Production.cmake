@@ -22,4 +22,5 @@ set(OPENBFME_PROD_TESTS
     tests/test_prod_hash.cpp
     tests/test_prod_retail.cpp
     tests/test_production1_retail.cpp # lane PRODUCTION1
+    tests/test_build_brutal_cheats.cpp # lane FEAT-BRUTAL-1: the Brutal AI build reductions (S-204)
 )

@@ -24,8 +24,9 @@ inline std::vector<std::string> lines()
 		"VeteranUnitsFromVeteranFactory and the PRODUCTION rate are PRODUCTION1's): audio (voices, the speed bonus loop) and EVA messages, "
 		"the speed bonus model condition, script naming of a produced object, the horde join of entry + 0x3C, the pending template name set (RW +0x130) and the score keeper",
 		"[S-204] build cost and time use neutral inputs where their sources are not ported: the lobby handicap (RW 0x7B19BF), the energy ratio of calcTimeToBuild (RW 0x8E3503), "
-		"the Brutal AI reductions, the MultipleFactory facility count (an APPEARS_AT_RALLY_POINT template with GameData MultipleFactory != 1.0 "
-		"throws), the Create-A-Hero surcharge (the CostModifierUpgrade factor RW 0x6AD8A7 IS applied since UPGRADE-1)",
+		"the MultipleFactory facility count (an APPEARS_AT_RALLY_POINT template with GameData MultipleFactory != 1.0 throws). The Brutal AI reductions ARE applied since "
+		"FEAT-BRUTAL-1 (RW 0x73C25F / 0x73C39E: difficulty RW 0x6AA61B == 3 and RW 0x6A950B, TheSkirmishAIData + 0x94C / + 0x950), as are the Create-A-Hero surcharge (HERO-2) "
+		"and the CostModifierUpgrade factor RW 0x6AD8A7 (UPGRADE-1)",
 		"[S-205] closed by UPGRADE-1: the UpgradeCenter, the upgrade masks, the upgrade modules and the research through the production queue are ported "
 		"(what remains of the research is S-486)",
 		"[S-206] command points: production asks the economy (Economy::canAffordCommandPoints, lane ECON-1: one model, RW 0x6A7C86 / 0x6A7B9F / 0x6A7F79, tier records ported); what the economy "
