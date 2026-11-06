@@ -586,6 +586,51 @@ public:
 	// the block) are two block zones, so the block search does not route through the cliff. The join rule is zonesJoin's. AIR and kind-less masks as
 	// getEffectiveZone. A raised-layer zone is its own block zone (the block search runs on the ground grid).
 	zoneStorageType getBlockZone(const PathfindMovement &mv, zoneStorageType zone) const;
+	// lane PERF-SIM-1: getBlockZone and zonesJoin resolve the movement's kind and the block-local union table (blockTable's std::map
+	// lookup) on every call; a hierarchical search asks hundreds of zones with one movement, so it resolves both once and then maps each
+	// zone. The answers are getBlockZone's and zonesJoin's.
+	struct ZoneLookup
+	{
+		const std::vector<zoneStorageType> *blockTable = nullptr; ///< the union table; null: every zone answers `blockFixed`
+		zoneStorageType blockFixed = 0;
+		size_t zones = 0; ///< m_zones.size() when the lookup was made
+		bool air = false;
+		int kind = 0;
+		int profile = 0; ///< 2 * e, the profile joins reads
+	};
+	ZoneLookup zoneLookup(const PathfindMovement &mv) const;
+	static zoneStorageType blockZoneOf(const ZoneLookup &lookup, zoneStorageType zone)
+	{
+		if (zone >= lookup.zones)
+		{
+			return 0;
+		}
+		if (!lookup.blockTable)
+		{
+			return lookup.blockFixed;
+		}
+		if (zone == UNINITIALIZED_ZONE)
+		{
+			return 0;
+		}
+		return (*lookup.blockTable)[zone];
+	}
+	bool zonesJoin(const ZoneLookup &lookup, zoneStorageType a, zoneStorageType b) const
+	{
+		if (lookup.air)
+		{
+			return true;
+		}
+		if (lookup.kind < 0)
+		{
+			return lookup.kind == -1;
+		}
+		if (a >= m_zones.size() || b >= m_zones.size() || a == UNINITIALIZED_ZONE || b == UNINITIALIZED_ZONE)
+		{
+			return false;
+		}
+		return joins(m_zones[a], m_zones[b], lookup.profile, lookup.kind, false);
+	}
 	// the block of every ground zone (derived, not saved): set by calculateZones, rebuilt from the cells after a load (Pathfinder::ensureZoneBlocks)
 	bool hasZoneBlocks() const { return !m_zones.empty() && m_zoneBlock.size() == m_zones.size(); }
 	void rebuildZoneBlocks(const PathfindGridView &map, const PathfindRegion &globalBounds);
@@ -1413,11 +1458,12 @@ private:
 		int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical = false, int attackDistance = 0);
 	// lane PATHPERF-1: RW 0x6F6454, one cell of a block edge in the hierarchical search, and RW 0x6F49BC, the corridor of the found cell chain
 	void examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2D &delta, PathfindCell *parent, PathfindCell *goal, zoneStorageType parentZone,
-		zoneStorageType *zones, int &zoneCount, const PathfindMovement &mv);
+		zoneStorageType *zones, int &zoneCount, const PathfindMovement &mv, const PathfindZoneManager::ZoneLookup &zoneLookup);
 	void makeHierarchicalPathPassable(PathfindCell *last, bool expand);
 	// the hierarchical search's raised branch (RW 0x6F8CC7 .. 0x6F8F7B): the raised layers whose connect cell lies in the popped cell's block; true: the goal
 	// was found (a layer whose zone is the goal's)
-	bool hierarchicalRaisedLinks(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone, const PathfindMovement &mv, int &cellCount);
+	bool hierarchicalRaisedLinks(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone,
+		const PathfindZoneManager::ZoneLookup &zoneLookup, int &cellCount);
 	bool examineShortcutCell(PathfindCell *from, PathfindCell *to, int x, int y, struct ShortcutState &state);
 	// RW 0x6EB151: true means the cell blocks the footprint
 	bool blockerCallback(const PathfindObject *obj, const PathfindCell *cell, int *count, bool countAllies, PathfindObjectID ignoreId, bool ignoreUnits,
@@ -1649,8 +1695,8 @@ private:
 	int slotOfWaypoint(int id) const;
 	friend class PathfindPortalSearch;
 	// the hierarchical search's portal branch (RW 0x6F909A .. 0x6F936B); true: the goal was "found" (see AIPathfindPortals.cpp)
-	bool hierarchicalPortals(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone, const PathfindMovement &mv, const PathfindObject *obj,
-		int &cellCount);
+	bool hierarchicalPortals(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone,
+		const PathfindZoneManager::ZoneLookup &zoneLookup, const PathfindObject *obj, int &cellCount);
 	void crcPortals(StateHasher &h) const;
 
 public:
