@@ -763,6 +763,33 @@ TEST_CASE("draw runtime: W3DHordeModelDraw limits the pick of states that are no
 	}
 }
 
+TEST_CASE("draw runtime: a horde draw shares only identical poses; MaxAnimFrameDelta stays parsed (lane PERF-HD, BFME2 ProcessGroup 0x00079FBC)")
+{
+	const std::string text =
+		"LodOptions = LOW\n  MaxAnimFrameDelta = 10\nEnd\n"
+		"LodOptions = MEDIUM\n  MaxAnimFrameDelta = 4\nEnd\n"
+		"LodOptions = HIGH\n  MaxAnimFrameDelta = 4\nEnd\n"
+		+ std::string(kDefaultState) +
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA") + "End\n"
+		"End\n";
+	Rig r({ { "ABUNIT_IDLA", 31 } }, text, W3D_DRAW_HORDE_MODEL);
+	W3DHordeModelDrawModuleData *data = dynamic_cast<W3DHordeModelDrawModuleData *>(r.data);
+	REQUIRE(data != nullptr);
+	CHECK(data->m_lodOptions[0].maxAnimFrameDelta == 10.0f);
+	CHECK(data->m_lodOptions[1].maxAnimFrameDelta == 4.0f);
+	CHECK(data->m_lodOptions[2].maxAnimFrameDelta == 4.0f);
+	// the instancer regroups every frame and does not copy the leader's frame into the members as ProcessGroup does: a member drawn with
+	// a pose 4 frames away would jump back to its own when its group changes, so only an identical frame is shared
+	for (int level = 0; level < 3; ++level)
+	{
+		r.startHorde(level);
+		CHECK(r.draw->poseShareDelta() == 0.0f);
+	}
+	data->m_lodOptions[2].maxAnimFrameDelta = -1.0f; // a negative delta still turns sharing off
+	r.startHorde(2);
+	CHECK(r.draw->poseShareDelta() == -1.0f);
+}
+
 TEST_CASE("draw runtime: a horde draw scales a RANDOMSTART start frame by RandomStartFramePercent (RW 0x478A74)")
 {
 	const std::string text =

@@ -366,7 +366,12 @@ public:
 	W3DHordeModelDraw(const W3DHordeModelDrawModuleData &data, int lodLevel, W3DDrawAssets &assets, W3DDrawRandom &random,
 		W3DDrawScriptHost *scripts = nullptr, const Options &options = Options());
 	int lodLevel() const { return m_lodLevel; }
-	float poseShareDelta() const override { return m_lod.maxAnimFrameDelta; } // lane PERF-HD
+	// lane PERF-HD: the instancer may draw members of a group with one member's pose. BFME2's W3DHordeModelDrawManager::ProcessGroup
+	// (RVA 0x00079FBC) keeps a group's leader across client frames and copies its frame and previous frame into every member's tracks, so a
+	// shared pose is the members' own. The instancer regroups every frame and copies nothing back: borrowing a pose up to MaxAnimFrameDelta
+	// frames away (4 for GondorFighter at HIGH) makes a soldier's animation jump whenever its group changes. Until that grouping is ported,
+	// only identical frames share; a negative delta still turns sharing off.
+	float poseShareDelta() const override { return m_lod.maxAnimFrameDelta < 0.0f ? m_lod.maxAnimFrameDelta : 0.0f; }
 
 protected:
 	int maxRandomAnimations() const override { return m_lod.maxRandomAnimations; }
