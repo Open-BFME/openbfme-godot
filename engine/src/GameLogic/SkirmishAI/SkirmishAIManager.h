@@ -71,6 +71,8 @@ struct AISkirmishPlayer
 	std::string dozerTemplate;                ///< RW 0x8F04F7's argument: the side's AIDozerAssignment unit
 	std::uint32_t shutdownFrame = 0;          ///< the frame the AI was shut down for a defeated player (0 = running)
 	std::uint32_t retryTimer = 0;             ///< AIPlayer + 0x158 = LOGICFRAMES_PER_SECOND * 30 at creation (RW 0x8F0855)
+	int enemyIndex = -1;                      ///< AIPlayer + 0xA0: the cached enemy player (RW 0x8F47EB), -1 when none
+	std::uint32_t enemyRefreshFrame = 0;      ///< AIPlayer + 0x9C: the frame the enemy cache refreshes (RW 0x8F47EB: now + 25)
 	const SkirmishAIStore *store = nullptr;   ///< the data the AI reads (not state)
 	AIBuildState build;                       ///< step 2: the base builder, the build requests, the dozer list, the game phase (AIBaseBuilder.h)
 	std::vector<std::shared_ptr<AIBuildRequest>> *farmSites = nullptr; ///< the manager's farm site pool (RW: a global vector, RW 0xDE9EEC)
@@ -127,6 +129,8 @@ public:
 
 	const std::vector<std::unique_ptr<AISkirmishGroup>> &groups() const { return m_groups; }
 	const AISkirmishPlayer *findAI(int playerIndex) const;
+	// lane RAI-POW-2: the same AI for a caller that updates its state (the enemy cache, RW 0x8F457D)
+	AISkirmishPlayer *findAI(int playerIndex) { return const_cast<AISkirmishPlayer *>(static_cast<const SkirmishAIManager *>(this)->findAI(playerIndex)); }
 	// RW 0x89C04B -> 0x8EDA39 / 0x8ED772: the manager's gate list (+ 0xA74), the gates the AI opens and closes for itself (RW 0x8ED6DC / 0x8ED726)
 	void registerGate(GateOpenAndCloseBehavior &gate);
 	void unregisterGate(GateOpenAndCloseBehavior &gate);
