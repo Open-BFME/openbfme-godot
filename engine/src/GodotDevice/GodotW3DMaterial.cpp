@@ -18,6 +18,7 @@
 #include "Libraries/WWVegas/WW3D2/textureloader.h"
 
 #include <godot_cpp/classes/image.hpp>
+#include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/vector3.hpp>
@@ -393,6 +394,31 @@ bool W3DMaterialFactory::Reduce_Image(Ref<Image> &image, int reduction)
 	return true;
 }
 
+void W3DMaterialFactory::Import_Texture(const std::string &key, std::map<std::string, std::string> &notes)
+{
+	// loose files (-preferLocalFiles) keep being read per factory: a modder's edited file shows in the next viewer, as before
+	if (!SharedTextures || Fs.preferLocalFiles() || Textures.count(key)) return;
+	const auto it = SharedTextures->Entries.find(key);
+	if (it == SharedTextures->Entries.end()) return;
+	Texture2D *texture = Object::cast_to<Texture2D>(ObjectDB::get_instance(it->second.Id));
+	if (!texture)
+	{
+		SharedTextures->Entries.erase(it); // every factory that held it is gone
+		return;
+	}
+	Textures[key] = Ref<Texture2D>(texture);
+	if (!it->second.PackedNote.empty()) notes[key] = it->second.PackedNote;
+}
+
+void W3DMaterialFactory::Export_Texture(const std::string &key, const std::map<std::string, std::string> &notes)
+{
+	if (!SharedTextures || Fs.preferLocalFiles()) return;
+	const auto texture = Textures.find(key);
+	if (texture == Textures.end() || texture->second.is_null()) return;
+	const auto note = notes.find(key);
+	SharedTextures->Entries[key] = { texture->second->get_instance_id(), note == notes.end() ? std::string() : note->second };
+}
+
 Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing, std::vector<std::string> *notes)
 {
 	found = false;
@@ -456,6 +482,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	}
 	const int reduction = g_textureReduction;
 	const std::string cacheKey = reduction > 0 ? res.Path + "#reduction" + std::to_string(reduction) : res.Path;
+	Import_Texture(cacheKey, PackedTextureNotes);
 	auto it = Textures.find(cacheKey);
 	if (it != Textures.end())
 	{
@@ -508,6 +535,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	Reduce_Image(image, reduction); // lane OPTS-2
 	Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
 	Textures[cacheKey] = tex;
+	Export_Texture(cacheKey, PackedTextureNotes);
 	found = true;
 	return tex;
 }
@@ -523,6 +551,7 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 	std::snprintf(opt, sizeof(opt), "%d&%d&%d&%d", params.kind, (int)params.colors[0], (int)params.colors[1], (int)params.colors[2]); // RW 0x535BCF's "%d&%d&%d&%d"
 	const int reduction = g_textureReduction; // lane OPTS-2
 	const std::string cacheKey = "#" + res.Path + "#" + opt + (reduction > 0 ? "#reduction" + std::to_string(reduction) : std::string());
+	Import_Texture(cacheKey, PackedHouseTextureNotes);
 	auto it = Textures.find(cacheKey);
 	if (it != Textures.end())
 	{
@@ -582,6 +611,7 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 	Reduce_Image(image, reduction); // lane OPTS-2
 	Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
 	Textures[cacheKey] = tex;
+	Export_Texture(cacheKey, PackedHouseTextureNotes);
 	return tex;
 }
 

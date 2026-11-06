@@ -3110,7 +3110,7 @@ void GameWorld::refresh_streaks(bool record)
 	const float eye[3] = { eg.x, -eg.z, eg.y }; // Godot -> SAGE
 	if (!m_streakTextures && m_fs.is_valid() && m_fs->archive_fs())
 	{
-		m_streakTextures.reset(new W3DMaterialFactory(*m_fs->archive_fs()));
+		m_streakTextures.reset(new W3DMaterialFactory(*m_fs->archive_fs(), m_fs->w3dTextureCache()));
 		m_streakTextures->Set_Asset_Packs(m_fs->assetPacks().empty() ? nullptr : &m_fs->assetPacks()); // lane SDK-0
 	}
 	// group the strips by material (lane PROJ-2: the texture of the map's weather, RW 0x4CFA9A: WeatherType NORMAL 0 / SNOWY 1)
