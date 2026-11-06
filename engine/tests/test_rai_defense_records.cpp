@@ -298,9 +298,11 @@ TEST_CASE("rai-def position sampler: an army OffensiveBuilding stays out of the 
 
 	// the real record of the AI took the run's starting structures too (the manager's world hooks, RW 0x6A9D9C -> 0x8E4591)
 	const AIStatCollector &live = AITacticalAI::recordOf(logic, g.computer->getPlayerIndex());
+	// tolerance: the map's starting structures decide how many sampler groups there are (Udun gives several); the exact count is not the sampler's rule
 	CHECK_FALSE(live.positions().groups().empty());
 	for (const AIPositionSampler::Group &grp : live.positions().groups())
 	{
+		// tolerance: a group always has at least the member that made it; which structures the map starts with is not pinned here
 		CHECK_FALSE(grp.members.empty());
 		// tolerance: a group's radius grows with its members; the padding is its floor (RW 0x8E4082)
 		CHECK(grp.radius >= padding);
@@ -324,4 +326,65 @@ TEST_CASE("rai-def position sampler: an army OffensiveBuilding stays out of the 
 		CHECK(y.members == x.members);
 	}
 	CHECK(loaded.positions().members() == record.positions().members());
+}
+
+TEST_CASE("rai-def position sampler: a point within the membership bound of two groups merges them in member order (RW 0x8E4376)")
+{
+	OPENBFME_REQUIRE_START(s);
+	RecordsGame g;
+	loadUdun(*s, g);
+	GameLogic &logic = g.game->logic();
+	AIStatCollector record(g.computer->getPlayerIndex());
+	const float padding = g.ai->store->data().defenseTreeNodeRadius;
+	REQUIRE(padding == 200.0f);
+	const Coord3D at{ 1800.0f, 1400.0f, logic.getGroundHeight(1800.0f, 1400.0f) };
+	Object *a = makeBuilding(logic, "GondorBarracks", *g.computer, at);
+	Object *b = makeBuilding(logic, "GondorFarm", *g.computer, Coord3D{ at.x + 100.0f, at.y, at.z });
+	Object *c = makeBuilding(logic, "GondorBarracks", *g.computer, Coord3D{ at.x + 400.0f, at.y, at.z });
+	Object *d = makeBuilding(logic, "GondorFarm", *g.computer, Coord3D{ at.x + 500.0f, at.y, at.z });
+	for (Object *o : { a, b, c, d })
+	{
+		// the sphere arithmetic is 3D: give every building the same z so the expected centre and radius are the map-independent ones
+		Coord3D p = *o->getPosition();
+		p.z = at.z;
+		o->setPosition(&p);
+		record.registerObject(*o);
+	}
+	record.update(logic);
+	REQUIRE(record.positions().groups().size() == 2u);
+	REQUIRE(record.positions().groups()[0].members == (std::vector<ObjectID>{ a->getID(), b->getID() }));
+	REQUIRE(record.positions().groups()[1].members == (std::vector<ObjectID>{ c->getID(), d->getID() }));
+	// a fifth point at 2000 is within sqrt(2) * padding of both groups: it joins the first, then the second group's members are appended to it
+	// in their order and its group is destroyed. The sphere after each append: 250/300/400/450 at 1850/1900/2000/2050.
+	Object *e = makeBuilding(logic, "GondorBarracks", *g.computer, Coord3D{ at.x + 200.0f, at.y, at.z });
+	Coord3D ep = *e->getPosition();
+	ep.z = at.z;
+	e->setPosition(&ep);
+	CHECK(record.registerObject(*e) == AIStatCollector::LISTEN_STRUCTURES);
+	record.update(logic);
+	REQUIRE(record.positions().groups().size() == 1u);
+	const AIPositionSampler::Group &merged = record.positions().groups()[0];
+	CHECK(merged.members == (std::vector<ObjectID>{ a->getID(), b->getID(), e->getID(), c->getID(), d->getID() }));
+	CHECK(merged.radius == 450.0f);
+	CHECK(merged.center.x == at.x + 250.0f);
+	CHECK(merged.center.y == at.y);
+	CHECK(merged.center.z == at.z);
+}
+
+TEST_CASE("rai-def position sampler: its registrations are checked on load with the record's other lists (a damaged save is refused earlier)")
+{
+	OPENBFME_REQUIRE_START(s);
+	RecordsGame g;
+	loadUdun(*s, g);
+	GameLogic &logic = g.game->logic();
+	AIStatCollector record(g.computer->getPlayerIndex());
+	const AIPositionSampler::Position at = [](ObjectID) { return Coord3D{ 0.0f, 0.0f, 0.0f }; };
+	// a sampler registration no structure list holds (what a damaged save can produce): the manager's checkLoaded sees it only through lists()
+	const_cast<AIPositionSampler &>(record.positions()).add(0x7FFFFFF0u, g.ai->store->data().defenseTreeNodeRadius, at);
+	bool seen = false;
+	for (const std::vector<ObjectID> *list : record.lists())
+	{
+		seen = seen || std::find(list->begin(), list->end(), 0x7FFFFFF0u) != list->end();
+	}
+	CHECK(seen);
 }
