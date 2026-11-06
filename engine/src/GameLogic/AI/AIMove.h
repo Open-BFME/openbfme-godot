@@ -90,6 +90,8 @@ public:
 	virtual bool setModelCondition(const char *name, bool on) = 0; // MOVING, CLIMBING, RAPPELLING, BACKING_UP
 	// RW 0x666FA3, called at the end of every doLocomotor pass (RW 0x66A4B7): the SAIL_* model conditions of a SHIP
 	virtual void updateSailModelConditions() {}
+	// lane AIRBORNE-1, RW 0x66A49E .. 0x66A4A0: Object::setStatus(AIRBORNE_TARGET (6), on) (RW 0x62684D)
+	virtual void setAirborneTarget(bool on) { (void)on; }
 	virtual float relativeAngleTo(const Coord3D &p) const = 0;     // RW relAngle2D(obj, p)
 	virtual bool isCellTypeTwo(const Coord3D &p, PathfindLayerEnum layer) const { (void)p; (void)layer; return false; } // RW 0x6EAD0E
 	// ---- lane PHYS-1 ----

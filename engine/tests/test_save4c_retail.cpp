@@ -454,10 +454,11 @@ TEST_CASE("save4c retail T5: each block's version window (RW 0xA1F5B9's two mess
 		REQUIRE(one.size() > at); // tolerance: an index precondition (the version byte must exist before it is read)
 		// every SAVE-4c block starts with its version: 1, except obfme:SkirmishAI's: (earliest 2, current 2) since lane AI5 (the upgrade builders and the money
 		// reserve), (3, 3) since community #113 (the capture-flag registration history, which older snapshots cannot recover), (3, 4) since lane AIEXPAND-1 (the
-		// EXPANSION heuristic's frame counter), (3, 5) since lane RAI-POW-3b (the AIPlayer's enemy cache, written only once an AI has asked for an enemy:
-		// this scene's AIs never do, so the block stays version 4, while the loader also accepts the cache's version 5)
+		// EXPANSION heuristic's frame counter), (3, 5) since lane RAI-DEF (the DEFENSIVE target's defense size and a SimpleDefense team's recruit origin),
+		// (3, 6) since lane RAI-POW-2 (community #233: the AIPlayer's enemy cache, written only once an AI has asked for an enemy: this scene's AIs never do,
+		// so the block stays version 5, while the loader also accepts the cache's version 6)
 		const bool skirmish = t == "obfme:SkirmishAI";
-		const std::uint8_t version = skirmish ? 4 : 1, latest = skirmish ? 5 : 1, earliest = skirmish ? 3 : 1;
+		const std::uint8_t version = skirmish ? 5 : 1, latest = skirmish ? 6 : 1, earliest = skirmish ? 3 : 1;
 		REQUIRE(one[at] == version);
 		std::vector<std::uint8_t> above = one, below = one;
 		above[at] = (std::uint8_t)(latest + 1);

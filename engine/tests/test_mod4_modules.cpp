@@ -392,7 +392,7 @@ TEST_CASE("MOD-4: ThreatFinderUpdate stays an UnportedModule, reported as its st
 				uses += n.name == name ? 1 : 0;
 			}
 		}
-		CHECK_MESSAGE(uses > 0, name);
+		CHECK_MESSAGE(uses > 0, name); // tolerance: the claim is that retail templates use the class at all, not a count
 	}
 	// the lane's ported classes are bound (and lane MODCOMPAT-MOD1's PickupStuffUpdate)
 	CHECK(std::find(unported.begin(), unported.end(), "PickupStuffUpdate") == unported.end());
