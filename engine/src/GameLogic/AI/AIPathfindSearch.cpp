@@ -264,14 +264,14 @@ bool Pathfinder::pathToObject(const PathfindObject &unit, const PathfindLocomoto
 	const PathfindLayerEnum layer = searchDestinationLayer(to);
 	ICoord2D centre;
 	worldToCell(&to, true, &centre);
-	// RW 0x6F6003: the target's cell first; an OBSTACLE goes straight to the line walk (0x6F607A). Any other cell takes the first shape's offset
-	// (RW 0xAD1AE0(0), + 0x10 / 0x14 / 0x18), looks again at the offset cell, and takes the quick path test to the offset point (RW 0x6F6070) or walks
-	// from that cell when it is an obstacle.
-	PathfindCell *goal = getCell(layer, centre.x, centre.y);
+	const PathfindCell *goal = getCell(layer, centre.x, centre.y);
 	if (!goal)
 	{
 		return false;
 	}
+	// RW 0x6F6009 / 0x6F600C: an OBSTACLE cell (the target's own footprint) walks from it at once. Any other cell retries at the position plus the first
+	// shape's offset (RW 0x6F600E .. 0x6F6061: RW 0xAD1AE0(0), + 0x10 / 0x14 / 0x18); not an obstacle there either, the quick path test to that offset point
+	// (RW 0x6F6070); an obstacle there, the walk from that cell
 	if (goal->getType() != PathfindCell::CELL_OBSTACLE)
 	{
 		const PathfindShape first = target.getGeometry().shape(0);
@@ -289,13 +289,14 @@ bool Pathfinder::pathToObject(const PathfindObject &unit, const PathfindLocomoto
 			return quickDoesPathExist(unit, &from, &to, &loco); // RW 0x6F6070
 		}
 	}
-	// RW 0x6F607A .. 0x6F6137: the footprint's own obstacle id, the from cell's effective zone (RW 0x938D89, the strict table), d from the bounding circle radius
+	// RW 0x6F607A .. 0x6F6137: the footprint's own obstacle id, the from cell's effective zone (RW 0x938D89), d from the bounding circle radius
 	const PathfindMovement mv = makeMovement(&unit, loco);
 	const PathfindCell *fromCell = getClippedCell(searchDestinationLayer(from), &from);
 	if (!fromCell)
 	{
 		return false;
 	}
+	// RW 0x938D89 is the odd (flag 1) table with the strict type rules: getEffectiveZone(mv, false, ..) (lane QPATH-1, S-162; as quickDoesPathExist)
 	const zoneStorageType fromZone = m_zoneManager.getEffectiveZone(mv, false, fromCell->getZone());
 	const PathfindObjectID obstacle = goal->getObstacleID();
 	const int d = 2 - SimMath::truncToInt32(SimMath::mulf32(target.getGeometry().boundingCircleRadius(), -0.1f));
@@ -316,8 +317,8 @@ bool Pathfinder::pathToObject(const PathfindObject &unit, const PathfindLocomoto
 			}
 			if (c->getObstacleID() != obstacle)
 			{
-				const zoneStorageType z = m_zoneManager.getEffectiveZone(mv, false, c->getZone());
-				if (z == fromZone || portalPathExists(&unit, loco, fromZone, z, false))
+				const zoneStorageType z = m_zoneManager.getEffectiveZone(mv, false, c->getZone()); // RW 0x6F5F2B (RW 0x938D89)
+				if (z == fromZone || portalPathExists(&unit, loco, fromZone, z, false)) // RW 0x6F5547
 				{
 					return true;
 				}
