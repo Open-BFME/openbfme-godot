@@ -2,6 +2,7 @@
 // See GodotAptPlayer.h.
 
 #include "GodotDevice/GodotAptPlayer.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "Common/BuildVersion.h"
 #include "Common/PathIO.h"
 #include "Common/GameEdition.h"
@@ -1472,6 +1473,21 @@ void AptMenuPlayer::set_show_placeholders(bool show)
 void AptMenuPlayer::_ready()
 {
 	set_process(m_autoProcess && m_booted);
+	m->view3d.syncVisibility();
+}
+
+void AptMenuPlayer::_notification(int what)
+{
+	if (what == NOTIFICATION_VISIBILITY_CHANGED || what == NOTIFICATION_ENTER_TREE || what == NOTIFICATION_EXIT_TREE)
+	{
+		m->view3d.syncVisibility(what == NOTIFICATION_EXIT_TREE);
+		if (what != NOTIFICATION_EXIT_TREE && is_inside_tree() && is_visible_in_tree())
+		{
+			// Reveal can happen after this frame's player/instancer process callbacks. Populate the
+			// retained scene now so its first enabled viewport frame uses the current APT pose.
+			m->view3d.advance();
+		}
+	}
 }
 
 void AptMenuPlayer::_process(double delta)
@@ -4028,6 +4044,8 @@ Vector2 AptMenuPlayer::get_stage_size() const
 
 void AptMenuPlayer::clearCanvas()
 {
+	m->view3d.beginBuild();
+	m->view3d.endBuild(); // no retained View3D placeholder remains, including an empty movie stack
 	if (m->nativeHook)
 	{
 		m->nativeHook->beginCanvas();
@@ -4116,6 +4134,7 @@ void AptMenuPlayer::freeItemPool()
 
 void AptMenuPlayer::render(bool force)
 {
+	m->view3d.syncVisibility(); // visibility can change without dirtying the retained canvas
 	if (!m_booted)
 	{
 		return;
@@ -5057,7 +5076,7 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 							if (material.is_null())
 							{
 								Ref<Shader> shader; shader.instantiate();
-								shader->set_code(String(aptImageModeShader(mode).c_str()));
+								SetShaderCode(shader.ptr(), String(aptImageModeShader(mode).c_str()), String("apt image mode ") + String(modeText.c_str()));
 								material.instantiate(); material->set_shader(shader);
 							}
 							rs->canvas_item_set_material(item, material->get_rid());
