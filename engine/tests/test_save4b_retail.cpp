@@ -376,6 +376,9 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 	// Merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range, moves the AIs' play;
 	// measured once on the merged tree and at its merge point, NECRODIE-1 keeps the census): no CommandButtonHuntUpdate object; an AutoHealBehavior,
 	// HordeNotifyTargetsOfImminentProbableCrushingUpdate, HorseHordeContain and RepairSpecialPower object (112)
+	// Merge queue q42 (CASTLEATK-1: nothing attacks an object with the status UNATTACKABLE, RW 0x6C9207, with ATKSTATE-1a's attack-state gates, moves the
+	// AIs' play; measured once on the merged tree and at each merge point, #216, #220 and #225 keep the census): no
+	// HordeNotifyTargetsOfImminentProbableCrushingUpdate or HorseHordeContain object (110)
 	CHECK(classes == std::set<std::string>{
 		"AISpecialPowerUpdate", "ActiveBody", "ArmorUpgrade", "ArrowStormUpdate", "AttributeModifierAuraUpdate", "AttributeModifierPoolUpdate",
 		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoHealBehavior", "AutoPickUpUpdate",
@@ -386,7 +389,7 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 		"ElvenWoodSpecialPower", "EmotionTrackerUpdate", "FXListDie", "FiringTrackerHelper", "FoundationAIUpdate", "FreezingRainSpecialPower",
 		"GeometryUpgrade", "GettingBuiltBehavior", "GiveUpgradeUpdate", "GrabPassengerSpecialPower", "GrantUpgradeCreate", "GuardingHelper",
 		"HighlanderBody", "HitReactionBehavior", "HordeContain", "HordeDispatchSpecialPower", "HordeMemberCollide",
-		"HordeNotifyTargetsOfImminentProbableCrushingUpdate", "HorseHordeContain", "ImmortalBody", "InactiveBody", "InvisibilityUpdate", "KeepObjectDie",
+		"ImmortalBody", "InactiveBody", "InvisibilityUpdate", "KeepObjectDie",
 		"LargeGroupAudioUpdate", "LargeGroupBonusUpdate", "LevelUpUpgrade", "LifetimeUpdate", "ModelConditionUpgrade", "MonitorConditionUpdate",
 		"OCLSpecialPower", "ObjectCreationUpgrade", "PassiveAreaEffectBehavior", "PhysicsBehavior", "PickupStuffUpdate", "PlayerHealSpecialPower",
 		"PlayerUpgradeSpecialPower", "PorcupineFormationBodyModule", "ProductionSpeedBonus", "ProductionUpdate", "QueueProductionExitUpdate",

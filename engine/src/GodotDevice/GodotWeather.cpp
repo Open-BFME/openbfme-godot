@@ -2,6 +2,7 @@
 // Lane WEATHER-1. See GodotDevice/GodotWeather.h.
 
 #include "GodotDevice/GodotWeather.h"
+#include "GodotDevice/GodotShaderBudget.h"
 
 #include "Common/Audio/AudioEntryPoints.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawServices.h"
@@ -223,7 +224,7 @@ bool GodotWeather::load(Node3D *parent, ArchiveFileSystem &fs, const std::string
 	m_nodeId = m_node->get_instance_id();
 	Ref<Shader> shader;
 	shader.instantiate();
-	shader->set_code(kSnowShader);
+	SetShaderCode(shader.ptr(), kSnowShader, "Snow");
 	m_snowMat.instantiate();
 	m_snowMat->set_shader(shader);
 	// the 64 x 64 starting heights (updateIniSettings ran at init; a map override is in the final setting the store gave init)
