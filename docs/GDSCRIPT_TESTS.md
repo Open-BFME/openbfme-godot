@@ -241,6 +241,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/online_war_walk.gd` | `godot/scripts/game.gd` | Two-peer relay war fixture; `tools/net/online_war_test.sh` supplies the local lobby, relay and game data. Not a generic pytest game test. |
 | `godot/tests/http_timed_test.gd` | `tools/net/test_http_timed.py` | Argument-aware fixture runner (a fake server that answers late or never); needs Godot. |
 | `godot/tests/opts1_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. Checks both RotWK and BFME2 presentation sources in menus and a live game. |
+| `godot/tests/options_open_test.gd` | Manual only; no generic pytest runner | Denied here: needs the built GDExtension and private BFME1 and/or RotWK/BFME2 installations; boots audio and checks settings entry, tabs, hidden controls, footer actions and persistence. Headless runs are supported; optional `OPTIONS_OPEN_SHOTS` captures need a window/GPU. |
 | `godot/tests/opts2_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/opts4_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/opts5_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
