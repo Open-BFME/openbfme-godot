@@ -1851,17 +1851,31 @@ bool wallTargetGone(GameLogic &logic, const AITactic &tac)
 	return !alive(wallTargetOf(logic, tac));
 }
 
+// RW 0x7A11FF: the first object of the team's object list that still exists. Retail's list never holds a destroyed object; the port's member ids
+// stay until the whole team is gone, so a dead first member must not make the wall search fail forever.
+const Object *firstExistingMember(GameLogic &logic, const AITacticTeam *team)
+{
+	if (!team)
+	{
+		return nullptr;
+	}
+	for (ObjectID id : team->members)
+	{
+		if (const Object *o = logic.findObjectByID(id))
+		{
+			return o;
+		}
+	}
+	return nullptr;
+}
+
 // RW 0x9EF829: team 0's first member finds the nearest living enemy WALL_GATE, or WALL_SEGMENT that is not WALK_ON_TOP_OF_WALL, never
 // NOT_AUTOACQUIRABLE (the enemy's structures list, RW 0x6A9999 + 8; 2D squared distance, the first on ties); kept at + 0x58
 bool findWallTarget(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, AITactic &tac)
 {
 	const Kinds &k = kinds();
 	const AITacticTeam *team0 = teamByIndex(tac, 0);
-	if (!team0 || team0->members.empty())
-	{
-		return false;
-	}
-	const Object *leader = logic.findObjectByID(team0->members[0]);
+	const Object *leader = firstExistingMember(logic, team0);
 	if (!leader)
 	{
 		return false;
@@ -1887,7 +1901,7 @@ bool findWallTarget(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainS
 		const float dx = SimMath::subf32(o->getPosition()->x, leader->getPosition()->x);
 		const float dy = SimMath::subf32(o->getPosition()->y, leader->getPosition()->y);
 		const float d = SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
-		if (!best || d == 0.0f || d < bestDist) // RW 0x9EF90B: a zero distance always takes the pick
+		if (!best || bestDist > d) // RW 0x9EF90B: TEST EDI, EDI (the best pointer), not the distance
 		{
 			best = o;
 			bestDist = d;
@@ -1975,7 +1989,7 @@ bool simpleSiegeStageZero(GameLogic &logic, const AISkirmishPlayer &ai, const AI
 	Object *wall = wallTargetOf(logic, tac);
 	AITacticTeam *team0 = teamByIndex(tac, 0);
 	const AITacticTeam *team1 = teamByIndex(tac, 1);
-	const Object *leader = team0 && !team0->members.empty() ? logic.findObjectByID(team0->members[0]) : nullptr;
+	const Object *leader = firstExistingMember(logic, team0);
 	if (!wall || !team0 || !team1 || !leader)
 	{
 		return false;
