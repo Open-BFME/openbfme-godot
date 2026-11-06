@@ -39,12 +39,30 @@ def run(command, cwd, records, name, env, allow_decoder_errors=False):
         'ERROR: Condition "buffer_size == 0" is true. Returning: ERR_INVALID_PARAMETER',
         "ERROR: Invalid or unsupported DDS texture file ''.",
         'ERROR: Failed to load DDS image.',
+        'ERROR: Packed texture RGBA8 image and mask byte counts differ',
     }
     errors = [line for line in output.splitlines() if line.startswith('ERROR:')]
     unexpected = [line for line in errors if not allow_decoder_errors or line not in decoder_errors]
     if result.returncode or 'SCRIPT ERROR:' in output or 'SHADER ERROR:' in output or unexpected:
         raise RuntimeError(f'{name} exit={result.returncode}\n{output[-4000:]}')
     return output
+
+
+def validate_mask_errors(output):
+    message = 'ERROR: Packed texture RGBA8 image and mask byte counts differ'
+    if output.splitlines().count(message) != 2:
+        raise RuntimeError('expected exactly two packed-mask size diagnostics')
+
+
+def test_validate_mask_errors():
+    message = 'ERROR: Packed texture RGBA8 image and mask byte counts differ\n'
+    validate_mask_errors(message * 2)
+    for output in ('', message, message * 3, message.replace('byte counts', 'sizes') * 2):
+        try:
+            validate_mask_errors(output)
+        except RuntimeError:
+            continue
+        raise AssertionError('missing, extra or altered size diagnostic accepted')
 
 
 def main():
@@ -60,7 +78,7 @@ def main():
     build, scratch = args.build_dir.resolve(), args.scratch.resolve()
     scratch.mkdir(parents=True, exist_ok=False)
     source = SOURCE.read_text()
-    call = 'mergePackedRgba8(image, png);'
+    call = 'if (!mergePackedRgba8(image, png))\n\t\t\treturn Ref<godot::Image>();'
     if source.count(call) != 1:
         raise RuntimeError('expected one bulk merge call; counterfactual refused')
     (scratch / 'Candidate.cpp').write_text(source)
@@ -110,6 +128,7 @@ def main():
     start = datetime.datetime.now(datetime.timezone.utc).isoformat()
     output = run([str(args.godot.resolve()), '--headless', '--path', str(project),
                   '--script', 'res://test.gd'], scratch, scratch, 'run', env, allow_decoder_errors=True)
+    validate_mask_errors(output)
     end = datetime.datetime.now(datetime.timezone.utc).isoformat()
     result = json.loads(next(line.removeprefix('PACKED RESULT ') for line in output.splitlines()
                              if line.startswith('PACKED RESULT ')))
