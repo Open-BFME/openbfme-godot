@@ -75,7 +75,7 @@ func setup(w: Node3D, cam: Camera3D, start: Vector3, ui_parent: Node, audio: Nod
 	# MULTIPLY multiplies (srcblend ZERO, destblend SRCCOLOR) and SATURATE draws src*dst + dst*src twice (4 * i * i * dst); FADE_NONE
 	# draws nothing and an unknown mode is an error, never black
 	var fade_shader := Shader.new()
-	fade_shader.code = """shader_type canvas_item;
+	var fade_code := """shader_type canvas_item;
 uniform sampler2D screen_tex : hint_screen_texture, filter_nearest;
 uniform int mode = 0;      // retail TFade: 1 SUBTRACT, 2 ADD, 3 SATURATE, 4 MULTIPLY (0 FADE_NONE is never drawn)
 uniform float intensity = 0.0;
@@ -95,6 +95,8 @@ void fragment() {
 	}
 }
 """
+	ShaderBudget.check(fade_code, "campaign_cine fade")
+	fade_shader.code = fade_code
 	var fade_mat := ShaderMaterial.new()
 	fade_mat.shader = fade_shader
 	_fade.material = fade_mat

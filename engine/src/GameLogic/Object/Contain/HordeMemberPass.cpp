@@ -689,6 +689,15 @@ float HordeContain::worstMemberSlotError() const
 bool HordeContain::runMemberPass()
 {
 	Object *horde = getObject();
+	if (AIUpdateInterface *hai = horde->getAIUpdateInterface(); hai && hai->world().mapReady())
+	{
+		// lane WALLHORDE-1: RW 0x873FE8 calls AdjustLayer on the horde itself before any member (RW 0x874015 -> RW 0x6F0741; BFME2 0x870DEE -> 0x6EF2A6)
+		const PathfindLayerEnum l = hai->world().pathfinder().adjustLayer(hai->adapter(), hai->adapter().getLayer());
+		if (l != hai->adapter().getLayer())
+		{
+			hai->setLayer(l);
+		}
+	}
 	HordeContainCore::Placement owner;
 	owner.position = *horde->getPosition();
 	owner.angle = horde->getOrientation();
@@ -1008,7 +1017,7 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 		// shared was snapped onto the slot and sent 1 .. 5 units away again every few frames (the cavalry's melee jitter, lane SMOOTH-3).
 		if (!ownerMoving)
 		{
-			member.setPosition(&q); // lane WALL-4: RotWK's near arm sets no layer (its pass runs AdjustLayer on the horde, RW 0x874015, not ported: S-4840)
+			member.setPosition(&q); // lane WALL-4: RotWK's near arm sets no layer (its pass runs AdjustLayer on the horde, RW 0x874015: lane WALLHORDE-1)
 			q = *member.getPosition();
 			host.setPendingPosition(q);
 			if (world.mapReady())

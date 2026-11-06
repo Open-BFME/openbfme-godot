@@ -282,6 +282,7 @@ TEST_CASE("online16-fix: a previous-release client (v3 HELLO, v1 ticket) plays a
 	REQUIRE(a.size() == 1);
 	CHECK(a[0].reply == v3(encodeRefused(REFUSE_CAPABILITY)));
 	CHECK(relay.stats().badDatagrams == 1);
+	relay.shutdown(0); // Windows cannot delete an open file: this closes the game logs
 	std::filesystem::remove_all(dir);
 }
 
@@ -638,6 +639,7 @@ TEST_CASE("online16-fix auth: a spectator bound with its own key cannot take a p
 	CHECK(a.empty());
 	CHECK(relay.stats().authDropped == dropped + 2);
 	CHECK(routeOf(relay, p0, 1, 1) == p1.from);
+	relay.shutdown(0); // Windows cannot delete an open file: this closes the game logs
 	std::filesystem::remove_all(o.logDir);
 }
 
@@ -735,6 +737,7 @@ TEST_CASE("online16-fix auth: authenticated rebind, rejoin and spectator flows; 
 		REQUIRE(d.size() > kHeaderBytes); // tolerance: a STATUS of the slots that ever bound
 		CHECK(d[3] == STATUS);
 	}
+	relay.shutdown(0); // Windows cannot delete an open file: this closes the game logs
 	std::filesystem::remove_all(o.logDir);
 }
 
@@ -817,6 +820,7 @@ TEST_CASE("online16-fix auth: an authenticated client ignores an untagged REFUSE
 	t.setClock([&] { return now; });
 	t.setPeer(1, NetAddress{});
 	auto hellos = [&] {
+		NetSleepMilliseconds(20); // a datagram just sent need not have arrived yet (macOS)
 		int n = 0;
 		NetAddress from;
 		std::vector<std::uint8_t> d;

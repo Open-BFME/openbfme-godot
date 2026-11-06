@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "Common/BfmeGame.h"
 #include "GodotDevice/GodotPackedTexture.h"
 #include "Libraries/Source/Apt/AptLoad.h"
@@ -315,7 +316,7 @@ Ref<Shader> W3DMaterialFactory::Get_Shader(const W3DShaderKey &key)
 	W3D_Ensure_Light_Globals(); // the shader names the light globals: they must exist before it compiles
 	Ref<Shader> shader;
 	shader.instantiate();
-	shader->set_code(toGodot(Generate_W3D_Shader_Code(key, samplers)));
+	SetShaderCode(shader.ptr(), toGodot(Generate_W3D_Shader_Code(key, samplers)), String("W3D material ") + String(id.c_str()));
 	Shaders[id] = shader;
 	return shader;
 }
@@ -483,7 +484,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	{
 		AptArchiveFileSource source(Fs);
 		bool paired = false;
-		image = loadPackedTexture(source, res.Path.substr(0, res.Path.size() - 4), &paired);
+		image = loadPackedTexture(source, res.Path.substr(0, res.Path.size() - 4), &paired, &buffer);
 		err = image.is_valid() ? OK : ERR_FILE_CORRUPT;
 		if (paired)
 		{
@@ -545,7 +546,7 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 	Error err;
 	if (res.Path.size()>=4 && res.Path.substr(res.Path.size()-4)==".jpg") {
 	 AptArchiveFileSource source(Fs);bool paired=false;
-	 image=loadPackedTexture(source,res.Path.substr(0,res.Path.size()-4),&paired);
+	 image=loadPackedTexture(source,res.Path.substr(0,res.Path.size()-4),&paired,&buffer);
 	 err=image.is_valid() ? OK : ERR_FILE_CORRUPT;
 	 if (paired) {
 	  const std::string note = "[S-1482] house texture " + res.Path + ": packed PNG colour multiplication and alpha replacement are inferred; the loader merge was not read";

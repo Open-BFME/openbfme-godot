@@ -125,6 +125,7 @@ struct HudFx
  RetailObjectWorld world;
  ArchiveW3DFileSource w3dSource;
  WW3DAssetManager assets;
+ MapObjectOptions mapOptions; // the game keeps a reference to it
  LiveGame game;
  PinholeView view;
  MetaMap meta;
@@ -138,7 +139,7 @@ struct HudFx
  std::string error;
 
  explicit HudFx(bool withRadar = false)
-  : world(files.fsys), w3dSource(files.fsys), assets(w3dSource), game(world, files.fsys, assets, MapObjectOptions{}),
+  : world(files.fsys), w3dSource(files.fsys), assets(w3dSource), game(world, files.fsys, assets, mapOptions),
     windows(movies, services), shell(windows, factories, services, environment)
  {
   files.mount({ { "Data\\INI\\Default\\SoundEffects.ini", "AudioEvent DefaultSoundEffect\n Volume = 100\n Type = ui everyone\n Type = +DEFAULT\nEnd\n" },
