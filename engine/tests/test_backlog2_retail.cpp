@@ -735,7 +735,10 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// in the mover hash)
 	// merge queue q38 (measured once on the merged tree and at LOCODIST-1's merge point; goals unchanged): 0xE4523180 -> 0x45726314 (the retail locomotor
 	// distance to the goal, RW 0x664127, moves when the units arrive)
-	CHECK(a.hashes.back() == 0x45726314U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// lane RAI-THREAT (measured on this tree): Evendim's two SkirmishSpawnPoint map objects carry ThreatFinderUpdate, now the retail-awake update module
+	// (RW 0x7EDDB6 returns 1) instead of the sleeping UnportedUpdateModule. Their registration changes the phase 3/4 split of updates[0], so the units' AI
+	// update order and the last hash move: 0x45726314 -> 0x7E0DE32B; the goals and positions above are unchanged.
+	CHECK(a.hashes.back() == 0x7E0DE32BU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

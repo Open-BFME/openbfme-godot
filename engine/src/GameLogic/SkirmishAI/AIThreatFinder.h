@@ -1,16 +1,19 @@
 // OpenBFME. GPL-3.0.
 //
-// AIThreatFinder (lane AI-3, QA-1 U22): the per-player army strength around a position the skirmish AI's targets and tactics read (retail class name from the
-// manager string RW 0xDC62B8 "TheThreatFinderManager"; the object is 0x5BC bytes, ctor RW 0x7EDDFB).
+// AIThreatFinder (lane AI-3, QA-1 U22; lane RAI-THREAT added the named map-threat-area instance): the per-player army strength
+// around a position the skirmish AI's targets and tactics read, and the finder a map's ThreatFinderUpdate registers by name (retail
+// class name from the manager string RW 0xDC62B8 "TheThreatFinderManager"; one object is 0x5BC bytes, ctor RW 0x7EDDFB).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; static disassembly):
 //   * layout: + 0 .. 0x5A0 twenty records of 0x48 bytes (18 floats: + 0 the total, + 4 + 4 * c the ThreatBreakdown category c of 17), + 0x5A0 its name, + 0x5A4
 //     the position, + 0x5B0 the radius, + 0x5B4 the frame of the last scan (RW 0x7EDB2B sets 0: rescan), + 0x5B8 "no structures" (the AITarget's finder is made
-//     with 1, RW 0x6C6939).
-//   * the query RW 0x7EE166(out, player, mode, ...): a rescan (RW 0x7EE057) when (frame - last) * LOGICFRAMES_PER_SECOND >= 3.0 (RW 0xBDD42C; every caller the
-//     port has resets the frame first: always a rescan), then out = 0 (RW 0x7ED8A3) plus, for i = 0 .. 19 in order, record i when ThePlayerList's player i
-//     (RW 0x6A844E) exists and player->getRelationship(player i) (RW 0x6ACEAF) is ENEMIES (mode 0, RW 0x7EDB4A) or ALLIES (mode 1, RW 0x7EDB5D); the sums
-//     are SSE single adds (RW 0x7ED8D9: out[k] = record[k] + out[k]).
+//     with 1, RW 0x6C6939; a map threat area's finder with 0, RW 0x7EDEFF).
+//   * the constructor RW 0x7EDDFB (name, noStructures): the records zeroed (RW 0x7ED8A3), the name, the position and radius 0, the scan frame 0. The module's
+//     destruction (RW 0x7EDE52) removes a named finder from the manager.
+//   * the query RW 0x7EE166(out, player, mode, mode2player): a rescan (RW 0x7EE057) when (frame - lastScanFrame) * LOGICFRAMES_PER_SECOND >= 3.0
+//     (RW 0xBDD42C: 3.0; RW 0xD9F608: 5, so every new frame), then out = 0 (RW 0x7ED8A3) plus, for i = 0 .. 19 in order, record i when ThePlayerList's player i
+//     (RW 0x6A844E) exists and player->getRelationship(player i) (RW 0x6ACEAF) is ENEMIES (mode 0, RW 0x7EDB4A) or ALLIES (mode 1, RW 0x7EDB5D); mode 2 reads
+//     the record of mode2player's index directly. A null player gives the zeroed output. The sums are SSE single adds (RW 0x7ED8D9: out[k] = record[k] + out[k]).
 //   * the scan RW 0x7EE057: the records cleared (RW 0x7EDB33), then ThePartitionManager->iterateObjectsInRange(position, radius, FROM_CENTER_2D, { alive
 //     (RW 0xC10E20 slot 1 = RW 0x660E71: not + 0x458 bit 0) }, ITER_FASTEST); an object whose template KindOf has any of CAN_ATTACK, HERO, SUPPORT (and STRUCTURE
 //     when + 0x5B8 is 0) and not STRUCTURE when + 0x5B8 is 1 (RW 0x70C548 -> 0x661359, the any-bit test), adds its threat value to the record of its controlling
@@ -24,55 +27,124 @@
 //     + 0x4B4 and RW 0x695003 hands both to the experience tracker.
 //   * the template's ThreatLevel (+ 0x52C) is 1.0 and its ThreatBreakdown category (+ 0x530, the block's AIKindOf, RW 0x73C073 / 0x8ED575) -1 from the constructor
 //     (RW 0x73FE51 / 0x73FE59); RW 0x7EDB72 adds the value to + 0 and to + 4 + 4 * category, so an object without a ThreatBreakdown adds it to the total twice.
-//   * the counter table RW 0x7EDC2F / 0x7ED963 (used by RW 0x6C6623, the threat of the end's merge RW 0x8F1499, and by the unported best-target gate S-1302).
+//   * the counter table RW 0x7EDC2F / 0x7ED963 (used by RW 0x6C6623, the threat of the end's merge RW 0x8F1499, and by the best-target gate S-1302).
+//
+// The named map threat area (lane RAI-THREAT, rotation from the same class):
+//   * ThreatFinderUpdate (GameLogic/Module/ThreatFinderUpdate.h) makes one of these for a map object, named by the object's script name (+ 0x88) and with
+//     radius "objectThreatFinderRadius" or its DefaultRadius (RW 0x7EDECE .. 0x7EDF5A), registers it in TheThreatFinderManager (RW 0x7EDEA4 -> 0x7EE33A)
+//     and copies the object's position into it every frame (RW 0x7EDDB6).
+//   * TheThreatFinderManager (RW 0xDE8888) is a name -> finder map: lookup RW 0x7EE260, add RW 0x7EE33A, remove RW 0x7EE378. The script readers are
+//     SET_COUNTER_TO_THREAT_FINDER_THREAT (556, RW 0x7C68AA) and SET_COUNTER_TO_UNIT_THREAT's KindOf THREAT_FINDER branch (439, helper RW 0x608BCA).
+//
 // INFERENCE / NOT PORTED (stop S-1300, reported by stopLines): object + 0x4B8 is taken as its constructor value 1 (the writer RW 0x691A2F is not ported); an
 // InactiveBody's health ratio is taken as 0; the ThreatBreakdown block is read from the template's raw lines (S-071), so an unknown AIKindOf name, a load error in
-// retail (RW 0x8ED505 throws), leaves the category -1 here.
+// retail (RW 0x8ED505 throws), leaves the category -1 here. The skirmish AI's AITarget keeps this class's fields (position, radius, scan result) instead of a
+// managed finder object: retail also creates one per target and registers it as "AIThreatFinder%d" (RW 0x6C689D .. 0x6C6952), but no script reader can name
+// that generated name, so only the values matter here.
 
 #pragma once
 
 #include "Common/INIDataTypes.h"
 
+#include <map>
+#include <string>
+
 class GameLogic;
 class Object;
 class Player;
+class StateHasher;
 class ThingTemplate;
+class Xfer;
 
-namespace AIThreatFinder
+class AIThreatFinder
 {
-constexpr int kRecords = 20; // RW 0x7EDB33 / 0x7EE166: 0x14 players
-constexpr int kSlots = 18;   // 0x48 bytes: the total and 17 categories
+public:
+	constexpr static int kRecords = 20; // RW 0x7EDB33 / 0x7EE166: 0x14 players
+	constexpr static int kSlots = 18;   // 0x48 bytes: the total and 17 categories
 
-struct ThreatRecord
-{
-	float v[kSlots] = {}; ///< + 0 the total, + 1 + c the category c (AI_KINDOF)
+	struct ThreatRecord
+	{
+		float v[kSlots] = {}; ///< + 0 the total, + 1 + c the category c (AI_KINDOF)
+	};
+
+	// RW 0x7EDDFB; a name is what the script lookup uses, empty means an unnamed finder (the manager keeps no entry)
+	AIThreatFinder(std::string name, bool noStructures);
+	~AIThreatFinder();
+	AIThreatFinder(const AIThreatFinder &) = delete;
+	AIThreatFinder &operator=(const AIThreatFinder &) = delete;
+
+	const std::string &getName() const { return m_name; }
+	const Coord3D &getPosition() const { return m_position; }
+	float getRadius() const { return m_radius; }
+	bool noStructures() const { return m_noStructures; }
+
+	// RW 0x7EDDB6: the module's update copies the object's position here; the cached scan is not invalidated (retail does not)
+	void setPosition(const Coord3D &p) { m_position = p; }
+	// RW 0x7EDF42..0x7EDF5A: "objectThreatFinderRadius" or the module data's DefaultRadius
+	void setRadius(float radius) { m_radius = radius; }
+	// RW 0x7EDB2B: lastScanFrame = 0
+	void invalidateScan() { m_lastScanFrame = 0; }
+
+	// RW 0x7EE166: the summed record of the players whose relationship from `owner` is ENEMIES (mode 0) or ALLIES (mode 1); mode 2 is
+	// `mode2Player`'s record. `owner` null gives the zeroed record.
+	void query(GameLogic &logic, const Player *owner, int mode, const Player *mode2Player, ThreatRecord &out);
+
+	// RW 0x7EDC93: the 20 records, the name, the position, the radius, the scan frame and the no-structures flag
+	void xfer(Xfer &x);
+	void crc(StateHasher &h) const;
+
+	// RW 0x7EDB72's add (SSE): + 0 and + 1 + category (the category -1 adds to + 0 twice)
+	static void accumulate(ThreatRecord &r, int category, float v);
+	// RW 0x7ED963(this = a, category, v): what the value `v` of `category` counts against the record `a` (consuming a's matching categories), as the x87 register
+	// holds it (lane DECOMP-2: the team builder's threat test RW 0x9A26A1 sums it per member)
+	static double counterValue(ThreatRecord &a, int category, float v);
+	// RW 0x7EDC2F(this = a, b): a's total minus b's categories through the counter table RW 0x7ED963 (consumes a's categories), as the x87 register holds it
+	static double counterDifference(ThreatRecord &a, const ThreatRecord &b, float *aTotal, float *sumOut);
+	// RW 0x7EE057 + 0x7EE166: the summed record of the players whose relationship from `owner` is ENEMIES (mode 0) or ALLIES (mode 1)
+	static ThreatRecord scanSum(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, const Player &owner, int mode);
+
+	// template + 0x530: the ThreatBreakdown's AIKindOf (-1 without one)
+	static int threatCategory(const ThingTemplate &tt);
+	// RW 0x68F0EC: the threat value of one object, as the x87 register returns it, and stored as a float (RW 0x7EDB83)
+	static double threatValueWide(const Object &obj);
+	static float threatValue(const Object &obj);
+
+	// RW 0x7EE057: the per-player records of the objects around `position` (`noStructures` is the finder's + 0x5B8)
+	static void scan(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, ThreatRecord (&records)[kRecords]);
+
+	// RW 0x7EE057 + 0x7EE166: the summed total (record + 0) of the players whose relationship from `owner` is ENEMIES (mode 0) or ALLIES (mode 1)
+	static float threatTotal(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, const Player &owner, int mode);
+
+	// RW 0x6C650B: allies minus enemies around `position` within 400 (RW 0xBDBCA0) for the target owner `owner` (0 when the allies' total is not above 0)
+	static float relativeThreat(GameLogic &logic, const Coord3D &position, const Player &owner);
+
+	// RW 0x6C6623: the allies' total minus the enemies' values through the counter table (RW 0x7EDC2F), within 400; 0 without allies (outputs untouched)
+	static double counteredThreat(GameLogic &logic, const Coord3D &position, const Player &owner, float &alliesOut, float &countersOut);
+
+private:
+	std::string m_name;                    ///< + 0x5A0
+	Coord3D m_position{};                  ///< + 0x5A4
+	float m_radius = 0.0f;                 ///< + 0x5B0
+	std::uint32_t m_lastScanFrame = 0;     ///< + 0x5B4
+	bool m_noStructures = false;           ///< + 0x5B8
+	ThreatRecord m_records[kRecords];      ///< + 0
 };
 
-// RW 0x7EDB72's add (SSE): + 0 and + 1 + category (the category -1 adds to + 0 twice)
-void accumulate(ThreatRecord &r, int category, float v);
-// RW 0x7ED963(this = a, category, v): what the value `v` of `category` counts against the record `a` (consuming a's matching categories), as the x87 register
-// holds it (lane DECOMP-2: the team builder's threat test RW 0x9A26A1 sums it per member)
-double counterValue(ThreatRecord &a, int category, float v);
-// RW 0x7EDC2F(this = a, b): a's total minus b's categories through the counter table RW 0x7ED963 (consumes a's categories), as the x87 register holds it
-double counterDifference(ThreatRecord &a, const ThreatRecord &b, float *aTotal, float *sumOut);
-// RW 0x7EE057 + 0x7EE166: the summed record of the players whose relationship from `owner` is ENEMIES (mode 0) or ALLIES (mode 1)
-ThreatRecord scanSum(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, const Player &owner, int mode);
+// TheThreatFinderManager (RW 0xDE8888): the named map threat areas of one game. Retail has one per process; this port keeps one per GameLogic so a
+// second game in the same process (the tests' two peers) has its own names. The finds are case-sensitive as the retail NameKey table is.
+class ThreatFinderManager
+{
+public:
+	// RW 0x7EE33A sets the name's entry (retail's map keeps the first node and overwrites its value)
+	void add(const std::string &name, AIThreatFinder &finder);
+	// RW 0x7EE378 removes the name's entry; the two-argument form only when it still names `finder` (a replaced name is left alone)
+	void remove(const std::string &name);
+	void remove(const std::string &name, const AIThreatFinder &finder);
+	// RW 0x7EE260: the named finder, null when there is none
+	AIThreatFinder *find(const std::string &name) const;
+	size_t size() const { return m_finders.size(); }
+	void clear() { m_finders.clear(); }
 
-// template + 0x530: the ThreatBreakdown's AIKindOf (-1 without one)
-int threatCategory(const ThingTemplate &tt);
-// RW 0x68F0EC: the threat value of one object, as the x87 register returns it, and stored as a float (RW 0x7EDB83)
-double threatValueWide(const Object &obj);
-float threatValue(const Object &obj);
-
-// RW 0x7EE057: the per-player records of the objects around `position` (`noStructures` is the finder's + 0x5B8)
-void scan(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, ThreatRecord (&records)[kRecords]);
-
-// RW 0x7EE057 + 0x7EE166: the summed total (record + 0) of the players whose relationship from `owner` is ENEMIES (mode 0) or ALLIES (mode 1)
-float threatTotal(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, const Player &owner, int mode);
-
-// RW 0x6C650B: allies minus enemies around `position` within 400 (RW 0xBDBCA0) for the target owner `owner` (0 when the allies' total is not above 0)
-float relativeThreat(GameLogic &logic, const Coord3D &position, const Player &owner);
-
-// RW 0x6C6623: the allies' total minus the enemies' values through the counter table (RW 0x7EDC2F), within 400; 0 without allies (outputs untouched)
-double counteredThreat(GameLogic &logic, const Coord3D &position, const Player &owner, float &alliesOut, float &countersOut);
-} // namespace AIThreatFinder
+private:
+	std::map<std::string, AIThreatFinder *> m_finders;
+};

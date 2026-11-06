@@ -7,7 +7,6 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/Module/RepairSpecialPower.cpp
     src/GameLogic/Module/SpawnBehavior.cpp
     src/GameLogic/Module/SlavedUpdate.cpp
-    src/GameLogic/Module/Mod4Stops.cpp # the registered stops (report text only)
 )
 set(OPENBFME_MOD4_TESTS
     tests/test_mod4_modules.cpp
