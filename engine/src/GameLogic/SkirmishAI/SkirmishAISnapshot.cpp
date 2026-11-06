@@ -428,7 +428,10 @@ void xferBrain(Xfer &x, AIBrainState &b, RequestTable &table, int version)
 
 void AIStatCollector::xfer(Xfer &x)
 {
-	XferVersion v{ 2, 2 }; // version 2 (lane AI5): the money reserve and its target (the block's version 2 refuses older snapshots)
+	// version 2 (lane AI5): the money reserve and its target. Version 3 (lane RAI-DEF): the position sampler (+ 0x10) and its pending
+	// registrations. A version 2 snapshot predates the sampler and loads with an empty one: its DEFENSIVE heuristic then has no group until a
+	// structure is registered again.
+	XferVersion v{ 2, 3 };
 	x.xferVersion(v);
 	for (std::vector<ObjectID> *l : { &m_army, &m_dozers, &m_ships, &m_structures, &m_pads, &m_economy, &m_heroes })
 	{
@@ -438,6 +441,16 @@ void AIStatCollector::xfer(Xfer &x)
 		x.xferAsciiString(&k);
 		x.xferInt(&n);
 	});
+	if (v.current >= 3)
+	{
+		AIXfer::ids(x, m_pendingPositions); // the sampler adds waiting for their object's position (the header's inference)
+		m_positions.xfer(x);
+	}
+	else if (x.isLoading())
+	{
+		m_pendingPositions.clear();
+		m_positions = AIPositionSampler{};
+	}
 	x.xferUnsignedInt(&m_reserve);
 	x.xferUnsignedInt(&m_reserveTarget);
 }
