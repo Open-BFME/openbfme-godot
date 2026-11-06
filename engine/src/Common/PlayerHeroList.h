@@ -20,10 +20,10 @@
 //     (RW 0x781792 -> RW 0x780DD4; AutoSpawn rules zero the cost);
 //   * cost (RW 0x780AD3 -> 0x780614): trunc((float)BuildAssistant::calcCostToBuild(template, owner, no producer, record cost) * m) where m is 1.0, or with a
 //     producer its ProductionUpdate's hero multiplier (slot 28, RW 0x8A0A31: the product of the CostMultiplier of the ProductionModifier entries with
-//     HeroRevive for a revive record or HeroPurchase for a purchase record whose RequiredUpgrade is empty or the producer's); a Brutal AI owner's discount
-//     (RW 0x6AA61B == 3 and RW 0x6A950B, AI data + 0x95C) is stop S-204, as for units;
+//     HeroRevive for a revive record or HeroPurchase for a purchase record whose RequiredUpgrade is empty or the producer's); then, when the PRODUCER's
+//     player is a Brutal skirmish AI (RW 0x6AA61B == 3 and RW 0x6A950B, AI data + 0x95C), trunc((1.0 - m) * cost) once more (lane BRUTALAI-1);
 //   * time in frames (RW 0x780B72 -> 0x780687): the same with calcTimeToBuild(template, owner, no producer, record seconds) and the TimeMultiplier (slot 29,
-//     RW 0x8A0AB0), Brutal AI data + 0x960 (S-204);
+//     RW 0x8A0AB0), Brutal AI data + 0x960 (BRUTALAI-1);
 //   * startProduction (RW 0x7812B2, index, production id): refused when a record already has the id or the index is out of range; a record not in production
 //     starts: + 0xDC = 0.998, + 0xB4 = id, + 0xA8 = the logic frame; true. cancelProduction (RW 0x780C64, id): the record in production goes back
 //     (+ 0xA8 = -1, + 0xB4 = -1, + 0xDC = 1.0). The progress (RW 0x780C9F, index, producer): 0.0 for no record or one not in production, 1.0 when the

@@ -926,9 +926,11 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// object with the status UNATTACKABLE, RW 0x6C9207: the armies go for a fortress's citadel instead of its castle flag, with ATKSTATE-1a's attack-state
 	// gates) keeps seed 2 open at 9000 with a new table from the 5000 window on, ends seed 7 with Mordor's defeat (start position 1) at 6563 and seed 1234
 	// with Mordor's defeat (start position 0) at 8095. Engine pins, not retail values.
-	// pin: merge of #235 on main 1d43a17e (2026-11-06, lane PR-TEND-AI): FarmKillSquad's farm and production choice moves the AIs' play:
-	// seed 2 stays open at 9000 with a new table, seed 7 ends with Mordor's defeat at 5158 (was 6563), seed 1234 stays open at 9000 (was 8095).
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 5158 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Merge queue q43 (measured once on the merged tree and at each merge point): #231's DEFENSIVE tactic (the AIs defend their buildings) ends seed 2 with
+	// the Men's defeat at 6558, seed 7 with Mordor's defeat at 2800 and keeps seed 1234 open; #227 / #228 / #235 (the siege tactics and the farm raid
+	// targets) end seed 7 at 2671 and keep seed 2 open at 9000 with a new table from the first window on; the other items keep the games. Engine pins, not
+	// retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 2671 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -979,16 +981,18 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// window on; the game stays open at 9000
 			// merge queue q42 (measured once on the merged tree and at each merge point; CASTLEATK-1 moves it, #216, #220 and #225 keep it): a new table
 			// from the 5000 window on; the game stays open at 9000
+			// merge queue q43 (measured once on the merged tree and at each merge point; see above): a new table from the first window on; the game stays open
+			// at 9000
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 90u/7s destroyed 20u/1s] [1 attacks 0 built 91u/8s destroyed 33u/2s]\n"
-		"frame 2000: [0 attacks 0 built 230u/8s destroyed 122u/1s] [1 attacks 2 built 186u/10s destroyed 171u/5s]\n"
-		"frame 3000: [0 attacks 0 built 347u/11s destroyed 197u/1s] [1 attacks 3 built 292u/13s destroyed 283u/7s]\n"
-		"frame 4000: [0 attacks 0 built 408u/13s destroyed 258u/4s] [1 attacks 3 built 362u/16s destroyed 358u/9s]\n"
-		"frame 5000: [0 attacks 1 built 503u/13s destroyed 348u/4s] [1 attacks 4 built 434u/20s destroyed 421u/10s]\n"
-		"frame 6000: [0 attacks 2 built 589u/13s destroyed 384u/5s] [1 attacks 5 built 494u/24s destroyed 496u/10s]\n"
-		"frame 7000: [0 attacks 4 built 655u/14s destroyed 384u/5s] [1 attacks 5 built 498u/24s destroyed 602u/10s]\n"
-		"frame 8000: [0 attacks 7 built 762u/15s destroyed 384u/5s] [1 attacks 5 built 498u/27s destroyed 694u/10s]\n"
-		"frame 9000: [0 attacks 9 built 878u/15s destroyed 384u/7s] [1 attacks 5 built 498u/29s destroyed 822u/10s]\n");
+		"frame 1000: [0 attacks 0 built 91u/6s destroyed 20u/1s] [1 attacks 1 built 76u/8s destroyed 35u/2s]\n"
+		"frame 2000: [0 attacks 2 built 235u/10s destroyed 173u/1s] [1 attacks 2 built 221u/10s destroyed 152u/5s]\n"
+		"frame 3000: [0 attacks 2 built 328u/13s destroyed 233u/2s] [1 attacks 3 built 333u/13s destroyed 220u/6s]\n"
+		"frame 4000: [0 attacks 3 built 446u/16s destroyed 316u/5s] [1 attacks 4 built 385u/16s destroyed 345u/9s]\n"
+		"frame 5000: [0 attacks 8 built 526u/20s destroyed 341u/9s] [1 attacks 7 built 417u/19s destroyed 474u/9s]\n"
+		"frame 6000: [0 attacks 9 built 646u/22s destroyed 365u/11s] [1 attacks 8 built 427u/19s destroyed 578u/9s]\n"
+		"frame 7000: [0 attacks 11 built 684u/27s destroyed 444u/12s] [1 attacks 9 built 471u/21s destroyed 635u/11s]\n"
+		"frame 8000: [0 attacks 14 built 707u/30s destroyed 504u/15s] [1 attacks 10 built 544u/21s destroyed 662u/11s]\n"
+		"frame 9000: [0 attacks 17 built 779u/30s destroyed 594u/16s] [1 attacks 11 built 628u/22s destroyed 752u/11s]\n");
 		}
 	}
 }

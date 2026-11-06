@@ -146,7 +146,9 @@ TEST_CASE("siege1 attack retail: Mordor's catapult made inside its MinimumAttack
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): 2869.34985 -> 2869.33984
 	// // pin: #220 (a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 -> 0x680A75 and validMovementPosition RW 0x6EA52E .. 0x6EA547; the corridor's +1000 on every ground-grid layer RW 0x6F9DC7 / 0x76550F), measured once on the merged tree with #207 and #211: a wanderer's ramp goal gets an exact path, the random stream moves: 2869.33984 -> 2869.35986
 	// pin: merge queue q42 (#220's wall-top and ramp goals on top of q41's DECOMPFIX-1104B; measured once on the merged tree and at each merge point, #216 keeps the archive's value, CASTLEATK-1 and #225 keep #220's): 2869.33984 (#220 alone: 2869.35986) -> 2869.32983
-	CHECK(r.healthAfter == 2869.32983f); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 2869.33984 -> 2869.35986; lane FBSIM-1 (the AI defender's phantom sites move the random stream): 2935.85986 -> 2935.87988
+	// pin: merge queue q43 (#231's DEFENSIVE tactic moves the AI defender and the random stream; measured once on the merged tree and at each merge point,
+	// the later items keep it): 2869.32983 -> 2869.33984
+	CHECK(r.healthAfter == 2869.33984f); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 2869.33984 -> 2869.35986; lane FBSIM-1 (the AI defender's phantom sites move the random stream): 2935.85986 -> 2935.87988
 }
 
 TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's Deep's main gate; Mordor's catapult from 500 toward Player_2_Start hits the flanking tower")
@@ -188,11 +190,13 @@ TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's
 	// merge queue q37 (measured once on the merged tree): first damage 243 -> 245, death 309 -> 312
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the demolisher's first damage 245 -> 242
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first damage 242 -> 250
-	CHECK(d.firstHit == 250);
+	// pin: merge queue q43 (#231's DEFENSIVE tactic; measured once on the merged tree and at each merge point, the later items keep it): first damage 250 -> 249
+	CHECK(d.firstHit == 249);
 	CHECK(d.healthAfterFirst == 3000.0f);
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): its death 312 -> 309
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 309 -> 318
-	CHECK(d.deathFrame == 318);
+	// pin: merge queue q43 (#231's DEFENSIVE tactic; measured once on the merged tree and at each merge point, the later items keep it): death 318 -> 317
+	CHECK(d.deathFrame == 317);
 	const AttackResult c = siegeAttack(*s, kHelmsDeep, "Main Gate", "MordorCatapult", false, 500.0f, 600, true);
 	print("MordorCatapult", c);
 	// on the archive (SIEGE-1, test_siege1_gate.cpp): from 500 toward Player_2_Start the catapult's stones meet HelmsDeepGatehouseRight in their line of fire,

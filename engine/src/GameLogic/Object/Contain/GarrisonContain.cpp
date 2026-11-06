@@ -435,7 +435,42 @@ void GarrisonContain::onContaining(Object *obj, bool wasSelected)
 		obj->setDrawableHidden(true); // RW 0x87BF38
 	}
 	recalcApparentControllingPlayer(); // RW 0x87BF41: slot 0x50
-	// RW 0x87BF44 .. 0x87BF9F: the rider's DISABLED type 0x14 (none in the port's 11 types) is cleared on it and its members: no type 0x14 exists (S-148)
+	// lane GARRISONWEAPON-1, RW 0x87BF44 .. 0x87BF9D: a rider whose template has a CONTAINED weapon set (RW 0x691014(20)) takes the weapon set flag CONTAINED
+	// (RW 0x691059(20): Object + 0x38C bit 20, the weapon set update, the mapped model condition), then so does every member of its horde that has one
+	if (hasContainedWeaponSet(*obj))
+	{
+		obj->setWeaponSetFlag(kWeaponSetContained, true);
+		setContainedOnHordeMembers(*obj);
+	}
+}
+
+// RW 0x691014(20): the object's template has a weapon set for WeaponSetType CONTAINED
+bool GarrisonContain::hasContainedWeaponSet(const Object &obj)
+{
+	const ObjectWeapons *w = obj.getWeapons();
+	return w && w->hasWeaponSetFor(kWeaponSetContained);
+}
+
+// RW 0x87BF5D .. 0x87BF9D / 0x87C225 .. 0x87C267: the rider's horde interface (RW 0x68C866: Object + 0x258 slot 0x7C), its member list (horde slot 0x108)
+// in order; each member with a CONTAINED weapon set takes the flag (RW 0x691059(20)). Both the entry and the exit SET it on the members (retail's own
+// bytes); a member's own exit through onRemoving clears its flag
+void GarrisonContain::setContainedOnHordeMembers(Object &rider)
+{
+	ContainModuleInterface *contain = rider.getContain();
+	if (!contain || !contain->getHordeContainInterface())
+	{
+		return;
+	}
+	if (const ContainModuleInterface::ContainedItemsList *members = contain->getContainedItemsList())
+	{
+		for (Object *m : *members)
+		{
+			if (m && hasContainedWeaponSet(*m))
+			{
+				m->setWeaponSetFlag(kWeaponSetContained, true);
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -521,6 +556,13 @@ void GarrisonContain::onRemoving(Object *obj)
 	{
 		++m_openStats.ridersDestroyedOnDeath;
 		container->logic().reportError("GarrisonContain of " + container->getTemplate()->getName() + ": the KillPassengersOnDeath branch of RW 0x87BFA6 is not ported (S-1100)");
+	}
+	// lane GARRISONWEAPON-1, RW 0x87C20E .. 0x87C267 (both branches end here, RW 0x87C0BD / 0x87C202): a rider with a CONTAINED weapon set loses the flag
+	// (RW 0x691106(20)), then its horde's members with one take it (RW 0x691059(20), as on the entry)
+	if (hasContainedWeaponSet(*obj))
+	{
+		obj->setWeaponSetFlag(kWeaponSetContained, false);
+		setContainedOnHordeMembers(*obj);
 	}
 }
 

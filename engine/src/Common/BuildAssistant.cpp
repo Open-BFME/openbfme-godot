@@ -21,6 +21,7 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
 #include <variant>
 
@@ -112,8 +113,13 @@ int BuildAssistant::calcCostToBuild(const ThingTemplate &tt, const Player *playe
 	const float K = player->getProductionCostChangeBasedOnKindOf(tt, false);
 	X = NumericState::pc24Mul(K, X);
 	const float h = 1.0f;                               // the handicap table RW 0x7B19BF (S-204)
-	const float r = NumericState::pc24Mul(NumericState::pc24Mul(NumericState::pc24Mul((float)cost, h), X), P);
-	return truncToInt(r);                               // cvttss2si; the Brutal AI discount (RW 0x6AA61B) is not ported (S-204)
+	const float r = NumericState::pc24Mul(NumericState::pc24Mul(NumericState::pc24Mul((float)cost, h), X), P); // fstp [ebp + 0x10]
+	// lane BRUTALAI-1, RW 0x73C344 .. 0x73C38C: the Brutal skirmish AI pays (1.0 - m) of the stored float (subss; mulss; cvttss2si)
+	if (const std::optional<float> m = player->getBrutalBuildReduction(false))
+	{
+		return SimMath::cvttss2si(SimMath::sseMul(SimMath::sseSub(1.0f, *m), r));
+	}
+	return truncToInt(r);                               // RW 0x73C392: cvttss2si
 }
 
 // RW 0x73C39E
@@ -190,7 +196,19 @@ int BuildAssistant::calcTimeToBuild(const ThingTemplate &tt, const Player *playe
 		}
 		sec = truncToInt(NumericState::pc24Mul((float)sec, f));
 	}
-	return (int)LOGICFRAMES_PER_SECOND * sec; // RW 0xD9F608: 5
+	const int frames = (int)LOGICFRAMES_PER_SECOND * sec; // RW 0xD9F608: 5
+	// lane BRUTALAI-1, RW 0x73C569 .. 0x73C5CB: the Brutal skirmish AI builds in floor(frames * (1.0 - m)) frames, x87 under PC24: fild; fld1; fsub dword m;
+	// fmulp; fstp qword; call [0xBD0580] (MSVCR71 floor); fstp dword; fistp. Every other player: RW 0x73C5D0 .. 0x73C5F1 runs fild; floor; fstp dword;
+	// fistp on the whole frame count, which leaves it unchanged
+	if (player)
+	{
+		if (const std::optional<float> m = player->getBrutalBuildReduction(true))
+		{
+			const double x = SimMath::floorD(SimMath::pc24MulW((double)frames, SimMath::pc24SubW(1.0, (double)*m)));
+			return SimMath::fistp32(SimMath::fstpDword(x));
+		}
+	}
+	return frames;
 }
 
 int BuildAssistant::maxSimultaneousOfType(const ThingTemplate &tt) { return (int)(integerField(tt, "MaxSimultaneousOfType") & 0xFFFF); }
