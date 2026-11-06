@@ -65,7 +65,7 @@ TerrainTrees::TerrainTrees(GameLogic &logic) : m_logic(logic)
 void TerrainTrees::reset()
 {
 	m_records.clear();
-	m_clusters.clear();
+	m_clusters = AIPositionSampler{};
 	m_events.clear();
 	m_heads.assign((size_t)BUCKETS * BUCKETS, (std::int16_t)-1);
 	m_hasExtent = false;
@@ -96,24 +96,14 @@ void TerrainTrees::setExtent(float loX, float loY, float hiX, float hiY)
 
 // ---- lane RAI-POW-3: the AI's tree-cluster index (see the header) -------------------------------------------------------------------------
 
-namespace
-{
-// RW 0x8E3DD6 / RW 0x6831BE: the squared 3D distance of two record positions, SSE float32 in z, y, x order
-float clusterSquared(const Coord3D &a, const Coord3D &b)
-{
-	const float dx = SimMath::subf32(a.x, b.x), dy = SimMath::subf32(a.y, b.y), dz = SimMath::subf32(a.z, b.z);
-	return SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
-}
-} // namespace
-
 void TerrainTrees::clearClusters()
 {
-	m_clusters.clear();
+	m_clusters = AIPositionSampler{};
 }
 
 bool TerrainTrees::anyClusterUsed() const
 {
-	for (const Cluster &c : m_clusters)
+	for (const Cluster &c : m_clusters.groups())
 	{
 		if (c.used)
 		{
@@ -123,100 +113,19 @@ bool TerrainTrees::anyClusterUsed() const
 	return false;
 }
 
-// RW 0x683055 (the tree copy of RW 0x8E4082): the group's centre and radius grow to contain the new record; the empty group's radius is the padding
-void TerrainTrees::appendCluster(Cluster &cluster, int recordIndex, const std::vector<Record> &from)
+// RW 0x683F17 .. 0x683F20: the record joins the sampler over the tree list; the sampler's grouping is RW 0x683C2D's copy of RW 0x8E42C8
+void TerrainTrees::installRecord(std::uint32_t recordIndex)
 {
-	const Coord3D p = from[(size_t)recordIndex].position;
-	if (cluster.members.empty())
-	{
-		cluster.radius = kClusterPadding;
-		cluster.center = p;
-	}
-	else
-	{
-		const float inner = SimMath::subf32(cluster.radius, kClusterPadding);
-		if (!(clusterSquared(p, cluster.center) <= SimMath::mulf32(inner, inner)))
-		{
-			// RW 0x403111 / 0x403175: the direction to the point, normalised (x87 length, SSE scale)
-			Coord3D dir{ SimMath::subf32(cluster.center.x, p.x), SimMath::subf32(cluster.center.y, p.y), SimMath::subf32(cluster.center.z, p.z) };
-			const float distance = (float)SimMath::length3d(dir.x, dir.y, dir.z);
-			if (distance != 0.0f)
-			{
-				const float scale = SimMath::divf32(1.0f, distance);
-				dir = { SimMath::mulf32(dir.x, scale), SimMath::mulf32(dir.y, scale), SimMath::mulf32(dir.z, scale) };
-			}
-			const float radius = SimMath::mulf32(SimMath::addf32(SimMath::addf32(cluster.radius, distance), kClusterPadding), 0.5f);
-			const Coord3D edge{ SimMath::addf32(cluster.center.x, SimMath::mulf32(dir.x, cluster.radius)),
-				SimMath::addf32(cluster.center.y, SimMath::mulf32(dir.y, cluster.radius)), SimMath::addf32(cluster.center.z, SimMath::mulf32(dir.z, cluster.radius)) };
-			cluster.center = { SimMath::addf32(edge.x, SimMath::mulf32(-dir.x, radius)), SimMath::addf32(edge.y, SimMath::mulf32(-dir.y, radius)),
-				SimMath::addf32(edge.z, SimMath::mulf32(-dir.z, radius)) };
-			cluster.radius = radius;
-		}
-	}
-	cluster.members.push_back(recordIndex);
-}
-
-// RW 0x683C2D -> RW 0x683807: insert a record into the first group with a member within 2 * padding^2, merging the other selected groups
-void TerrainTrees::insertCluster(int recordIndex, const std::vector<Record> &from)
-{
-	for (Cluster &c : m_clusters)
-	{
-		c.selected = false;
-	}
-	size_t first = m_clusters.size();
-	const float bound = SimMath::mulf32(SimMath::mulf32(kClusterPadding, kClusterPadding), 2.0f); // RW 0x6831BE -> RW 0x8E3DD6
-	const Coord3D p = from[(size_t)recordIndex].position;
-	for (size_t i = 0; i < m_clusters.size(); ++i)
-	{
-		for (int member : m_clusters[i].members)
-		{
-			if (bound > clusterSquared(p, from[(size_t)member].position))
-			{
-				m_clusters[i].selected = true; // RW 0x683206
-				if (first == m_clusters.size())
-				{
-					first = i;
-					appendCluster(m_clusters[i], recordIndex, from); // RW 0x683217
-				}
-				break;
-			}
-		}
-	}
-	if (first == m_clusters.size())
-	{
-		m_clusters.emplace_back();
-		appendCluster(m_clusters.back(), recordIndex, from); // RW 0x683842 .. 0x683879
-		return;
-	}
-	// RW 0x6838B5 .. 0x68391E: every later selected group's members join the first in member order, then the group is destroyed
-	for (size_t i = first + 1; i < m_clusters.size(); ++i)
-	{
-		if (!m_clusters[i].selected)
-		{
-			continue;
-		}
-		for (int member : m_clusters[i].members)
-		{
-			appendCluster(m_clusters[first], member, from);
-		}
-	}
-	for (size_t i = m_clusters.size(); i-- > first + 1;)
-	{
-		if (m_clusters[i].selected)
-		{
-			m_clusters.erase(m_clusters.begin() + (long)i);
-		}
-	}
+	m_clusters.add((ObjectID)recordIndex, kClusterPadding, [this](ObjectID id) { return m_records[(size_t)id].position; });
 }
 
 // RW 0x683D53: the index over the map's tree list, rebuilt from the records as the map made them (a cleared record keeps its place: RW 0x67D3C2)
-void TerrainTrees::rebuildClusters(const std::vector<Record> &from)
+void TerrainTrees::rebuildClusters()
 {
-	// the caller has already put the map's records back into m_records (TerrainTrees::xfer); `from` names them
 	clearClusters();
-	for (size_t i = 0; i < from.size(); ++i)
+	for (size_t i = 0; i < m_records.size(); ++i)
 	{
-		insertCluster((int)i, from);
+		installRecord((std::uint32_t)i);
 	}
 }
 
@@ -256,7 +165,7 @@ bool TerrainTrees::addTree(const ThingTemplate &tmpl, const Coord3D &position, s
 	r.grabbable = boolField(tmpl, "IsGrabbable");     // + 0x5FB
 	r.harvestable = boolField(tmpl, "IsHarvestable"); // + 0x5FC
 	m_records.push_back(r);
-	insertCluster((int)m_records.size() - 1, m_records); // RW 0x683F17 .. 0x683F20: the record joins the tree cluster index
+	installRecord((std::uint32_t)m_records.size() - 1); // RW 0x683F17 .. 0x683F20: the record joins the tree cluster index
 	return true;
 }
 
@@ -578,14 +487,14 @@ void TerrainTrees::crc(StateHasher &h) const
 	{
 		h.addU32(0x584u);
 		std::uint32_t used = 0;
-		for (const Cluster &c : m_clusters)
+		for (const Cluster &c : m_clusters.groups())
 		{
 			used += c.used ? 1u : 0u;
 		}
 		h.addU32(used);
-		for (size_t i = 0; i < m_clusters.size(); ++i)
+		for (size_t i = 0; i < m_clusters.groups().size(); ++i)
 		{
-			if (m_clusters[i].used)
+			if (m_clusters.groups()[i].used)
 			{
 				h.addU32((std::uint32_t)i);
 			}
@@ -705,14 +614,14 @@ void TerrainTrees::xfer(Xfer &x)
 		if (v.current >= 2)
 		{
 			std::uint32_t used = 0;
-			for (const Cluster &c : m_clusters)
+			for (const Cluster &c : m_clusters.groups())
 			{
 				used += c.used ? 1u : 0u;
 			}
 			x.xferCount(&used, 1, 4);
-			for (size_t i = 0; i < m_clusters.size(); ++i)
+			for (size_t i = 0; i < m_clusters.groups().size(); ++i)
 			{
-				if (m_clusters[i].used)
+				if (m_clusters.groups()[i].used)
 				{
 					std::uint32_t index = (std::uint32_t)i;
 					x.xferUnsignedInt(&index);
@@ -730,7 +639,7 @@ void TerrainTrees::xfer(Xfer &x)
 		m_records[e.first] = e.second;
 	}
 	// lane RAI-POW-3: the index is the map's (RW 0x683D53 rebuilds it from the records); the snapshot's used bytes go on top
-	rebuildClusters(m_start);
+	rebuildClusters();
 	m_changed = (int)changed;
 	m_changedFrame = changedFrame;
 	m_toppleSpeed = toppleSpeed;
@@ -738,25 +647,25 @@ void TerrainTrees::xfer(Xfer &x)
 	{
 		std::uint32_t used = 0;
 		x.xferCount(&used, 1, 4);
-		if (used > m_clusters.size())
+		if (used > m_clusters.groups().size())
 		{
-			throw XferException("terrain trees: " + std::to_string(used) + " used cluster(s) of " + std::to_string(m_clusters.size()));
+			throw XferException("terrain trees: " + std::to_string(used) + " used cluster(s) of " + std::to_string(m_clusters.groups().size()));
 		}
-		std::vector<char> seen(m_clusters.size(), 0);
+		std::vector<char> seen(m_clusters.groups().size(), 0);
 		for (std::uint32_t n = 0; n < used; ++n)
 		{
 			std::uint32_t index = 0;
 			x.xferUnsignedInt(&index);
-			if (index >= m_clusters.size())
+			if (index >= m_clusters.groups().size())
 			{
-				throw XferException("terrain trees: used cluster " + std::to_string(index) + " of " + std::to_string(m_clusters.size()));
+				throw XferException("terrain trees: used cluster " + std::to_string(index) + " of " + std::to_string(m_clusters.groups().size()));
 			}
 			if (seen[index])
 			{
 				throw XferException("terrain trees: used cluster " + std::to_string(index) + " twice");
 			}
 			seen[index] = 1;
-			m_clusters[index].used = true;
+			m_clusters.groups()[index].used = true;
 		}
 	}
 }

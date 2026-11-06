@@ -44,6 +44,7 @@ public:
 		float radius = 0.0f;      ///< + 0x14
 		Coord3D center{};         ///< + 0x04
 		bool selected = false;    ///< + 0x00 (RW's per-insert mark)
+		bool used = false;        ///< + 0x18 (RW 0x9E7095 / 0x9E70A6: the tree index's Devastation mark; the AI records never set it)
 		std::vector<ObjectID> members; ///< + 0x1C
 	};
 	// the position of an object at the time it is inserted (retail asks the game for both objects, RW 0x8E3DD6 -> RW 0x8E4082's + 0x20)

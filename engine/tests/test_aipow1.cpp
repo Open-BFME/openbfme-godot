@@ -494,7 +494,7 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("42 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("43 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") != std::string::npos);
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
 	// the decisions still unported: SOUL_FREEZE, ATTACK_HEAL_AOE and 8 spell book ones (ARMY_BREAKER, HEAL, STRUCTURE_BREAKER (+ _PREF_WALLS, BASEKILL),
@@ -1148,4 +1148,46 @@ TEST_CASE("RAI-POW-3: the tree-cluster index (TerrainTrees + 0x584) groups the m
 	// ... and the earlier version 1 snapshot loads into a game whose clusters were never used
 	REQUIRE_MESSAGE(a.g.live->loadSnapshot(before, &err), err);
 	CHECK(!trees.anyClusterUsed());
+}
+
+TEST_CASE("RAI-POW-3: the tree-cluster index's grouping: the 100 cutoff, a bridge merge and the merged sphere (RW 0x8E42C8 / 0x8E4082)")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionIsengard", 6103, &err), err);
+	TerrainTrees trees(*a.logic);
+	trees.setExtent(0.0f, 0.0f, 10000.0f, 10000.0f);
+	const ThingTemplate *tmpl = a.logic->trees().records().empty() ? nullptr : a.logic->trees().records()[0].tmpl;
+	REQUIRE(tmpl != nullptr);
+	// a and b share a group (100 apart, inside sqrt(2) * 100); c is 350 from the first group's centre (outside) and starts a second; d joins c;
+	// e at 1250 is inside the bound of both groups, so it joins the first and the second is merged into it in member order
+	for (const Coord3D &p : { Coord3D{ 1000.0f, 1000.0f, 0.0f }, Coord3D{ 1100.0f, 1000.0f, 0.0f }, Coord3D{ 1400.0f, 1000.0f, 0.0f },
+		 Coord3D{ 1500.0f, 1000.0f, 0.0f }, Coord3D{ 1250.0f, 1000.0f, 0.0f } })
+	{
+		REQUIRE(trees.addTree(*tmpl, p, (std::uint32_t)trees.records().size() + 1));
+	}
+	REQUIRE(trees.clusters().size() == 1u);
+	const TerrainTrees::Cluster &merged = trees.clusters()[0];
+	// the members are record indices in the map's add order: 0, 1, then the bridge 4, then the merged group's 2, 3
+	CHECK(merged.members == (std::vector<ObjectID>{ 0, 1, 4, 2, 3 }));
+	CHECK(merged.radius == 450.0f); // 200, 250, 325 (the bridge), 400 and 450 as each member is appended (RW 0x8E418E)
+	CHECK(merged.center.x == 1250.0f);
+	CHECK(merged.center.y == 1000.0f);
+	CHECK(merged.center.z == 0.0f);
+}
+
+TEST_CASE("RAI-POW-3: a used cluster alone changes the game hash (the Devastation mark is set before the location test)")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionIsengard", 6104, &err), err);
+	TerrainTrees &trees = a.logic->trees();
+	REQUIRE(!trees.clusters().empty());
+	REQUIRE(!trees.anyChanged()); // the map starts with no changed record
+	const std::uint32_t before = a.logic->hashState(nullptr, nullptr);
+	trees.clusters()[0].used = true; // what decideTreeKiller does before setLocationIfValid (RW 0x9E7095)
+	const std::uint32_t after = a.logic->hashState(nullptr, nullptr);
+	CHECK(before != after);
 }
