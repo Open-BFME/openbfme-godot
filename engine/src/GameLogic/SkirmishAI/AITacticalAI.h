@@ -242,6 +242,8 @@ void makeGenerator(GameLogic &logic, AISkirmishPlayer &ai);
 void flankWaypointsForTest(GameLogic &logic, AITactic &tac, const AITarget &t, const Coord3D &start);
 // test hook (lane AI-3): RW 0x6C720A(pos, -1) on the AI's attacked-at list
 void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &pos);
+// test hook (lane RAI-DEF): RW 0x8F21F7's team setup, with the recruiting player's index separate from the target chooser's (as an allied brain's
+void startTacticForTest(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targetIndex, int playerIndex);
 // test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);

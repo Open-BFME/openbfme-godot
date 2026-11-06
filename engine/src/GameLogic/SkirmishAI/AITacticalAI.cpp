@@ -320,7 +320,10 @@ void heuristicDozers(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState 
 // object in the group's radius (2D scan, ITER_FASTEST) that is the player's ENEMY (relationship 1), alive, with CAN_ATTACK, HERO or SUPPORT and none of
 // UNATTACKABLE, SHIP, NEUTRALGOLLUM or PASS_EXPERIENCE_TO_CONTAINER; one group with a hit is drawn at AITargetHeuristicBaseDefense.cpp line 0x57. The
 // group's member count (RW 0x97D700) is the target's defence size (+ 0x2C): 1 -> 0, 2 -> 1, else 2; a count of 1 only goes on when the second draw at
-// line 0x60 is below 30. The target is the object with a 200 radius (RW 0xBE4170, AITarget::setTarget RW 0x6C6A09)
+// line 0x60 is below 30. The target is the object with a 200 radius (RW 0xBE4170, AITarget::setTarget RW 0x6C6A09).
+// BFME2 1.06's counterpart is the same slot 1 at 0x5737D6 (Open-BFME-2 Code/GameEngine/Source/GameLogic/SkirmishAI/AITacticalAI/AITargetChooser/
+// AITargetHeuristics/AITargetHeuristicBaseDefense.cpp): mask 3 / 90 only (no SUPPORT 218), draws at lines 0x56 / 0x5F; RotWK adds SUPPORT and moves both
+// draws. The BFME2 edition runs this RotWK rule today (docs/EDITIONS.md).
 void heuristicBaseDefense(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState &b, AITarget &t)
 {
 	const Player *player = playerOf(logic, ai.playerIndex);
@@ -1012,7 +1015,10 @@ void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &
 	case SIMPLE_EXPANSION: // RW 0x9B5081: + 0x2D0 = GetGameLogicRandomValue(2, 2) (AISimpleExpansionTactic.cpp line 0xA0); the minimum stays the pool's 1
 		team.maximum = logic.random().getValue(2, 2, "AISimpleExpansionTactic.cpp", 0xA0);
 		break;
-	case SIMPLE_DEFENSE: // RW 0x9B4EF0: the recruit origin is the target's position; the maximum is 1, 3 or half the army list (RW 0x945ADA)
+	// RW 0x9B4EF0: the recruit origin is the target's position; the maximum is 1, 3 or half the army list (RW 0x945ADA). BFME2 1.06's SimpleDefense
+	// (0x5AA740 slot 3, Open-BFME-2 Code/GameEngine/Source/Common/Rva005AA735Tactic.cpp) sizes the same way but takes the chance-to-use-all-units table of
+	// the AITacticDefensive base (the BFME2 path); RotWK 0x9B4EF0 does not read it and this port follows RotWK for both editions.
+	case SIMPLE_DEFENSE:
 		team.hasRecruitOrigin = true;
 		team.recruitOrigin = t.position;
 		if (t.defenseSize == 0)
@@ -1069,7 +1075,7 @@ void endTactic(AITactic &tac, AIBrainState &owner, bool success)
 }
 
 // RW 0x8F21F7
-void startTactic(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targetIndex)
+void startTactic(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targetIndex, int playerIndex)
 {
 	AITarget &t = owner.targets[(size_t)targetIndex];
 	if (t.teams >= t.maxTeams)
@@ -1086,7 +1092,7 @@ void startTactic(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targe
 		team.name = std::string(targetTypeName(t.type)) + "_" + tac.kind + "_" + std::to_string(tac.id) + "_" + std::to_string(i); // "%s_%s_%u_%u"
 		team.type = t.type;
 		team.index = i;
-		setupTeam(logic, kind, i, t, team, tac.targetOwner);
+		setupTeam(logic, kind, i, t, team, playerIndex);
 		tac.teams.push_back(team);
 	}
 	t.teams += 1;
@@ -1119,7 +1125,7 @@ void enemyStructureTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &
 	tac.kind = kOffensiveNames[kind];
 	tac.id = b.nextTacticId++;
 	tac.targetOwner = ownerIndex;
-	startTactic(logic, tac, owner, targetIndex);
+	startTactic(logic, tac, owner, targetIndex, ai.playerIndex);
 	++b.tacticsByKind[tac.kind];
 	b.tactics.push_back(tac);
 	++b.tacticsStarted;
@@ -1149,7 +1155,7 @@ void expansionTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 	tac.kind = kOffensiveNames[kind];
 	tac.id = b.nextTacticId++;
 	tac.targetOwner = ownerIndex;
-	startTactic(logic, tac, owner, targetIndex);
+	startTactic(logic, tac, owner, targetIndex, ai.playerIndex);
 	++b.tacticsByKind[tac.kind];
 	b.tactics.push_back(tac);
 	++b.tacticsStarted;
@@ -1166,7 +1172,7 @@ void defensiveTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 	tac.kind = kOffensiveNames[SIMPLE_DEFENSE];
 	tac.id = b.nextTacticId++;
 	tac.targetOwner = ownerIndex;
-	startTactic(logic, tac, owner, targetIndex);
+	startTactic(logic, tac, owner, targetIndex, ai.playerIndex);
 	++b.tacticsByKind[tac.kind];
 	b.tactics.push_back(tac);
 	++b.tacticsStarted;
@@ -2733,6 +2739,11 @@ void AITacticalAI::addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, 
 	{
 		addAttackedAt(logic, ai.brain, *p, pos, -1);
 	}
+}
+
+void AITacticalAI::startTacticForTest(GameLogic &logic, AITactic &tac, AIBrainState &owner, int targetIndex, int playerIndex)
+{
+	startTactic(logic, tac, owner, targetIndex, playerIndex);
 }
 
 void AITacticalAI::pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target)

@@ -369,3 +369,41 @@ TEST_CASE("rai-def defensive tactic: an enemy at two outlying AI structures give
 	MESSAGE("DEFENSIVE target on frame " << targetFrame << " at (" << chosenPos.x << ", " << chosenPos.y << "); SimpleDefense on " << tacticFrame
 			<< ", started " << startedFrame << ", ended " << endedFrame << "; members " << members.size());
 }
+
+TEST_CASE("rai-def defensive tactic: a SimpleDefense team is sized from the AI that recruits it, not the group's target chooser (RW 0x6C74F6 / 0x8F21F7 / 0x9B4F17)")
+{
+	OPENBFME_REQUIRE_START(s);
+	DefenseGame g;
+	loadUdun(*s, g);
+	GameLogic &logic = g.game->logic();
+	AISkirmishPlayer &ai = *g.ai;
+	// three extra hordes make the recruiting AI's army big enough for the half-army size; the human has no player info record at all, which is the
+	// mismatched chooser the allied bug used (its army count 0 left the maximum unset)
+	for (int i = 0; i < 3; ++i)
+	{
+		std::string error;
+		const Coord3D at{ ai.build.startPosition.x + (float)(i * 40), ai.build.startPosition.y, logic.getGroundHeight(ai.build.startPosition.x, ai.build.startPosition.y) };
+		Object *unit = g.game->createObject("GondorFighterHorde", g.computer->getPlayerIndex(), at, 0.0f, &error);
+		REQUIRE_MESSAGE(unit, error);
+	}
+	AIBrainState owner;
+	AITarget target;
+	target.type = 1; // DEFENSIVE
+	target.inactive = false;
+	target.defenseSize = 2; // a large base: half the army
+	target.maxTeams = 1;
+	target.teams = 0;
+	target.position = ai.build.startPosition;
+	owner.targets.push_back(target);
+	AITactic tac;
+	tac.kindIndex = SIMPLE_DEFENSE;
+	tac.kind = "SimpleDefense";
+	tac.id = owner.nextTacticId++;
+	tac.targetOwner = g.human->getPlayerIndex(); // the group's first AI (the chooser) is not the AI recruiting this team
+	AITacticalAI::startTacticForTest(logic, tac, owner, 0, ai.playerIndex);
+	REQUIRE(tac.teams.size() == 1u);
+	const size_t army = AITacticalAI::recordOf(logic, ai.playerIndex).army().size();
+	REQUIRE(army > 1u); // tolerance: the map's starting army is not pinned; the test needs more than one unit for the half-army branch
+	CHECK(tac.teams[0].maximum == (int)(army / 2));
+	CHECK(tac.teams[0].maximum != -1); // the pre-fix code read the human's empty record and left the unlimited default
+}
