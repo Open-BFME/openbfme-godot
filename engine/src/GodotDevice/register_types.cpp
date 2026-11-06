@@ -18,6 +18,7 @@
 #include "Common/ConsoleFilter.h"
 #include "Common/WindowsCrashDump.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 #include "GodotDevice/GodotVideoStream.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
@@ -37,6 +38,7 @@ static void initialize_openbfme(ModuleInitializationLevel p_level)
 		return;
 	}
 	GDREGISTER_CLASS(RetailFileSystem);
+	GDREGISTER_CLASS(ShaderBudget); // SHADER-BUDGET-1: the runtime varying guard
 	GDREGISTER_CLASS(W3DModelBuilder);
 	GDREGISTER_CLASS(MapTerrainBuilder);
 	GDREGISTER_CLASS(MapObjectBuilder);

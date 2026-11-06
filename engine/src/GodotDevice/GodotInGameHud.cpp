@@ -5,6 +5,7 @@
 #include "Common/Audio/AudioEntryPoints.h"
 #include "Common/Audio/AudioLog.h"
 #include "GodotDevice/GodotInGameHud.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "GodotDevice/MacOSTrackpad.h"
 #include <godot_cpp/classes/input_event_pan_gesture.hpp>
 #include <godot_cpp/classes/input_event_magnify_gesture.hpp>
@@ -603,7 +604,7 @@ bool HudDevice::ensureGlobe()
 		return false;
 	}
 	globeShader.instantiate();
-	globeShader->set_code(kGlobeShader);
+	SetShaderCode(globeShader.ptr(), kGlobeShader, "Palantir globe composite");
 	globeMaterial.instantiate();
 	globeMaterial->set_shader(globeShader);
 	globeMaterial->set_shader_parameter("add_tex", globeAdd.view->get_texture());
@@ -961,7 +962,7 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 			{
 				Ref<Shader> shader;
 				shader.instantiate();
-				shader->set_code(String(aptImageModeShader(mode).c_str()));
+				SetShaderCode(shader.ptr(), String(aptImageModeShader(mode).c_str()), "apt image mode " + String(varOf(op, "_mode").c_str()));
 				material.instantiate();
 				material->set_shader(shader);
 			}

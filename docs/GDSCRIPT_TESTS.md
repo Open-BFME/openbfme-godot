@@ -30,6 +30,35 @@ this is neither a rendered HUD test nor a GPU timing benchmark. It reuses only
 the bindings archive and never replaces the game extension. Logs and results
 remain under the requested new scratch directory.
 
+The manual packed-texture CPU oracle is also separate from the GDScript runner:
+
+```sh
+python godot/tests/packed_texture_merge_test.py --build-dir engine/build --scratch workspace/packed-merge-check --godot "$GODOT"
+```
+
+On macOS it reuses the configured godot-cpp archive and builds a scratch extension
+containing the actual packed loader. All 65,536 channel pairs are compared with
+Godot's previous C++ `get_pixel`/`set_pixel` Color operations, including PNG alpha
+replacement. Full JPEG/PNG loads at 256, 512 and 1024 pixels compare exact output
+bytes, RGB-only masks and nearest resizing. Read counters require supplied JPEG
+bytes to avoid rereading the file; invalid supplied bytes must fail even when a
+valid file exists. Valid/corrupt DDS precedence, missing JPEGs and corrupt or
+unreadable companions are checked. Rounded RGB and multiplied-alpha alternatives
+must differ from the original oracle. `--baseline-ref <pre-change-ref>` loads the
+exact earlier loader, adding only an ignored fourth argument for the probe; the
+default counterfactual restores its per-pixel loop and JPEG reread. An optional
+`--bindings-source <godot-cpp-dir>` repairs moved bindings include paths.
+
+This manual fixture needs no retail files, window or GPU. It isolates HOME/XDG
+and game user directories, records commands/results under a new scratch folder,
+and never replaces the game's extension. Expected corrupt-image decoder errors
+are allowed explicitly; other engine/script errors fail. Diagnostic timings cover
+synthetic CPU decode/merge work only, with no performance threshold or gameplay
+frame-time claim. Both editions use this presentation path; the existing S-1482
+retail-merge inference remains unchanged. `packed_model_texture_test.gd` remains
+manual with private assets and covers model-builder/material-factory integration,
+corrupt JPEG/PNG retry and the S-1482 report.
+
 The launcher coverage gap is closed by the existing release pytest runners,
 including the resource-limited write-failure regression and the argument-aware
 social/OAuth fixtures. Every launcher entry point is listed below.
