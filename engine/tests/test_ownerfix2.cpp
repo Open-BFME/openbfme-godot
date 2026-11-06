@@ -806,9 +806,30 @@ TEST_CASE("ownerfix2 retail: a resource building's placement collects the own an
 	CHECK(shroudedOwnArcs == 0);                 // every segment of the unlit ring is under the shroud: none is drawn
 	CHECK(fb.claimArcs().size() < arcsBeforeShroud); // tolerance: the unlit ring's segments went (the rest of the map's claims may stay lit)
 	// and it goes when the placement ends
+	fb.updatePlacement(logic, me, farmT, centre(ox, oy), u"%d%%"); // the barracks check above ended the placement: start it again
+	CHECK(fb.placement().active);
 	fb.updatePlacement(logic, me, nullptr, centre(ox, oy), u"%d%%");
 	CHECK(fb.claimCircles().empty());
 	CHECK(fb.claimArcs().empty());
+	// lane ECOCIRCLE-2 review: a Visible own claimant with Radius 0 (the module's default, which TerrainResourceManager::claim records unchanged) is
+	// collected, but RW 0x8E9744's length / circumference is 0 / 0; retail's conversion gives no positive count and it draws nothing. The port skips the
+	// non-positive radius before the division (C++'s conversion of the NaN is undefined); no arc and no NaN reach the decals.
+	Object *zero = make(logic, "GondorBarracks", *human, centre(ox, oy).x, centre(ox, oy).y);
+	REQUIRE(zero);
+	logic.economy().resources().claim(*zero, 0.0f, true, false);
+	fb.updatePlacement(logic, me, farmT, centre(ox, oy), u"%d%%");
+	REQUIRE(fb.placement().active);
+	REQUIRE(circleOf(zero->getID()));
+	CHECK(circleOf(zero->getID())->radius == 0.0f);
+	size_t zeroArcs = 0;
+	for (const ResourceClaimArc &a : fb.claimArcs())
+	{
+		zeroArcs += a.id == zero->getID() ? 1 : 0;
+	}
+	CHECK(zeroArcs == 0);
+	CHECK(TerrainResourceFeedback::claimSegmentCount(0.0f, 0.0f) == 0);
+	CHECK(TerrainResourceFeedback::claimSegmentCount(100.0f, 0.0f) == 0);
+	CHECK(TerrainResourceFeedback::claimSegmentCount(2.0f * 3.14159265f * 300.0f, 2.0f * 3.14159265f * 300.0f) == 32); // tolerance: pi as a float
 }
 
 #include "Common/ModelState.h"

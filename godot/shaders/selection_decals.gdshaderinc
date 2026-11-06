@@ -124,9 +124,12 @@ float sel_mask_at(int header, vec2 w) {
 // flushDecals draws them before the merge list (RW 0x509A1F: ShaderClass 0x1198B3, SRC_ALPHA / ONE_MINUS_SRC_ALPHA, no alpha test; texture x diffuse,
 // MODULATE RW 0x5373FC; the diffuse is the colour with the opacity as alpha, RW 0x73228B): over a surface colour C each one gives C (1 - a) + c a with
 // a = texel alpha x opacity, c = texel x colour. Lane ECOCIRCLE-2: an additive decal (rec3.w -2 / -3, SHADOW_ADDITIVE_DECAL 0x40 / 0x800) gives C + c a
-// instead (SRC_ALPHA / ONE): the surface keeps its colour. Returned premultiplied: rgb the decals' share (retail space, 0..1), a how much of the surface is
-// covered, so the surface becomes C (1 - result.a) + result.rgb. The same raised and wall rules as sel_merge_at
-vec4 sel_alpha_at(vec3 w, bool wall) {
+// instead (SRC_ALPHA / ONE): the surface keeps its colour. `surface` is the colour the decals are drawn over (the terrain's gamma-space ground, the wall's
+// clamped output): every draw lands in D3D9's [0, 1] frame buffer, so the running colour is saturated after each decal (review: an additive decal could
+// leave > 1 in the premultiplied share and a later alpha decal blended over the unclamped value). Returned premultiplied against `surface`: rgb the decals'
+// share (retail space), a how much of the surface is covered, so the surface becomes surface (1 - result.a) + result.rgb. The same raised and wall rules
+// as sel_merge_at
+vec4 sel_alpha_at(vec3 w, bool wall, vec3 surface) {
 	if (int(sel_grid2.w) < 4) {
 		return vec4(0.0);
 	}
@@ -137,7 +140,7 @@ vec4 sel_alpha_at(vec3 w, bool wall) {
 	vec4 cell = sel_texel(int(sel_grid2.y) + int(g.y) * int(sel_grid.w) + int(g.x));
 	int first = int(cell.z);
 	int count = int(cell.w);
-	vec3 cd = vec3(0.0);
+	vec3 cur = surface;
 	float keep = 1.0;
 	for (int i = 0; i < count; i++) {
 		vec4 e = sel_texel(int(sel_grid2.z) + first + i); // x, y, size, decal
@@ -169,13 +172,13 @@ vec4 sel_alpha_at(vec3 w, bool wall) {
 		}
 		vec3 src = s.rgb * rec1.rgb / 255.0;
 		if (additive) {
-			cd += src * a; // SRC_ALPHA / ONE: the surface keeps its colour
+			cur = clamp(cur + src * a, 0.0, 1.0); // SRC_ALPHA / ONE: the surface keeps its colour, clipped per draw
 		} else {
-			cd = cd * (1.0 - a) + src * a;
+			cur = clamp(cur * (1.0 - a) + src * a, 0.0, 1.0);
 			keep *= 1.0 - a;
 		}
 	}
-	return vec4(cd, 1.0 - keep);
+	return vec4(cur - surface * (1.0 - keep), 1.0 - keep);
 }
 
 // the terrain's (the SAGE point x, y)

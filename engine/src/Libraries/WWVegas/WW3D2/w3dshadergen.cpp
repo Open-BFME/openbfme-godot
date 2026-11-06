@@ -778,7 +778,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		// only where the surface faces up (SEL_WALL_MIN_UP: the walkable top, a ramp, a stair's tread; not the wall's side faces)
 		line("\tbool sel_up = normalize(v_wnrm).y >= SEL_WALL_MIN_UP;");
 		line("\tvec3 sel_at = vec3(sel_world.x, -sel_world.z, sel_world.y);");
-		line("\tvec4 sela = sel_up ? sel_alpha_at(sel_at, true) : vec4(0.0);");
+		line("\tvec4 sela = sel_up ? sel_alpha_at(sel_at, true, clamp(cur.rgb, 0.0, 1.0)) : vec4(0.0);");
 		line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
 		line("\tvec3 sel_ground = ALBEDO;");
 		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader);
