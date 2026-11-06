@@ -277,6 +277,7 @@ void runBattle(ArchiveFileSystem &fs, RetailObjectWorld &world, const MapObjectO
 }
 } // namespace uberbench
 
+// pin: merge of main 1d43a17e (2026-11-06, lane PR-TEND-AI): the position sampler re-records the Uber battle from frame 0
 TEST_CASE("uber bench: 10k / 20k / 40k unit battles on map mp fall back 8p, faithful and Uber profiles - logic frame wall time, phases, cores used" *
 		  doctest::skip())
 {

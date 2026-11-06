@@ -582,6 +582,8 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: the skirmish AI player info record's position sampler (RW 0x8E4042) is hashed
 // pin: re-measured after the sampler's append order (RW 0x8E4082: radius + distance + padding) settled
 // pin: re-measured on the merged #217 / #214 main: the sampler is hashed from frame 0 in the skirmish and the Uber battle
+// pin: merge of main 1d43a17e (2026-11-06, lane PR-TEND-AI): the sampler still starts at frame 0; upstream's #225 / #220 / #216 changes move the
+//      vector on top of the old re-record, 0x544c0108 -> 0x327cddbd (first) and 0xd3318909 -> 0x4e00eb68 (last)
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,
