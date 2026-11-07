@@ -706,8 +706,8 @@ std::vector<std::string> GateModules::acceptanceStops()
 		"[S-1940] gates (HUD-5): GateOpenAndCloseBehavior's states, timing, model conditions and open / closed geometry (RW 0x89CC29), MSG_OPEN_GATE / MSG_CLOSE_GATE "
 		"(RW 0x77BF7B / 0x77C037), the gate buttons (RW 0x9410D7 / 0x9436E9), AIGateUpdate (RW 0x8B4D34), the push-out scan of the units in the gate's way "
 		"(RW 0x89C759, lane GATEPUSH-1) and the skirmish AI's gate list (TheSkirmishAIManager + 0xA74, RW 0x89C04B / 0x8ED6DC / 0x8ED726 / 0x89C12F / 0x89C18E) run; "
-		"the collide interface's repel (RW 0x89C6F5, RepelCollidingUnits) is ported but meets no contact: the port's collision "
-		"pass pairs AI units only (S-581); not ported: the object interface call RW 0x68C3E6 at the start of the "
+		"the collide interface's repel (RW 0x89C6F5, RepelCollidingUnits) meets the AI objects that touch the gate's active shapes through the gates' own "
+		"contact pass (AIWorld::processGateContacts, lane GATECOLLIDE-1; the units' pass pairs AI units only, S-581); not ported: the object interface call RW 0x68C3E6 at the start of the "
 		"update and the AI notification RW 0x68BE59(9); the pathfinder's gate-flag keeping removal (RW 0x6E861E) runs since lane WALLFOOT-1 and "
 		"FakePathfindPortalBehaviour since lane WALL-2 (PortalModules.h)",
 		"[S-1941] GateProxyBehavior and the Proxy link of GateOpenAndCloseBehavior (onObjectCreated RW 0x89CB19, Orthanc) are not ported: the messages and buttons find "

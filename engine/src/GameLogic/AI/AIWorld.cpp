@@ -5,6 +5,7 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PortalModules.h"
 #include "GameLogic/Module/CollideModule.h"
+#include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/SalvageCrateCollide.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -866,6 +867,7 @@ void AIWorld::attach()
 	m_logic.installPhaseWork("partitionAndCollision", [this]() {
 		processCollisions();
 		processCrateContacts(); // lane MODCOMPAT-MOD1: the crates' contacts, after the AI units' pass (S-780)
+		processGateContacts();  // lane GATECOLLIDE-1: the gates' contacts, after the crates' (S-1940)
 	});
 	// PROD-1's hand-off: what production asks the AI of a produced object (move to the rally point, follow the exit path, idle, regroup) runs here, at the call sites
 	// production already has (GameLogic/AI/AICommandSink.h)
@@ -1646,7 +1648,8 @@ void AIWorld::processCrateContacts()
 	static const int kNoCollide = CombatNames::kindOf("NO_COLLIDE"), kHorde = CombatNames::kindOf("HORDE");
 	static const unsigned kNoCollisions = (unsigned)CombatNames::statuses().noCollisions;
 	const auto registered = [&](const Object &o) {
-		// RW 0x68E31F: no collision manager record for NO_COLLIDE (template + 0x108 bit 30) or HORDE (+ 0x115 bit 5); RW 0xB6C480 removed records
+		// RW 0x68E31F: no collision manager record for NO_COLLIDE (template + 0x108 bit 30) or INERT, a HORDE (+ 0x115 bit 5) only with AIData
+		// HordesWaitForHordes (retail Yes: this pass leaves the hordes out and does not test INERT, S-780); RW 0xB6C480 removed records
 		return o.isInWorld() && !o.isDestroyed() && !o.isKindOf((unsigned)kNoCollide) && !o.isKindOf((unsigned)kHorde) && !o.testStatus(kNoCollisions) &&
 			!o.isOutOfCollisionManager();
 	};
@@ -1698,6 +1701,94 @@ void AIWorld::processCrateContacts()
 			++m_crateContacts;
 			ObjectCollide::onCollide(first, second);
 			ObjectCollide::onCollide(second, first);
+		}
+	}
+}
+
+// lane GATECOLLIDE-1 (S-1940 / S-581): see the header. The candidates and the narrow test are the crates' (processCrateContacts): the partition's objects within
+// the gate's bounding sphere, then each pair's overlap of the two objects' active shapes (a gate's OpenLeft / OpenRight or Closed boxes) from its lower ObjectID's side
+void AIWorld::processGateContacts()
+{
+	if (!m_mapReady)
+	{
+		return;
+	}
+	const std::vector<GateOpenAndCloseBehavior *> &gates = m_logic.skirmishAI().gates();
+	if (gates.empty())
+	{
+		return;
+	}
+	m_gateScratch.clear();
+	for (GateOpenAndCloseBehavior *g : gates)
+	{
+		if (g && g->getObject())
+		{
+			m_gateScratch.push_back(g->getObject()->getID());
+		}
+	}
+	std::sort(m_gateScratch.begin(), m_gateScratch.end());
+	m_gateScratch.erase(std::unique(m_gateScratch.begin(), m_gateScratch.end()), m_gateScratch.end()); // an object with two gate modules: one pass
+	static const int kNoCollide = CombatNames::kindOf("NO_COLLIDE"), kHorde = CombatNames::kindOf("HORDE");
+	static const int kImmobile = CombatNames::kindOf("IMMOBILE"), kInert = CombatNames::kindOf("INERT");
+	static const unsigned kNoCollisions = (unsigned)CombatNames::statuses().noCollisions;
+	const bool hordesRegistered = m_logic.settings().hordesWaitForHordes;
+	const auto registered = [&](const Object &o) {
+		// RW 0x68E31F (BFME2 0x68DCC4): no collision manager record for INERT (RW 0x68E32A) or NO_COLLIDE, nor for HORDE unless AIData HordesWaitForHordes
+		// (AIData + 0xB9, RW 0x68E3C7 .. 0x68E3FD; retail aidata.ini: Yes); RW 0xB6C480 removed records. INFERENCE: a global byte that also blocks the
+		// registration (BFME2 0x68DCC4's g_00DFE7A8, role unknown) is 0 in a game
+		return o.isInWorld() && !o.isDestroyed() && !o.isKindOf((unsigned)kInert) && !o.isKindOf((unsigned)kNoCollide) &&
+			(hordesRegistered || !o.isKindOf((unsigned)kHorde)) && !o.testStatus(kNoCollisions) && !o.isOutOfCollisionManager();
+	};
+	for (PathfindObjectID id : m_gateScratch)
+	{
+		Object *gate = m_logic.findObjectByID(id);
+		if (!gate || !registered(*gate) || gate->geometryShapes().empty())
+		{
+			continue;
+		}
+		// the pass assumes the gate's collision group 1 (IMMOBILE, RW 0x68EEA5); a mod's gate without IMMOBILE (retail: its own group, paired with every
+		// object) meets no contact here and notes the collision manager's stop
+		if (!gate->isKindOf((unsigned)kImmobile))
+		{
+			m_logic.noteStop(kStopCollisionManager);
+			continue;
+		}
+		// RW 0xB6D730: a pair whose collision groups are equal and non-zero is skipped; a gate's group is 1 (IMMOBILE, RW 0x68EEA5), so an IMMOBILE object
+		// meets no gate. INFERENCE: only objects with an AI (as the crates' pass): the projectiles have their own pass (CombatState::processProjectileContacts)
+		PartitionFilterFn candidate([&](Object &o) { return &o != gate && o.getAIUpdateInterface() && !o.isKindOf((unsigned)kImmobile) && registered(o); });
+		const PartitionHits hits =
+			m_logic.partition().iterateObjectsInRange(*gate->getPosition(), CombatQueries::boundingSphereRadius(*gate), FROM_BOUNDINGSPHERE_3D, { &candidate }, ITER_FASTEST);
+		m_gateHits.clear();
+		for (const PartitionHit &h : hits)
+		{
+			m_gateHits.push_back(h.object->getID());
+		}
+		std::sort(m_gateHits.begin(), m_gateHits.end());
+		for (PathfindObjectID otherId : m_gateHits)
+		{
+			if (gate->isDestroyed())
+			{
+				break;
+			}
+			Object *o = m_logic.findObjectByID(otherId);
+			if (!o || o->isDestroyed())
+			{
+				continue;
+			}
+			const bool gateFirst = gate->getID() < o->getID();
+			Object &first = gateFirst ? *gate : *o;
+			Object &second = gateFirst ? *o : *gate;
+			if (!NotifyCrushModules::geometriesOverlap(first.geometryShapes(), *first.getPosition(), first.getOrientation(), second.geometryShapes(), *second.getPosition(),
+			                                           second.getOrientation()))
+			{
+				continue;
+			}
+			++m_gateContacts;
+			ObjectCollide::onCollide(first, second);
+			if (registered(first) && registered(second)) // RW 0xB6D141 .. 0xB6D156: both records still there for the second call (a stand-in)
+			{
+				ObjectCollide::onCollide(second, first);
+			}
 		}
 	}
 }
