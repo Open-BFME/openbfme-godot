@@ -67,7 +67,7 @@ const char *const kStopMeleeMachine =
 	"0xE6 / 0xE7 / 0xE8; an ordinary non-crushing horde member inside its horde requests no path through 0xE1 / 0xE2 (0xE5 always refuses it; a crushing member can dispatch 0xE9, which can path); INFERENCE: the machine-busy test, stealth, RW 0x792973 / 0x744B25 / AI vslot 0x168 / + 0x3CC "
 	"are false, STAND_GROUND's RW 0x6FF7FA is the reach test, the fire-during-approach sub-state and the run-down speed of 0xE2 are not ported, the own-position "
 	"reservation does not write AI + 0x180, 0xE5's re-acquisition uses TargetFinder, RW 0x6F37B3's obstacle-zone mapping / siege branches are not ported; RW 0x7463E8's "
-	"CanApproachToTarget (RW 0x6FB754) is ported (lane PLAY-4) with the quick path test clientSafeQuickDoesPathExist (RW 0x6F5BB0); the reach of a melee weapon "
+	"CanApproachToTarget (RW 0x6FB754) is ported (lane PLAY-4) with the quick path test quickDoesPathExist (RW 0x6F5BB0, lane QPATH-1); the reach of a melee weapon "
 	"against a moving unit is RW 0x6ED843's footprint test (lane PLAY-4 r1, S-3806)";
 
 Object *victimOf(const AIState &s)

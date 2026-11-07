@@ -167,8 +167,10 @@ TEST_CASE("pathfind: a straight path in the open is the start position and the g
 	CHECK(chain[0].y == 5.0f);
 	CHECK(chain[1].x == 55.0f);
 	CHECK(chain[1].y == 5.0f);
-	// the unoptimised cell path has a node per cell: from, then the centres of cells 1..5
-	CHECK(p->nodeCount() == 6);
+	// lane PATH-REBUILD: the found path is rebuilt from its optimised nodes (RW 0x767B0E), so its chain is these two nodes (6 before: from, then the
+	// centres of cells 1..5) and raw == optimised
+	CHECK(p->nodeCount() == 2);
+	CHECK(p->getFirstNode()->getNext() == p->getFirstNode()->getNextOptimized());
 	delete p;
 	// no cell info stays allocated after a search
 	CHECK(w.pf->pool().freeCount() == testConfig().cellInfoPoolSize);
@@ -453,7 +455,7 @@ TEST_CASE("pathfind stops: what a build and a search report is registered, every
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &inside, &partial);
 	delete w.pf->findPath(nullptr, groundLoco(), &from, &far, &partial);
 	const std::vector<std::string> all = Pathfinder::allStops();
-	REQUIRE(all.size() == 26); // S-4840's vertical ramp plane (review of #159) joined the 25
+	REQUIRE(all.size() == 28); // S-4840's vertical ramp plane (review of #159) joined the 25; lane WALLFOOT-1: S-164's ground type filter and the wall flag's drawable queries
 	std::set<std::string> registered(all.begin(), all.end());
 	CHECK(registered.size() == all.size());
 	std::set<int> rows;

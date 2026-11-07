@@ -153,6 +153,19 @@ def load_credits(path: Path | None) -> dict[str, list[list[int]]]:
     return merges
 
 
+def load_not_carried(path: Path | None) -> dict[str, set[int]]:
+    """nightly_credits.json's not_carried: merge commit (40 hex) -> pull requests the merge names or cherry-picked but does NOT ship
+    (merged then reverted inside the merge, e.g. MERGEQ-43's #229): they are no carried pull request, so no line has to credit them"""
+    if path is None:
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rows = data.get("not_carried", {}) if isinstance(data, dict) else {}
+    if not isinstance(rows, dict) or not all(re.fullmatch(r"[0-9a-f]{40}", k) and isinstance(v, list) and v and all(
+            isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in v) for k, v in rows.items()):
+        raise SystemExit(f"nightly_notes: {path.name}: not_carried maps full commit ids to non-empty lists of pull request numbers")
+    return {k: set(v) for k, v in rows.items()}
+
+
 def note_credits(c: dict, refs: list[list[int]], hidden: bool, prs: dict[int, dict], credits: dict) -> list[list[int]]:
     """RELNOTES-1 (owner + Discord 10-30: a batch's one community pull request was credited on every line of the batch): the pull requests
     each Release-note line came from. A line's own `(#12)` / `(#12, #13)` ending, or the merge's row in nightly_credits.json (for merges
@@ -177,7 +190,8 @@ def note_credits(c: dict, refs: list[list[int]], hidden: bool, prs: dict[int, di
     return refs
 
 
-def build_context(git_dir: str | None, a: str, b: str, github: GitHub, credits: dict | None = None) -> dict:
+def build_context(git_dir: str | None, a: str, b: str, github: GitHub, credits: dict | None = None,
+                  not_carried: dict | None = None) -> dict:
     changes = []
     for c in ar.first_parent_commits(git_dir, a, b):
         split = [ar.note_refs(t) for t in ar.release_note_texts(c["body"])]
@@ -194,6 +208,8 @@ def build_context(git_dir: str | None, a: str, b: str, github: GitHub, credits: 
         # a port's commits are new commits GitHub links to no pull request (MERGEQ-33, 10-30): the numbers the merge's subject names count too
         for n in sorted({int(x) for x in SUBJECT_REF.findall(c["subject"])}):
             prs.setdefault(n, dict(github.pull(n), subjects=[]))
+        for n in (not_carried or {}).get(c["sha"], ()):
+            prs.pop(n, None)
         lines = note_credits(c, [r for _, r in split], hidden, prs, credits or {})
         for n in sorted({n for ln in lines for n in ln} - set(prs)):
             prs[n] = dict(github.pull(n), subjects=[])
@@ -522,7 +538,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "context":
-        ctx = build_context(a.git_dir, a.a, a.b, GitHub(a.gh, a.repo), load_credits(a.credits))
+        ctx = build_context(a.git_dir, a.a, a.b, GitHub(a.gh, a.repo), load_credits(a.credits),
+                            load_not_carried(a.credits))
         a.out.write_text(json.dumps(ctx, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         n = sum(1 for u in units(ctx) if u["need"] != "none")
         print(f"NIGHTLY context: {len(ctx['changes'])} changes, {n} for the model, "

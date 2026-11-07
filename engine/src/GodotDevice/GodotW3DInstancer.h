@@ -39,6 +39,7 @@
 #include <godot_cpp/variant/transform3d.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
@@ -50,6 +51,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
 
 namespace godot
 {
@@ -127,6 +129,10 @@ public:
 	// state: KBHall.tga -> KBHall_snow.tga): its meshes are built again, under a name that carries Texture_Swap_Suffix, with every texture A loaded as B.
 	// The add clears them.
 	void Set_Build_Texture_Swaps(const std::vector<std::pair<std::string, std::string>> &swaps) { PendingSwaps = swaps; }
+	// lane SELWALL-1 (C++ only): the next add_model / add_model_colored builds a wall top or bridge model (KINDOF_WALK_ON_TOP_OF_WALL): its meshes are built
+	// again under a name with "#sel", their opaque surfaces draw the selection decals (W3DShaderKey::SelectionDecals: the merge decals and, lane HERORING-1,
+	// the alpha decals). The add clears it
+	void Set_Build_Selection_Decals(bool on) { PendingSelectionDecals = on; }
 	// "#tex&a=b&c=d" (lower case, in the state's order): the part of a model's cache name that its texture swaps make; empty without swaps
 	static std::string Texture_Swap_Suffix(const std::vector<std::pair<std::string, std::string>> &swaps);
 	// RENDER-1 (stop S-390): the instance is lit by the map's infantry light set (KINDOF_INFANTRY drawables) instead of the objects set;
@@ -164,6 +170,8 @@ public:
 	// changes. Default on. (Added by lane MAPOBJ-1.)
 	void set_auto_update(bool enabled);
 	bool get_auto_update() const { return AutoUpdate; }
+	// Owned offscreen View3D scenes can skip presentation work while their animation clock keeps normal process-delta semantics.
+	void set_presentation_updates(bool enabled) { PresentationUpdates = enabled; }
 
 	// { ok, name, frames, frame_rate, seconds, pivots } for a clip of a model
 	Dictionary get_clip_info(int64_t model, const String &clip);
@@ -182,6 +190,13 @@ public:
 	void set_pose_culling(bool enabled) { PoseCulling = enabled; }
 	// An additional presentation camera's six world-space planes; empty removes it. Poses visible in either camera stay current.
 	bool set_extra_pose_frustum(const TypedArray<Plane> &planes);
+	// lane GPUPERF-2 (presentation only): draw culling. The instances whose bounds (the pose culling's sphere, S-1730) lie outside the viewport camera's
+	// frustum and the extra one (set_extra_pose_frustum: the caster PiP) are left out of their MultiMeshes, and each MultiMesh's AABB is the union of
+	// the drawn instances' spheres, so Godot culls a batch that has nothing in view (and no longer walks every slot to make the box). The draw lists are
+	// compacted again at frame_pre_draw (after every process, the PiP camera's included) when the cameras or the drawn sets changed; the order of the
+	// instances drawn is the order written (back to front for sorted items). Off by default; GameWorld turns it on for the live and the static objects.
+	void set_draw_culling(bool enabled);
+	bool get_draw_culling() const { return DrawCulling; }
 	// lane PERF-3 (tests): the palette texels of one instance as the last update wrote them (3 RGBA texels per pivot), empty for an unknown instance
 	PackedFloat32Array get_instance_palette(int64_t instance) const;
 	bool get_pose_culling() const { return PoseCulling; }
@@ -261,6 +276,10 @@ private:
 		bool HasBatch = false;
 		bool PoseDirty = false;         // pivot visibility/fade changed, or sorted animated depth may have changed
 		int Dithered = 0;               // retained when this draw keeps its buffer
+		std::vector<int> Packed;        // lane GPUPERF-2: the instance ids of the buffer as last packed (Order without the culled ones)
+		AABB Box;                       // lane GPUPERF-2: the drawn instances' spheres in the instancer's space (the MultiMeshes' and the shadows' box)
+		bool Rigid = false;             // the mesh is rigid (INSTANCE_CUSTOM.w carries the pivot)
+		uint64_t PackedEpoch = 0;       // lane GPUPERF-2: the InView computation the buffer was packed with (0: none)
 	};
 	struct Model
 	{
@@ -338,6 +357,12 @@ private:
 	void evaluate_animation_pose(Instance &inst) const; ///< the animation part of evaluate_pose (lane COMBAT-4 adds the bone spins after it)
 	void write_palette(const Instance &inst);
 	void write_buffers();
+	// lane GPUPERF-2: draw culling. cull_frustum gathers the camera planes (false without a camera: nothing is culled); compute_in_view marks every live
+	// instance whose sphere meets them; pack_draw writes d's buffer from d.Order (minus the culled ones while culling) with the MultiMeshes' boxes
+	bool cull_frustum(std::vector<Plane> &planes, Transform3D &nodeXf) const;
+	void compute_in_view(const std::vector<Plane> &planes, const Transform3D &nodeXf);
+	void pack_draw(Model &m, DrawItem &d);
+	void cull_draws(); // frame_pre_draw
 	const HAnimClass *resolve_clip_cached(Model &m, const std::string &name);
 	void allocate_palette(Instance &inst);   // SMOOTH-1: a block of the palette for one instance (a free block of the size, else the end)
 	void grow_palette(int texels);           // SMOOTH-1: a larger palette image / texture (capacity grows by half), the data kept
@@ -358,6 +383,7 @@ private:
 	std::map<std::string, std::shared_ptr<MeshGpu>> MeshCache;
 	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
 	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-5015: Set_Build_Texture_Swaps, taken by the next add_model
+	bool PendingSelectionDecals = false; // lane SELWALL-1: Set_Build_Selection_Decals, taken by the next add_model
 	std::vector<std::unique_ptr<Model>> Models;
 	std::vector<Instance> Instances;
 	bool ShadowReceiving = false;
@@ -414,6 +440,7 @@ private:
 	double TimeScale = 1.0;
 	bool Playing = true;
 	bool AutoUpdate = true;
+	bool PresentationUpdates = true;
 	bool HouseColorEnabled = false;
 
 	// stats
@@ -437,6 +464,16 @@ private:
 	int Workers = 1;
 	bool PoseCulling = false;                    // lane PERF-3: set_pose_culling
 	std::vector<Plane> ExtraPoseFrustum;
+	bool DrawCulling = false;                    // lane GPUPERF-2: set_draw_culling
+	bool PreDrawConnected = false;
+	std::vector<std::uint8_t> InView;            // by instance id: the sphere meets a camera's frustum (valid while InViewValid)
+	bool InViewValid = false;
+	std::vector<Plane> CullPlanes;               // the planes and node transform InView was computed for
+	Transform3D CullNodeXf;
+	uint64_t InViewEpoch = 0;                    // counts compute_in_view (a draw packed with an older one is checked again)
+	int DrawCulled = 0;                          // instance slots left out of the draw lists by the last compaction
+	double CullMs = 0.0;
+	std::vector<int> PackScratch;
 	int PoseCulled = 0;                          // instances whose pose the last update left pending (outside the frustum)
 	bool PoseSharing = true;                     // lane PERF-HD: set_pose_sharing
 	int PoseShared = 0;                          // lane PERF-HD: instances drawn with another's pose in the last update

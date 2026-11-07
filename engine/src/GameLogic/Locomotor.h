@@ -504,7 +504,8 @@ enum LocomotorFlags
 	LOCOMOTOR_FLAG_BIT2 = 0x04,         // cleared by the dispatcher on entry (RW 0x5E8875); set by maintainCurrentPosition with the held position (RW 0x5E7D2A, lane EXIT-1)
 	LOCOMOTOR_FLAG_NO_BRAKE = 0x10,     // moveForward does not start braking while it is set (setter not located)
 	LOCOMOTOR_FLAG_OVER_WATER = 0x20,   // the HOVER mover's last water test (RW 0x5E745D, ZH OVER_WATER; lane SHIP-1)
-	LOCOMOTOR_FLAG_BACKING_UP = 0x80    // Legs / Wheels / HORDE movers
+	LOCOMOTOR_FLAG_BACKING_UP = 0x80,   // Legs / Wheels / HORDE movers
+	LOCOMOTOR_FLAG_CLOSE_ENOUGH_DIST_3D = 0x400 // ZH CLOSE_ENOUGH_DIST_3D: the constructor's RW 0x5E2CC1(10, template + 0xC8 CloseEnoughDist3D) (lane LOCODIST-1)
 };
 
 class Locomotor

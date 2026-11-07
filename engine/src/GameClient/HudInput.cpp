@@ -398,6 +398,7 @@ std::vector<std::string> HudInput::acceptanceStops()
 				  "not ported: the restricted-area code 8 (RW 0x707141), its shadow (SHADOW_VOLUME; translucent ghosts cast no shadow map, S-3304), RotWK's own "
 				  "tint lighting (the donor is ZH's), the bib quad's own buffer (ZH's W3DBibBuffer)");
 	out.push_back(FormationPlacement::stopLine());
+	out.push_back("[S-5902] crate context clicks move to the crate before the enemy attack test unless force-attack is held; this input adaptation is not verified against RotWK evaluateContextCommand RW 0x81E60B");
 	return out;
 }
 

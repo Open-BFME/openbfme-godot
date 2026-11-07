@@ -260,6 +260,7 @@ include(cmake/Rules1.cmake)     # RULES-1: the Rules tab, the game rules, Legend
 include(cmake/Cheat1.cmake)        # CHEAT-1: the open Cheat Mode of custom games (appends to OPENBFME_SIM_SOURCES; OPENBFME_CHEAT1_TESTS)
 include(cmake/Gamemodes1.cmake) # GAMEMODES-1: the game modes' tests (OPENBFME_GAMEMODES1_TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
+include(cmake/PathRebuild.cmake) # PATH-REBUILD: the finish of a found path, RW 0x767B0E (appends to OPENBFME_SIM_SOURCES)
 include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
 include(cmake/Opts2.cmake)      # OPTS-2: the Options menu (OPENBFME_OPTS2_TESTS)
 include(cmake/Opts3.cmake)      # OPTS-3: the OpenBFME page of the Options screen (appends to OPENBFME_APT_SOURCES)
@@ -365,6 +366,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_VISUAL2_SOURCES}
     ${OPENBFME_CAMPSAVE1_SOURCES}
     src/Common/AsciiString.cpp
+    src/Common/ShaderVaryings.cpp
     src/Common/LogicFrameClock.cpp
     src/Common/MD5.cpp
     src/Common/MiniJson.cpp
@@ -406,6 +408,7 @@ add_library(openbfme_core STATIC
     src/Libraries/WWVegas/WW3D2/meshrender.cpp
     src/Libraries/WWVegas/WW3D2/w3dstops.cpp
     src/Libraries/WWVegas/WW3D2/w3dshadergen.cpp
+    src/Libraries/WWVegas/WW3D2/fxshadergen.cpp
     src/Libraries/WWVegas/WW3D2/w3dfxconvert.cpp
     src/Libraries/WWVegas/WW3D2/textureloader.cpp
     src/GameEngineDevice/W3DDevice/GameClient/HouseColor.cpp
@@ -631,6 +634,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotPathfindView.cpp
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
+    src/GodotDevice/GodotShaderBudget.cpp # SHADER-BUDGET-1
     # START-1: the new-game message and the load screen as Godot data
     ${OPENBFME_START_GODOT_SOURCES}
     ${OPENBFME_RENDER3_GODOT_SOURCES}
@@ -652,6 +656,12 @@ add_library(openbfme SHARED
     ${OPENBFME_WEATHER1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
 target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    enable_language(OBJCXX)
+    target_sources(openbfme PRIVATE src/GodotDevice/MacOSTrackpad.mm)
+    target_compile_options(openbfme PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>) # ARC for the Objective-C++ trackpad monitor only, no per-file list
+    target_link_libraries(openbfme PRIVATE "-framework AppKit")
+endif()
 if(UNIX AND NOT APPLE)
     # The extension links libstdc++ statically; without this its exported locale facet ids collide with the system runtime that Mesa loads into a
     # windowed Godot, and the first stream integer extraction (std::istream >> int) dispatches into the wrong codecvt and crashes (PROD-1 review r1).
@@ -860,7 +870,9 @@ add_executable(openbfme_tests
     tests/test_workerpool.cpp
     tests/test_w3d_mapper.cpp
     tests/test_w3d_shader.cpp
+    tests/test_shader_varyings.cpp
     tests/test_w3d_shadergen.cpp
+    tests/test_fx_shadergen.cpp
     tests/test_w3d_fxconvert.cpp
     tests/test_w3d_stops.cpp
     tests/test_w3d_render.cpp
@@ -927,11 +939,15 @@ add_executable(openbfme_tests
     # ---- PATH-1 (pathfinder, AI move path) ----
     tests/test_pathfind_cells.cpp
     tests/test_pathfind_grid.cpp
+    tests/test_qpath1.cpp
     tests/test_pathfind_path.cpp
     tests/test_pathfind_retail.cpp
     tests/test_pathfind_retail_search.cpp
     tests/test_pathfind_move.cpp
     tests/test_pathfind_numerics.cpp
+    tests/test_locodist1.cpp
+    tests/test_sails1.cpp
+    tests/test_airborne1.cpp # lane AIRBORNE-1
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp

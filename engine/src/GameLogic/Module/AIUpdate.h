@@ -130,7 +130,7 @@ public:
 	// B1 aiAttackObject (AIUpdate.cpp privateAttackObject): clears the machine and enters AI_ATTACK_OBJECT with the victim as the goal; false when this object cannot attack it
 	// `maxShotsToFire`: the command's shot limit (AICommandParms m_intValue, RW 0x66C536), set on the current weapon once the state is entered
 	bool aiAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire = 0x7FFFFFFF);
-	bool aiForceAttackObject(Object *victim, CommandSourceType source);
+	bool aiForceAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire = 0x7FFFFFFF); // retail callers pass NO_MAX_SHOTS_LIMIT or forward one
 	// lane PLAY-2: aiAttackPosition (RW 0x6961F1, AICommandType 0xE) -> privateAttackPosition (RW 0x66DE02; BFME2 decomp
 	// AIUpdateInterfacePrivateCommands.cpp:AIUpdateInterface::privateAttackPosition, tier B "edited": the RotWK differences are offsets and branch targets).
 	// The unit attacks the ground at `pos` (state AI_ATTACK_POSITION) firing at most `maxShotsToFire` shots; a weapon with a ContinueAttackRange first looks
@@ -452,8 +452,19 @@ public:
 	float wanderFactor() const override;
 	float closeEnoughDist() const override;
 	float locomotorSpeed() const override;
+	bool isProjectile() const override;
+	bool treatAsAircraftForLocoDistToGoal() const override; // RW 0x6629D3; GiantBirdAIUpdate overrides it
+	Coord3D machineGoalPosition() const override;
 	bool movingBackwards() const override;
+	bool isInfantryKind() const override;           // lane BUMP-1
+	bool isUsingSpecialAbility() const override;
+	bool isOffMapObject() const override;
+	bool isLargeRectanglePathfind() const override;
+	int objectFormationId() const override { return m_formationId; }
+	float objectFormationOffsetX() const override { return m_formationOffset.x; }
 	bool setModelCondition(const char *name, bool on) override;
+	void updateSailModelConditions() override; // lane SAILS-1: RW 0x666FA3
+	void setAirborneTarget(bool on) override; // lane AIRBORNE-1: RW 0x62684D(6, on) from doLocomotor
 	void revealDisguiseOnClimb() override; // lane WALL-2: RW 0x66A143 (a Climb portal)
 	void idleFromAI() override;            // lane WALL-2: RW 0x662A0E's vslot 0x60(2) (a type 7 portal)
 	void startMoveSound() override; // lane AUDIO-3: RW 0x748C0B

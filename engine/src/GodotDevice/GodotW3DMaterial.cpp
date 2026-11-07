@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "Common/BfmeGame.h"
 #include "GodotDevice/GodotPackedTexture.h"
 #include "Libraries/Source/Apt/AptLoad.h"
@@ -29,6 +30,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 
 namespace godot
 {
@@ -203,7 +205,8 @@ void W3D_Ensure_Light_Globals()
 	{
 		rs->global_shader_parameter_add(StringName(String("w3d_sway") + String::num_int64(i)), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4());
 	}
-	// lane SELPERF-1: the selection's merge decals the terrain shader draws (godot/shaders/selection_decals.gdshaderinc; the HUD sets them, mode 0 = none)
+	// lane SELPERF-1: the selection's merge decals the terrain shader draws (godot/shaders/selection_decals.gdshaderinc; the HUD sets them, mode 0 = none;
+	// lane SELWALL-1 / HERORING-1: the wall models' shaders too, and the alpha decals)
 	rs->global_shader_parameter_add(StringName("sel_data"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
 	rs->global_shader_parameter_add(StringName("sel_atlas"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
 	rs->global_shader_parameter_add(StringName("sel_grid"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4(0.0f, 0.0f, 1.0f, 0.0f));
@@ -302,6 +305,40 @@ void W3D_Apply_Viewer_Lighting()
 	setSet("inf", v);
 }
 
+namespace
+{
+// Both editions' presentation: separate instancers use the same generated shader
+// for the same permutation, while materials, textures and palette uniforms remain
+// factory-local. Weak entries avoid retaining shaders from destroyed previews or
+// keeping Godot resources alive after RenderingServer shutdown. The shared_ptr
+// acquisition also keeps the resource alive without a raw ObjectID/refcount race.
+std::shared_ptr<const Ref<Shader>> sharedShader(const std::string &id, const W3DShaderKey &key, W3DSamplerPolicy samplers)
+{
+	static std::mutex mutex;
+	static std::map<std::string, std::weak_ptr<const Ref<Shader>>> entries;
+	std::lock_guard<std::mutex> lock(mutex);
+	const auto found = entries.find(id);
+	if (found != entries.end())
+	{
+		if (auto shader = found->second.lock()) return shader;
+	}
+	// A cache miss is already a shader-creation path. Remove dead metadata here,
+	// rather than letting one-off model permutations accumulate for the session.
+	for (auto it = entries.begin(); it != entries.end();)
+	{
+		if (it->second.expired()) it = entries.erase(it);
+		else ++it;
+	}
+	W3D_Ensure_Light_Globals(); // globals must exist before the first shader compiles
+	Ref<Shader> shader;
+	shader.instantiate();
+	SetShaderCode(shader.ptr(), toGodot(Generate_W3D_Shader_Code(key, samplers)), String("W3D material ") + String(id.c_str()));
+	auto owner = std::make_shared<const Ref<Shader>>(shader);
+	entries[id] = owner;
+	return owner;
+}
+} // namespace
+
 Ref<Shader> W3DMaterialFactory::Get_Shader(const W3DShaderKey &key)
 {
 	const W3DSamplerPolicy samplers = samplerPolicy();
@@ -311,12 +348,10 @@ Ref<Shader> W3DMaterialFactory::Get_Shader(const W3DShaderKey &key)
 	{
 		return it->second;
 	}
-	W3D_Ensure_Light_Globals(); // the shader names the light globals: they must exist before it compiles
-	Ref<Shader> shader;
-	shader.instantiate();
-	shader->set_code(toGodot(Generate_W3D_Shader_Code(key, samplers)));
-	Shaders[id] = shader;
-	return shader;
+	const auto owner = sharedShader(id, key, samplers);
+	ShaderOwners.push_back(owner);
+	Shaders[id] = *owner;
+	return *owner;
 }
 
 Ref<Texture2D> W3DMaterialFactory::Placeholder_Texture(bool flatNormal)
@@ -482,7 +517,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	{
 		AptArchiveFileSource source(Fs);
 		bool paired = false;
-		image = loadPackedTexture(source, res.Path.substr(0, res.Path.size() - 4), &paired);
+		image = loadPackedTexture(source, res.Path.substr(0, res.Path.size() - 4), &paired, &buffer);
 		err = image.is_valid() ? OK : ERR_FILE_CORRUPT;
 		if (paired)
 		{
@@ -544,7 +579,7 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 	Error err;
 	if (res.Path.size()>=4 && res.Path.substr(res.Path.size()-4)==".jpg") {
 	 AptArchiveFileSource source(Fs);bool paired=false;
-	 image=loadPackedTexture(source,res.Path.substr(0,res.Path.size()-4),&paired);
+	 image=loadPackedTexture(source,res.Path.substr(0,res.Path.size()-4),&paired,&buffer);
 	 err=image.is_valid() ? OK : ERR_FILE_CORRUPT;
 	 if (paired) {
 	  const std::string note = "[S-1482] house texture " + res.Path + ": packed PNG colour multiplication and alpha replacement are inferred; the loader merge was not read";
@@ -912,6 +947,7 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 	Ref<ShaderMaterial> mat;
 	mat.instantiate();
 	key.AlphaOverride = AlphaOverride; // lane BUILD-5 r3
+	key.SelectionDecals = SelectionDecals && key.Blend == W3D_GODOT_BLEND_OPAQUE && !AlphaOverride; // lane SELWALL-1: the generator's opaque surfaces only
 	mat->set_shader(Get_Shader(key));
 	mat->set_shader_parameter("w3d_diffuse", Vector4(diffuse.r, diffuse.g, diffuse.b, diffuse.a));
 	mat->set_shader_parameter("w3d_ambient_mat", Vector3(ambientMat.r, ambientMat.g, ambientMat.b));
