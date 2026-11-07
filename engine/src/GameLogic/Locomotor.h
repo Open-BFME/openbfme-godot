@@ -335,11 +335,12 @@ void parseLocomotorSet(INI *ini, void *instance, void *store, const void *userDa
 //   getMaxSpeedForCondition 0x5E3F49, getMaxAcceleration 0x5E40AD, getBraking 0x5E40F2, getMaxTurnRate
 //   0x5E372D, isCharging 0x5E3EF7, moveForward 0x5E586F, rotateTowardsPosition 0x5E4F44 (ground branch) with
 //   its wrapper 0x5E60C7, Legs 0x5E63F3, Wheels 0x5E83FD (also TREADS 0x5E8827), HORDE 0x5E6D4F (plain path
-//   only), OTHER / WINGS 0x5E6835, the dispatcher 0x5E8865 (appearance table RW 0x5E91BA) and handleBehaviorZ
-//   0x5E76AC for NO_Z_MOTIVE_FORCE, FLOATING_Z, SCALING_WALLS (off a wall), SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT; HOVER 0x5E742E and
+//   only), OTHER / WINGS 0x5E6835, the dispatcher 0x5E8865 (appearance table RW 0x5E91BA), the ScalesWalls look-ahead
+//   0x5E8956 .. 0x5E8FF8 (lane MECH-D) and handleBehaviorZ
+//   0x5E76AC for NO_Z_MOTIVE_FORCE, FLOATING_Z, SCALING_WALLS (on and off a wall), SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT; HOVER 0x5E742E and
 //   SHIP 0x5E613F (lane SHIP-1).
 // NOT ported (reported through Locomotor::unverified(), acceptance stops S-081, S-084):
-//   x87/SSE parity of the CRT trigonometry, the ScalesWalls look-ahead of the dispatcher (RW 0x5E8956-0x5E8FF8), the remaining ZAxisBehaviors
+//   x87/SSE parity of the CRT trigonometry, the remaining ZAxisBehaviors
 //   FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS and RELATIVE_TO_HIGHEST_LAYER, the cliff / wading
 //   condition updates of RW 0x5E5785, and the HORDE mover's formation path nodes (types 2, 3, 7, 8).
 // =====================================================================================================
@@ -436,7 +437,13 @@ public:
 	// RW 0x5E719F: a HORDE locomotor with ScalesWalls asks its contain (vtable +0x240 = RW 0x86BC78) to adjust the desired speed. HordeContain returns it unchanged
 	// while its wall-scaling counter (H+0x1D0) is 0, which is every state this port can reach (wall scaling itself is not ported, S-084)
 	virtual float hordeWallScalingSpeed(float desiredSpeed) const { return desiredSpeed; }
-	// RW 0x694BF8 + vtable +0x238 (ZAxisBehavior SCALING_WALLS, RW 0x5E76D3): the object is on a wall; never true here (S-084)
+	// RW 0x5E8956 .. 0x5E8FF8 (the dispatcher's ScalesWalls look-ahead, lane MECH-D): the object walks up a SCALEABLE_WALL's face, over its top and down the
+	// far side; true when this frame's position was set by the climb and the appearance movers must not run. The retail code: no HORDE_MEMBER status, not
+	// contained, its producer not a HORDE, the locomotor template's ScalesWalls, the object not KindOf HORDE but KindOf CAN_CLIMB_WALLS; the point one step
+	// ahead (the unit direction x min(desired speed, 7)) is looked up in the pathfinder, and a SCALEABLE_WALL there inside its major radius and below its top is
+	// climbed (or rappelled down when no wall is under the step but the object is above the ground). The host answers false when the object is no climber.
+	virtual bool wallScalingLookAhead(float desiredSpeed) { (void)desiredSpeed; return false; }
+	// RW 0x694BF8 + vtable +0x238 (ZAxisBehavior SCALING_WALLS, RW 0x5E76D3): the object's horde keeps a wall to scale (HordeContain slot 0x238)
 	virtual bool isScalingWall() const { return false; }
 	// ---- lane SHIP-1: the SHIP / HOVER movers and the SEA_LEVEL z ----
 	// TheTerrainLogic vslot 0x4C (isUnderwater, RW 0x67DAE6) at (x, y): true when standing water covers the point; `waterZ` (may be null) gets the water height

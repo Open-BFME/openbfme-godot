@@ -21,6 +21,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/InvisibilityModules.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/SimMath.h"
@@ -162,6 +163,22 @@ private:
 	ObjectWeapons &m_w;
 };
 
+// RW 0x696057 (lane MECH-D): a CAN_CLIMB_WALLS object is on a wall when its horde keeps one (Object::getHorde RW 0x694BF8, the contain's isScalingWall RW
+// 0x86BD54) or, without a horde, when it is CLIMBING or RAPPELLING (RW 0x696080: model conditions 0x67 / 0x69)
+bool objectIsOnWall(const Object &o)
+{
+	Object *horde = o.getHordeObject(false); // RW 0x693A1A: the object itself when HORDE, else its container
+	ContainModuleInterface *contain = horde ? horde->getContain() : nullptr;
+	HordeContainInterface *hc = contain ? contain->getHordeContainInterface() : nullptr;
+	if (hc)
+	{
+		return hc->isScalingWall();
+	}
+	static const int kClimbing = CombatNames::modelCondition("CLIMBING");
+	static const int kRappelling = CombatNames::modelCondition("RAPPELLING");
+	return o.testModelCondition(kClimbing) || o.testModelCondition(kRappelling);
+}
+
 const char *meleeReachStopLine()
 {
 	return "[S-3806] melee reach (RW 0x6ED843, lane PLAY-4): the footprint test of a unit target is ported; a SIEGE_TOWER target outside the boxes takes RW's top branch "
@@ -207,8 +224,8 @@ public:
 	//   * a STRUCTURE target (RW 0x6ED8D5): rings around the unit footprint find the target obstacle id (RW 0x6ED937 .. 0x6EDA52).
 	//     The WALK_ON_TOP_OF_WALL / bridge-layer tail remains unported (S-3806).
 	//   * any other target (lane PLAY-4 r1): the footprint boxes (Pathfinder::meleeReachCells, RW 0x6EDB0C .. 0x6EDB69); a CAN_CLIMB_WALLS target on a wall
-	//     (RW 0x6EDAD4 -> 0x696057) is not ported (wall climbing is S-084: no unit climbs); a SIEGE_TOWER target outside the boxes takes the top branch
-	//     (RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: siegeTowerTopReach; stop S-3806 for its inference).
+	//     (RW 0x6EDAD4 -> 0x696057, lane MECH-D: objectIsOnWall and the 2D bounding circle overlap, RW 0x66352C) is reached from below; a SIEGE_TOWER target
+	//     outside the boxes takes the top branch (RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: siegeTowerTopReach; stop S-3806 for its inference).
 	bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) override
 	{
 		if (!victim.object)
@@ -240,6 +257,16 @@ public:
 		if (victim.isStructure)
 		{
 			return world->pathfinder().meleeStructureReach(*unit, sourcePos, *target, cells);
+		}
+		// RW 0x6EDAD4 (lane MECH-D): a CAN_CLIMB_WALLS victim that is on a wall (RW 0x696057: the horde's wall kept, or no horde and CLIMBING / RAPPELLING)
+		// is reached when the 2D bounding circles overlap: RW 0x66352C returns the signed edge distance (sqrt of the centre distance - both radii) and RW
+		// 0xC1B678 is 0.0, so only a negative value passes. A climber on the wall face is in reach of a unit below it, and one on the top of a low wall too
+		static const int canClimbWalls = CombatNames::kindOf("CAN_CLIMB_WALLS");
+		if (victim.object->isKindOf((unsigned)canClimbWalls) && objectIsOnWall(*victim.object))
+		{
+			const float d2 = CircleDistanceSquared(sourcePos, source.boundingCircleRadius, victim.position, victim.boundingCircleRadius);
+			const float d = SimMath::fstpDword(SimMath::sqrtPC24((double)d2));
+			return SimMath::subf32(SimMath::subf32(d, source.boundingCircleRadius), victim.boundingCircleRadius) < 0.0f;
 		}
 		if (world->pathfinder().meleeReachCells(*unit, sourcePos, *target, cells))
 		{
