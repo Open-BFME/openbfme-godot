@@ -108,6 +108,10 @@ bool AICommands::move(GameLogic &logic, const GameMessage &m)
 			// lane MOVE-3: RW 0x77BAAA (MSG_DO_MOVETO) and RW 0x77AA7A (MSG_DO_ATTACKMOVETO) hand the group to the group manager's move order (RW 0x75748C) while
 			// GameData + 0x11CA (PlanningModeEnabled) is set, which retail always is; MSG_DO_FORCEMOVETO (RW 0x77AAF8) takes the generic group command (RW 0x774897)
 			group.planningMoveToPosition(dest->location, type == MSG_DO_ATTACKMOVETO, CMD_FROM_PLAYER);
+			if (type == MSG_DO_ATTACKMOVETO)
+			{
+				group.cohereMoveSpeed(false); // RW 0x77AAEB .. 0x77AAEE, after either move order
+			}
 			return true;
 		}
 		group.groupMoveToPosition(dest->location, false, CMD_FROM_PLAYER, false, 0.0f, type == MSG_DO_ATTACKMOVETO);
@@ -121,6 +125,7 @@ bool AICommands::move(GameLogic &logic, const GameMessage &m)
 					ai->armAttackMove(ai->stateMachine().goalPosition());
 				}
 			}
+			group.cohereMoveSpeed(false); // RW 0x77AAEE, the group's speed matching without a leader
 		}
 	}
 	return true;

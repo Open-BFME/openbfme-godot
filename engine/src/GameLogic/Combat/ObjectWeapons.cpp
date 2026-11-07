@@ -1441,6 +1441,22 @@ float ObjectWeapons::currentAttackRangeNoTarget() const
 	return WeaponGetAttackRangeNoTarget(*w->getTemplate(), bonus, *self->m_rangeHost, src);
 }
 
+float ObjectWeapons::attackRangeNoTargetFor(const Weapon &weapon, const Object &source) const
+{
+	if (!weapon.getTemplate())
+	{
+		return 0.0f;
+	}
+	ObjectWeapons *self = const_cast<ObjectWeapons *>(this);
+	ObjectWeapons *sw = const_cast<Object &>(source).getWeapons();
+	WeaponBonus bonus;
+	if (sw)
+	{
+		weapon.computeBonus(sw->host(), 0, bonus); // RW 0x6CA7AC(source, 0, bonus)
+	}
+	return WeaponGetAttackRangeNoTarget(*weapon.getTemplate(), bonus, sw ? sw->rangeHost() : *self->m_rangeHost, subjectOf(source));
+}
+
 bool ObjectWeapons::isTooClose(const Object &victim) const
 {
 	const Weapon *w = weaponInSlot(m_curSlot);

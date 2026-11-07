@@ -88,6 +88,9 @@ public:
 	// RW 0x76FD04 (RotWK only): every member's current locomotor (AI + 0x1F0) loses its temporary speed cap (+ 0x2C = -1.0, RW 0xBD19DC). The attack
 	// commands end with it (RW 0x77B00A -> 0x77A342)
 	void clearTemporarySpeedCaps();
+	// RW 0x77005F (stop S-1301), the group's speed matching (see AIGroup.cpp): every member's current locomotor gets the
+	// temporary speed cap (+ 0x2C) of the group's slowest member, with the leader bands when `withLeader`
+	void cohereMoveSpeed(bool withLeader);
 	// the stop line of the force-attack commands (S-2480)
 	static const char *forceAttackStopLine();
 	// the stop line S-223 (raised by every group move)
