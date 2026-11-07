@@ -1078,7 +1078,7 @@ bool AISpecialPowerUpdate::decideAttackHealAoe(Object &obj)
 	{
 		return false;
 	}
-	if (team->findSpecialPowerRecord(m_decision->powerTemplate, nullptr, logic))
+	if (team->findSpecialPowerRecord(m_decision->powerType, nullptr, logic))
 	{
 		return false; // RW 0x9E6941: any record of the power rejects, the caster's own included
 	}
@@ -1142,6 +1142,7 @@ bool AISpecialPowerUpdate::decideAttackHealAoe(Object &obj)
 	}
 	team->eraseOrder(found); // RW 0x9E6AFD -> RW 0x7A1C5E
 	return true;
+}
 
 // ---- the structure breakers: the enemy record's position sampler (lane RAI-POW-3b) ---------------------------------------------------------------
 
