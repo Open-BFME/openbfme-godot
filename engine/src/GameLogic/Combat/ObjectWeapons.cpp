@@ -1134,7 +1134,10 @@ bool ObjectWeapons::canAttackObject(const Object &victim, CommandSourceType sour
 	{
 		return false;
 	}
-	if (victim.isKindOf((unsigned)CombatNames::kinds().unattackable) || (victim.testStatus((unsigned)st.noAttackFromAI) && source == CMD_FROM_AI))
+	// CASTLEATK-1: the KindOf UNATTACKABLE (template + 0x10E bit 0x40), then the status UNATTACKABLE (0x3C), forced or not (RW 0x6C91FA / 0x6C9207; BFME2
+	// 0x6C84AF / 0x6C84BC: both editions). A castle flag keeps the status for good (CastleBehavior::onBuildComplete RW 0x798299); its keep is the target
+	if (victim.isKindOf((unsigned)CombatNames::kinds().unattackable) || victim.testStatus((unsigned)st.unattackable) ||
+		(victim.testStatus((unsigned)st.noAttackFromAI) && source == CMD_FROM_AI))
 	{
 		return false;
 	}

@@ -8,7 +8,9 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 
 #include "Common/StateHash.h"
+#include "Common/Team.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIMove.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -288,8 +290,12 @@ StateReturnType AIAttackState::onEnter()
 		return STATE_FAILURE;
 	}
 	m_attackMachine = createAttackMachine();
+	// ATKSTATE-1a: + 0x49 is cleared, then for an attack on an object set to "the victim is an enemy" (BFME2 0x74B692 .. 0x74B6E5); update's non-enemy drop
+	// reads it (RW 0x7512C6). RotWK's onEnter does the same: RW 0x74D066 clears it, RW 0x74D0B9 sets it after the gone / FLEE_OFF_MAP gate
+	m_victimWasEnemyOnEnter = false;
 	if (m_isAttackingObject)
 	{
+		m_victimWasEnemyOnEnter = source.getRelationship(*machine().goalObject()) == ENEMIES;
 		m_attackMachine->setGoalObject(machine().goalObject()->getID());
 	}
 	else
@@ -327,6 +333,21 @@ StateReturnType AIAttackState::update()
 	}
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
+	// lane ATKSTATE-1a: a STONED attacker (model condition 129, RW 0x7511F5; BFME2 0x74F78B) fails
+	static const int kStoned = CombatNames::modelCondition("STONED");
+	if (source.testModelCondition(kStoned))
+	{
+		return STATE_FAILURE;
+	}
+	// RW 0x75120C (BFME2 0x74F79B .. 0x74F7BA): a goal object that is UNATTACKABLE (status 0x3C) clears the machine's goal object and fails
+	{
+		Object *goal = machine().goalObject();
+		if (goal && goal->testStatus((unsigned)CombatNames::statuses().unattackable))
+		{
+			machine().setGoalObject(INVALID_ID);
+			return STATE_FAILURE;
+		}
+	}
 	ObjectWeapons *w = source.getWeapons();
 	if (!w || !m_attackMachine)
 	{
@@ -339,7 +360,10 @@ StateReturnType AIAttackState::update()
 	if (m_isAttackingObject)
 	{
 		Object *victim = machine().goalObject();
-		if (victimGone(victim))
+		// RW 0x751285 (BFME2 0x74F81B): a victim that is FLEE_OFF_MAP (status 0x32) counts as gone. What retail does with a gone victim (AI vslot 0x240, then
+		// the inner machine runs on unless ARMY_OF_DEAD) is stop S-583; the port's ZH handling below is kept
+		static const int kFleeOffMap = CombatNames::status("FLEE_OFF_MAP");
+		if (victimGone(victim) || victim->testStatus((unsigned)kFleeOffMap))
 		{
 			// a lone unit fighting a horde moves on to the next member while the horde lives
 			if (Object *next = a.replacementVictim())
@@ -351,6 +375,28 @@ StateReturnType AIAttackState::update()
 			{
 				a.notifyVictimIsDead();
 				return STATE_SUCCESS; // my, that was easy
+			}
+		}
+		// lane ATKSTATE-1a, RW 0x7512C6 (BFME2 0x74F82A .. 0x74F8A7): a victim that is no enemy now, that was an enemy at onEnter (+ 0x49), on an attack whose AI's
+		// last command source (AI vslot 0x23C) has bit 2 (CMD_FROM_AI), from an attacker that is not IS_MELEE_ATTACKING (status 0x1C), and that is no TREE (KindOf
+		// + 0x113 bit 6): the AI's goal object is cleared, the team's target too when it is this victim (RW 0x7A3E36), the AI hears the victim is dead
+		// (vslot 0x240) and the attack fails
+		{
+			static const int kTree = CombatNames::kindOf("TREE");
+			const bool isEnemy = source.getRelationship(*victim) == ENEMIES;
+			if (!isEnemy && m_victimWasEnemyOnEnter && ((unsigned)a.lastCommandSource() & 2u) != 0 &&
+				!source.testStatus((unsigned)CombatNames::statuses().isMeleeAttacking) && !victim->isKindOf((unsigned)kTree))
+			{
+				machine().setGoalObject(INVALID_ID);
+				if (Team *team = source.getTeam())
+				{
+					if (AIHuntState::teamTarget(*team, source.logic()) == victim)
+					{
+						team->setTeamTargetId(0);
+					}
+				}
+				a.notifyVictimIsDead();
+				return STATE_FAILURE;
 			}
 		}
 		// lane STEALTH-1 (RW 0x75232F, the attack sub-state: RW 0x752382 .. 0x7523B2): a victim that is stealthed and undetected for the attacker's player (RW 0x694C0D) ends
@@ -392,6 +438,34 @@ StateReturnType AIAttackState::update()
 	{
 		return STATE_FAILURE;
 	}
+	// lane ATKSTATE-1a, RW 0x7514F7 .. 0x751599 (BFME2 0x74FA79 .. 0x74FB2F): with the inner machine in its state 0xE4 the attack model conditions
+	// ATTACKING, ATTACKING_STRUCTURE and ATTACKING_POSITION are cleared; in any other state (or none) ATTACKING is set, ATTACKING_STRUCTURE when the goal
+	// object is a STRUCTURE (KindOf bit 7) and ATTACKING_POSITION on an attack on a position; neither of the last two is cleared here. INFERENCE (S-7164):
+	// the port's attack machines define no state 0xE4, so the clear branch is not reached
+	{
+		static const int kAttacking = CombatNames::modelCondition("ATTACKING"), kAttackingStructure = CombatNames::modelCondition("ATTACKING_STRUCTURE"),
+						 kAttackingPosition = CombatNames::modelCondition("ATTACKING_POSITION");
+		const unsigned kInnerState0xE4 = 0xE4;
+		if (m_attackMachine->currentStateId() == kInnerState0xE4)
+		{
+			source.setModelConditionState(kAttacking, false);
+			source.setModelConditionState(kAttackingStructure, false);
+			source.setModelConditionState(kAttackingPosition, false);
+		}
+		else
+		{
+			source.setModelConditionState(kAttacking, true);
+			const Object *goal = machine().goalObject();
+			if (goal && goal->isKindOf((unsigned)CombatNames::kinds().structure))
+			{
+				source.setModelConditionState(kAttackingStructure, true);
+			}
+			if (!m_isAttackingObject)
+			{
+				source.setModelConditionState(kAttackingPosition, true);
+			}
+		}
+	}
 	StateReturnType r;
 	{
 		KeptSubMachines<AIStateMachine>::Run run(m_keptMachines); // the shot can end this state inside the update (onExit below)
@@ -424,7 +498,10 @@ void AIAttackState::onExit(StateExitType)
 	{
 		t->setTurretTargetObject(nullptr, false); // lane GARRISON-2: RW 0x74D25D -> 0x6622C7(turret 0, none) (ZH AIStates.cpp:5722)
 	}
+	// RW onExit (BFME2 0x74B889): the model conditions ATTACKING, ATTACKING_STRUCTURE and ATTACKING_POSITION (+ 0x110 bits 5 .. 7) are cleared
 	obj.setModelConditionState(CombatNames::modelCondition("ATTACKING"), false);
+	obj.setModelConditionState(CombatNames::modelCondition("ATTACKING_STRUCTURE"), false);
+	obj.setModelConditionState(CombatNames::modelCondition("ATTACKING_POSITION"), false);
 	if (ObjectWeapons *w = obj.getWeapons())
 	{
 		w->updateWeaponStatusConditions();
@@ -457,6 +534,7 @@ void AIAttackState::crc(StateHasher &h) const
 	h.addI32(m_lockedSlotOnEnter);
 	h.addU32(m_shotsFired);
 	h.addBool(m_meleeMachine);
+	h.addBool(m_victimWasEnemyOnEnter);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------

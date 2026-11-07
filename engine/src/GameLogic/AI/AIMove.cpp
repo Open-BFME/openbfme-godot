@@ -678,7 +678,8 @@ bool AIMover::computePath(const Coord3D &destIn)
 	// two fall back, when they made nothing and the unit has no path, to the closest path (slot + 4, RW 0x6FB869), which always sets the retry flag
 	Path *np = nullptr;
 	bool tryClosest = true;
-	if (!m_pf.validMovementPosition(&obj, info, m_pf.getLayerAt(dest.x, dest.y, dest.z), &dest)) // the destination's layer (RW 0x680A75; lane WALL-1: a wall top's)
+	// the destination's layer (lane WALLSEARCH-1: RW 0x666328 asks RW 0x680A75 with the object, so the footprint's +5 for an even footprint applies)
+	if (!m_pf.validMovementPosition(&obj, info, m_pf.getLayerAt(obj, dest), &dest))
 	{
 		np = nullptr;
 	}
@@ -1189,6 +1190,15 @@ unsigned AIMover::doLocomotor()
 	if (!blocked && m_blockedFrames > 1)
 	{
 		m_blockedFrames = 1;
+	}
+	if (loco)
+	{
+		// lane AIRBORNE-1, RW 0x66A472 .. 0x66A4A0 (BFME2 0x66A3A0 doLocomotor, decomp AIUpdateInterface_doLocomotor.cpp:678, tier A): every pass with a
+		// locomotor, also one that does not work when dead (RW 0x6699D3 jumps to RW 0x66A45B), sets AIRBORNE_TARGET to height above terrain (RW 0x70B8AE) >
+		// the current locomotor template's AirborneTargetingHeight (+ 0xC0, an int): fild; fcomip; jbe (an unordered height clears it). Without a
+		// locomotor retail jumps past this tail (RW 0x6699B9 -> RW 0x66A4B5)
+		const int airborneHeight = loco->getTemplate().m_airborneTargetingHeight;
+		m_host.setAirborneTarget((double)obj.getHeightAboveTerrain() > (double)airborneHeight);
 	}
 	m_curMaxBlockedSpeed = AI_FAST_SPEED;
 	m_host.updateSailModelConditions(); // RW 0x66A4B7 (BFME2 0x66AF25): after the blocked-speed reset, before the sleep test

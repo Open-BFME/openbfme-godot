@@ -23,7 +23,7 @@
 // MOVEMENT (lane MOVE-1, GameLogic/Object/Contain/HordeMemberPass.cpp): in a game with an AIWorld update() is the movement part of HordeContain::update: the
 // TRANSPORT_MOVING mirror, the dirty flag, the member pass (snap, turn, walk to the slot, wait when ahead of it), the reform of the HORDE mover (greedy slot
 // reassignment). In a game without an AIWorld (the LOGIC-1 fixtures) update() sleeps forever and the members keep the slots they were given.
-// NOT PORTED (stop S-149 / S-222): the banner carriers, melee (M2), the flank history, the layer sync.
+// NOT PORTED (stop S-149 / S-222): the banner carriers, melee (M2), the flank history. Lane WALLHORDE-1: the layer sync is ported (RW 0x872EFC).
 
 #pragma once
 
