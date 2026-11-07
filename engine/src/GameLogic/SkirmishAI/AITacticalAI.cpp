@@ -3842,7 +3842,9 @@ void AITacticalAI::updateBrain(GameLogic &logic, AISkirmishPlayer &ai, AISkirmis
 	{
 		expansionTactic(logic, ai, b, owner->brain, best, owner->playerIndex, *player); // RW 0x90C50C (lane AIEXPAND-1)
 	}
-	// RW 0x90CCCB: not ported (S-417)
+	// RW 0x6C7506: the brain update tail-jumps to RW 0x90CCCB, the FlagCaptureSquad prototype refresh (RW 0x90CC23 adds one prototype per capture flag of the
+	// player's list, then each prototype's slot 0 RW 0x9BC5D6 runs). The port's FlagCaptureSquad is one prototype over the live capture registry (S-893), so
+	// there is no per-flag prototype list to refresh; S-417's old "generator teardown" reading of 0x90CCCB is corrected there.
 }
 
 void AITacticalAI::updateIdleArmy(GameLogic &logic, AISkirmishPlayer &ai)
