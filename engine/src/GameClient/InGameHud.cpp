@@ -779,11 +779,14 @@ void InGameHud::updateRadarEvents()
 	// A write can land after this logic frame was already sampled (a hit or a script notice between the present and the next logic step, which is how
 	// the radar tests post them). GameLogic::radarLogicWrites() bumps on those writes, and the sample is read again.
 	const unsigned radarLogicFrame = m_config.game.logic().getFrame();
+	// noteAttacks keeps only the local player's attacks, so a change of local player (an observer's view, a scenario's set_local_player) reads again.
 	const std::uint32_t radarLogicWrites = m_config.game.logic().radarLogicWrites();
-	if (radarLogicFrame != m_radarLogicFrame || radarLogicWrites != m_radarLogicWrites)
+	const Player *radarLocalPlayer = m_config.game.logic().players().getLocalPlayer();
+	if (radarLogicFrame != m_radarLogicFrame || radarLogicWrites != m_radarLogicWrites || radarLocalPlayer != m_radarLocalPlayer)
 	{
 		m_radarLogicFrame = radarLogicFrame;
 		m_radarLogicWrites = radarLogicWrites;
+		m_radarLocalPlayer = radarLocalPlayer;
 		m_radar->noteAttacks(m_config.game.logic()); // the logic is idle here (update's gate)
 		m_radar->noteLogicEvents(m_config.game.logic()); // lane BACKLOG3 (S-2452): the scripts' and the dozer's events
 	}

@@ -290,6 +290,48 @@ TEST_CASE("radar1 retail events: an enemy's hit on our unit makes an UNDER_ATTAC
 	}
 }
 
+TEST_CASE("radar1 retail events: switching the local player between logic steps reads the new player's fresh attacks")
+{
+	if (!haveWorld("radar1 retail local switch"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	RadarRig r(s);
+	Player *other = r.rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(other != nullptr);
+	Player *const before = r.rig.game->players().getLocalPlayer();
+	const Coord3D b = r.rig.freeSpot(600, 2600, 250.0f);
+	Object *theirs = r.rig.make("GondorBarracks", b.x, b.y, other);
+	Radar &radar = r.hud->radar();
+	radar.setPicture(40, 500, 200, 200);
+	r.frames(3);
+	// the local player's side hits Player_2's barracks; with the local player as it is, that is not our attack
+	DamageInfo hit;
+	hit.m_input.m_sourcePlayerMask = 1u << before->getPlayerIndex();
+	hit.m_input.m_damageType = DAMAGE_SLASH;
+	hit.m_input.m_amount = 5.0f;
+	theirs->attemptDamage(hit);
+	REQUIRE(theirs->radarAttackFrame() == r.rig.logic().getFrame());
+	const auto underAttack = [&] {
+		int n = 0;
+		for (int i = 0; i < Radar::kMaxEvents; ++i)
+		{
+			const auto &e = radar.radarEvent(i);
+			const float dx = e.worldLoc.x - theirs->getPosition()->x, dy = e.worldLoc.y - theirs->getPosition()->y;
+			n += e.active && e.type == Radar::RADAR_EVENT_UNDER_ATTACK && dx * dx + dy * dy < 100.0f * 100.0f;
+		}
+		return n;
+	};
+	r.hud->update(0.033); // samples this logic frame with the old local player
+	CHECK(underAttack() == 0);
+	// the view switches to Player_2 without a logic step: the same frame's attack on its barracks is now ours
+	r.rig.game->players().setLocalPlayer(other);
+	r.hud->update(0.033);
+	CHECK(underAttack() == 1);
+	r.rig.game->players().setLocalPlayer(before);
+}
+
 TEST_CASE("radar1 retail events: hordes that fight make UNDER_ATTACK events for the local player only")
 {
 	if (!haveWorld("radar1 retail fight"))

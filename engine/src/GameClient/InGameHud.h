@@ -53,6 +53,7 @@
 class ArchiveFileSystem;
 class GameTextSource;
 class LiveGame;
+class Player;
 class RetailObjectWorld;
 
 class InGameHud : public ScriptLocalView
@@ -329,6 +330,7 @@ private:
 	unsigned m_decalLogicFrame = ~0u;
 	unsigned m_radarLogicFrame = ~0u; ///< the logic frame noteAttacks / noteLogicEvents last read (their state moves once per logic frame)
 	std::uint32_t m_radarLogicWrites = 0; ///< GameLogic::radarLogicWrites() at that read; a later write in the same logic frame reads again
+	const Player *m_radarLocalPlayer = nullptr; ///< the local player at that read (noteAttacks keeps only that player's attacks)
 	std::vector<ObjectID> m_decalSelection;
 	SelectionDecalSettings m_decalBuiltSettings;
 	const GameLogic *m_decalLogic = nullptr;
