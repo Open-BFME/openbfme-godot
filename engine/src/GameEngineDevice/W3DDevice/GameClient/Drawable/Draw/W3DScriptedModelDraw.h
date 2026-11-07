@@ -188,6 +188,54 @@ public:
 		const int mode = m_tracks[0].mode;
 		return m_tracks[0].anim && !m_tracks[1].anim && !m_pending && (mode == 0 || mode == 1 || mode == 3 || mode == 5);
 	}
+	// lane DRAWADV-1: whether advance() (RW 0x4BF560) would change the track queue, the state or the fade. Retail advances every drawn draw once per
+	// client frame (doDrawModule RW 0x4C72BE, and six ObjectDrawInterface queries, through the lazy wrapper RW 0x4BFAF4; BFME2 0x4C7BC4 -> 0x4C0386)
+	// and has no such test; the port advances only the draws for which this is true (Drawable's entries, re-evaluated on every flag change, and
+	// MapObjectRuntime's map objects, evaluated once). True:
+	// - a blend or a waiting track, whatever track 0's mode: the countdown tests only that tracks 0 and 1 are there (RW 0x4BF8C0 .. 0x4BF8D4), then
+	//   the promotion (RW 0x4BF92D .. 0x4BF9D4); a waiting track moves into an empty track 0 (RW 0x4BF636 .. 0x4BF653);
+	// - a pending state with nothing playing (RW 0x4BF59B .. 0x4BF5D5);
+	// - a fade (FadeBeginFrame / FadeEndFrame): the opacity ramp RW 0x4B5497 (called at RW 0x4BFAE3) reads track 0's frame whatever its mode, and the
+	//   construction update RW 0x4B51B5 moves a MANUAL frame (the Troll Cage's fade-in, trollcage.ini; the opacity is not drawn yet, S-096);
+	// - a stepping track 0 (not MANUAL, more than one frame), or one completing into a pending state (RW 0x4BFA2D);
+	// - a one-frame track 0 that completes at once (ONCE, PLAY_TO_FRAME, ONCE_BACKWARDS: RW 0x4B271C) in a state that restarts (no conditions, or
+	//   RESTART_ANIM_WHEN_COMPLETE: RW 0x4BFA77 .. 0x4BFABC applies the state again, a new pick).
+	// A MANUAL track alone without a fade is not advanced: stepTrack leaves its frame and RW 0x4B271C never completes it. What a skipped advance
+	// still leaves out is registered in S-090 (the tracks' prevFrame / completed reset, the distance speed sync RW 0x4B67D4)
+	bool needsAdvance() const
+	{
+		if (!m_model || !m_curAnimState)
+		{
+			return false; // RW 0x4BF56C / 0x4BF575: advance returns at once
+		}
+		if (m_tracks[1].anim || m_tracks[2].anim)
+		{
+			return true;
+		}
+		const W3DDrawTrack &t = m_tracks[0];
+		if (!t.anim)
+		{
+			return m_pending;
+		}
+		if (m_whichAnim >= 0 && m_whichAnim < (int)m_curAnimState->animations.size())
+		{
+			const W3DAnimationInfo &info = m_curAnimState->animations[(size_t)m_whichAnim];
+			if (info.fadeBeginFrame > 0.0f && info.fadeEndFrame > info.fadeBeginFrame)
+			{
+				return true; // RW 0x4B54D0 .. 0x4B54EB: the ramp's test
+			}
+		}
+		if (t.mode == W3D_ANIM_MODE_MANUAL)
+		{
+			return false;
+		}
+		if (t.anim->Get_Num_Frames() > 1 || m_pending)
+		{
+			return true;
+		}
+		return trackComplete(t, false) && m_whichAnim != -1 &&
+			   (!m_curAnimState->conditions.any() || m_curAnimState->testFlag(W3D_ACF_RESTART_ANIM_WHEN_COMPLETE));
+	}
 
 	W3DDrawFrame frame() const;
 	// lane PERF-1: the same frame written into `f`, reusing its strings' and vector's storage (the render side asks for every animated drawable's frame

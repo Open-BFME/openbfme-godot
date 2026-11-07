@@ -157,8 +157,7 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 				{
 					e.draw.reset(new W3DScriptedModelDraw(*data, services.drawAssets, services.random, &services.host, o));
 				}
-				const W3DDrawFrame f = e.draw->frame();
-				e.animated = f.trackCount > 0 && f.tracks[0].anim && f.tracks[0].anim->Get_Num_Frames() > 1 && f.tracks[0].mode != W3D_ANIM_MODE_MANUAL;
+				e.animated = e.draw->needsAdvance(); // W3DScriptedModelDraw::needsAdvance: a blend runs whatever track 0's mode (S-090)
 				// the draw runtime's errors and stops are collected by DrawableManager (DrawEntry::draw->errors() / stops()), after the script hooks ran
 			}
 			catch (const std::exception &ex)
@@ -227,8 +226,7 @@ void Drawable::setModelConditionFlags(const ModelConditionFlags &flags)
 		if (e.draw)
 		{
 			e.draw->setModelConditionFlags(flags);
-			const W3DDrawFrame f = e.draw->frame();
-			e.animated = f.trackCount > 0 && f.tracks[0].anim && f.tracks[0].anim->Get_Num_Frames() > 1 && f.tracks[0].mode != W3D_ANIM_MODE_MANUAL;
+			e.animated = e.draw->needsAdvance();
 		}
 	}
 }
