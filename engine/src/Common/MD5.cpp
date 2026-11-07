@@ -29,6 +29,10 @@ void MD5::transform(const std::uint8_t block[64])
 
 void MD5::update(const void *data, size_t size)
 {
+	if (size == 0)
+	{
+		return; // an empty update (data may be null) changes nothing; memcpy must not see a null pointer
+	}
 	const std::uint8_t *p = static_cast<const std::uint8_t *>(data);
 	m_bitCount += (std::uint64_t)size * 8;
 	if (m_bufferUsed > 0)

@@ -57,3 +57,22 @@ TEST_CASE("MD5 unrolled kernel matches the scalar reference")
 		checkSame(big.data(), n);
 	}
 }
+
+TEST_CASE("MD5 streaming: empty and null updates between chunks change nothing")
+{
+	const std::string text(200, 'q');
+	MD5 whole;
+	whole.update(text.data(), text.size());
+	const std::string expected = whole.finalHex();
+	// a partial block, then empty updates (one with a null pointer), at and around the 64-byte block boundary
+	MD5 streamed;
+	streamed.update(text.data(), 1);
+	streamed.update(nullptr, 0);
+	streamed.update(text.data() + 1, 63);
+	streamed.update(nullptr, 0);
+	streamed.update(text.data() + 64, 0);
+	streamed.update(text.data() + 64, 70);
+	streamed.update(nullptr, 0);
+	streamed.update(text.data() + 134, 66);
+	CHECK(streamed.finalHex() == expected);
+}
