@@ -219,12 +219,16 @@ vec4 record_texel(int rec, int k) {
 }
 
 // One layer's lit colour in retail (gamma) space, before cloud / macro / fog.
+// terrain_low.gdshader (#define TERRAIN_LOW) draws retail GameLOD.ini Low's terrain: no normal map (flat, up-facing normals, no
+// specular). A separate shader variant, not a uniform branch: the branch itself measured about 1 ms of the default picture's opaque pass.
 vec3 shade_layer(vec2 uv_unwrapped, vec4 rect, vec4 vcol, vec2 gx, vec2 gy) {
 	vec2 uv = wrap_into_class(rect, uv_unwrapped);
 	vec3 albedo = textureGrad(base_atlas, uv, gx, gy).rgb;
 	if (debug_mode == 7) {
 		return albedo;
 	}
+	vec3 lit;
+#ifndef TERRAIN_LOW
 	vec4 nm = textureGrad(normal_atlas, uv, gx, gy);
 	vec2 nxy = 2.0 * nm.xy - 1.0;
 	float nz = sqrt(max(1.0 - dot(nxy, nxy), 0.0));
@@ -236,13 +240,21 @@ vec3 shade_layer(vec2 uv_unwrapped, vec4 rect, vec4 vcol, vec2 gx, vec2 gy) {
 	float diff = NdL > 0.0 ? NdL : 0.0;
 	float spec = (NdL > 0.0 && NdH > 0.0) ? pow(NdH, 1200.0) * nm.b * 0.9 : 0.0;
 	vec3 sun = overbright ? 0.5 * sun_color : sun_color;
-	vec3 lit = (vcol.rgb + 0.5 * lightning_color) * albedo + sun * (diff * albedo + spec);
+	lit = (vcol.rgb + 0.5 * lightning_color) * albedo + sun * (diff * albedo + spec);
+#else
+	vec3 Lt = normalize(v_lts);
+	vec3 sun = overbright ? 0.5 * sun_color : sun_color;
+	float diff = max(Lt.z, 0.0); // N = +up in the tangent frame
+	lit = (vcol.rgb + 0.5 * lightning_color) * albedo + sun * (diff * albedo);
+#endif
 	if (overbright) {
 		lit = 2.0 * lit;
 	}
 	if (debug_mode == 1) { return albedo; }
 	if (debug_mode == 2) { return vcol.rgb; }
+#ifndef TERRAIN_LOW
 	if (debug_mode == 3) { return nm.rgb; }
+#endif
 	return lit;
 }
 
