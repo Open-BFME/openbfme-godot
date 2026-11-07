@@ -31,8 +31,8 @@ set(OPENBFME_COMBAT_TESTS
     tests/test_invul1.cpp
     tests/test_kindfix1.cpp
     tests/test_combat_ai.cpp
-    tests/test_attack_aim_turn.cpp
-    tests/test_target1_acquire.cpp
+    tests/test_attack_approach_retail.cpp
+    tests/test_attack_aim_turn.cpp    tests/test_target1_acquire.cpp
     tests/test_los1_terrain.cpp
     tests/test_combat_horde.cpp
     tests/test_archer_spread.cpp

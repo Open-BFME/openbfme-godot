@@ -117,6 +117,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // point: WARG-1 moves it (its own vector, which the archive's newer commits keep) and PR #182 moves it again). The state hash's own dispatches are counted
 // apart from the frame's (PERF-2's collision jobs): with more than one
 // thread the hash itself ran chunks on workers. The Uber hash is not the Faithful one, and a Faithful hash dispatches nothing.
+// pin: re-measured on this branch with RotWK and BFME2 installed (OPENBFME_UBER1_REGEN=1): the attack approach's wait for an owner that cannot
+// move (RW 0x0034CD3A) moves the Uber battle from frame 0 (first 0x6adc90b9, last 0x23c35f12).
 // Lane MODCOMPAT-MOD1 re-measured the pin vector at GeometryUpgrade's commit (OPENBFME_UBER1_REGEN=1, a CI host): GeometryUpgrade's per-object GeometryInfo
 // (RW Object + 0xA8: the object's shapes enter its hash) moves it, from frame 0.
 // Lane MODCOMPAT-MOD1 re-measured the pin vector at RebuildHoleExposeDie's commit (OPENBFME_UBER1_REGEN=1, a CI host): RebuildHoleExposeDie /
