@@ -2416,6 +2416,8 @@ void updateReturnTheRing(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b
 		tac.step2 = (int)fortress->getID();
 		tac.step = 2;
 	}
+}
+
 // ---- lane RAI-TL: FarmKillSquad's farm and production target choice (RW 0x9BBA51 / 0x9BB5E4) ------------------------------------------------
 // RW 0x9BB2A7 (Coord3D::length RW 0x403111): the 3D distance, the sum (x*x + y*y) + z*z in float and the correctly rounded sqrt of its double
 float distance3d(const Coord3D &a, const Coord3D &b)
