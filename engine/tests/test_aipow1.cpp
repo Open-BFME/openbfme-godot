@@ -499,7 +499,7 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("50 of the 53 decisions run") != std::string::npos);
+	CHECK(ai[0].find("51 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") == std::string::npos); // lane RAI-POW ported it
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
 	// the decisions still unported: ATTACK_HEAL_AOE and the 2 spell book ones (ARMY_BREAKER, HEAL); TREE_KILLER is ported by lane RAI-POW-3
@@ -510,10 +510,10 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 		{
 			++unported;
 			const bool spellBook = std::string(TheAISpecialPowerTypeNames[t]).rfind("AI_SPELLBOOK_", 0) == 0;
-			CHECK_MESSAGE((spellBook || t == 49), TheAISpecialPowerTypeNames[t]);
+			CHECK_MESSAGE(spellBook, TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 3); // RAI-POW-3 moved this from 4: TREE_KILLER is ported
+	CHECK(unported == 2); // RAI-POW-4 moved this from 3: ATTACK_HEAL_AOE is ported
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -2063,4 +2063,230 @@ TEST_CASE("RAI-POW-3 review: the tree clusters are the connected groups of trees
 	CHECK(got == want);
 	CHECK(want.size() < records.size()); // tolerance: the map has trees closer than the bound, so some cluster holds several (the exact grouping is checked above)
 	MESSAGE(records.size() << " trees in " << got.size() << " clusters");
+}
+
+TEST_CASE("RAI-POW-4: the team threat orders round-trip in version 3 and older snapshots clear them")
+{
+	OPENBFME_REQUIRE_START(s);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityNecroSoulFreeze");
+	REQUIRE(t);
+	TeamFactory f;
+	TeamPrototype *proto = f.initTeam("RAI-POW-4 orders", nullptr, false, nullptr);
+	REQUIRE(proto);
+	Team *saved = f.createTeam(proto);
+	REQUIRE(saved);
+	Team::Order order;
+	order.command = 0x11;
+	order.flags = 0xFF;
+	order.flagsWord = 0x2014 | 0x4000;
+	order.timestamp = 17;
+	order.target = 42;
+	saved->addOrderForTest(order);
+	XferSave save;
+	saved->xfer(save);
+	REQUIRE(!save.data().empty());
+	CHECK(save.data()[0] == 3); // the block's version
+	Team *loaded = f.createTeam(proto);
+	REQUIRE(loaded);
+	XferLoad load(save.data());
+	loaded->xfer(load);
+	REQUIRE(loaded->orders().size() == 1);
+	const Team::Order &back = loaded->orders()[0];
+	CHECK(back.command == 0x11);
+	CHECK(back.flags == 0xFF);
+	CHECK(back.flagsWord == (0x2014 | 0x4000));
+	CHECK(back.timestamp == 17);
+	CHECK(back.target == 42);
+	CHECK(back.hasTarget());
+	// a version 2 snapshot (the registry only) loads into a team whose order list is cleared
+	Team *registry = f.createTeam(proto);
+	REQUIRE(registry);
+	registry->addSpecialPowerRecord(t->getSpecialPowerType(), 3, 7);
+	XferSave save2;
+	registry->xfer(save2);
+	REQUIRE(!save2.data().empty());
+	CHECK(save2.data()[0] == 2);
+	Team *loaded2 = f.createTeam(proto);
+	REQUIRE(loaded2);
+	loaded2->addOrderForTest(order);
+	XferLoad load2(save2.data());
+	loaded2->xfer(load2);
+	CHECK(loaded2->orders().empty());
+	CHECK(loaded2->specialPowerRecords().size() == 1);
+}
+
+// ---- lane RAI-POW-4: the team threat order (RW 0x7A59CB) and ATTACK_HEAL_AOE (Well of Souls, RW 0x9E691D) --------------------------------
+
+namespace
+{
+// the horde's module of `type`, or a module initialised as if its command button were in the command set (RW 0x8B714F's test hook)
+AISpecialPowerUpdate *hordePowerForTest(Object &horde, int type, std::unique_ptr<AISpecialPowerUpdate> &fresh)
+{
+	AISpecialPowerUpdate *found = aiPowerOfType(horde, type);
+	REQUIRE(found);
+	if (found->active())
+	{
+		return found;
+	}
+	fresh = std::make_unique<AISpecialPowerUpdate>(&horde, found->data());
+	fresh->initAsIfInCommandSetForTest();
+	return fresh.get();
+}
+
+void makePowerReady(Object &horde, AISpecialPowerUpdate &module)
+{
+	REQUIRE(module.decision());
+	const CommandButton *button = module.decision()->button;
+	REQUIRE(button);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(button->m_specialPowerName);
+	REQUIRE(t);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(horde, t);
+	REQUIRE(sp);
+	sp->pauseCountdown(false);
+	sp->setReadyFrame(horde.logic().getFrame());
+	REQUIRE(sp->isReady());
+}
+} // namespace
+
+TEST_CASE("RAI-POW-4: the team threat order (RW 0x7A59CB) records the most damaged member and the engine updates it every frame")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5301, &err), err);
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	Object *horde = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	Object *ally = a.make("AngmarNecromancerHorde", a.ai, -60.0f, 0.0f);
+	Object *enemy1 = a.make("GondorFighterHorde", a.human, 100.0f, 0.0f);
+	Object *enemy2 = a.make("GondorFighterHorde", a.human, -60.0f, 100.0f);
+	a.advance(2);
+	REQUIRE(horde->getAIUpdateInterface()->aiAttackObject(enemy1, CMD_FROM_PLAYER));
+	REQUIRE(ally->getAIUpdateInterface()->aiAttackObject(enemy2, CMD_FROM_PLAYER));
+	// the caster horde's members are barely hurt (0.99), the ally horde's badly (0.8): the ally is the most damaged member (RW 0x7A0141's
+	// smallest deficit)
+	REQUIRE(horde->getContain());
+	REQUIRE(ally->getContain());
+	for (Object *m : *horde->getContain()->getContainedItemsList())
+	{
+		setHealthRatio(*m, 0.99f);
+	}
+	for (Object *m : *ally->getContain()->getContainedItemsList())
+	{
+		setHealthRatio(*m, 0.8f);
+	}
+	Team *team = horde->getTeam();
+	REQUIRE(team);
+	REQUIRE(team == ally->getTeam());
+	REQUIRE(team->orders().empty());
+	team->updateThreatOrder(*a.logic);
+	REQUIRE(team->orders().size() == 1);
+	const Team::Order &order = team->orders()[0];
+	CHECK(order.command == 0x11); // the 50 .. 1500 deficit order, the one ATTACK_HEAL_AOE consumes
+	CHECK(order.hasTarget());
+	CHECK(order.target == ally->getID());
+	// an existing matching order is not added again (RW 0x7A159B)
+	team->updateThreatOrder(*a.logic);
+	CHECK(team->orders().size() == 1);
+	// Team::updateState (RW 0x7A208C) calls the vslot at its end: expire the direct order, advance one frame through ScriptEngine::updateTeamState,
+	// and the team has a fresh one
+	team->expireOrders(a.logic->getFrame() + 3001);
+	CHECK(team->orders().empty());
+	a.advance(1);
+	CHECK(!team->orders().empty());
+	// RW 0x7A2004: an order older than 3000 frames goes
+	team->expireOrders(a.logic->getFrame() + 3001);
+	CHECK(team->orders().empty());
+}
+
+TEST_CASE("RAI-POW-4: ATTACK_HEAL_AOE (Well of Souls, RW 0x9E691D) consumes the team's 0x11 order after the distance and location gates")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5302, &err), err);
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	// the battle sits on the AI fortress's plateau (dry land: Well of Souls has no WATER_OK and its radius cursor is 75 wide)
+	const Object *aiFort = firstOf(*a.logic, a.ai, "COMMANDCENTER");
+	REQUIRE(aiFort);
+	a.where = *aiFort->getPosition();
+	Object *horde = a.make("AngmarNecromancerHorde", a.ai, -200.0f, 0.0f);
+	Object *ally = a.make("AngmarNecromancerHorde", a.ai, 150.0f, 0.0f);
+	Object *enemy1 = a.make("GondorFighterHorde", a.human, -100.0f, 0.0f);
+	Object *enemy2 = a.make("GondorFighterHorde", a.human, 250.0f, 0.0f);
+	a.advance(2);
+	REQUIRE(horde->getAIUpdateInterface()->aiAttackObject(enemy1, CMD_FROM_PLAYER));
+	REQUIRE(ally->getAIUpdateInterface()->aiAttackObject(enemy2, CMD_FROM_PLAYER));
+	REQUIRE(horde->getContain());
+	REQUIRE(ally->getContain());
+	for (Object *m : *horde->getContain()->getContainedItemsList())
+	{
+		setHealthRatio(*m, 0.99f);
+	}
+	for (Object *m : *ally->getContain()->getContainedItemsList())
+	{
+		setHealthRatio(*m, 0.8f);
+	}
+	std::unique_ptr<AISpecialPowerUpdate> fresh;
+	AISpecialPowerUpdate *heal = hordePowerForTest(*horde, 49, fresh);
+	REQUIRE(heal->decision());
+	CHECK(heal->decision()->kind == AISpecialPowerDecision::KIND_LOCATION);
+	CHECK(heal->data()->m_commandButtonName == "Command_NecromancerWellOfSouls");
+	makePowerReady(*horde, *heal);
+	Team *team = horde->getTeam();
+	REQUIRE(team);
+	REQUIRE(team == ally->getTeam());
+	team->updateThreatOrder(*a.logic);
+	REQUIRE(team->orders().size() == 1);
+	CHECK(team->orders()[0].target == ally->getID());
+	// the order's member is 600 away: 600 is not below distanceLimit (400) * 0.9, so the decision answers no and keeps the order
+	CHECK(heal->decideNow() == false);
+	CHECK(team->orders().size() == 1);
+	// the caster joins the ally: the estimated length gate and the first enemy within the range (250) now pass
+	Coord3D near = *ally->getPosition();
+	near.x += 30.0f;
+	horde->teleportTo(&near, true);
+	a.logic->partition().update();
+	CHECK(distance2D(*horde->getPosition(), *ally->getPosition()) < 60.0f); // tolerance: the teleport puts the caster 30 from the ally
+	{
+		const CommandButton *b = heal->decision()->button;
+		const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(b->m_specialPowerName);
+		REQUIRE(t);
+		SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(*horde, t);
+		REQUIRE(sp);
+		CHECK(sp->requirementsMet());
+		CHECK(horde->getContain()->getContainCount() >= 4u); // tolerance: SpecialAbilityNecroWellOfSouls UnitCost (4) is a floor; the horde has its members
+	}
+	CHECK(heal->decideNow() == true);
+	// the location is the nearest enemy the scan found (a horde member, not the horde's own centre) and the order is erased (RW 0x7A1C5E)
+	CHECK(distance2D(heal->decidedLocation(), *horde->getPosition()) <= heal->decision()->range); // tolerance: the scan's own radius bounds a hit
+	bool onEnemy = false;
+	for (Object *o = a.logic->getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->getControllingPlayer() == a.human && !o->isEffectivelyDead() && heal->decidedLocation().x == o->getPosition()->x &&
+		    heal->decidedLocation().y == o->getPosition()->y)
+		{
+			onEnemy = true;
+		}
+	}
+	CHECK(onEnemy);
+	CHECK(team->orders().empty());
+	// a target id that resolves to nothing does not fall back to the payload position: the order stays and the decision answers no
+	Team::Order dead;
+	dead.command = 0x11;
+	dead.flags = 0xFF;
+	dead.flagsWord = 0x2004 | 0x4000;
+	dead.target = 0x7FFFFFF0u;
+	team->addOrderForTest(dead); // tests only
+	CHECK(heal->decideNow() == false);
+	CHECK(team->orders().size() == 1);
+	CHECK(team->orders()[0].target == dead.target);
+	// any team registry record of the power rejects, even the caster's own (RW 0x9E6941)
+	team->addSpecialPowerRecord(heal->decision()->powerType, a.logic->getFrame(), horde->getID());
+	CHECK(heal->decideNow() == false);
 }
