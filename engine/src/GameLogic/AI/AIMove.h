@@ -73,6 +73,15 @@ public:
 	virtual float closeEnoughDist() const = 0;      // locomotor +0x3C
 	virtual float locomotorSpeed() const = 0;       // locomotor +0x40 (RW getter 0x5E36F7), per frame
 	virtual bool movingBackwards() const = 0;       // locomotor flags bit 7
+	// lane BUMP-1: the object facts RW 0x66D16E tests (defaults: none): KindOf INFANTRY (template + 0x109 bit 0), status 0x46
+	// SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING, Object + 0x458 bit 3 (OFF_MAP), KindOf LARGE_RECTANGLE_PATHFIND (template + 0x11F bit 2), the
+	// formation id (Object + 0x42C) and the formation offset's x (+ 0x430)
+	virtual bool isInfantryKind() const { return false; }
+	virtual bool isUsingSpecialAbility() const { return false; }
+	virtual bool isOffMapObject() const { return false; }
+	virtual bool isLargeRectanglePathfind() const { return false; }
+	virtual int objectFormationId() const { return 0; }
+	virtual float objectFormationOffsetX() const { return 0.0f; }
 	// lane LOCODIST-1, getLocomotorDistanceToGoal (RW 0x664127): the object's template KindOf PROJECTILE (RW template + 0x10B bit 1), AI vslot 0x25C
 	// getTreatAsAircraftForLocoDistToGoal (RW 0x6629D3) and the state machine's goal position (AI + 0x30, machine + 0x24)
 	virtual bool isProjectile() const = 0;
@@ -81,6 +90,8 @@ public:
 	virtual bool setModelCondition(const char *name, bool on) = 0; // MOVING, CLIMBING, RAPPELLING, BACKING_UP
 	// RW 0x666FA3, called at the end of every doLocomotor pass (RW 0x66A4B7): the SAIL_* model conditions of a SHIP
 	virtual void updateSailModelConditions() {}
+	// lane AIRBORNE-1, RW 0x66A49E .. 0x66A4A0: Object::setStatus(AIRBORNE_TARGET (6), on) (RW 0x62684D)
+	virtual void setAirborneTarget(bool on) { (void)on; }
 	virtual float relativeAngleTo(const Coord3D &p) const = 0;     // RW relAngle2D(obj, p)
 	virtual bool isCellTypeTwo(const Coord3D &p, PathfindLayerEnum layer) const { (void)p; (void)layer; return false; } // RW 0x6EAD0E
 	// ---- lane PHYS-1 ----

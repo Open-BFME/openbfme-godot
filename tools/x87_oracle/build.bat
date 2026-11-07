@@ -12,10 +12,9 @@ if not exist "%VSWHERE%" goto no_msvc
 for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
 if not defined VSDIR goto no_msvc
 set "PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer;%PATH%"
-call "%VSDIR%\VC\Auxiliary\Build\vcvars32.bat" >nul
-if errorlevel 1 goto no_msvc
 if not exist "%HERE%build" mkdir "%HERE%build"
-cl /nologo /EHsc /O1 /arch:IA32 /Fo"%HERE%build\\" /Fe"%HERE%build\x87_oracle.exe" "%HERE%x87_oracle.cpp"
+rem own shell: vcvars grows PATH on each call, and cmd refuses a line over 8191 characters
+cmd /c ""%VSDIR%\VC\Auxiliary\Build\vcvars32.bat" >nul && cl /nologo /EHsc /O1 /arch:IA32 /Fo"%HERE%build\\" /Fe"%HERE%build\x87_oracle.exe" "%HERE%x87_oracle.cpp""
 if errorlevel 1 exit /b 1
 echo BUILD OK: tools\x87_oracle\build\x87_oracle.exe
 exit /b 0
