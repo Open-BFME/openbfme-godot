@@ -61,8 +61,10 @@ func _settings_checks() -> void:
 	DirAccess.remove_absolute(path)
 	var d = DisplaySettings.new()
 	_check(d.load_file(path) and d.errors.is_empty(), "a missing file is the first run: the defaults, no error")
-	_check(d.to_dict() == {"window_mode": "windowed", "resolution": "", "vsync": "on", "max_fps": 0, "show_fps": false, "render_scale": 1.0, "scaler": "bilinear"},
-		"the defaults change nothing of the game's start (windowed, vsync on, no cap, 100%% bilinear): %s" % JSON.stringify(d.to_dict()))
+	_check(d.to_dict() == {"window_mode": "windowed", "resolution": "", "vsync": "on", "max_fps": 0, "show_fps": false, "render_scale": 1.0, "scaler": "bilinear", "preset": "auto", "probe": "pending"},
+		"a first start keeps the full picture and marks the GPU probe pending: %s" % JSON.stringify(d.to_dict()))
+	_check(DisplaySettings.probe_verdict([10.0, 30.0, 40.0]) == "low" and DisplaySettings.probe_verdict([10.0, 16.0, 20.0]) == "high",
+		"the probe's median above 25 ms is low")
 	d.from_dict({"window_mode": "borderless", "resolution": "1600x900", "vsync": "adaptive", "max_fps": 144, "show_fps": true, "render_scale": 0.65, "scaler": "fsr2"})
 	_check(d.errors.is_empty() and d.save_file(path), "a full set of values is accepted and written")
 	var e = DisplaySettings.new()
