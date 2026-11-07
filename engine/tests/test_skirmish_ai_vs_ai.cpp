@@ -983,16 +983,17 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// from the 5000 window on; the game stays open at 9000
 			// merge queue q43 (measured once on the merged tree and at each merge point; see above): a new table from the first window on; the game stays open
 			// at 9000
+			// the immobile give-up (RW 0x0034CD3A): seed 2's table moves from the 6000 window; the game stays open at 9000. Seeds 7 and 1234 keep their ends.
 			CHECK(run.progress ==
 		"frame 1000: [0 attacks 0 built 91u/6s destroyed 20u/1s] [1 attacks 1 built 76u/8s destroyed 35u/2s]\n"
 		"frame 2000: [0 attacks 2 built 235u/10s destroyed 173u/1s] [1 attacks 2 built 221u/10s destroyed 152u/5s]\n"
 		"frame 3000: [0 attacks 2 built 328u/13s destroyed 233u/2s] [1 attacks 3 built 333u/13s destroyed 220u/6s]\n"
 		"frame 4000: [0 attacks 3 built 446u/16s destroyed 316u/5s] [1 attacks 4 built 385u/16s destroyed 345u/9s]\n"
 		"frame 5000: [0 attacks 8 built 526u/20s destroyed 341u/9s] [1 attacks 7 built 417u/19s destroyed 474u/9s]\n"
-		"frame 6000: [0 attacks 9 built 646u/22s destroyed 365u/11s] [1 attacks 8 built 427u/19s destroyed 578u/9s]\n"
-		"frame 7000: [0 attacks 11 built 684u/27s destroyed 444u/12s] [1 attacks 9 built 471u/21s destroyed 635u/11s]\n"
-		"frame 8000: [0 attacks 14 built 707u/30s destroyed 504u/15s] [1 attacks 10 built 544u/21s destroyed 662u/11s]\n"
-		"frame 9000: [0 attacks 17 built 779u/30s destroyed 594u/16s] [1 attacks 11 built 628u/22s destroyed 752u/11s]\n");
+		"frame 6000: [0 attacks 9 built 646u/23s destroyed 361u/11s] [1 attacks 8 built 427u/19s destroyed 580u/9s]\n"
+		"frame 7000: [0 attacks 16 built 688u/28s destroyed 436u/12s] [1 attacks 9 built 471u/22s destroyed 619u/10s]\n"
+		"frame 8000: [0 attacks 20 built 714u/31s destroyed 483u/16s] [1 attacks 9 built 519u/22s destroyed 666u/10s]\n"
+		"frame 9000: [0 attacks 21 built 751u/31s destroyed 541u/20s] [1 attacks 11 built 580u/23s destroyed 688u/10s]\n");
 		}
 	}
 }

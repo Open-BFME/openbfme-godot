@@ -577,6 +577,8 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: merge queue q44 re-measured all three once on the merged tree (OPENBFME_PERF1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (the locomotor
 // update sets AIRBORNE_TARGET from the height above terrain, RW 0x66A472) moves the big battle and the allied blob from frame 0 and the skirmish from
 // frame 2; the Brutal discount and the garrison weapon set leave all three as they were.
+// pin: re-measured on this branch with RotWK and BFME2 installed (OPENBFME_PERF1_REGEN=1): the immobile give-up (RW 0x0034CD3A) moves the big battle
+// (first 0xb49a66f0, last 0x3268ab48) and the 6000-frame skirmish (first 0x327cddbd, last 0x4a435648). The allied blob is unchanged.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,
