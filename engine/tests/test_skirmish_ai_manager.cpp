@@ -936,7 +936,7 @@ TEST_CASE("skirmish ai WotR battle start: not in a skirmish, past frame 5, once,
 		REQUIRE(fx.logic->getFrame() == 10);
 		const int unportedBefore = ai->brain.targetlessUnported;
 		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
-		CHECK(ai->brain.targetlessUnported - unportedBefore == 7); // the WotR prototype's check is ported
+		CHECK(ai->brain.targetlessUnported - unportedBefore == 8); // WotR's check is ported; the other eight prototypes still count
 		if (skirmish)
 		{
 			CHECK(ai->brain.tacticsByKind.count("AIStartWoTRBattleTactic") == 0); // RW 0x9B8451: game kind 3

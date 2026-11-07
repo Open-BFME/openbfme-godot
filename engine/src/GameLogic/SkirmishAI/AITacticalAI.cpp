@@ -3186,8 +3186,8 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 			return;
 		}
 	}
-	// RW 0x8F11DA
-	tac.ready = !tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; });
+	// RW 0x8F11DA. A prototype whose vslot 0x10 is 0 (AIStartWoTRBattleTactic) has no team to hand over, so an empty team list is ready.
+	tac.ready = tacticTeamCount(tac) == 0 ? tac.teams.empty() : (!tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; }));
 	if (!tac.ready || tac.ended)
 	{
 		return;
