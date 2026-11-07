@@ -2050,6 +2050,7 @@ void Object::doAttemptDamage(DamageInfo &info)
 			if (info.m_input.m_shouldPlayUnderAttackEva)
 			{
 				m_radarAttackFrame = m_logic.getFrame();
+				m_logic.noteRadarLogicWrite(); // the HUD may already have sampled this logic frame
 				// lane EVADAMAGE-1: RW 0x67B580 .. 0x67B776, the Eva half for the local player's object (RW 0x6AA7B2): the logic's part of the choice and
 				// the scan (EvaDamageNotice.h; reads only), the rest is the client's (ClientEvent::EVA_DAMAGED)
 				if (notifyDrawable && m_client && owner == m_logic.players().getLocalPlayer())

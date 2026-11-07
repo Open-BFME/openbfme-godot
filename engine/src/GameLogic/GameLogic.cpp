@@ -1037,6 +1037,7 @@ void GameLogic::noteRadarEvent(int type, const Coord3D &position, RadarEventNoti
 	n.source = source;
 	n.playerIndex = playerIndex;
 	m_radarEventNotices.push_back(n);
+	noteRadarLogicWrite();
 }
 
 void GameLogic::reset()

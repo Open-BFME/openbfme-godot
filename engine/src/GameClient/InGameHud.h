@@ -328,6 +328,7 @@ private:
 	// lane SELPERF-1: what m_selectionDecals was built for (rebuilt when any changes, else refreshed)
 	unsigned m_decalLogicFrame = ~0u;
 	unsigned m_radarLogicFrame = ~0u; ///< the logic frame noteAttacks / noteLogicEvents last read (their state moves once per logic frame)
+	std::uint32_t m_radarLogicWrites = 0; ///< GameLogic::radarLogicWrites() at that read; a later write in the same logic frame reads again
 	std::vector<ObjectID> m_decalSelection;
 	SelectionDecalSettings m_decalBuiltSettings;
 	const GameLogic *m_decalLogic = nullptr;

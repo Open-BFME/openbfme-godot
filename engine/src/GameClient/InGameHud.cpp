@@ -776,10 +776,14 @@ void InGameHud::updateRadarEvents()
 {
 	// What a logic frame writes (an object's radar attack frame, the scripts' event notices) is read once per logic frame.
 	// noteAttacks walks every live object; that walk does not change while one logic frame stands. The client-frame ping work below stays every render frame.
+	// A write can land after this logic frame was already sampled (a hit or a script notice between the present and the next logic step, which is how
+	// the radar tests post them). GameLogic::radarLogicWrites() bumps on those writes, and the sample is read again.
 	const unsigned radarLogicFrame = m_config.game.logic().getFrame();
-	if (radarLogicFrame != m_radarLogicFrame)
+	const std::uint32_t radarLogicWrites = m_config.game.logic().radarLogicWrites();
+	if (radarLogicFrame != m_radarLogicFrame || radarLogicWrites != m_radarLogicWrites)
 	{
 		m_radarLogicFrame = radarLogicFrame;
+		m_radarLogicWrites = radarLogicWrites;
 		m_radar->noteAttacks(m_config.game.logic()); // the logic is idle here (update's gate)
 		m_radar->noteLogicEvents(m_config.game.logic()); // lane BACKLOG3 (S-2452): the scripts' and the dozer's events
 	}
