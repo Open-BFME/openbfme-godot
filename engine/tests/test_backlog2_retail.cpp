@@ -735,9 +735,9 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// in the mover hash)
 	// merge queue q38 (measured once on the merged tree and at LOCODIST-1's merge point; goals unchanged): 0xE4523180 -> 0x45726314 (the retail locomotor
 	// distance to the goal, RW 0x664127, moves when the units arrive)
-	// lane RAI-TL-2 (ReturnTheRing's applicability check is ported, so the brain's targetless-unported counter, which is hashed, drops 9 -> 8):
-	// measured on the lane's tree 0xDE5C4CC1 (was 0x45726314); goals, positions and the scene are unchanged.
-	CHECK(a.hashes.back() == 0xDE5C4CC1U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// merge queue q43 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x45726314 -> 0xCA4B529D at #230's merge point
+	// (the AI's position sampler and base structure groups, hashed in the AI state) -> 0x57D4FF8F at #231's (the DEFENSIVE tactic's state); the later items keep it
+	CHECK(a.hashes.back() == 0x57D4FF8FU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

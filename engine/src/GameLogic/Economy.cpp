@@ -19,6 +19,8 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/SkirmishAI/SkirmishAIData.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include <stdexcept>
 #include <utility>
@@ -427,6 +429,35 @@ void Economy::reportUpgradeEva(const Player &player, const UpgradeTemplate &upgr
 			: (allied ? upgrade.m_alliedPlayerLosesUpgradeEvaEvent : upgrade.m_enemyPlayerLosesUpgradeEvaEvent);
 	}
 	AudioApi::reportEva(event, nullptr);
+}
+
+// lane BRUTALAI-1. The gate of the six sites (RW 0x73C344 .. 0x73C383 the thing cost, 0x73C569 .. 0x73C59A the thing time, 0x66F1AF .. 0x66F1E7 the upgrade
+// time, 0x66F3AC .. 0x66F3E5 the upgrade cost, 0x780AF9 .. 0x780B31 the hero revival cost, 0x780B98 .. 0x780BD0 the hero revival time):
+//   * RW 0x6AA61B Player::getDifficulty: Player + 0x2FC (its AI) -> RW 0x9A5E0C (the AI's + 0x30), else the game's ([0xDE3BAC] + 0x1A5C4); `cmp eax, 3`;
+//   * RW 0x6A950B: TheSkirmishAIManager ([0xDE4938]) runs an AI for the player (a null player: none).
+// A player the manager runs always has its AI, whose difficulty is the skirmish level (the port's Player::getSkirmishDifficulty, as RW 0x6AA61B is read
+// at AIBaseBuilder / AIUpgrade), so the game's difficulty never reaches a passing gate. Then m = 1.0 > r ? r : 1.0 (`comiss [0xBD1908]; jbe`: an
+// unordered r takes 1.0) with r the manager's + 0x95C (BuildCostReduction) or + 0x960 (BuildTimeReduction), the AIData BrutalDifficultyCheats at data
+// + 0x94C / + 0x950 (manager + 0x10). Retail data (RotWK 2.01 and BFME2 1.06): 15% and 15%. BFME2 1.06 has the same gate on its own manager (+ 0x850 cost, decomp
+// UpgradeTemplateCalcCostToBuild.cpp; + 0x854 time, decomp UpgradeRva0026EE30.cpp at BFME2 0x66EE30): both editions.
+std::optional<float> Economy::brutalReduction(const Player &player, bool time) const
+{
+	if (player.getSkirmishDifficulty() != 3) // GameDifficulty BRUTAL (RW 0x64501B)
+	{
+		return std::nullopt;
+	}
+	const SkirmishAIManager &manager = m_logic.skirmishAI();
+	if (!manager.findAI(player.getPlayerIndex()))
+	{
+		return std::nullopt;
+	}
+	if (!manager.store())
+	{
+		throw std::logic_error("Economy::brutalReduction: the skirmish AI runs without its AIData (SkirmishAIManager::setStore)");
+	}
+	const AIBrutalCheats &cheats = manager.store()->data().brutalCheats;
+	const float r = time ? cheats.buildTimeReduction : cheats.buildCostReduction;
+	return 1.0f > r ? r : 1.0f;
 }
 
 namespace
