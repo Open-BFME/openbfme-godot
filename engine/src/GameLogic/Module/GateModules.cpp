@@ -152,6 +152,48 @@ GateOpenAndCloseBehavior::GateOpenAndCloseBehavior(Thing *thing, const GateOpenA
 	m_geometryState = GEOMETRY_NONE;
 	m_request = -1;
 	m_soundPlayed = false;
+	// RW 0x89C0F1: the manager's gate list (+ 0xA74) takes the module (RW 0x8EDA39, no duplicate)
+	if (getObject())
+	{
+		getObject()->logic().skirmishAI().registerGate(*this);
+	}
+}
+
+// RW 0x8ED772 (the manager's gate list drops the module; RW 0x89BF87 in the destructor)
+GateOpenAndCloseBehavior::~GateOpenAndCloseBehavior()
+{
+	if (getObject())
+	{
+		getObject()->logic().skirmishAI().unregisterGate(*this);
+	}
+}
+
+// RW 0x89C12F: true while the gate's OPEN (passable) geometry is the one in the pathfinder's map, so the AI walks RW 0x8ED6DC / 0x8ED726 only close a gate
+// whose geometry is currently passable and restore it after the group's AIs. Opening: the open shapes are active from above PercentOpenForPathing percent;
+// open: always; closing: until the percent is above 100 - PercentOpenForPathing; closed: never.
+bool GateOpenAndCloseBehavior::openGeometryInPathfindMap() const
+{
+	switch (m_state)
+	{
+		case OPENING:
+			return m_percent > (float)m_data->m_percentOpenForPathing;
+		case OPEN:
+			return true;
+		case CLOSING:
+			return m_percent <= (float)(100u - m_data->m_percentOpenForPathing);
+		case CLOSED:
+			return false;
+		default:
+			return false;
+	}
+}
+
+// RW 0x89C18E: Player::getRelationship(gate object) (RW 0x6ADC43; an object without a controlling player is NEUTRAL)
+Relationship GateOpenAndCloseBehavior::relationshipTo(const Player &player) const
+{
+	const Object *obj = getObject();
+	const Player *owner = obj ? obj->getControllingPlayer() : nullptr;
+	return owner ? player.getRelationship(owner) : NEUTRAL;
 }
 
 GateOpenAndCloseBehavior *GateOpenAndCloseBehavior::findGate(const Object &obj)
@@ -352,10 +394,11 @@ bool GateOpenAndCloseBehavior::wouldLikeToCollideWith(const Object &other) const
 }
 
 // RW 0x89CA84 (open geometry) / RW 0x89C9FA (closed geometry). `scan`: the push-out scan RW 0x89C759 runs first
-void GateOpenAndCloseBehavior::setGeometry(bool openGeometry, bool scan)
+void GateOpenAndCloseBehavior::setGeometry(bool openGeometry, bool scan, bool force)
 {
 	const int wanted = openGeometry ? GEOMETRY_OPEN : GEOMETRY_CLOSED;
-	if (m_geometryState == wanted)
+	// RW 0x89C9FA (closed) always returns for its state; RW 0x89CA84 (open) only when its first argument is 0
+	if (m_geometryState == wanted && (!openGeometry || !force))
 	{
 		return;
 	}
@@ -409,12 +452,15 @@ UpdateSleepTime GateOpenAndCloseBehavior::update()
 	}
 	if (obj->isEffectivelyDead())
 	{
+		// RW 0x89CC6B .. 0x89CD59: a non-open gate becomes opening at 100 %, the geometry opens inline with the "already open" early-out (the force 0
+		// call; the object-created open call RW 0x89CB4A with force 1 is not this path), and the module leaves the manager's gate list
 		if (m_state != OPEN)
 		{
 			m_state = OPENING;
 			m_percent = 100.0f;
 		}
-		setGeometry(true, true);
+		setGeometry(true, true, false);
+		obj->logic().skirmishAI().unregisterGate(*this); // RW 0x89CD4D .. 0x89CD59 -> 0x8ED772
 		m_settled = false;
 		return UPDATE_SLEEP_NONE;
 	}
@@ -658,11 +704,12 @@ std::vector<std::string> GateModules::acceptanceStops()
 {
 	return {
 		"[S-1940] gates (HUD-5): GateOpenAndCloseBehavior's states, timing, model conditions and open / closed geometry (RW 0x89CC29), MSG_OPEN_GATE / MSG_CLOSE_GATE "
-		"(RW 0x77BF7B / 0x77C037), the gate buttons (RW 0x9410D7 / 0x9436E9), AIGateUpdate (RW 0x8B4D34) and the push-out scan of the units in the gate's way "
-		"(RW 0x89C759, lane GATEPUSH-1) run; the collide interface's repel (RW 0x89C6F5, RepelCollidingUnits) is ported but meets no contact: the port's collision "
+		"(RW 0x77BF7B / 0x77C037), the gate buttons (RW 0x9410D7 / 0x9436E9), AIGateUpdate (RW 0x8B4D34), the push-out scan of the units in the gate's way "
+		"(RW 0x89C759, lane GATEPUSH-1) and the skirmish AI's gate list (TheSkirmishAIManager + 0xA74, RW 0x89C04B / 0x8ED6DC / 0x8ED726 / 0x89C12F / 0x89C18E) run; "
+		"the collide interface's repel (RW 0x89C6F5, RepelCollidingUnits) is ported but meets no contact: the port's collision "
 		"pass pairs AI units only (S-581); not ported: the object interface call RW 0x68C3E6 at the start of the "
-		"update, the AI notification RW 0x68BE59(9) and the skirmish AI's gate list (TheSkirmishAIManager + 0xA74); the pathfinder's gate-flag keeping removal "
-		"(RW 0x6E861E) runs since lane WALLFOOT-1 and FakePathfindPortalBehaviour since lane WALL-2 (PortalModules.h)",
+		"update and the AI notification RW 0x68BE59(9); the pathfinder's gate-flag keeping removal (RW 0x6E861E) runs since lane WALLFOOT-1 and "
+		"FakePathfindPortalBehaviour since lane WALL-2 (PortalModules.h)",
 		"[S-1941] GateProxyBehavior and the Proxy link of GateOpenAndCloseBehavior (onObjectCreated RW 0x89CB19, Orthanc) are not ported: the messages and buttons find "
 		"only a GateOpenAndCloseBehavior",
 		"[S-1942] the gate sounds (SoundOpeningGateLoop / SoundFinishedOpeningGate / SoundClosingGateLoop / SoundFinishedClosingGate, RW 0x89C261 / 0x89C1A4) are "

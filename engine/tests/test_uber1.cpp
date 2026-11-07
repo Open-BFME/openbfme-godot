@@ -145,8 +145,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // and the mover hash covers the path's node chain, from frame 0.
 // Merge queue q37 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: #187 on top of WARG-1 and #182 moves it,
 // and ATKRESET-1 (attack orders end the FiringDuration lock) moves it again.
-// Lane CATAPULT-GIVEUP re-measured the pin vector (OPENBFME_UBER1_REGEN=1 on the merged tree): the attack approach's wait for an owner that cannot move
-// (AIAttackApproachState, RW 0x0034CD3A) has two new hashed fields, from frame 0.
+// pin: merge queue q44 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (AIRBORNE_TARGET
+// from the locomotor height, RW 0x66A472) moves it from frame 0.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

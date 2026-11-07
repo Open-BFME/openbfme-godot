@@ -353,6 +353,10 @@
    "reason": "host pacing: decides how many logic frames run per wall-clock interval, never what a frame computes (the state hash is frame indexed)"
   },
   {
+   "glob": "src/Common/ShaderVaryings.cpp",
+   "reason": "lane SHADER-BUDGET-1: counts the varyings of a Godot shader code string (the commit gate and the runtime guard); text only, never simulation state"
+  },
+  {
    "glob": "src/GameClient/FXList.cpp",
    "reason": "FX-1 client-side effects (FXList playback, particle systems, emitters): visual only, driven by the CLIENT random generator (GameClientRandom), never read back by the logic"
   },
@@ -511,6 +515,10 @@
   {
    "glob": "src/GodotDevice/GodotFXPlayer.cpp",
    "reason": "plays FXLists and particle systems on the GPU: client-side effects (FX-1)"
+  },
+  {
+   "glob": "src/GodotDevice/GodotShaderBudget.cpp",
+   "reason": "lane SHADER-BUDGET-1: the device-side set_code guard that reports an over-budget shader; client rendering only, never read by the logic"
   },
   {
    "glob": "src/Common/Audio/*",

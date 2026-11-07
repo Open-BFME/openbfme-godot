@@ -235,3 +235,48 @@ TEST_CASE("necrodie1 retail: the location test counts the acolytes without the N
 	CHECK(horde->getContain()->getContainCount() == 4);
 	CHECK_FALSE(ActionManager::canDoSpecialPowerAtLocation(*horde, at, well, kUngated));
 }
+
+// lane prtrkl (PR #216 x NECRODIE-1): the Necromancer is the horde's banner carrier and AngmarNecromancerHorde sets BannerCarrierDestroyHordeOnDeath, so his
+// death (RW 0x871915) kills every acolyte, while the acolytes his powers burn (UnitCost, above) are not the carrier and leave the rest standing
+TEST_CASE("prtrkl: the Necromancer's death takes his acolytes with him; his spells' sacrifices do not (RW 0x871915 x RW 0x85521F)")
+{
+	if (!hudtest::haveWorld("necrodie1"))
+	{
+		return;
+	}
+	for (const char *power : { "SpecialAbilityNecroFellStrength", "SpecialAbilityNecroWellOfSouls" })
+	{
+		const Cast r = cast(power, 0);
+		CAPTURE(power);
+		CHECK(r.triggered == 1);
+		CHECK(r.paid.size() == (std::string(power) == "SpecialAbilityNecroFellStrength" ? 2u : 4u));
+		CHECK(r.necromancerAlive);
+		CHECK(r.hordeAlive);
+	}
+	Arena a(shared());
+	Object *horde = a.place("AngmarNecromancerHorde", 0, 450.0f, 600.0f);
+	a.run(10);
+	HordeContain *h = dynamic_cast<HordeContain *>(horde->getContain());
+	REQUIRE(h != nullptr);
+	const ObjectID necromancer = h->bannerCarrier();
+	REQUIRE(necromancer != INVALID_ID);
+	std::vector<ObjectID> acolytes;
+	for (Object *m : membersOf(*horde))
+	{
+		if (m->getID() != necromancer)
+		{
+			acolytes.push_back(m->getID());
+		}
+	}
+	CHECK(acolytes.size() == 7);
+	a.logic.findObjectByID(necromancer)->kill(DAMAGE_UNRESISTABLE, 0);
+	a.run(2);
+	unsigned dead = 0;
+	for (ObjectID id : acolytes)
+	{
+		const Object *m = a.logic.findObjectByID(id);
+		dead += (!m || m->isEffectivelyDead()) ? 1u : 0u;
+	}
+	MESSAGE("acolytes dead after the Necromancer: " << dead << " of " << acolytes.size());
+	CHECK(dead == acolytes.size());
+}

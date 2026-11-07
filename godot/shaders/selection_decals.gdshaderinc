@@ -123,8 +123,9 @@ float sel_mask_at(int header, vec2 w) {
 // lane HERORING-1: the alpha decals (a hero's ring, SHADOW_ALPHA_DECAL) at the SAGE point `w` of a surface, blended in their list order as RotWK's
 // flushDecals draws them before the merge list (RW 0x509A1F: ShaderClass 0x1198B3, SRC_ALPHA / ONE_MINUS_SRC_ALPHA, no alpha test; texture x diffuse,
 // MODULATE RW 0x5373FC; the diffuse is the colour with the opacity as alpha, RW 0x73228B): over a surface colour C each one gives C (1 - a) + c a with
-// a = texel alpha x opacity, c = texel x colour. Returned premultiplied: rgb the decals' share (retail space, 0..1), a how much of the surface is covered,
-// so the surface becomes C (1 - result.a) + result.rgb. The same raised and wall rules as sel_merge_at
+// a = texel alpha x opacity, c = texel x colour. Lane ECOCIRCLE-2: an additive decal (rec3.w -2 / -3, SHADOW_ADDITIVE_DECAL 0x40 / 0x800) gives C + c o
+// instead (o the opacity, ShaderClass 0x515833 SC_ADDITIVE: ONE / ONE): the surface keeps its colour. Returned premultiplied: rgb the decals' share (retail space, 0..1), a how much of the surface is
+// covered, so the surface becomes C (1 - result.a) + result.rgb. The same raised and wall rules as sel_merge_at
 vec4 sel_alpha_at(vec3 w, bool wall) {
 	if (int(sel_grid2.w) < 4) {
 		return vec4(0.0);
@@ -149,8 +150,9 @@ vec4 sel_alpha_at(vec3 w, bool wall) {
 		}
 		int di = int(e.w < 0.0 ? -e.w - 1.0 : e.w) * 4;
 		vec4 rec1 = sel_texel(di + 1); // r, g, b, z
-		vec4 rec3 = sel_texel(di + 3); // the turn's cosine and sine, the y size, -1 terrain only / the vertex mask's texel (lane PLACEDECAL-1)
-		if (wall && (rec3.w != 0.0 || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT))) {
+		vec4 rec3 = sel_texel(di + 3); // the turn's cosine and sine, the y size, -1 terrain only / -2 terrain-only additive / -3 additive, wall too / the vertex mask's texel (lane PLACEDECAL-1)
+		bool additive = rec3.w == -2.0 || rec3.w == -3.0;
+		if (wall && ((rec3.w != 0.0 && rec3.w != -3.0) || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT))) {
 			continue;
 		}
 		vec4 rec0 = sel_texel(di); // x, y, size, opacity
@@ -161,12 +163,18 @@ vec4 sel_alpha_at(vec3 w, bool wall) {
 			continue;
 		}
 		vec4 s = sel_bilinear(sel_texel(di + 2), uv);
-		float a = s.a * rec0.w / 255.0;
+		// an additive decal adds texel x colour x opacity, its texel alpha unused (RW 0x73228B: no diffuse alpha; SC_ADDITIVE ONE / ONE)
+		float a = additive ? rec0.w / 255.0 : s.a * rec0.w / 255.0;
 		if (rec3.w > 0.0) {
 			a *= sel_mask_at(int(rec3.w), w.xy) / 255.0;
 		}
-		cd = cd * (1.0 - a) + s.rgb * rec1.rgb / 255.0 * a;
-		keep *= 1.0 - a;
+		vec3 src = s.rgb * rec1.rgb / 255.0;
+		if (additive) {
+			cd += src * a; // ONE / ONE: the surface keeps its colour
+		} else {
+			cd = cd * (1.0 - a) + src * a;
+			keep *= 1.0 - a;
+		}
 	}
 	return vec4(cd, 1.0 - keep);
 }

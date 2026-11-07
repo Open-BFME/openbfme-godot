@@ -12,9 +12,10 @@
 //     producer's ProductionModifier cost multiplier (ProductionUpdate slot 26); the result is truncated to int (Brutal AI: times 1 - BuildCostReduction).
 //   calcTimeToBuild(player, producer, override) RW 0x73C39E: SECONDS are truncated to whole numbers at several steps: t = (int)BuildTime; t = ftol(handicap *
 //     t); t = ftol((1.0 + ProductionTimeChange) * t); t = ftol(P * t) (slot 27); sec = (int)((float)t / lowEnergyRate); the multi-factory and multiplayer
-//     speed factors (GameData MultipleFactory, MultiPlayUnitSpeedMult / MultiPlayBuildingSpeedMult MPn) scale sec; frames = 5 * sec.
+//     speed factors (GameData MultipleFactory, MultiPlayUnitSpeedMult / MultiPlayBuildingSpeedMult MPn) scale sec; frames = 5 * sec; a Brutal skirmish AI:
+//     floor(frames * (1.0 - BuildTimeReduction)) in x87 PC24 (RW 0x73C569 .. 0x73C5CB, lane BRUTALAI-1).
 //   A vanilla unit with BuildTime 20.0 therefore takes 100 frames; BuildTime 7.5 takes 35, not 37.5.
-// Not ported (stop S-204): the handicap table (lobby handicap, 1.0), the energy ratio (no energy system: 1.0), the Brutal AI reductions, the MultipleFactory count for BuildCompletion APPEARS_AT_RALLY_POINT templates
+// Not ported (stop S-204): the handicap table (lobby handicap, 1.0), the energy ratio (no energy system: 1.0), the MultipleFactory count for BuildCompletion APPEARS_AT_RALLY_POINT templates
 // (reported when GameData's MultipleFactory is not 1.0), the Create-A-Hero surcharge.
 
 #pragma once
