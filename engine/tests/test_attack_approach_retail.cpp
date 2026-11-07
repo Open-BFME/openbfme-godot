@@ -268,14 +268,24 @@ TEST_CASE("attack approach: a guarding fortress catapult that picked a structure
 		}
 	}
 	MESSAGE("the guard picked the far farm after " << picked << " frames");
+	REQUIRE(picked == 2); // the guard took the far farm; a miss here means a later shot is not the give-up
 	const unsigned before = lastShot(*catapult);
 	Object *nearFarm = placeAt(logic, "GondorFarm", m.men, spot.x + dir * 300.0f, spot.y + 40.0f); // inside the 500 range, beyond the minimum 150
 	REQUIRE(nearFarm != nullptr);
+	int abandonedAt = -1;
 	for (int f = 0; f < 300; ++f)
 	{
 		advance(m, 1);
 		REQUIRE(logic.findObjectByID(catapultId) != nullptr);
+		if (abandonedAt < 0 && ai->currentVictim() != farFarm)
+		{
+			abandonedAt = f;
+		}
 	}
-	MESSAGE("last shot " << lastShot(*catapult) << " (before " << before << "), victim " << (ai->currentVictim() ? (int)ai->currentVictim()->getID() : 0));
+	MESSAGE("last shot " << lastShot(*catapult) << " (before " << before << "), victim " << (ai->currentVictim() ? (int)ai->currentVictim()->getID() : 0)
+		<< ", far farm dropped after " << abandonedAt << " frames");
+	// The two-second wait (RW 0x0034CD3A) is what drops the unreachable farm. A guard that never took it, or that drops it on the
+	// frame the near farm appears, does not show that wait. Holding the far farm for the whole window does not either.
+	CHECK(abandonedAt == 2 * LOGICFRAMES_PER_SECOND);
 	CHECK(lastShot(*catapult) > before); // tolerance: any shot after the near farm is placed proves the guard fired; its frame is reported
 }
