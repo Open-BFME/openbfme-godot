@@ -7,10 +7,12 @@
 
 #include "LogicTestUtil.h"
 
+#include "Common/GameState.h"
 #include "Common/INI.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
+#include "Common/Xfer.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
@@ -129,4 +131,32 @@ TEST_CASE("rai group tasks: a task is part of the skirmish AI hash (the group's 
 	StateHasher after;
 	m.crc(after);
 	CHECK(before.value() != after.value());
+}
+
+TEST_CASE("rai group tasks: a snapshot with one task loads back (version 7, five 4-byte fields)")
+{
+	TaskFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C1", "FactionA", false, 1, 0, 1 }, { "C2", "FactionA", false, 1, 0, 2 } });
+	SkirmishAIManager &m = fx.logic->skirmishAI();
+	REQUIRE(m.newGame(true) == 2);
+	AISkirmishGroup &g = *m.groups()[0];
+	g.addTask(fx.indexOf("C1"), fx.indexOf("C2"), 40, 10);
+	std::vector<std::uint8_t> saved;
+	fx.logic->gameState().saveBlocks({ "obfme:SkirmishAI" }, saved);
+	g.tasks.clear();
+	try
+	{
+		fx.logic->gameState().loadBlocks({ "obfme:SkirmishAI" }, saved);
+	}
+	catch (const XferException &e)
+	{
+		FAIL(e.what());
+	}
+	REQUIRE(m.groups().size() == 1);
+	const AISkirmishGroup &loaded = *m.groups()[0];
+	REQUIRE(loaded.tasks.size() == 1);
+	CHECK(loaded.tasks[0].state == AIGroupTask::TASK_ACTIVE);
+	CHECK(loaded.tasks[0].fromPlayer == fx.indexOf("C1"));
+	CHECK(loaded.tasks[0].toPlayer == fx.indexOf("C2"));
+	CHECK(loaded.tasks[0].remaining == 40);
+	CHECK(loaded.tasks[0].perUpdate == 10);
 }

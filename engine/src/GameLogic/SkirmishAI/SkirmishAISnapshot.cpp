@@ -731,7 +731,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 		if (v.current >= 7)
 		{
 			std::uint32_t tasks = (std::uint32_t)g->tasks.size();
-			x.xferCount(&tasks, 1024, sizeof(AIGroupTask)); // a live game has none (no caller fills the list); a save keeps them
+			x.xferCount(&tasks, 20, sizeof(AIGroupTask)); // five 4-byte fields (state, two players, remaining, per-update)
 			if (loading)
 			{
 				g->tasks.clear();
