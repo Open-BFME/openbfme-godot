@@ -24,7 +24,10 @@
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Economy.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
@@ -279,6 +282,7 @@ bool AISpecialPowerUpdate::locationValid(Object &obj, const Coord3D &loc)
 bool AISpecialPowerUpdate::setLocationIfValid(Object &obj, const Coord3D &loc)
 {
 	// RW 0xA0229F
+	m_proposedForTest = loc;
 	if (locationValid(obj, loc))
 	{
 		m_decision->location = loc;
@@ -739,6 +743,135 @@ bool AISpecialPowerUpdate::decideCallTheHorde(Object &obj)
 	return SimMath::subf32(1.0f, SimMath::divf32(used, limit)) > 0.25f;
 }
 
+// ---- the economy debuffs (lane RAI-POW-2) --------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+// RW 0x6AA5F5 (Player + 0x2FC's vslot 0x30) -> RW 0x8F47EB: the controlling player's AIPlayer enemy; null when the player has no skirmish AI
+const Player *aiEnemy(GameLogic &logic, const Player &player)
+{
+	AISkirmishPlayer *ai = logic.skirmishAI().findAI(player.getPlayerIndex());
+	return ai ? AITacticalAI::enemyPlayer(logic, *ai) : nullptr;
+}
+
+// RW 0xB4D9A0: the position is SHROUDED to the viewer
+bool shroudedFor(const GameLogic &logic, const Player &viewer, const Coord3D &position)
+{
+	return !logic.shroud() || (int)logic.shroud()->getStatusAt(viewer.getPlayerIndex(), position.x, position.y) == CELLSHROUD_SHROUDED;
+}
+} // namespace
+
+bool AISpecialPowerUpdate::decideDebuffEconomy(Object &obj)
+{
+	// RW 0x9E74B7: the controlling player's AIPlayer enemy (RW 0x6AA5F5 -> RW 0x8F47EB) and its record's economy list (record + 0xC, RW 0x72B229); each
+	// object that resolves, that the caster's player does not see SHROUDED and that is not UNDER_CONSTRUCTION (RW 0x44DDEC(object, 2)) weighs its
+	// PRODUCTION attribute product (RW 0x68C82D(object, 0xD, out = 1.0, 0, 1)); the largest weight (strictly greater) whose position RW 0xA0229F accepts
+	// wins. The answer is whether one was accepted
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const Player *enemy = aiEnemy(logic, *player);
+	if (!enemy)
+	{
+		return false;
+	}
+	const AIStatCollector *record = logic.skirmishAI().record(enemy->getPlayerIndex()); // RW 0x6A9999
+	if (!record)
+	{
+		return false; // INFERENCE: every playable player has a record (RW 0x8E46D9)
+	}
+	static const int kUnderConstruction = ObjectTemplateInfoBuilder::objectStatusIndex("UNDER_CONSTRUCTION");
+	float best = 0.0f;
+	const Object *bestObject = nullptr;
+	for (ObjectID id : record->economy()) // RW 0x72B229
+	{
+		Object *o = logic.findObjectByID(id); // RW 0x449681
+		if (!o)
+		{
+			continue;
+		}
+		if (shroudedFor(logic, *player, *o->getPosition()))
+		{
+			continue;
+		}
+		if (o->testStatus((unsigned)kUnderConstruction)) // RW 0x44DDEC(object, 2)
+		{
+			continue;
+		}
+		float weight = 1.0f; // RW 0xBD1908
+		o->attributeModifierProduct(0xD, nullptr, true, weight); // RW 0x68C82D(0xD, &weight, 0, 1)
+		if (!(weight > best))
+		{
+			continue;
+		}
+		if (!setLocationIfValid(obj, *o->getPosition())) // RW 0xA0229F
+		{
+			continue;
+		}
+		best = weight;
+		bestObject = o;
+	}
+	return bestObject != nullptr;
+}
+
+bool AISpecialPowerUpdate::decideDebuffProduction(Object &obj)
+{
+	// RW 0x9E726A: the same enemy (RW 0x6AA5F5) and its record's structure list (record + 8); each visible (RW 0xB4D9A0 != 2) FS_FACTORY (template + 0x10F
+	// bit 7, KindOf 63) whose position RW 0xA0229F accepts; the weight is the count of the caster's player's ENEMIES within 200 (RW 0xC8DE70) that are alive
+	// and FS_FACTORY (the query's KindOf mask); the largest count (strictly greater) wins
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const Player *enemy = aiEnemy(logic, *player);
+	if (!enemy)
+	{
+		return false;
+	}
+	const AIStatCollector *record = logic.skirmishAI().record(enemy->getPlayerIndex());
+	if (!record)
+	{
+		return false; // INFERENCE: every playable player has a record (RW 0x8E46D9)
+	}
+	static const int kFsFactory = kind("FS_FACTORY");
+	unsigned best = 0;
+	const Object *bestObject = nullptr;
+	PartitionFilterFn relation([&](Object &o) { return relationIn(player, o, 4u); }); // RW 0xC1676C mask 4
+	PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });        // RW 0xC10E20
+	PartitionFilterFn factory([](Object &o) { return hasKind(o, kFsFactory); });       // the query's KindOf mask
+	for (ObjectID id : record->structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (!o || !hasKind(*o, kFsFactory))
+		{
+			continue;
+		}
+		if (shroudedFor(logic, *player, *o->getPosition()))
+		{
+			continue;
+		}
+		const unsigned count = (unsigned)logic.partition()
+		                           .iterateObjectsInRange(*o->getPosition(), 200.0f, FROM_CENTER_2D, { &relation, &alive, &factory }, ITER_FASTEST)
+		                           .size(); // RW 0xC8DE70
+		if (count <= best)
+		{
+			continue;
+		}
+		if (!setLocationIfValid(obj, *o->getPosition())) // RW 0xA0229F
+		{
+			continue;
+		}
+		best = count;
+		bestObject = o;
+	}
+	return bestObject != nullptr;
+}
+
 bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)
 {
 	// RW 0x9E7671: the player info record's economy list (record + 0xC, RW 0x99E738; add RW 0x99E84E -> filter RW 0x99E818: neither LINKED_TO_FLAG nor
@@ -779,11 +912,11 @@ bool AISpecialPowerUpdate::decideSoulFreeze(Object &obj)
 	// skips every hit's accounting, which leaves the enemy total 0.
 	Team *team = obj.getTeam();
 	const Player *player = obj.getControllingPlayer();
-	if (!team || !m_decision->powerTemplate || !player)
+	if (!team || !player)
 	{
 		return false;
 	}
-	Object *registered = team->findSpecialPowerRecord(m_decision->powerTemplate, nullptr, obj.logic());
+	Object *registered = team->findSpecialPowerRecord(m_decision->powerType, nullptr, obj.logic());
 	if (registered && registered != &obj)
 	{
 		return false;
@@ -800,8 +933,8 @@ bool AISpecialPowerUpdate::decideSoulFreeze(Object &obj)
 	{
 		return false;
 	}
-	// the cell width: __ftol2(x87(radius * the double 2/3, RW 0xC8E360)), not a float32 2/3
-	const int width = (int)SimMath::ftol2(SimMath::pc24MulW((double)radius, 2.0 / 3.0));
+	// the cell width: __ftol2(x87(radius * the double 2/3 = 0x3FE5555555555555, RW 0xC8E360)), not a float32 2/3
+	const int width = (int)SimMath::ftol2(SimMath::pc24MulW((double)radius, 0.66666666666666663));
 	if (width == 0)
 	{
 		throw std::logic_error("AISpecialPowerUpdate SOUL_FREEZE (RW 0x9E9B37): the range " + std::to_string(radius) + " gives a zero cell width (retail divides by zero)");
@@ -926,7 +1059,7 @@ bool AISpecialPowerUpdate::decideSoulFreeze(Object &obj)
 		return false;
 	}
 	// RW 0x9EA028: the five-word record joins the team's registry after the location was accepted
-	team->addSpecialPowerRecord(m_decision->powerTemplate, obj.logic().getFrame(), obj.getID());
+	team->addSpecialPowerRecord(m_decision->powerType, obj.logic().getFrame(), obj.getID());
 	return true;
 }
 
@@ -1009,4 +1142,270 @@ bool AISpecialPowerUpdate::decideAttackHealAoe(Object &obj)
 	}
 	team->eraseOrder(found); // RW 0x9E6AFD -> RW 0x7A1C5E
 	return true;
+
+// ---- the structure breakers: the enemy record's position sampler (lane RAI-POW-3b) ---------------------------------------------------------------
+
+namespace
+{
+// RW 0xA024DA (AISpellBookBase::findDenseStructureCenter): the enemy Player's record (RW 0x6A9999) and its position sampler (record + 0x10); in cluster
+// order the first cluster whose object count (RW 0x97D700: (members.end - members.begin) / 4) is above the best so far (strictly) and whose centre
+// (RW 0x9E7071: the group + 0x08) the viewer does not see SHROUDED (RW 0xB4D9A0 != 2) wins. `out` is zeroed first, as retail does; false when no
+// cluster has a member. The groups come from AIPositionSampler (the defence-records PR): its Group carries the retail group's + 0x08 centre and its
+// + 0x1C / + 0x20 members; the + 0x18 "used" byte is set and read only by RW 0x9E7095 / 0x9E70A6, which none of the three decisions calls.
+bool findDenseStructureCenter(Object &caster, const Player &recordPlayer, Coord3D &out)
+{
+	GameLogic &logic = caster.logic();
+	const Player *viewer = caster.getControllingPlayer();
+	out = Coord3D{};
+	if (!viewer || !logic.shroud())
+	{
+		return false;
+	}
+	AIStatCollector *record = logic.skirmishAI().record(recordPlayer.getPlayerIndex());
+	if (!record)
+	{
+		return false; // INFERENCE: retail reads through a null record; every playable player has one (RW 0x8E46D9)
+	}
+	unsigned best = 0;
+	bool found = false;
+	Coord3D bestPosition{};
+	for (const AIPositionSampler::Group &cluster : record->positions().groups())
+	{
+		const unsigned count = (unsigned)cluster.members.size();
+		if (count <= best)
+		{
+			continue;
+		}
+		if ((int)logic.shroud()->getStatusAt(viewer->getPlayerIndex(), cluster.center.x, cluster.center.y) == CELLSHROUD_SHROUDED)
+		{
+			continue;
+		}
+		best = count;
+		bestPosition = cluster.center;
+		found = true;
+	}
+	if (found)
+	{
+		out = bestPosition;
+	}
+	return found;
+}
+
+// RW 0x6C7807: the AI's current enemy player; null when it has none
+const Player *enemyPlayerOf(GameLogic &logic, const AISkirmishPlayer &ai)
+{
+	const int enemy = AITacticalAI::enemyOfGroup(ai);
+	return enemy >= 0 ? logic.players().getNthPlayer(enemy) : nullptr;
+}
+} // namespace
+
+bool AISpecialPowerUpdate::decideStructureBreaker(Object &obj)
+{
+	// RW 0x9E7A98: the controlling player's AI (RW 0x6A950B) and its current enemy (RW 0x6C7807); the enemy record's densest structure cluster
+	// (RW 0xA024DA) -> RW 0xA0229F at its centre
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(player->getPlayerIndex());
+	if (!ai)
+	{
+		return false;
+	}
+	const Player *enemy = enemyPlayerOf(logic, *ai);
+	if (!enemy)
+	{
+		return false;
+	}
+	Coord3D position{};
+	if (!findDenseStructureCenter(obj, *enemy, position))
+	{
+		return false;
+	}
+	return setLocationIfValid(obj, position); // RW 0xA0229F
+}
+
+bool AISpecialPowerUpdate::decideStructureBreakerWalls(Object &obj)
+{
+	// RW 0x9E7942: the first busy army unit (RW 0xA0241D(player, hero, any victim, live)); its player's ENEMIES (mask 4) within 500 (RW 0xC8DF5C),
+	// alive, of KindOf WALK_ON_TOP_OF_WALL (60), DEFENSIVE_WALL (61), WALL_UPGRADE (150), WALL_HUB (156) or WALL_SEGMENT (189) (RW 0x9E7985's mask),
+	// near to far: the first -> RW 0xA0229F. No busy unit or no wall falls back to RW 0x9E7A98 (RW 0x9E7A5F)
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	Object *unit = firstBusyArmyUnit(logic, *player, true, true, false);
+	if (unit)
+	{
+		static const int kWalkOnTopOfWall = kind("WALK_ON_TOP_OF_WALL"), kDefensiveWall = kind("DEFENSIVE_WALL"), kWallUpgrade = kind("WALL_UPGRADE"),
+		                 kWallHub = kind("WALL_HUB"), kWallSegment = kind("WALL_SEGMENT");
+		for (const PartitionHit &hit : scanAt(logic, player, *unit->getPosition(), 500.0f, 4u)) // RW 0xC8DF5C
+		{
+			const Object &wall = *hit.object;
+			if (hasKind(wall, kWalkOnTopOfWall) || hasKind(wall, kDefensiveWall) || hasKind(wall, kWallUpgrade) || hasKind(wall, kWallHub) ||
+			    hasKind(wall, kWallSegment))
+			{
+				return setLocationIfValid(obj, *wall.getPosition()); // RW 0xA0229F
+			}
+		}
+	}
+	return decideStructureBreaker(obj); // RW 0x9E7A5F
+}
+
+bool AISpecialPowerUpdate::decideStructureBaseKill(Object &obj)
+{
+	// RW 0x9E6EF4: the first busy army unit (RW 0xA0241D(player, hero, any victim, live)); its player's ENEMIES (mask 4) within 500 (RW 0xC8DDF8),
+	// alive, KindOf DOZER_FACTORY (194) (RW 0x9E6F36's mask), near to far: the first -> RW 0xA0229F. None (or no busy unit) then asks RW 0x9E6E8E
+	// whether the enemy record's structures still list a DOZER_FACTORY: if so no, else the densest structure cluster (RW 0x9E7A98)
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(player->getPlayerIndex());
+	if (!ai)
+	{
+		return false;
+	}
+	static const int kDozerFactory = kind("DOZER_FACTORY");
+	Object *unit = firstBusyArmyUnit(logic, *player, true, true, false);
+	if (unit)
+	{
+		for (const PartitionHit &hit : scanAt(logic, player, *unit->getPosition(), 500.0f, 4u)) // RW 0xC8DDF8
+		{
+			if (hasKind(*hit.object, kDozerFactory))
+			{
+				return setLocationIfValid(obj, *hit.object->getPosition()); // RW 0xA0229F
+			}
+		}
+	}
+	// RW 0x9E6E8E: the current enemy (RW 0x6C7807) and its record's structure list (record + 8)
+	if (const Player *enemy = enemyPlayerOf(logic, *ai))
+	{
+		const AIStatCollector *record = logic.skirmishAI().record(enemy->getPlayerIndex());
+		if (!record)
+		{
+			return false; // INFERENCE: every playable player has a record (RW 0x8E46D9)
+		}
+		for (ObjectID id : record->structures())
+		{
+			const Object *structure = logic.findObjectByID(id);
+			if (structure && hasKind(*structure, kDozerFactory))
+			{
+				return false;
+			}
+		}
+	}
+	return decideStructureBreaker(obj); // RW 0x9E7010
+}
+
+// ---- CITADEL (lane RAI-POW-2, community #234) -------------------------------------------------------------------------------------------------------------------------------
+
+bool AISpecialPowerUpdate::decideCitadel(Object &obj)
+{
+	// RW 0x9E6CCB: the controlling player's AI (RW 0x6A950B), its base position (RW 0x8F0284: the base builder's start) and its current enemy
+	// (RW 0x6C7807); the enemy record's structure list (record + 8): the first DOZER_FACTORY (template + 0x120 bit 2) is the target. Two draws of
+	// GameLogicRandomValueReal (RW 0x6D332C) "AISpellBookCitadel.cpp" (the binary stores the full build path): line 0x49, range (0, 1), places a point along
+	// the base -> target line; line 0x51, range (-1, 1) (the low bound is RW 0xBD19DC = -1.0f), offsets it by the cross product of the base -> target
+	// vector with (0, 0, t2) (RW 0x9E6DE0 .. 0x9E6E44, SSE, the zero products kept); then RW 0xA0229F
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(player->getPlayerIndex());
+	if (!ai)
+	{
+		return false;
+	}
+	const int enemyIndex = AITacticalAI::enemyOfGroup(*ai);
+	if (enemyIndex < 0)
+	{
+		return false;
+	}
+	const AIStatCollector *record = logic.skirmishAI().record(enemyIndex); // RW 0x6A9999
+	if (!record)
+	{
+		return false; // INFERENCE: every playable player has a record (RW 0x8E46D9)
+	}
+	static const int kDozerFactory = kind("DOZER_FACTORY");
+	const Object *target = nullptr;
+	for (ObjectID id : record->structures())
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && hasKind(*o, kDozerFactory))
+		{
+			target = o;
+			break;
+		}
+	}
+	if (!target)
+	{
+		return false; // RW 0x9E6D3A
+	}
+	const Coord3D &base = ai->build.startPosition; // RW 0x8F0284 -> RW 0x90CD45
+	const Coord3D &goal = *target->getPosition();
+	const float dx = SimMath::subf32(goal.x, base.x), dy = SimMath::subf32(goal.y, base.y), dz = SimMath::subf32(goal.z, base.z);
+	const float t1 = logic.random().getValueReal(0.0f, 1.0f, "AISpellBookCitadel.cpp", 0x49);
+	const Coord3D point{ SimMath::addf32(base.x, SimMath::mulf32(dx, t1)), SimMath::addf32(base.y, SimMath::mulf32(dy, t1)),
+		                 SimMath::addf32(base.z, SimMath::mulf32(dz, t1)) };
+	const float t2 = logic.random().getValueReal(-1.0f, 1.0f, "AISpellBookCitadel.cpp", 0x51);
+	// x += t2 * dy - dz * 0; y += dz * 0 - t2 * dx; z += dx * 0 - dy * 0
+	const float zdz = SimMath::mulf32(dz, 0.0f);
+	const Coord3D offset{ SimMath::addf32(point.x, SimMath::subf32(SimMath::mulf32(t2, dy), zdz)),
+		                  SimMath::addf32(SimMath::subf32(zdz, SimMath::mulf32(t2, dx)), point.y),
+		                  SimMath::addf32(SimMath::subf32(SimMath::mulf32(dx, 0.0f), SimMath::mulf32(dy, 0.0f)), point.z) };
+	return setLocationIfValid(obj, offset); // RW 0xA0229F
+}
+
+// RW 0x9E70B6: the terrain's tree clusters (TheTerrainLogic + 0x584, see TerrainTrees::clusters): in cluster order the first cluster whose
+// "used" byte (RW 0x9E70A6, + 0x18) is clear and whose member count (RW 0x97D700) is above the best so far (strictly) and whose centre
+// (RW 0x9E7071, + 0x08) the caster's player does not see SHROUDED (RW 0xB4D9A0 == 2) wins. On success the used byte is set (RW 0x9E7095)
+// BEFORE RW 0xA0229F accepts the centre, so a refused location still burns the cluster; the decision answers RW 0xA0229F's answer.
+// Both editions: BFME2 1.06's AISpellBookTreeKiller::shouldActivate (game.dat 0x5D7766, Open-BFME-2 AISpellBookTreeKiller.cpp) reads the same
+// TheTerrainLogic + 0x584 table with a shroud check (the donor's evidence line; its body was not compared field by field).
+bool AISpecialPowerUpdate::decideTreeKiller(Object &obj)
+{
+	GameLogic &logic = obj.logic();
+	const Player *viewer = obj.getControllingPlayer();
+	if (!viewer || !logic.shroud())
+	{
+		return false; // INFERENCE: retail reads through the shroud pointer unchecked; every game has one
+	}
+	std::vector<TerrainTrees::Cluster> &clusters = logic.trees().clusters();
+	unsigned best = 0;
+	size_t bestCluster = clusters.size();
+	Coord3D bestPosition{};
+	for (size_t i = 0; i < clusters.size(); ++i)
+	{
+		const TerrainTrees::Cluster &cluster = clusters[i];
+		if (cluster.used)
+		{
+			continue;
+		}
+		const unsigned count = (unsigned)cluster.members.size();
+		if (count <= best)
+		{
+			continue;
+		}
+		if ((int)logic.shroud()->getStatusAt(viewer->getPlayerIndex(), cluster.center.x, cluster.center.y) == CELLSHROUD_SHROUDED)
+		{
+			continue;
+		}
+		best = count;
+		bestCluster = i;
+		bestPosition = cluster.center;
+	}
+	if (bestCluster == clusters.size())
+	{
+		return false;
+	}
+	clusters[bestCluster].used = true; // RW 0x9E7095, before the location base runs
+	return setLocationIfValid(obj, bestPosition); // RW 0xA0229F
 }

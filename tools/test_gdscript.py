@@ -123,9 +123,11 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "w3d_shader_reuse_test.gd": "manual: requires the isolated native test extension built by w3d_shader_reuse_test.py; no retail assets",
     "harlindon_creep_combat_test.gd": "manual: requires private retail assets and a live skirmish",
     "fortress_exit_test.gd": "manual: requires private retail assets and a live skirmish",
     "water_normal_test.gd": "manual: requires GPU rendering for fixed-input water normals",
+    "draw_cull_test.gd": "manual: requires GPU rendering and a frame_pre_draw for the draw-cull compaction",
     "standing_water_test.gd": "manual: requires private retail assets and GPU water rendering",
     "ini_error_in_extension_test.gd": "manual: requires private retail assets (a synthetic mod INI over a retail map)",
     "map_water_ini_error_test.gd": "manual: requires private retail assets (a synthetic mod water.ini over a retail map)",
@@ -134,7 +136,7 @@ DENYLIST = {
                     "manual: needs a private BFME1 installation"),
     **dict.fromkeys(scripts("""
         audio_stress backlog3_focus bfme2camp1 buildperf cah_awards_display camp2 campsave1 floating_money_text
-        hero_radius_cursor hudredraw hud_globe_visibility menustyle_native menustyle net_uber netlag1 occlude1 opts4 opts5
+        apt_view3d_visibility hero_radius_cursor hudredraw hud_globe_visibility menustyle_native menustyle net_uber netlag1 occlude1 opts4 opts5
         macos_trackpad packed_model_texture pathperf1_render perf3_cull perfclient_views play3 player_house_color player_message_log
         pose_buffer pose_buffer_cull_query pose_buffer_query_trigger
         renderwait1_teardown road_shading selperf shellfix1 spellbook_reload terrain_lighting uberjoin1 ui4_resize

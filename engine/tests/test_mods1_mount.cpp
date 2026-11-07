@@ -20,6 +20,7 @@
 #include "GameNetwork/NetPacket.h"
 #include "GameNetwork/ProfileIdentity.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -31,6 +32,13 @@ namespace fs = std::filesystem;
 
 namespace
 {
+// a source name joins the mod folder to its file with '/'; fs::path joins with '\' on Windows
+std::vector<std::string> forwardSlashes(std::vector<std::string> names)
+{
+	for (std::string &name : names) std::replace(name.begin(), name.end(), '\\', '/');
+	return names;
+}
+
 
 struct TempDir
 {
@@ -107,11 +115,11 @@ TEST_CASE("MODS-1: parseMod (RW 0x7BADB9): user data folder, folder vs archive, 
 	ModOperand op;
 	std::string error;
 	REQUIRE_MESSAGE(ParseModArgument("MyMod", user.u8string(), op, &error), error);
-	CHECK(op.dir == (user / "MyMod").u8string() + "/"); // RW 0x7BAEF1: the trailing separator
+	CHECK(op.dir == user.u8string() + "/MyMod/"); // RW 0x7BAEF1: the trailing separator
 	CHECK(op.archive.empty());
 	REQUIRE_MESSAGE(ParseModArgument("single.big", user.u8string(), op, &error), error);
-	CHECK(op.archive == (user / "single.big").u8string());
-	CHECK(op.dir == (user / "MyMod").u8string() + "/"); // the other kind stays (GlobalData + 0xD38 / + 0xD3C)
+	CHECK(op.archive == user.u8string() + "/single.big");
+	CHECK(op.dir == user.u8string() + "/MyMod/"); // the other kind stays (GlobalData + 0xD38 / + 0xD3C)
 	REQUIRE_MESSAGE(ParseModArgument((tmp.path / "abs.big").u8string(), user.u8string(), op, &error), error);
 	CHECK(op.archive == (tmp.path / "abs.big").u8string()); // a leading '/' is absolute; the second archive replaces the first
 
@@ -167,8 +175,8 @@ TEST_CASE("MODS-1: precedence: loose mod files, then the folder's archives (last
 
 	// the resolver: the winner first
 	CHECK(fsys.sourcesOf("data\\ini\\c.ini") == std::vector<std::string>{ "mod-folder:Data\\INI\\C.ini", "rotwk/INI.big" });
-	CHECK(fsys.sourcesOf("data\\ini\\a.ini") ==
-		std::vector<std::string>{ (mod / "B.big").u8string(), (mod / "a.big").u8string(), single.u8string(), "rotwk/INI.big" }); // the rest by name
+	CHECK(forwardSlashes(fsys.sourcesOf("data\\ini\\a.ini")) ==
+		forwardSlashes({ (mod / "B.big").u8string(), (mod / "a.big").u8string(), single.u8string(), "rotwk/INI.big" })); // the rest by name
 
 	// the mount order and the identity lines
 	REQUIRE(report.archives.size() == 3);
@@ -267,7 +275,7 @@ TEST_CASE("MODS-1: an overridden Apt movie executes branches to a detached End a
 		fs::create_directories(options.rotwkInstallRoot);
 		const auto report = MountRetailMod(fsys, op, options);
 		REQUIRE_MESSAGE(report.ok, joined(report.errors));
-		CHECK(fsys.sourcesOf("MainMenu.apt") == std::vector<std::string>{ (modDir / "menu.big").u8string(), "base.big" });
+		CHECK(forwardSlashes(fsys.sourcesOf("MainMenu.apt")) == forwardSlashes({ (modDir / "menu.big").u8string(), "base.big" }));
 		AptStubHost host;
 		Apt player(source, host);
 		REQUIRE_MESSAGE(player.loadMovie(0, "MainMenu", &error), error);

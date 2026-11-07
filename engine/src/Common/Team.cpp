@@ -131,11 +131,11 @@ void Team::friend_removeMember(Object *obj)
 }
 
 // RW 0x7A3EF5
-Object *Team::findSpecialPowerRecord(const SpecialPowerTemplate *power, const Object *caster, GameLogic &logic) const
+Object *Team::findSpecialPowerRecord(int powerType, const Object *caster, GameLogic &logic) const
 {
 	for (const SpecialPowerRecord &r : m_specialPowers)
 	{
-		if (r.power != power)
+		if (r.powerType != powerType)
 		{
 			continue;
 		}
@@ -153,9 +153,9 @@ Object *Team::findSpecialPowerRecord(const SpecialPowerTemplate *power, const Ob
 }
 
 // RW 0x7A5582: the record joins the end of the team's list
-void Team::addSpecialPowerRecord(const SpecialPowerTemplate *power, std::uint32_t frame, ObjectID caster)
+void Team::addSpecialPowerRecord(int powerType, std::uint32_t frame, ObjectID caster)
 {
-	m_specialPowers.push_back(SpecialPowerRecord{ power, frame, caster });
+	m_specialPowers.push_back(SpecialPowerRecord{ powerType, frame, caster });
 }
 
 // ---- lane RAI-POW-4: the team's threat-order list (Team + 0x13C, see Team.h) ----------------------------------------------------------------
@@ -433,7 +433,7 @@ void Team::crc(StateHasher &h) const
 		h.addU32((std::uint32_t)m_specialPowers.size());
 		for (const SpecialPowerRecord &r : m_specialPowers)
 		{
-			h.addString(r.power ? r.power->getName() : std::string());
+			h.addI32(r.powerType);
 			h.addU32(r.frame);
 			h.addU32(r.caster);
 		}
@@ -722,36 +722,20 @@ void Team::xfer(Xfer &x)
 	else
 	{
 		std::uint32_t count = (std::uint32_t)m_specialPowers.size();
-		x.xferCount(&count, 1, sizeof(std::string) + 12);
+		x.xferCount(&count, 12, sizeof(SpecialPowerRecord));
 		if (x.isLoading())
 		{
 			m_specialPowers.clear();
-			for (std::uint32_t i = 0; i < count; ++i)
-			{
-				std::string name;
-				x.xferAsciiString(&name);
-				std::uint32_t frame = 0;
-				ObjectID caster = INVALID_ID;
-				x.xferUnsignedInt(&frame);
-				x.xferObjectID(&caster);
-				const SpecialPowerTemplate *t = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(name) : nullptr;
-				if (!t)
-				{
-					throw XferException("a team's special-power record names \"" + name + "\", which this game does not have");
-				}
-				m_specialPowers.push_back(SpecialPowerRecord{ t, frame, caster });
-			}
 		}
-		else
+		for (std::uint32_t i = 0; i < count; ++i)
 		{
-			for (const SpecialPowerRecord &r : m_specialPowers)
+			SpecialPowerRecord r = x.isLoading() ? SpecialPowerRecord{} : m_specialPowers[i];
+			x.xferInt(&r.powerType); // retail RW 0x7A5C06 saves the type word as an int
+			x.xferUnsignedInt(&r.frame);
+			x.xferObjectID(&r.caster);
+			if (x.isLoading())
 			{
-				std::string name = r.power ? r.power->getName() : std::string();
-				x.xferAsciiString(&name);
-				std::uint32_t frame = r.frame;
-				ObjectID caster = r.caster;
-				x.xferUnsignedInt(&frame);
-				x.xferObjectID(&caster);
+				m_specialPowers.push_back(r);
 			}
 		}
 	}

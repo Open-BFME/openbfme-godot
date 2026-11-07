@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 class Player;
 class ThingTemplate;
@@ -34,4 +35,8 @@ public:
 	virtual void removeUpgradeFromObjectsOfPlayer(const Player &player, const UpgradeTemplate &upgrade) = 0;
 	// RW 0x6AE4CA / 0x6AE59B: presentation only, after the object walk.
 	virtual void reportUpgradeEva(const Player &player, const UpgradeTemplate &upgrade, bool gained) = 0;
+	// lane BRUTALAI-1: the Brutal skirmish AI's discount of the six cost / time sites (RW 0x73C344, 0x73C569, 0x66F1AF, 0x66F3AC, 0x780AF9, 0x780B98): the player's
+	// difficulty (RW 0x6AA61B) is 3 and TheSkirmishAIManager runs an AI for it (RW 0x6A950B) -> min(1.0, the AIData BrutalDifficultyCheats reduction) (manager
+	// + 0x95C BuildCostReduction / + 0x960 BuildTimeReduction, `comiss [1.0]; jbe`); otherwise nothing (no discount)
+	virtual std::optional<float> brutalReduction(const Player &player, bool time) const = 0;
 };

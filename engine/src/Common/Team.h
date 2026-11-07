@@ -145,16 +145,16 @@ public:
 	// AIPOW-1's SOUL_FREEZE decision writes it, and RW 0x9E6941 (ATTACK_HEAL_AOE) reads it.
 	struct SpecialPowerRecord
 	{
-		const SpecialPowerTemplate *power = nullptr; ///< + 0x08
+		int powerType = 0;                           ///< + 0x08: the power's type (SpecialPowerTemplate + 0x1C, the decision's + 0x08 set by RW 0x8B714F)
 		std::uint32_t frame = 0;                      ///< + 0x0C
 		ObjectID caster = INVALID_ID;                 ///< + 0x18 (the record's fifth word; the two between stay 0)
 	};
 	// RW 0x7A3EF5: the first record of the power, in insertion order. `caster` null answers the object the record's id resolves to; a caster that
 	// does not match the record continues the walk (retail loops forever on that path, which no caller reaches: both pass null). The logic resolves
 	// the record's id (retail's GameLogic::findObjectByID through TheGameLogic, which the port passes)
-	Object *findSpecialPowerRecord(const SpecialPowerTemplate *power, const Object *caster, GameLogic &logic) const;
+	Object *findSpecialPowerRecord(int powerType, const Object *caster, GameLogic &logic) const;
 	// RW 0x7A5582: appended at the end of the registry (retail's circular list insert before its sentinel)
-	void addSpecialPowerRecord(const SpecialPowerTemplate *power, std::uint32_t frame, ObjectID caster);
+	void addSpecialPowerRecord(int powerType, std::uint32_t frame, ObjectID caster);
 	const std::vector<SpecialPowerRecord> &specialPowerRecords() const { return m_specialPowers; }
 
 	// lane RAI-POW-4: the team's threat-order list (Team + 0x13C, a pointer to a circular list of orders; RW 0x7A59CB adds one, RW 0x7A1C5E

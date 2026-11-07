@@ -31,6 +31,7 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <string>
@@ -358,6 +359,119 @@ TEST_CASE("hud5 gates retail: a computer player's gate (Helm's Deep at start 1) 
 	g.frames(2);
 	CHECK(u->alliesInside() == 0);
 	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSING);
+}
+
+// RW 0x8ED6DC / 0x8ED726 (the manager's gate list + 0xA74): an AI group temporarily closes the enemy gates whose OPEN (passable) geometry is the one in the
+// pathfinder's map before its AIs run, and restores their OPEN geometry after (the poll RW 0x89C12F). A logically CLOSED gate is skipped by both walks and
+// ends the frame with its CLOSED geometry: the gate's own update (RW 0x89CC29) ran earlier in phase 5 (RW 0x62E9D4 .. 0x62EB5D), the manager later (RW 0x62EBEF).
+TEST_CASE("rai gate object retail: the group's gate walk closes the enemy gate that is passable for its AIs and reopens it; a closed gate keeps its closed geometry (RW 0x8ED6DC / 0x8ED726)")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	Player *owner = gate->getControllingPlayer();
+	REQUIRE(owner);
+	CHECK_FALSE(owner->isSkirmishAI());
+	SkirmishAIManager &m = g.game->logic().skirmishAI();
+	CHECK(m.findAI(owner->getPlayerIndex()) == nullptr);
+	Player *ai = nullptr;
+	for (int i = 0; i < g.game->players().getPlayerCount(); ++i)
+	{
+		Player *p = g.game->players().getNthPlayer(i);
+		ai = p && p->getPlayerType() == PLAYER_COMPUTER ? p : ai;
+	}
+	REQUIRE(ai);
+	REQUIRE(ai->isSkirmishAI());
+	REQUIRE(m.findAI(ai->getPlayerIndex()));
+	CHECK(b->relationshipTo(*ai) == ENEMIES); // RW 0x89C18E: the only gate filter besides the poll
+	// every gate registers itself in the manager's list at construction (RW 0x89C04B -> 0x8EDA39)
+	CHECK(std::find(m.gates().begin(), m.gates().end(), b) != m.gates().end());
+	std::vector<SkirmishAIManager::GateWalkSample> trace;
+	m.setGateWalkTrace(&trace);
+	auto walkStates = [&](bool before) {
+		std::vector<int> states;
+		for (const SkirmishAIManager::GateWalkSample &x : trace)
+		{
+			if (x.gate == b && x.before == before)
+			{
+				states.push_back(x.geometryState);
+			}
+		}
+		return states;
+	};
+	// the gate is open by default (OpenByDefault): its OPEN geometry is the one in the pathfinder's map, so the before walk gives the group's AIs the CLOSED
+	// geometry (RW 0x89C9FA(0)) and the after walk restores OPEN (RW 0x89CA84(1, 0))
+	g.frames(12); // the manager updates from logic frame 10
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::OPEN);
+	REQUIRE(b->isSettled());
+	trace.clear();
+	g.frames(1);
+	CHECK(walkStates(true) == std::vector<int>{ GateOpenAndCloseBehavior::GEOMETRY_CLOSED });
+	CHECK(walkStates(false) == std::vector<int>{ GateOpenAndCloseBehavior::GEOMETRY_OPEN });
+	CHECK(b->state() == GateOpenAndCloseBehavior::OPEN);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
+	CHECK(g.shapeActive(*gate, "OpenLeft"));
+	CHECK_FALSE(g.shapeActive(*gate, "Closed"));
+	CHECK_FALSE(g.blocksCentre(*gate));
+	// the human closes it and lets it settle: its own update puts the CLOSED geometry in the pathfinder's map, and the poll RW 0x89C12F is false in CLOSED,
+	// so both walks leave it alone
+	g.send(MSG_CLOSE_GATE, owner->getPlayerIndex(), gate->getID());
+	g.frames(70);
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(b->isSettled());
+	trace.clear();
+	g.frames(1);
+	CHECK(walkStates(true) == std::vector<int>{ GateOpenAndCloseBehavior::GEOMETRY_CLOSED });
+	CHECK(walkStates(false) == std::vector<int>{ GateOpenAndCloseBehavior::GEOMETRY_CLOSED });
+	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED);
+	CHECK(g.shapeActive(*gate, "Closed"));
+	CHECK_FALSE(g.shapeActive(*gate, "OpenLeft"));
+	CHECK(g.blocksCentre(*gate));
+	// the next frame's gate update closes it again when it had been opened; here nothing opens it, so the end of every frame has it closed
+	g.frames(1);
+	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED);
+	CHECK(g.blocksCentre(*gate));
+	m.setGateWalkTrace(nullptr);
+}
+
+// RW 0x89CD4D .. 0x89CD59: the update's dead path opens the gate and drops it from the manager's gate list; the walk no longer touches it
+TEST_CASE("rai gate object retail: a dead gate leaves the manager's gate list and keeps its open geometry (RW 0x89CD4D .. 0x89CD59)")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	SkirmishAIManager &m = g.game->logic().skirmishAI();
+	g.frames(12);
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::OPEN);
+	REQUIRE(std::find(m.gates().begin(), m.gates().end(), b) != m.gates().end());
+	std::vector<SkirmishAIManager::GateWalkSample> trace;
+	m.setGateWalkTrace(&trace);
+	gate->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+	CHECK(gate->isEffectivelyDead());
+	g.frames(1); // the gate's own update, phase 5: its dead path opens the geometry and unregisters it
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
+	CHECK(g.shapeActive(*gate, "OpenLeft"));
+	CHECK_FALSE(g.blocksCentre(*gate));
+	CHECK(std::find(m.gates().begin(), m.gates().end(), b) == m.gates().end());
+	// the walk that follows in the same frame does not list it any more, and later frames do not put it back
+	trace.clear();
+	g.frames(1);
+	bool walked = false;
+	for (const SkirmishAIManager::GateWalkSample &x : trace)
+	{
+		walked = walked || x.gate == b;
+	}
+	CHECK_FALSE(walked);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
+	m.setGateWalkTrace(nullptr);
 }
 
 // Sol's review (HUD-5 r1): Minas Tirith's gate with a computer owner. Its only gate (MinisGateDoor, object "Gate") has a GateOpenAndCloseBehavior and no

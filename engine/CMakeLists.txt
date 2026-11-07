@@ -365,6 +365,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_VISUAL2_SOURCES}
     ${OPENBFME_CAMPSAVE1_SOURCES}
     src/Common/AsciiString.cpp
+    src/Common/ShaderVaryings.cpp
     src/Common/LogicFrameClock.cpp
     src/Common/MD5.cpp
     src/Common/MiniJson.cpp
@@ -406,6 +407,7 @@ add_library(openbfme_core STATIC
     src/Libraries/WWVegas/WW3D2/meshrender.cpp
     src/Libraries/WWVegas/WW3D2/w3dstops.cpp
     src/Libraries/WWVegas/WW3D2/w3dshadergen.cpp
+    src/Libraries/WWVegas/WW3D2/fxshadergen.cpp
     src/Libraries/WWVegas/WW3D2/w3dfxconvert.cpp
     src/Libraries/WWVegas/WW3D2/textureloader.cpp
     src/GameEngineDevice/W3DDevice/GameClient/HouseColor.cpp
@@ -631,6 +633,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotPathfindView.cpp
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
+    src/GodotDevice/GodotShaderBudget.cpp # SHADER-BUDGET-1
     # START-1: the new-game message and the load screen as Godot data
     ${OPENBFME_START_GODOT_SOURCES}
     ${OPENBFME_RENDER3_GODOT_SOURCES}
@@ -865,7 +868,9 @@ add_executable(openbfme_tests
     tests/test_workerpool.cpp
     tests/test_w3d_mapper.cpp
     tests/test_w3d_shader.cpp
+    tests/test_shader_varyings.cpp
     tests/test_w3d_shadergen.cpp
+    tests/test_fx_shadergen.cpp
     tests/test_w3d_fxconvert.cpp
     tests/test_w3d_stops.cpp
     tests/test_w3d_render.cpp
@@ -940,6 +945,7 @@ add_executable(openbfme_tests
     tests/test_pathfind_numerics.cpp
     tests/test_locodist1.cpp
     tests/test_sails1.cpp
+    tests/test_airborne1.cpp # lane AIRBORNE-1
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp

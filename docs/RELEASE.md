@@ -1589,9 +1589,24 @@ runners only, with `permissions: contents: read`, pinned action shas, no secrets
 | `lint` | ubuntu-24.04 | actionlint 1.7.12 and zizmor 1.31.1 (offline), downloads checked by SHA-256 |
 | `gate` | ubuntu-24.04 | the commit gate on the pull request's changes, `pr_audit.py` (built-in privacy rules + the `.github` policy; no private denylist), `pr_pytest.py` |
 | `linux` | ubuntu-24.04 | engine core + `openbfme_tests` build (ccache), the unit tests that need no game files |
-| `windows` | ubuntu-24.04 | `tools/release/build_windows.sh --no-export`: the release's llvm-mingw cross build (tests, peer, GDExtension, PDB scrub, DLL audit), compile only |
-| `macos` | macos-15 | the GDExtension and unit test executable (arm64, macOS 13), then the console filter tests including the real `/dev/null` regression |
+| `windows` | ubuntu-24.04 | `tools/release/build_windows.sh --no-export`: the release's llvm-mingw cross build (tests, peer, GDExtension, PDB scrub, DLL audit); the binaries go to `windows-tests` |
+| `windows-tests` | windows-2025 | those cross-built binaries on real Windows: the unit tests that need no game files, then `tools/test_gdscript.py` with Godot 4.7.2 and the DLL. A junction gives the Linux build's absolute test paths a home |
+| `msvc` | windows-2025 | `build.bat` from a fresh clone (GDExtension, tests and test helpers), then the unit tests that need no game files. The release ships llvm-mingw, so this is the only job that compiles with MSVC. The runner has Visual Studio 2026, not the 2022 `build.bat` names |
+| `macos` | macos-15 | the GDExtension and unit test executable (arm64, macOS 13), then the unit tests that need no game files |
 | `CI` | ubuntu-24.04 | needs all of the above, runs even when one failed, and passes only when every one succeeded |
+
+`.github/workflows/sanitizers.yml` runs the same Linux unit tests built with Clang 18 at `-O1`, one job under the address and undefined
+behaviour sanitizers and one under the thread sanitizer. It is not part of `CI`, so a failure blocks nothing yet. Measured 2026-11-04: a
+cold build took 59 to 62 minutes (address and undefined) and 39 (thread), a warm one under a minute, and the tests 2.5 and 5 minutes. The
+macOS job leaves out `test_netlag2.cpp`, `test_mpdrop3_farewell.cpp` and `test_onlinemenu1.cpp`: network timing tests there failed in 7 of
+26 full runs on that runner, and no other file failed. Linux and Windows still run them.
+
+`msvc`, measured 2026-11-05: a cold build took 37 and 64 minutes, a warm one 3, and the tests 2. It sets `CCACHE_COMPILERCHECK=content`:
+`cl.exe`'s timestamp differs between runners, and with ccache's default check every compile missed.
+
+GitHub keeps 10 GB of compiler caches for this repository and evicts the least recently used. One push to main saves about 6.6 GB (2026-11-05:
+`windows` 1.9, `msvc` 1.7, `linux` 1.4, the sanitizers 1.5, `macos` 0.2), so a `ci/**` branch that saves a full set can evict main's and
+leave every pull request building cold. Delete such a branch's caches when you are done with it (`gh cache delete`).
 
 Measured on `ci/publicci1` (2026-10-19, the tree of the next sync): with warm compiler caches the whole check took 7.5 minutes
 (gate 7m21 with pytest on four workers, linux 3m13, macos 55 s, windows 47 s, lint 7 s); with cold caches the builds took
