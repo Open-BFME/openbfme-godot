@@ -30,7 +30,7 @@
 //     clearReaction(true). Returns 1 (every frame).
 //   * xfer RW 0x85C5DE: version (1, 1), UpdateModule (RW 0x850C60), + 0x24, + 0x28 (int).
 //   * selectObject RW 0x625685(object, force, player mask, select sound): runs for an object RW 0x6937C0 calls selectable (not a soldier of a HORDE producer
-//     (+ 0x78) with status UNSELECTABLE (3), Object::isSelectable RW 0x68DE58, not KindOf STRUCTURE (7)) or when `force` (the message's createNewGroup and
+//     (+ 0x78) whose producer has status UNSELECTABLE (3, RW 0x6937E6), Object::isSelectable RW 0x68DE58, not KindOf STRUCTURE (7)) or when `force` (the message's createNewGroup and
 //     its first object, RW 0x77A0D7 .. 0x77A0E5); for each player of the mask: ... the click when that player controls the object.
 // WHAT IS INFERENCE (OpenBFME):
 //   * the drawable exists for every logic object (RW 0x628882 makes one per object, as S-1024 / S-1041 take it): the no-drawable exits never apply here;

@@ -133,13 +133,14 @@ TEST_CASE("heroring1: the grid carries an alpha decal after the merge decals: it
 	// cells 40 wide from x -20: the hero (x 40 .. 80) in cells 1 and 2 of the one row
 	CHECK(heroEntries == 2);
 	CHECK(g.maxAlphaPerCell == 1);
-	// a style RotWK's SelectionDecal blocks never use (an additive decal) is left out by name; the other decals are drawn
+	// lane ECOCIRCLE-2: an additive decal (SHADOW_ADDITIVE_DECAL 0x40) is now an alpha decal of the grid too, added to the surface rather than blended
 	std::vector<SelectionDecal> additive = list;
 	additive[1].style = 0x40u;
 	CHECK(BuildMergeDecalGrid(additive, &Atlas::rect, twoPasses(), g, &err));
-	CHECK(err.find("0x40") != std::string::npos);
+	CHECK(err.find("0x40") == std::string::npos);
 	CHECK(g.decals == 2);
-	CHECK(g.alphaDecals == 0);
+	CHECK(g.alphaDecals == 1);
+	CHECK(g.texels[2 * 16 + 15] == -3.0f); // additive, wall capable (rec3.w)
 	// SHADOW_DECAL_TERRAIN_CLAIM (0x2000) is no alpha decal (RotWK puts it on the claim grid and colours it from the TerrainResourceManager)
 	additive[1].style = 0x2000u;
 	CHECK(BuildMergeDecalGrid(additive, &Atlas::rect, twoPasses(), g, &err));
@@ -154,6 +155,38 @@ TEST_CASE("heroring1: the grid carries an alpha decal after the merge decals: it
 	CHECK(g.alphaDecals == 0);
 	missing[0].texture = "nope";
 	CHECK_FALSE(BuildMergeDecalGrid(missing, &Atlas::rect, twoPasses(), g, &err));
+	// the shaders' grid (BuildSelectionDecalGrid, the HUD's): a merge decal's missing texture takes the merge list, not the hero's ring
+	REQUIRE(BuildSelectionDecalGrid({ member(0, 0, 0), hero(60, 0, 0, 0xFFFFFFFFu) }, &Atlas::rect, twoPasses(), g, &err));
+	CHECK(g.decals == 1);
+	CHECK(g.alphaDecals == 1);
+	std::vector<SelectionDecal> broken = { member(0, 0, 0), hero(60, 0, 0, 0xFFFFFFFFu) };
+	broken[0].texture = "nope";
+	REQUIRE(BuildSelectionDecalGrid(broken, &Atlas::rect, twoPasses(), g, &err));
+	CHECK(err.find("nope") != std::string::npos);
+	CHECK(g.decals == 0);
+	CHECK(g.alphaDecals == 1);
+	CHECK(g.texels[0 * 16 + 0] == 60.0f); // the ring is record 0
+	broken[1].texture = "nope"; // the ring's texture missing too: an empty grid (nothing drawn), both errors named
+	REQUIRE(BuildSelectionDecalGrid(broken, &Atlas::rect, twoPasses(), g, &err));
+	CHECK(g.alphaDecals == 0);
+	CHECK(SelectionDecalShaderMode(g) == 0);
+	broken.pop_back(); // the merge decal alone
+	CHECK_FALSE(BuildSelectionDecalGrid(broken, &Atlas::rect, twoPasses(), g, &err));
+	// the notes of the decals after the broken merge decal reach the report too (the first build stops at it): a missing ring texture, an
+	// unsupported style; each note once. Lane ECOCIRCLE-2: 0x40 is an alpha decal now, so the multiplicative 0x01 stands in for an unsupported style
+	std::vector<SelectionDecal> later = { member(0, 0, 0), hero(60, 0, 0, 0xFFFFFFFFu, "ringgone"), hero(-60, 0, 0, 0xFFFFFFFFu) };
+	later[0].texture = "mergegone";
+	later[2].style = 0x01u; // SHADOW_MUL_DECAL handled otherwise: not drawn
+	REQUIRE(BuildSelectionDecalGrid(later, &Atlas::rect, twoPasses(), g, &err)); // nothing drawn (the grid is empty)
+	CHECK(SelectionDecalShaderMode(g) == 0);
+	CHECK(err.find("mergegone") != std::string::npos);
+	CHECK(err.find("ringgone") != std::string::npos);
+	CHECK(err.find("0x1") != std::string::npos);
+	std::vector<SelectionDecal> before = { later[1], later[0] }; // the ring's note is already in the first build's: named once
+	REQUIRE(BuildSelectionDecalGrid(before, &Atlas::rect, twoPasses(), g, &err));
+	CHECK(err.find("ringgone") != std::string::npos);
+	CHECK(err.find("ringgone") == err.rfind("ringgone"));
+	CHECK(err.find("mergegone") != std::string::npos);
 	// a skipped alpha decal before another: the other takes the first alpha record and draws
 	const Atlas atlas;
 	REQUIRE(BuildMergeDecalGrid({ hero(0, 0, 0, 0xFFFF0000u, "nope"), hero(0, 0, 0, 0xFFFFFFFFu) }, &Atlas::rect, twoPasses(), g, &err));
@@ -201,6 +234,57 @@ TEST_CASE("heroring1: an alpha decal blends over the surface as RotWK's shader d
 	CHECK(outside.r == 40);
 	CHECK(outside.g == 40);
 	CHECK(outside.b == 40);
+}
+
+TEST_CASE("heroring1: an additive decal (lane ECOCIRCLE-2) adds texel x colour x alpha to the surface and keeps its colour")
+{
+	const Atlas a;
+	MergeDecalGrid g;
+	std::string err;
+	// the same ring at opacity 128 in SHADOW_ADDITIVE_DECAL: over black 0 + 100 x a, 150 x a, 200 x a; over white every channel saturates at 255
+	std::vector<SelectionDecal> d = { hero(0, 0, 0, 0x80FFFFFFu) };
+	d[0].style = 0x40u;
+	REQUIRE_MESSAGE(BuildMergeDecalGrid(d, &Atlas::rect, twoPasses(), g, &err), err);
+	const Rgb black = at(g, a, 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, 0);
+	CHECK(black.drawn);
+	CHECK(black.r == 50);
+	CHECK(black.g == 75);
+	CHECK(black.b == 100);
+	const Rgb white = at(g, a, 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, 255);
+	CHECK(white.drawn);
+	CHECK(white.r == 255);
+	CHECK(white.g == 255);
+	CHECK(white.b == 255);
+	// the list order: red alpha at full opacity under the additive share gives (150, 75, 100); the additive share under the red gives the red only
+	REQUIRE_MESSAGE(BuildMergeDecalGrid({ hero(0, 0, 0, 0xFFFF0000u), d[0] }, &Atlas::rect, twoPasses(), g, &err), err);
+	Rgb c = at(g, a, 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, 0);
+	CHECK(c.r == 150);
+	CHECK(c.g == 75);
+	CHECK(c.b == 100);
+	REQUIRE_MESSAGE(BuildMergeDecalGrid({ d[0], hero(0, 0, 0, 0xFFFF0000u) }, &Atlas::rect, twoPasses(), g, &err), err);
+	c = at(g, a, 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, 0);
+	CHECK(c.r == 100);
+	CHECK(c.g == 0);
+	CHECK(c.b == 0);
+	// the texel's alpha takes no part (setOpacity RW 0x73228B gives an additive decal no diffuse alpha, SC_ADDITIVE is ONE / ONE): the "half"
+	// texture's transparent half (u 0.75) adds its rgb x colour x opacity as its opaque half does
+	std::vector<SelectionDecal> half = { hero(0, 0, 0, 0x80FFFFFFu, "half") };
+	half[0].style = 0x40u;
+	REQUIRE_MESSAGE(BuildMergeDecalGrid(half, &Atlas::rect, twoPasses(), g, &err), err);
+	for (const float x : { -10.0f, 10.0f })
+	{
+		const Rgb h = at(g, a, x, 0.0f, 0.0f, DecalReceiver::Terrain, 0);
+		CHECK(h.drawn);
+		CHECK(h.r == 50);
+		CHECK(h.g == 75);
+		CHECK(h.b == 100);
+	}
+	// 0x800 (SHADOW_ADDITIVE_DECAL_DYNAMIC) is additive too; without terrainOnly it draws on a wall as well (rec3.w -3)
+	d[0].style = 0x800u;
+	d[0].terrainOnly = false;
+	REQUIRE_MESSAGE(BuildMergeDecalGrid(d, &Atlas::rect, twoPasses(), g, &err), err);
+	CHECK(g.texels[0 * 16 + 15] == -3.0f);
+	CHECK(at(g, a, 0.0f, 0.0f, 0.0f, DecalReceiver::Wall, 0).drawn);
 }
 
 TEST_CASE("heroring1: several alpha decals blend in their list order; the merge decals are drawn over them")
@@ -281,7 +365,42 @@ TEST_CASE("heroring1: the wall shader blends the alpha decals over the surface's
 	sel.SelectionDecals = true;
 	const std::string code = Generate_W3D_Shader_Code(sel);
 	CHECK(code.find("vec4 sela = sel_up ? sel_alpha_at(sel_at, true) : vec4(0.0);") != std::string::npos);
-	CHECK(code.find("if (sela.a > 0.0) { ALBEDO = w3d_to_linear(clamp(cur.rgb, 0.0, 1.0) * (1.0 - sela.a) + sela.rgb); }") != std::string::npos);
-	CHECK(code.find("float sel_keep = (1.0 - sela.a) * (1.0 - sel.a);") != std::string::npos);
+	// review r2 (#208): the surface's shadowed share and the ring over it go to light() (one colour space), the shadow split keeps the merge share
+	CHECK(code.find("varying vec3 v_shadow_over;") != std::string::npos);
+	CHECK(code.find("vec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);") != std::string::npos);
+	CHECK(code.find("if (sela.a > 0.0 || any(greaterThan(sela.rgb, vec3(0.0)))) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }") !=
+		std::string::npos);
+	CHECK(code.find("float sel_keep = 1.0 - sel.a;") != std::string::npos);
+	CHECK(code.find("(1.0 - sela.a) * (1.0 - sel.a)") == std::string::npos);
+	CHECK(code.find("v_shadow_color = sel_shadow;") != std::string::npos);
+	CHECK(code.find("v_shadow_over = sel_over;") != std::string::npos);
+	CHECK(code.find("DIFFUSE_LIGHT += shadow_to_linear(v_shadow_color * mix(w3d_shadow.rgb, vec3(1.0), ATTENUATION) + v_shadow_over);") != std::string::npos);
 	CHECK(code.find("EMISSION = ALBEDO - sel_ground * sel_keep * shadow_enabled;") != std::string::npos);
+}
+
+TEST_CASE("heroring1: under an object shadow the ring is drawn over the shadowed surface, as the shaders split it (review r2, #208)")
+{
+	const Atlas a;
+	MergeDecalGrid g;
+	std::string err;
+	REQUIRE_MESSAGE(BuildMergeDecalGrid({ hero(0, 0, 0, 0x80FFFFFFu) }, &Atlas::rect, twoPasses(), g, &err), err);
+	const std::uint8_t white[3] = { 255, 255, 255 }, black[3] = { 0, 0, 0 };
+	std::uint8_t out[3] = { 0, 0, 0 };
+	// half shadowed white ground: 128 (1 - a) + texel x a, a = 128 / 255
+	const float half[3] = { 128.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f };
+	REQUIRE(EvaluateSelectionDecals(g, a.image(), 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, white, out, half));
+	CHECK(out[0] == 114);
+	CHECK(out[1] == 139);
+	CHECK(out[2] == 164);
+	// fully shadowed: the ring's own share only, never below it
+	const float none[3] = { 0.0f, 0.0f, 0.0f };
+	REQUIRE(EvaluateSelectionDecals(g, a.image(), 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, white, out, none));
+	CHECK(out[0] == 50);
+	CHECK(out[1] == 75);
+	CHECK(out[2] == 100);
+	// over black any shadow is the same
+	REQUIRE(EvaluateSelectionDecals(g, a.image(), 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, black, out, half));
+	CHECK(out[0] == 50);
+	CHECK(out[1] == 75);
+	CHECK(out[2] == 100);
 }

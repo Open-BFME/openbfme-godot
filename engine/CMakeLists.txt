@@ -365,6 +365,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_VISUAL2_SOURCES}
     ${OPENBFME_CAMPSAVE1_SOURCES}
     src/Common/AsciiString.cpp
+    src/Common/ShaderVaryings.cpp
     src/Common/LogicFrameClock.cpp
     src/Common/MD5.cpp
     src/Common/MiniJson.cpp
@@ -406,6 +407,7 @@ add_library(openbfme_core STATIC
     src/Libraries/WWVegas/WW3D2/meshrender.cpp
     src/Libraries/WWVegas/WW3D2/w3dstops.cpp
     src/Libraries/WWVegas/WW3D2/w3dshadergen.cpp
+    src/Libraries/WWVegas/WW3D2/fxshadergen.cpp
     src/Libraries/WWVegas/WW3D2/w3dfxconvert.cpp
     src/Libraries/WWVegas/WW3D2/textureloader.cpp
     src/GameEngineDevice/W3DDevice/GameClient/HouseColor.cpp
@@ -631,6 +633,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotPathfindView.cpp
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
+    src/GodotDevice/GodotShaderBudget.cpp # SHADER-BUDGET-1
     # START-1: the new-game message and the load screen as Godot data
     ${OPENBFME_START_GODOT_SOURCES}
     ${OPENBFME_RENDER3_GODOT_SOURCES}
@@ -655,7 +658,7 @@ target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     enable_language(OBJCXX)
     target_sources(openbfme PRIVATE src/GodotDevice/MacOSTrackpad.mm)
-    set_source_files_properties(src/GodotDevice/MacOSTrackpad.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_compile_options(openbfme PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>) # ARC for the Objective-C++ trackpad monitor only, no per-file list
     target_link_libraries(openbfme PRIVATE "-framework AppKit")
 endif()
 if(UNIX AND NOT APPLE)
@@ -865,7 +868,9 @@ add_executable(openbfme_tests
     tests/test_workerpool.cpp
     tests/test_w3d_mapper.cpp
     tests/test_w3d_shader.cpp
+    tests/test_shader_varyings.cpp
     tests/test_w3d_shadergen.cpp
+    tests/test_fx_shadergen.cpp
     tests/test_w3d_fxconvert.cpp
     tests/test_w3d_stops.cpp
     tests/test_w3d_render.cpp
@@ -932,12 +937,15 @@ add_executable(openbfme_tests
     # ---- PATH-1 (pathfinder, AI move path) ----
     tests/test_pathfind_cells.cpp
     tests/test_pathfind_grid.cpp
+    tests/test_qpath1.cpp
     tests/test_pathfind_path.cpp
     tests/test_pathfind_retail.cpp
     tests/test_pathfind_retail_search.cpp
     tests/test_pathfind_move.cpp
     tests/test_pathfind_numerics.cpp
     tests/test_locodist1.cpp
+    tests/test_sails1.cpp
+    tests/test_airborne1.cpp # lane AIRBORNE-1
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp

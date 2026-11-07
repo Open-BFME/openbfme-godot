@@ -456,7 +456,15 @@ public:
 	bool treatAsAircraftForLocoDistToGoal() const override; // RW 0x6629D3; GiantBirdAIUpdate overrides it
 	Coord3D machineGoalPosition() const override;
 	bool movingBackwards() const override;
+	bool isInfantryKind() const override;           // lane BUMP-1
+	bool isUsingSpecialAbility() const override;
+	bool isOffMapObject() const override;
+	bool isLargeRectanglePathfind() const override;
+	int objectFormationId() const override { return m_formationId; }
+	float objectFormationOffsetX() const override { return m_formationOffset.x; }
 	bool setModelCondition(const char *name, bool on) override;
+	void updateSailModelConditions() override; // lane SAILS-1: RW 0x666FA3
+	void setAirborneTarget(bool on) override; // lane AIRBORNE-1: RW 0x62684D(6, on) from doLocomotor
 	void revealDisguiseOnClimb() override; // lane WALL-2: RW 0x66A143 (a Climb portal)
 	void idleFromAI() override;            // lane WALL-2: RW 0x662A0E's vslot 0x60(2) (a type 7 portal)
 	void startMoveSound() override; // lane AUDIO-3: RW 0x748C0B

@@ -251,7 +251,8 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	// (1144758272, 1167090688) (was 1144266752, 1167193088)
 	// merge queue q38 (LOCODIST-1: the locomotor distance to the goal follows RW 0x664127, the path length left instead of the 2D line; measured once on the
 	// merged tree and at its merge point): he walks 15 frames (8) and stops at (1144266752, 1167152128)
-	CHECK(walked == 15);
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): Boromir walks 17 frames (15) and stops on the same spot
+	CHECK(walked == 17);
 	CHECK(bitsOf(boromir->getPosition()->x) == 1144266752u);
 	CHECK(bitsOf(boromir->getPosition()->y) == 1167152128u);
 	CHECK(bitsOf(start.x) == 1144391642u);
@@ -734,7 +735,9 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// in the mover hash)
 	// merge queue q38 (measured once on the merged tree and at LOCODIST-1's merge point; goals unchanged): 0xE4523180 -> 0x45726314 (the retail locomotor
 	// distance to the goal, RW 0x664127, moves when the units arrive)
-	CHECK(a.hashes.back() == 0x45726314U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// merge queue q43 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x45726314 -> 0xCA4B529D at #230's merge point
+	// (the AI's position sampler and base structure groups, hashed in the AI state) -> 0x57D4FF8F at #231's (the DEFENSIVE tactic's state); the later items keep it
+	CHECK(a.hashes.back() == 0x57D4FF8FU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);
