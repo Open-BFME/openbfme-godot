@@ -264,4 +264,7 @@ void launchTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b
 void updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner);
 // test hook (lane RAI-SIEGE): RW 0x9B3453's stand-back point, wall position + normalise(team 0's first member - wall) * 500 (RW 0xC894AC)
 Coord3D siegeStandBackPointForTest(const Coord3D &leader, const Coord3D &wall);
+// test hook (lane RAI-TL-2): RW 0x9B8160's roam destination (the economy structure within 900 of the base, else a point 400 from the first
+// DOZER_FACTORY at the drawn angle); false when neither exists. Consumes the body's draws.
+bool roamDestinationForTest(GameLogic &logic, AISkirmishPlayer &ai, const Object &unit, Coord3D &out);
 } // namespace AITacticalAI

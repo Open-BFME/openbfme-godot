@@ -1235,11 +1235,13 @@ constexpr bool kTargetlessAlways[] = { false, false, false, false, false, true, 
 constexpr int kTargetlessCount = 11;
 constexpr int TL_FLAG_CAPTURE = 0;
 constexpr int TL_FARM_KILL = 1;
+constexpr int TL_ROAMING_DEFENSE = 7; // AIRoamingDefenseTactic (RW 0x90C0EE's 8th prototype)
 const char *const kFlagCaptureFile = "AIFlagCaptureSquad.cpp";
 const char *const kFlagCaptureRunning = "AIFlagCaptureSquad_IsRunning";
 const char *const kFlagCaptureNextFrame = "AIFlagCaptureSquad_FrameNextRun";
 const char *const kTargetlessFile = "AITacticsGenerator.cpp";  // RW 0xC7AD48
 const char *const kFarmKillFile = "AIFarmKillSquad.cpp";        // RW 0xC8A218
+const char *const kRoamingFile = "AIRoamingDefenseTactic.cpp";  // RW 0xC89D98
 // the FarmKillSquad counters (RW keys DAT_00DEBEF8 / DAT_00DEBEFC, AsciiStrings whose text is set by an initialiser that is not read: the port's names)
 const char *const kFarmKillRunning = "FarmKillSquad::IsRunning";
 const char *const kFarmKillNextFrame = "FarmKillSquad::NextLogicFrame";
@@ -1260,6 +1262,75 @@ int namedCounter(AIBrainState &b, const char *name)
 int enemyOfGroup(const AISkirmishPlayer &ai)
 {
 	return AITacticalAI::enemyOfGroup(ai); // RW 0x6C7807
+}
+
+// RW 0x9B8160: choose where a unit roams. With an economy structure within 900 of the AI's base (RW 0xC89CF0: 810000 = 900^2,
+// squared 3D SSE) one of them is drawn (AIRoamingDefenseTactic.cpp line 0xA4) and its position is the destination; otherwise the first
+// DOZER_FACTORY of the player info record's structures is the centre and the destination is 400 (RW 0xC89CF4) from it at a drawn angle
+// 0 .. 6 radians (line 0xBA; sin/cos RW 0xA3CF90 / 0xA3CF84). No economy structure and no fortress: no destination.
+bool chooseRoamDestination(GameLogic &logic, AISkirmishPlayer &ai, Coord3D &out)
+{
+	const AIStatCollector &record = AITacticalAI::recordOf(logic, ai.playerIndex);
+	const std::vector<ObjectID> &economy = record.economy();
+	if (!economy.empty())
+	{
+		const Coord3D &base = ai.build.startPosition; // RW 0x8F0284
+		std::vector<Object *> near;
+		for (ObjectID id : economy)
+		{
+			Object *o = logic.findObjectByID(id);
+			if (!o)
+			{
+				continue;
+			}
+			const Coord3D *p = o->getPosition();
+			const float dx = SimMath::subf32(base.x, p->x), dy = SimMath::subf32(base.y, p->y), dz = SimMath::subf32(base.z, p->z);
+			const float d = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
+			if (d < 810000.0f) // RW 0xC89CF0
+			{
+				near.push_back(o);
+			}
+		}
+		if (!near.empty())
+		{
+			const int index = logic.random().getValue(0, (int)near.size() - 1, kRoamingFile, 0xA4);
+			out = *near[(size_t)index]->getPosition();
+			return true;
+		}
+	}
+	const Object *fortress = nullptr;
+	for (ObjectID id : record.structures())
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && o->isKindOfName("DOZER_FACTORY"))
+		{
+			fortress = o;
+			break;
+		}
+	}
+	if (!fortress)
+	{
+		return false;
+	}
+	const int angle = logic.random().getValue(0, 6, kRoamingFile, 0xBA);
+	const float a = (float)angle;
+	const float c = SimMath::fstpDword(SimMath::cosd(a)); // RW 0xA3CF84
+	const float s = SimMath::fstpDword(SimMath::sind(a)); // RW 0xA3CF90
+	const Coord3D *centre = fortress->getPosition();
+	out.x = SimMath::addf32(centre->x, SimMath::mulf32(c, 400.0f)); // RW 0xC89CF4
+	out.y = SimMath::addf32(centre->y, SimMath::mulf32(s, 400.0f));
+	out.z = centre->z;
+	return true;
+}
+
+// RW 0x9B8160: the attack-move to that destination (aiAttackMoveToPosition RW 0x696266(pos, INT_MAX, CMD_FROM_PLAYER), AI command 0xF).
+void issueRoamOrder(GameLogic &logic, AISkirmishPlayer &ai, Object &unit)
+{
+	Coord3D destination{};
+	if (chooseRoamDestination(logic, ai, destination))
+	{
+		attackMove(logic, std::vector<ObjectID>{ unit.getID() }, destination, CMD_FROM_PLAYER);
+	}
 }
 
 // vslot 1 (applies) of targetless prototype `index` (the prototype's + 0x24 player is the AI's: RW 0x90C623)
@@ -1297,8 +1368,26 @@ bool targetlessApplies(GameLogic &logic, AISkirmishPlayer &ai, int index)
 		const unsigned next = (unsigned)namedCounter(b, kFarmKillNextFrame);
 		return running == 0 && next <= logic.getFrame() && enemyOfGroup(ai) >= 0;
 	}
-	// the other 9 prototypes' vslot 1 (AIRingHeroTactic RW 0x9BAF6C, StructureCreep RW 0x9BA3C2, LumberMillBuild RW 0x9B9E06,
-	// ReturnTheRing RW 0x9B89CF, AIStartWoTRBattleTactic RW 0x9B8451, AIRoamingDefenseTactic RW 0x9B7F56, AIWoTRForfeitTactic RW 0x9B71B7, WallTactic RW 0x9B6F70,
+	if (index == TL_ROAMING_DEFENSE)
+	{
+		// RW 0x9B7F56: EASY only (RW 0x6AA61B == 0), not already running and its next frame due. The first check schedules the
+		// next attempt 5 s on and answers false; the second and later add nothing to it.
+		const Player *me = playerOf(logic, ai.playerIndex);
+		if (!me || me->getSkirmishDifficulty() != 0)
+		{
+			return false;
+		}
+		const int running = namedCounter(b, "AIRoamingDefenseTactic_IsRunning");
+		const int next = namedCounter(b, "AIRoamingDefenseTactic_NextLogicFrameRun");
+		if (next == 0)
+		{
+			b.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] = (int)(logic.getFrame() + (unsigned)(kLogicFramesPerSecond * 5));
+			return false;
+		}
+		return running == 0 && logic.getFrame() >= (unsigned)next;
+	}
+	// the other prototypes' vslot 1 (AIRingHeroTactic RW 0x9BAF6C, StructureCreep RW 0x9BA3C2, LumberMillBuild RW 0x9B9E06,
+	// ReturnTheRing RW 0x9B89CF, AIStartWoTRBattleTactic RW 0x9B8451, AIWoTRForfeitTactic RW 0x9B71B7, WallTactic RW 0x9B6F70,
 	// FarmBuilder RW 0x9B53C6) are not ported: taken as "does not apply" and counted (S-893)
 	++b.targetlessUnported;
 	return false;
@@ -1321,6 +1410,12 @@ void targetlessCleanup(GameLogic &logic, AISkirmishPlayer &ai, const AITactic &t
 		ai.brain.namedCounters[kFarmKillRunning] = 0;
 		const int delay = logic.random().getValue(kLogicFramesPerSecond * kFarmKillDelayMinSeconds, kLogicFramesPerSecond * kFarmKillDelayMaxSeconds, kFarmKillFile, 0x244);
 		ai.brain.namedCounters[kFarmKillNextFrame] = (int)(logic.getFrame() + (unsigned)delay);
+	}
+	if (tac.kindIndex == kTargetlessBase + TL_ROAMING_DEFENSE)
+	{
+		// RW 0x9B8047: clear both keys, no draw.
+		ai.brain.namedCounters["AIRoamingDefenseTactic_IsRunning"] = 0;
+		ai.brain.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] = 0;
 	}
 }
 
@@ -2600,6 +2695,31 @@ Object *chooseFarmKillTarget(GameLogic &logic, const AITactic &tac, int enemy)
 	return selectProductionTarget(logic, tac, enemy);
 }
 
+// AIRoamingDefenseTactic's run RW 0x9B7EBD: the tactic's running flag (+ 0x10) and "roaming" (+ 0x58); setup RW 0x9B80FA has already set
+// the IsRunning key. The update RW 0x9B83A6 sends the first idle, unbusy unit of the player's army (AI slot 0x1B8, status 0x5A clear, the
+// controlling player's id + 0x31C == the AI player's + 0x30C) to RW 0x9B8160's destination and ends the tactic (0, 0).
+void updateRoamingDefense(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (tac.step == 0)
+	{
+		return;
+	}
+	const Player *me = playerOf(logic, ai.playerIndex);
+	static const int leavingFactory = CombatNames::status("IS_LEAVING_FACTORY");
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
+	{
+		Object *o = logic.findObjectByID(id);
+		AIUpdateInterface *u = o ? o->getAIUpdateInterface() : nullptr;
+		if (!u || !u->isIdle() || o->testStatus((unsigned)leavingFactory) || o->getControllingPlayer() != me)
+		{
+			continue;
+		}
+		issueRoamOrder(logic, ai, *o);
+		break;
+	}
+	endAnyTactic(logic, ai, b, tac, owner, false);
+}
+
 void updateFarmKill(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
 	// RW 0x9BB27E: no team with index 0 (RW 0x8F128B(0)) ends it (0, 0)
@@ -3089,7 +3209,8 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 		}
 	}
 	// RW 0x8F11DA
-	tac.ready = !tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; });
+	// RW 0x8F232F: a prototype with no teams (RW 0x851E97) marks itself ready (byte + 0x51); the port's team count keeps that
+	tac.ready = tacticTeamCount(tac) == 0 ? tac.teams.empty() : (!tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; }));
 	if (!tac.ready || tac.ended)
 	{
 		return;
@@ -3099,7 +3220,8 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 		if (tac.targetless)
 		{
 			if (tac.kindIndex == kTargetlessBase + TL_FLAG_CAPTURE) { updateFlagCapture(logic, ai, b, tac, owner); }
-			else { updateFarmKill(logic, ai, b, tac, owner); }
+			else if (tac.kindIndex == kTargetlessBase + TL_FARM_KILL) { updateFarmKill(logic, ai, b, tac, owner); }
+			else if (tac.kindIndex == kTargetlessBase + TL_ROAMING_DEFENSE) { updateRoamingDefense(logic, ai, b, tac, owner); }
 			return;
 		}
 		updateOffensive(logic, ai, b, tac, owner, t); // vslot 0x1C (lane AI-2 r5: every offensive body)
@@ -3114,6 +3236,10 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 	tac.started = true;
 	if (tac.targetless)
 	{
+		if (tac.kindIndex == kTargetlessBase + TL_ROAMING_DEFENSE)
+		{
+			tac.step = 1; // RW 0x9B7EBD: + 0x58 roaming, + 0x10 running
+		}
 		return; // FarmKillSquad / FlagCaptureSquad vslot 0x18 is RW 0x63F3BF (nothing)
 	}
 	launchOffensive(logic, ai, b, tac, owner, t); // vslot 0x18
@@ -3152,6 +3278,11 @@ void startTargetless(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
 			ai.brain.namedCounters[kFarmKillRunning] = 1;
 		}
 		tac.teams.push_back(team);
+	}
+	if (count == 0 && tac.kindIndex == kTargetlessBase + TL_ROAMING_DEFENSE)
+	{
+		// RW 0x9B80FA (vslot 3, the team setup): set IsRunning, then RW 0x8F121F with no team.
+		ai.brain.namedCounters["AIRoamingDefenseTactic_IsRunning"] = 1;
 	}
 }
 
@@ -3382,6 +3513,10 @@ void AITacticalAI::updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, A
 Coord3D AITacticalAI::siegeStandBackPointForTest(const Coord3D &leader, const Coord3D &wall)
 {
 	return siegeStandBackPoint(leader, wall);
+bool AITacticalAI::roamDestinationForTest(GameLogic &logic, AISkirmishPlayer &ai, const Object &unit, Coord3D &out)
+{
+	(void)unit;
+	return chooseRoamDestination(logic, ai, out);
 }
 
 const AIStatCollector &AITacticalAI::recordOf(GameLogic &logic, int playerIndex)
