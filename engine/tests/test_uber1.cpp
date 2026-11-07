@@ -4,6 +4,7 @@
 // pin: lane RAI-POW-4 re-measured the Uber pin (OPENBFME_UBER1_REGEN=1): the team threat order (Team + 0x13C, writer RW 0x7A59CB) is hashed once it has an
 // order, so the battle differs from frame 12.
 // pin: re-measured on the merged #217 / #214 main (first 0xd4d54986, last 0xc044f68e -> 0xbb41e447); it still differs from frame 12.
+// pin: re-recorded on top of main c8aa4603 (OPENBFME_UBER1_REGEN=1): the same threat order still moves the battle from frame 12 (last fecda5ca -> f9ca9383).
 
 #include "doctest.h"
 
