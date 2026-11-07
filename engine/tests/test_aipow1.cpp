@@ -2101,7 +2101,7 @@ TEST_CASE("RAI-POW-4: the team threat orders round-trip in version 3 and older s
 	// a version 2 snapshot (the registry only) loads into a team whose order list is cleared
 	Team *registry = f.createTeam(proto);
 	REQUIRE(registry);
-	registry->addSpecialPowerRecord(t, 3, 7);
+	registry->addSpecialPowerRecord(t->getSpecialPowerType(), 3, 7);
 	XferSave save2;
 	registry->xfer(save2);
 	REQUIRE(!save2.data().empty());
@@ -2287,6 +2287,6 @@ TEST_CASE("RAI-POW-4: ATTACK_HEAL_AOE (Well of Souls, RW 0x9E691D) consumes the 
 	CHECK(team->orders().size() == 1);
 	CHECK(team->orders()[0].target == dead.target);
 	// any team registry record of the power rejects, even the caster's own (RW 0x9E6941)
-	team->addSpecialPowerRecord(heal->decision()->powerTemplate, a.logic->getFrame(), horde->getID());
+	team->addSpecialPowerRecord(heal->decision()->powerType, a.logic->getFrame(), horde->getID());
 	CHECK(heal->decideNow() == false);
 }
