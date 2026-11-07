@@ -123,6 +123,8 @@ public:
 	// SMOOTH-1: the object's KindOf bits as the creation event carried them (Object::isKindOfName for the render side)
 	void setKindOf(const KindOfMaskType &kindOf) { m_kindOf = kindOf; }
 	bool isKindOfName(const char *name) const;
+	// lane SELWALL-1: the same by the bit's index (ObjectTemplateInfoBuilder::kindOfIndex; -1: false), for a per-frame test without the name lookup
+	bool isKindOfIndex(int bit) const;
 	// lane FX-3: the object's target record as the latest event or snapshot carried it (what the draw scripts ask: DrawableScriptTarget.h)
 	void setScriptTarget(const DrawableScriptTarget &t) { m_scriptTarget = t; }
 	const DrawableScriptTarget &scriptTarget() const { return m_scriptTarget; }

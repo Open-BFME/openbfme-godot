@@ -31,6 +31,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/HeroSystem.h"
 #include "GameLogic/Module/ActiveBody.h"
+#include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/ExitInterface.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -588,7 +589,9 @@ UpdateSleepTime RespawnUpdate::update()
 		m_state = STATE_ALIVE;
 		Object *producer = logic.findObjectByID(obj->getProducerID()); // RW 0x8B3AF1: Object + 0x78
 		AIUpdateInterface *ai = obj->getAIUpdateInterface();
-		if (producer && ai && ai->isIdle()) // AI vslot 0x1B8 or RW 0x660AC1 == 16 (S-854: taken as isIdle)
+		// KINDFIX-1: RW 0x8B3ABC .. 0x8B3AD0: AI vslot 0x1B8 (isIdle) or the state machine's current state id (RW 0x660AC1) == 16, AI_GUARD. Donor:
+		// Open-BFME-2 RespawnUpdate.cpp:473 (BFME2 0x8AF92F, same shape); both editions
+		if (producer && ai && (ai->isIdle() || ai->stateId() == AI_GUARD))
 		{
 			if (ExitInterface *exit = producer->getObjectExitInterface())
 			{

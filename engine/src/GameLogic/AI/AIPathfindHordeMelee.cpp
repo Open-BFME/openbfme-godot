@@ -4,7 +4,7 @@
 // Lane ATTACKPATH-1: the pathfinder helpers of a horde's melee approach goal (AIAttackMeleeHordeApproachTargetState::computePath RW 0x74A594, stop S-590),
 // ported from the RotWK disassembly with the BFME2 decomp's byte-matched sources as names and cross-checks:
 //   * RW 0x6F2FFF Pathfinder::IsHordeMeleeLinePassable (tier A, decomp AI/PathfinderCoordLineWalk.cpp; its record RW 0x6EE496 and cell callback RW 0x6EE524,
-//     decomp Pathfinder/PathfinderRva002ED15ACellCallback.cpp Rva002ED15AInfo);
+//     decomp AI/AIPathfind.cpp Rva002ED15AInfo);
 //   * RW 0x746783 (tier B same-shape, decomp AI/AIStatesBfmeOnExit.cpp AIAttackMeleeHordeApproachTargetState::rva00344D60): the goal walked back toward the horde;
 //   * RW 0x6FB67A Pathfinder::AdjustHordeMeleeDestination (tier A, decomp Pathfinder/pathfinder.cpp) with its ring RW 0x6FA733 (decomp rva002F92BC,
 //     "IterateCircular1"), the functor RW 0x6EEAF5 / 0x6F8540 (Pathfinder_IsCheckForMeleeHordeAdjust), its cell test RW 0x6F6C18 and footprint test RW 0x6EB2EF.
@@ -36,7 +36,7 @@
 //     cliff -> false; an obstacle cell must be the AI's ignored obstacle (else false; nothing else is checked there); type 6 -> false; the goal list
 //     (info + 0x14): every unit that is not the unit, not its ignored obstacle and not contained by it: an ally adds 1, a non-ally standing at its goal
 //     (RW 0x68B47F) -> false; the position list (info + 0x20): every unit that is not the unit and not contained by it adds 3 for an ally, else 1.
-// INFERENCE / NOT PORTED (stop S-590): the layer for a destination is the ground (S-161); the quick path test RW 0x6F5BB0 is the port's clientSafeQuickDoesPathExist (as in canApproachToTarget).
+// INFERENCE / NOT PORTED (stop S-590): the layer for a destination is the ground (S-161); the quick path test RW 0x6F5BB0 (RW 0x6F6D08 / 0x6F6D19 / 0x6F6D2E, the unit and the caller's set) is quickDoesPathExist (lane QPATH-1).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindLine.h"
@@ -286,13 +286,13 @@ bool Pathfinder::adjustHordeMeleeDestination(PathfindObject &obj, const Pathfind
 		}
 		else if (height <= 0.0f || SimMath::absD((double)SimMath::subf32(at.z, height)) <= 50.0)
 		{
-			bool ok = clientSafeQuickDoesPathExist(loco, &unitPos, &at);
+			bool ok = quickDoesPathExist(obj, &unitPos, &at, &loco);
 			if (!goalReachableKnown)
 			{
-				goalReachable = clientSafeQuickDoesPathExist(loco, &unitPos, &goal);
+				goalReachable = quickDoesPathExist(obj, &unitPos, &goal, &loco);
 				goalReachableKnown = true;
 			}
-			if (!goalReachable && clientSafeQuickDoesPathExist(loco, &goal, &at))
+			if (!goalReachable && quickDoesPathExist(obj, &goal, &at, &loco))
 			{
 				ok = true;
 			}

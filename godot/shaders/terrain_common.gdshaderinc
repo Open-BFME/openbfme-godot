@@ -88,7 +88,6 @@ uniform vec2 shroud_origin = vec2(0.0);
 uniform vec2 shroud_extent = vec2(1.0);
 uniform vec3 shroud_color = vec3(1.0);
 uniform bool shroud_enabled = false;
-varying vec2 v_shroud_uv;
 uniform float output_gamma = 2.2; // != 1: decode for Godot's linear output (retail_output)
 // Debug views (0 = retail maths): 1 albedo, 2 vertex colour, 3 normal map, 4 uv, 5 lit without cloud/macro,
 // 6 cloud*macro, 7 the gamma-space composite of the raw layer albedos converted once (numeric shader test)
@@ -105,12 +104,19 @@ vec3 retail_output(vec3 c) {
 	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
 }
 
-varying vec3 v_lts;
+// The smooth varyings are packed into vec4s: every varying takes one interpolator slot whatever its size, and
+// Intel Arc (DG2) allows 29 in total with Godot's own; the terrain shader used 31 and failed to compile there
+// (flat brown ground). The names stay as macros so the maths reads unchanged.
+varying vec4 v_pack_lts_fog;    // xyz: v_lts, w: v_fog
+varying vec4 v_pack_cloud_macro; // xy: v_cloud, zw: v_macro
+varying vec4 v_pack_shroud_local; // xy: v_shroud_uv, zw: v_local (cell-local coordinates 0..1 of the pixel)
+#define v_lts v_pack_lts_fog.xyz
+#define v_fog v_pack_lts_fog.w
+#define v_cloud v_pack_cloud_macro.xy
+#define v_macro v_pack_cloud_macro.zw
+#define v_shroud_uv v_pack_shroud_local.xy
+#define v_local v_pack_shroud_local.zw
 varying vec3 v_hts;
-varying float v_fog;
-varying vec2 v_cloud;
-varying vec2 v_macro;
-varying vec2 v_local;        // cell-local coordinates (0..1) of the pixel
 varying flat vec4 v_wrap;    // base layer class wrap rect (x0, y0, w, h); w == 0: none
 varying flat float v_rec;    // record index of the cell's blend layers, or -1
 // lane WEATHERFX-1: the SAGE world point, vertex normal and camera of the Enhanced look's weather (weather_fx.gdshaderinc)

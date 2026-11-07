@@ -31,8 +31,8 @@
 //       - the spot (x, y, z) is the result.
 // DONOR: ZH PartitionManager.h FindPositionFlags / FindPositionOptions (the names of the flags and fields; RotWK's layout is the same: flags + 0, minRadius + 4,
 // maxRadius + 8, startAngle + 0xC, maxZDelta + 0x10, ignoreObject + 0x14, sourceToPathToDest + 0x18, relationshipObject + 0x1C).
-// INFERENCE (stop S-1280): the object's geometry in the overlap test is its template's shape list (retail keeps a per-object GeometryInfo, S-1020); the path test
-// is the port's clientSafeQuickDoesPathExist with the source's locomotor (as GarrisonContain reads RW 0x6F5BB0).
+// INFERENCE (stop S-1280): the object's geometry in the overlap test is its template's shape list (retail keeps a per-object GeometryInfo, S-1020). The path test
+// is QuickDoesPathExist RW 0x6F5BB0 with the source (lane QPATH-1: Pathfinder::quickDoesPathExist).
 //
 // Simulation maths goes through SimMath.
 

@@ -662,11 +662,13 @@ TEST_CASE("bridge1 retail: on MAP MP Anfalas a GenericTreeBridge survives a kill
 	std::string error;
 	Object *hero = g.game->createObject("GondorBoromir", me->getPlayerIndex(), onDeck, 0.0f, &error);
 	REQUIRE_MESSAGE(hero, error);
-	// on the deck's surface (createObject puts it on the terrain; a map's units on walls carry their height)
+	// on the deck's surface (createObject puts it on the terrain; a map's units on walls carry their height) and on its layer, as a map's placement gives it
+	// (RW 0x62E14C .. 0x62E15F: the layer RW 0x680A75 names there; lane WALL-4: RotWK's movers put no unit on a surface above it at its height)
 	onDeck.z = pf.getLayerHeight(onDeck.x, onDeck.y, deckLayer);
 	hero->setPosition(&onDeck);
 	AIUpdateInterface *ai = hero->getAIUpdateInterface();
 	REQUIRE(ai);
+	ai->setLayer(pf.getLayerAt(ai->adapter(), onDeck));
 	ai->aiIdle(CMD_FROM_AI); // not the guard of its creation point on the terrain under the deck
 	g.frames(3);
 	const Coord3D before = *hero->getPosition();
