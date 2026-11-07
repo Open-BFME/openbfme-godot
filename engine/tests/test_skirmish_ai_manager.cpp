@@ -16,6 +16,7 @@
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Economy.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
@@ -862,4 +863,103 @@ TEST_CASE("skirmish ai farm choice: the farm and production selectors' draws (RW
 	CHECK(after[0].hi == 1);
 	CHECK(active.squadTarget == (after[0].result == 0 ? farmA : farmB)->getID());
 	CHECK(after.back().line == 0x8B);
+}
+
+TEST_CASE("skirmish ai WotR battle start: not in a skirmish, past frame 5, once, and only CAN_ATTACK / HERO units roam (RW 0x9B8451 / 0x9B8556 / 0x9B8160)")
+{
+	for (bool skirmish : { true, false })
+	{
+		INFO(skirmish);
+		AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
+		if (!skirmish)
+		{
+			fx.logic->economy().context().gameKind = 0; // not a skirmish (GameLogic + 0x114 != 3)
+		}
+		pathtest::SyntheticTerrain terrain(100, 100);
+		AIWorldConfig config;
+		config.pathfind = pathtest::testConfig();
+		AIWorld world(*fx.logic, config, fx.w.fx.env.macros);
+		world.attach();
+		world.newMap(terrain);
+		LocomotorStore locomotors;
+		struct LocomotorScope
+		{
+			GameLogic &logic;
+			LocomotorStore *saved = TheLocomotorStore;
+			~LocomotorScope()
+			{
+				logic.reset();
+				TheLocomotorStore = saved;
+			}
+		} locomotorScope{ *fx.logic };
+		TheLocomotorStore = &locomotors;
+		fx.w.fx.env.blocks.registerBlock("Locomotor", [](INI *ini) { LocomotorStore::parseLocomotorTemplateDefinitionGlobal(ini); });
+		REQUIRE(fx.w.load(movetest::kLocomotors).empty());
+		REQUIRE(fx.w.load("Object BattleUnit\n KindOf = CAN_ATTACK INFANTRY\n"
+			" Body = ActiveBody ModuleTag_Body\n MaxHealth = 100\n InitialHealth = 100\n End\n"
+			" Behavior = AIUpdateInterface ModuleTag_AI\n End\n"
+			" LocomotorSet\n Locomotor = WalkerLoco\n Condition = SET_NORMAL\n Speed = 55\n End\nEnd\n"
+			"Object BattleHero\n KindOf = HERO\n"
+			" Body = ActiveBody ModuleTag_Body\n MaxHealth = 100\n InitialHealth = 100\n End\n"
+			" Behavior = AIUpdateInterface ModuleTag_AI\n End\n"
+			" LocomotorSet\n Locomotor = WalkerLoco\n Condition = SET_NORMAL\n Speed = 55\n End\nEnd\n"
+			"Object BattleWorker\n KindOf = DOZER\n"
+			" Body = ActiveBody ModuleTag_Body\n MaxHealth = 100\n InitialHealth = 100\n End\n"
+			" Behavior = AIUpdateInterface ModuleTag_AI\n End\n"
+			" LocomotorSet\n Locomotor = WalkerLoco\n Condition = SET_NORMAL\n Speed = 55\n End\nEnd\n"
+			"Object BattleFortress\n KindOf = STRUCTURE DOZER_FACTORY\nEnd\n").empty());
+		AIUpdateInterface::registerClasses(fx.w.modules);
+		REQUIRE(fx.logic->skirmishAI().newGame(true) == 1);
+		auto *ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+		REQUIRE(ai);
+		ai->build.startPosition = { 100.0f, 100.0f, 0.0f };
+		ai->brain.namedCounters["FarmKillSquad::IsRunning"] = 1;
+		fx.players.findPlayerWithName("C")->setSkirmishDifficulty(1); // AIRoamingDefenseTactic is EASY only
+		Object *fortress = fx.make("BattleFortress", fx.teamOf("C"));
+		REQUIRE(fortress);
+		const Coord3D fortressPos{ 500.0f, 500.0f, 0.0f };
+		fortress->setPosition(&fortressPos);
+		Object *unit = fx.make("BattleUnit", fx.teamOf("C"));
+		Object *hero = fx.make("BattleHero", fx.teamOf("C"));
+		Object *worker = fx.make("BattleWorker", fx.teamOf("C"));
+		REQUIRE(unit);
+		REQUIRE(hero);
+		REQUIRE(worker);
+		const Coord3D unitPos{ 200.0f, 200.0f, 0.0f };
+		unit->setPosition(&unitPos);
+		hero->setPosition(&unitPos);
+		worker->setPosition(&unitPos);
+		for (int i = 0; i < 10; ++i)
+		{
+			fx.logic->runLogicFrame();
+		}
+		REQUIRE(fx.logic->getFrame() == 10);
+		const int unportedBefore = ai->brain.targetlessUnported;
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		CHECK(ai->brain.targetlessUnported - unportedBefore == 8); // WotR's check is ported; the other eight prototypes still count
+		if (skirmish)
+		{
+			CHECK(ai->brain.tacticsByKind.count("AIStartWoTRBattleTactic") == 0); // RW 0x9B8451: game kind 3
+			CHECK(ai->brain.namedCounters["StartWoTRBattleTacticHasRun"] == 0);
+			continue;
+		}
+		REQUIRE(ai->brain.tacticsByKind.count("AIStartWoTRBattleTactic") == 1);
+		// RW 0x8F11DA: the ready frame first, then the run; RW 0x9B8556 sends the roam orders and ends the tactic (1, 0). The
+		// targetless pick can add a second clone before the run sets its key; that one ends at once, as retail's + 0x65 does.
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		CHECK(ai->brain.namedCounters.at("StartWoTRBattleTacticHasRun") == 1);
+		bool ended = false;
+		for (const AITactic &t : ai->brain.tactics)
+		{
+			ended = ended || (t.kind == "AIStartWoTRBattleTactic" && t.ended);
+		}
+		CHECK(ended);
+		REQUIRE(unit->getAIUpdateInterface());
+		REQUIRE(hero->getAIUpdateInterface());
+		REQUIRE(worker->getAIUpdateInterface());
+		CHECK(unit->getAIUpdateInterface()->attackMoveActive()); // CAN_ATTACK (KindOf 3)
+		CHECK(hero->getAIUpdateInterface()->attackMoveActive()); // HERO (KindOf 90)
+		CHECK_FALSE(worker->getAIUpdateInterface()->attackMoveActive());
+	}
 }
