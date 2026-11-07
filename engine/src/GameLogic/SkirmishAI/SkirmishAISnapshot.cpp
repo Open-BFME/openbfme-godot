@@ -1026,6 +1026,20 @@ void SkirmishAIManager::checkLoaded() const
 					throw XferException("skirmish ai: a SimpleExpansion whose request is not a plain structure request");
 				}
 				break;
+			case 105:
+				// RW 0x9B869B..0x9B86D3: created/entry flags and the issued fortress ID survive death.
+				AIXfer::inRange(tac.step, 0, 2, what.c_str());
+				if (tac.step == 0)
+					AIXfer::inRange(tac.step2, 0, 0, what.c_str());
+				else
+				{
+					AIXfer::inRange(tac.step2, -1, 0x7fffffff, what.c_str());
+					if (tac.step2 != -1)
+						AIXfer::issued((ObjectID)tac.step2, "skirmish ai: ReturnTheRing fortress");
+					if (tac.step == 2 && tac.step2 == -1)
+						throw XferException(what + " entered without a fortress");
+				}
+				break;
 			default:
 				AIXfer::inRange(tac.step, 0, 0, what.c_str());
 				AIXfer::inRange(tac.step2, 0, 0, what.c_str());

@@ -16,6 +16,8 @@
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AI/AIGarrisonStates.h"
+#include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/GateModules.h"
@@ -710,12 +712,17 @@ TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member tea
 	TheLocomotorStore = &locomotors;
 	fx.w.fx.env.blocks.registerBlock("Locomotor", [](INI *ini) { LocomotorStore::parseLocomotorTemplateDefinitionGlobal(ini); });
 	REQUIRE(fx.w.load(movetest::kLocomotors).empty());
-	REQUIRE(fx.w.load("Object RingBearer\n KindOf = CAN_ATTACK INFANTRY\n"
+	GarrisonContain::registerClasses(fx.w.modules);
+	const auto ringErrors = fx.w.load("Object RingBearer\n KindOf = CAN_ATTACK INFANTRY\n TransportSlotCount = 1\n"
 		" Body = ActiveBody ModuleTag_Body\n MaxHealth = 100\n InitialHealth = 100\n End\n"
 		" Behavior = AIUpdateInterface ModuleTag_AI\n End\n"
 		" LocomotorSet\n Locomotor = WalkerLoco\n Condition = SET_NORMAL\n Speed = 55\n End\nEnd\n"
-		"Object Fortress\n KindOf = STRUCTURE DOZER_FACTORY\nEnd\n"
-		"Object SummonedFortress\n KindOf = STRUCTURE DOZER_FACTORY SUMMONED\nEnd\n").empty());
+		"Object Fortress\n KindOf = STRUCTURE DOZER_FACTORY IMMOBILE\n"
+		" Geometry = CYLINDER\n GeometryMajorRadius = 20\n GeometryHeight = 40\n"
+		" Behavior = CitadelSlaughterHordeContain ModuleTag_Contain\n ContainMax = 1\n EnterSound = NoSound\n"
+		" StatusForRingEntry = HOLDING_THE_RING\n ObjectToDestroyForRingEntry = NONE\n End\nEnd\n"
+		"Object SummonedFortress\n KindOf = STRUCTURE DOZER_FACTORY SUMMONED\nEnd\n");
+	REQUIRE_MESSAGE(ringErrors.empty(), ringErrors);
 	AIUpdateInterface::registerClasses(fx.w.modules);
 	REQUIRE(fx.logic->skirmishAI().newGame(true) == 1);
 	auto *ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
@@ -731,6 +738,11 @@ TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member tea
 	REQUIRE(fortress);
 	const Coord3D fortressPos{ 500.0f, 500.0f, 0.0f };
 	fortress->setPosition(&fortressPos);
+	// RW 0x9B8930 skips a corpse still present in the structure record.
+	Object *dead = fx.make("Fortress", fx.teamOf("C"));
+	const Coord3D deadPos{ 210, 210, 0 };
+	dead->setPosition(&deadPos);
+	dead->friend_onDie(DieModuleInterface::Event());
 	// A closer SUMMONED fortress is skipped (template KindOf 179, RW 0x9B8945).
 	Object *summoned = fx.make("SummonedFortress", fx.teamOf("C"));
 	REQUIRE(summoned);
@@ -776,6 +788,50 @@ TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member tea
 	CHECK(tac->teams[0].members == std::vector<ObjectID>{ holder->getID() });
 	CHECK(ai->brain.namedCounters.at("AIReturnTheRingTactic_IsRunning") == 1);
 	CHECK(tac->step2 == (int)fortress->getID()); // the nearest NON-SUMMONED DOZER_FACTORY
+	// Whole game save/load/continue, restoring the checkpoint after comparing the next update.
+	const ObjectID holderID = holder->getID(), fortressID = fortress->getID();
+	auto roundTrip = [&]() {
+		std::vector<std::uint8_t> saved, again;
+		std::string error;
+		const auto hash = fx.logic->computeStateHash();
+		REQUIRE_MESSAGE(fx.logic->saveSnapshot(saved, &error), error);
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		const auto continued = fx.logic->computeStateHash();
+		REQUIRE_MESSAGE(fx.logic->loadSnapshot(saved, &error), error);
+		ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+		CHECK(fx.logic->computeStateHash() == hash);
+		REQUIRE_MESSAGE(fx.logic->saveSnapshot(again, &error), error);
+		CHECK(again == saved);
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		CHECK(fx.logic->computeStateHash() == continued);
+		REQUIRE_MESSAGE(fx.logic->loadSnapshot(saved, &error), error);
+		ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+		holder = fx.logic->findObjectByID(holderID);
+		fortress = fx.logic->findObjectByID(fortressID);
+		tac = live();
+	};
+	roundTrip(); // journey
+	bool deliver = false;
+	SUBCASE("entry and delivery") { deliver = true; }
+	SUBCASE("stationary entry times out") {}
+	SUBCASE("destroyed destination during travel")
+	{
+		fx.logic->destroyObject(fortress);
+		roundTrip(); // issued but now absent fortress ID
+		REQUIRE(tac);
+		tac->teams[0].lastPosition = *holder->getPosition();
+		tac->teams[0].idleFrames = 15;
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		CHECK(live()->step == 1); // only the dead and summoned structures remain
+		return;
+	}
+	SUBCASE("no fortress sentinel")
+	{
+		tac->step2 = -1;
+		roundTrip();
+		CHECK(live()->step2 == -1);
+		return;
+	}
 	// RW 0x9B8A47: every team done (RW 0x8F175A) -> RW 0x9B8994 garrisons the fortress and marks + 0x64; the next done update ends.
 	AIUpdateInterface *holderAI = holder->getAIUpdateInterface();
 	REQUIRE(holderAI);
@@ -788,10 +844,26 @@ TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member tea
 	tac = live();
 	REQUIRE(tac);
 	CHECK(tac->step == 2);
-	holderAI->aiIdle(CMD_FROM_PLAYER);
-	tac->teams[0].lastPosition = *holder->getPosition();
-	tac->teams[0].idleFrames = 15;
+	CHECK(holderAI->currentStateId() == AI_MOVE_TO_POSITION_AND_ENTER);
+	CHECK(holderAI->stateMachine().goalObjectID() == fortressID);
+	CHECK(holderAI->lastCommandSource() == CMD_FROM_PLAYER);
+	CHECK(tac->teams[0].idleFrames == 0); // RW 0x8F192A
+	roundTrip(); // entry issued
+	if (deliver)
+	{
+		// Let the actual command walk into the ring-capable contain; never supply the entry ourselves.
+		for (int i = 0; i < 300 && holder->testStatus((unsigned)CombatNames::status("HOLDING_THE_RING")); ++i)
+			fx.logic->runLogicFrame();
+		INFO(holder->getPosition()->x << "," << holder->getPosition()->y << " state " << holder->getAIUpdateInterface()->currentStateId() << " contained " << (holder->getContainedBy() != nullptr));
+		CHECK_FALSE(holder->testStatus((unsigned)CombatNames::status("HOLDING_THE_RING")));
+		return;
+	}
+	holderAI = holder->getAIUpdateInterface();
 	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+	REQUIRE(live());
+	CHECK(live()->teams[0].idleFrames == 1);
+	// Stationary simulation: complete only after the fresh 15-update idle period.
+	for (int i = 1; i < 15; ++i) AITacticalAI::updateBrain(*fx.logic, *ai, ai);
 	// The end itself clears the key (RW 0x9B8635), so the same update's targetless pick can start a fresh clone for the
 	// holder that still carries the ring; the ended one is what this step checks.
 	bool ended = false;
@@ -801,6 +873,8 @@ TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member tea
 	}
 	CHECK(ended);
 	CHECK(ai->brain.namedCounters.at("AIReturnTheRingTactic_IsRunning") == 0); // RW 0x9B8635
+	roundTrip(); // ended but not yet removed
+
 }
 
 

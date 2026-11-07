@@ -1289,7 +1289,8 @@ Object *nearestNonSummonedFortress(GameLogic &logic, AISkirmishPlayer &ai, const
 	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).structures())
 	{
 		Object *o = logic.findObjectByID(id);
-		if (!o || !o->isKindOf((unsigned)fortress) || o->isKindOf((unsigned)summoned))
+		// RW 0x9B8930: death precedes removal from the structure record.
+		if (!alive(o) || !o->isKindOf((unsigned)fortress) || o->isKindOf((unsigned)summoned))
 		{
 			continue;
 		}
@@ -2413,6 +2414,7 @@ void updateReturnTheRing(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b
 				u->aiEnter(fortress, CMD_FROM_PLAYER); // RW 0x8F18DE -> RW 0x774EDF team 0, AI command 0x42
 			}
 		}
+		tac.teams[0].idleFrames = 0; // RW 0x8F192A: entry starts a fresh idle period.
 		tac.step2 = (int)fortress->getID();
 		tac.step = 2;
 	}
