@@ -3513,6 +3513,8 @@ void AITacticalAI::updateTacticForTest(GameLogic &logic, AISkirmishPlayer &ai, A
 Coord3D AITacticalAI::siegeStandBackPointForTest(const Coord3D &leader, const Coord3D &wall)
 {
 	return siegeStandBackPoint(leader, wall);
+}
+
 bool AITacticalAI::roamDestinationForTest(GameLogic &logic, AISkirmishPlayer &ai, const Object &unit, Coord3D &out)
 {
 	(void)unit;
