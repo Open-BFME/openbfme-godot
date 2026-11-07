@@ -737,7 +737,8 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// distance to the goal, RW 0x664127, moves when the units arrive)
 	// merge queue q43 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x45726314 -> 0xCA4B529D at #230's merge point
 	// (the AI's position sampler and base structure groups, hashed in the AI state) -> 0x57D4FF8F at #231's (the DEFENSIVE tactic's state); the later items keep it
-	CHECK(a.hashes.back() == 0x57D4FF8FU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	CHECK(a.hashes.back() == 0x8ECFDB13U);   // lane RAI-TL-2: ReturnTheRing's applicability check drops the hashed targetless-unported counter 9 -> 8 (was 0x57D4FF8F on main c8aa4603); goals and positions unchanged
+	                                         // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);
