@@ -609,3 +609,9 @@ transparent-wrapper overfill behavior: 2 cases, 44 assertions passed. Object
 construction (`0x001D2DA8`) and Team construction (`0x000F7830`) initialize
 threat value/deadline to zero; their queries (`0x001D2580`, `0x000F72D0`)
 refresh only when the deadline is strictly less than the current frame.
+
+PR validation preserves AOD inherited death-filter fields from native table
+`0x00CB2E70` (build chain `0x0022F8A0 -> 0x002469A0 -> 0x0022DB70 ->
+0x002284A0`). They remain typed data; AOD death-filter execution is an explicit,
+regression-pinned S-5017 stop. The field census no longer lists the three
+horde rows now accepted by the native variant as gaps.

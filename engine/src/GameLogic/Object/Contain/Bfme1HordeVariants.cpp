@@ -20,6 +20,7 @@
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Module/CollideModule.h"
+#include "GameLogic/Module/MoneyEventModules.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/FXEvents.h"
 #include "GameLogic/ObjectCreationList.h"
@@ -170,6 +171,7 @@ protected:
 class AodData final : public Bfme1HordeData
 {
 public:
+	DieMuxData deathFilter;
 	float frequency=0, frequencyRandom=0, amplitude=0, amplitudeRandom=0, still=0;
 	float frequencyZ=0, frequencyRandomZ=0, amplitudeZ=0, amplitudeRandomZ=0, stillZ=0;
 	float oathZ=1, heightFactor=0.45f, minHeight=0, maxHeight=999999, tailOff=1;
@@ -180,6 +182,15 @@ public:
 		Bfme1HordeData::buildFieldParse(p);
 #define AOD_REAL(name, field) {name, INI::parseReal, nullptr, (int)offsetof(AodData, field)}
 		static const FieldParse fields[] = {
+			// BFME1 0x22F8A0 -> 0x2469A0 -> 0x22DB70 -> 0x2284A0:
+			// the inherited OpenContain chain adds DieMux table 0xCB2E70.
+			// Retain its data; AOD death-filter execution remains S-5017.
+			{"DeathTypes",ParseDeathTypeFlags,nullptr,(int)offsetof(AodData,deathFilter.m_deathTypes)},
+			{"ExemptStatus",ParseObjectStatusMask,nullptr,(int)offsetof(AodData,deathFilter.m_exemptStatus)},
+			{"RequiredStatus",ParseObjectStatusMask,nullptr,(int)offsetof(AodData,deathFilter.m_requiredStatus)},
+			{"DamageAmountRequired",INI::parseReal,nullptr,(int)offsetof(AodData,deathFilter.m_damageAmountRequired)},
+			{"MinKillerAngle",INI::parseAngleReal,nullptr,(int)offsetof(AodData,deathFilter.m_minKillerAngle)},
+			{"MaxKillerAngle",INI::parseAngleReal,nullptr,(int)offsetof(AodData,deathFilter.m_maxKillerAngle)},
 			AOD_REAL("FrequencyScale",frequency), AOD_REAL("FrequencyRandomness",frequencyRandom),
 			AOD_REAL("AmplitudeScale",amplitude), AOD_REAL("AmplitudeRandomness",amplitudeRandom), AOD_REAL("StillAmplitude",still),
 			AOD_REAL("FrequencyScaleZ",frequencyZ), AOD_REAL("FrequencyRandomnessZ",frequencyRandomZ),
@@ -255,6 +266,7 @@ public:
 	AodContain(Thing *t,const AodData *d):Bfme1HordeContain(t,d),m_aod(d)
 	{
 		getObject()->logic().noteStop("[S-5017] BFME1 AOD: native formation/melee and contact scheduling; low-level pathfinder, contact-coordinate and CRT boundaries apply");
+		getObject()->logic().noteStop("[S-5017] BFME1 AOD: inherited death-filter fields are retained; death-filter execution remains unported");
 	}
 	const std::type_info &xferClass() const override { return typeid(AodContain); }
 	void onObjectCreated() override

@@ -1737,6 +1737,7 @@ TEST_CASE("bfme1 ai: AOD uses flowing rows waves large-unit expiry and a saved s
 {
 	std::string config=combinationObjects();
 	auto begin=config.find("Behavior = HordeContain");config.replace(begin,std::string("Behavior = HordeContain").size(),"Behavior = AODHordeContain");
+	config.insert(config.find(" Slots =",begin)," DeathTypes = ALL\n ExemptStatus = NONE\n RequiredStatus = NONE\n DamageAmountRequired = 12.5\n MinKillerAngle = -45\n MaxKillerAngle = 45\n");
 	config.insert(config.find(" Slots =",begin)," FrequencyScale = 0\n FrequencyRandomness = 0\n AmplitudeScaleZ = 10\n StillAmplitudeZ = 1\n LargeUnitTimeout = 800\n LargeUnitMinHeight = 100\n LargeUnitMaxHeight = 100\n");
 	config+="Object Large\n DeadCollideSize = LARGE\n Geometry = CYLINDER\n GeometryHeight = 200\n Body = ActiveBody Body\n MaxHealth = 1000\n End\nEnd\n";
 	movetest::MoveWorld f(100,100,"",true);f.buildMap();
@@ -1745,6 +1746,8 @@ TEST_CASE("bfme1 ai: AOD uses flowing rows waves large-unit expiry and a saved s
 	REQUIRE_MESSAGE(initest::loadError(parse.env,"aod.ini",config).empty(),config);
 	f.logic->random().enableCallLog(true);
 	Object *wrapper=f.spawn("PartA",200,200);REQUIRE(wrapper);auto *horde=dynamic_cast<HordeContain *>(wrapper->getContain());REQUIRE(horde);
+	const auto stops=f.logic->report().stops;
+	CHECK(std::count(stops.begin(),stops.end(),"[S-5017] BFME1 AOD: inherited death-filter fields are retained; death-filter execution remains unported")==1);
 	std::vector<int> sites;
 	for(const auto &call:f.logic->random().callLog())if(call.file.find("AODHordeContain.cpp")!=std::string::npos){sites.push_back(call.line);CHECK_FALSE(call.drewNumber);}
 	CHECK(sites==std::vector<int>{0x209,0x20A,0x20B,0x20E,0x20F,0x210,0x209,0x20A,0x20B,0x20E,0x20F,0x210});
