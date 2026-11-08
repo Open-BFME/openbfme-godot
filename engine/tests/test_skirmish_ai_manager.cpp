@@ -21,6 +21,7 @@
 #include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
@@ -480,6 +481,7 @@ TEST_CASE("skirmish ai capture registry: neutral map flags register once, "
 	m.objectAdded(*first);
 	CHECK(m.captureFlags() == std::vector<ObjectID>{ firstId, secondId });
 	fx.logic->destroyObject(second);
+	fx.logic->processDestroyList();
 	CHECK(m.captureFlags() == std::vector<ObjectID>{ firstId, secondId });
 	XferSave save;
 	save.beginBlock();
@@ -689,7 +691,6 @@ TEST_CASE("skirmish ai capture squad: allied flags do not start a squad; a neutr
 	}
 }
 
-
 TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member team, the nearest non-summoned fortress and the garrison end (RW 0x9B89CF / 0x9B877C / 0x9B8A7B / 0x9B8A06 / 0x9B88D8 / 0x9B8994 / 0x9B8A47)")
 {
 	AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
@@ -759,7 +760,7 @@ TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member tea
 	const int unportedBefore = ai->brain.targetlessUnported;
 	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
 	CHECK(ai->brain.tacticsByKind.count("ReturnTheRing") == 0);
-	CHECK(ai->brain.targetlessUnported - unportedBefore == 8); // the other 8 unported applicability checks, once per pick
+	CHECK(ai->brain.targetlessUnported - unportedBefore == 6); // six remaining applicability checks, once per pick
 	holder->setStatus((unsigned)CombatNames::status("HOLDING_THE_RING"), true);
 	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
 	REQUIRE(ai->brain.tacticsByKind.count("ReturnTheRing") == 1);
@@ -878,6 +879,322 @@ TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member tea
 
 }
 
+
+
+TEST_CASE("skirmish ai roaming defense: EASY only, the 5 s scheduling, the zero-team run and the first idle unit (RW 0x9B7F56 / 0x9B8047 / 0x9B80FA / 0x9B7EBD / 0x9B83A6)")
+{
+	AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
+	pathtest::SyntheticTerrain terrain(100, 100);
+	AIWorldConfig config;
+	config.pathfind = pathtest::testConfig();
+	AIWorld world(*fx.logic, config, fx.w.fx.env.macros);
+	world.attach();
+	world.newMap(terrain);
+	LocomotorStore locomotors;
+	struct Scope {
+		GameLogic &logic;
+		LocomotorStore *saved = TheLocomotorStore;
+		~Scope() { logic.reset(); TheLocomotorStore = saved; }
+	} scope{ *fx.logic };
+	TheLocomotorStore = &locomotors;
+	fx.w.fx.env.blocks.registerBlock("Locomotor", [](INI *ini) { LocomotorStore::parseLocomotorTemplateDefinitionGlobal(ini); });
+	REQUIRE(fx.w.load(movetest::kLocomotors).empty());
+	AIUpdateInterface::registerClasses(fx.w.modules);
+	InvisibilityModules::registerAll(fx.w.modules);
+	REQUIRE(fx.w.load("Object Roamer\n KindOf = CAN_ATTACK INFANTRY\n"
+		" Body = ActiveBody ModuleTag_Body\n MaxHealth = 100\n InitialHealth = 100\n End\n"
+		" Behavior = AIUpdateInterface ModuleTag_AI\n AutoAcquireEnemiesWhenIdle = Yes\n End\n"
+		" Behavior = StealthUpdate ModuleTag_Stealth\n StealthDelay = 10000\n End\n"
+		" LocomotorSet\n Locomotor = WalkerLoco\n Condition = SET_NORMAL\n Speed = 55\n End\nEnd\n"
+		"Object Farm\n KindOf = STRUCTURE ECONOMY_STRUCTURE IMMOBILE\nEnd\n").empty());
+	REQUIRE(fx.logic->skirmishAI().newGame(true) == 1);
+	auto *ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+	REQUIRE(ai);
+	Player *computer = fx.players.findPlayerWithName("C");
+	REQUIRE(computer);
+	ai->brain.namedCounters["FarmKillSquad::IsRunning"] = 1; // isolate this prototype from FarmKillSquad
+	computer->setSkirmishDifficulty(0); // RW 0x6AA61B == 0: EASY only
+	fx.logic->random().enableCallLog(true);
+	// RW 0x9B7F56: the first check only schedules the next attempt 5 s (FPS * 5 = 25 frames) on and answers false.
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+	CHECK(ai->brain.tactics.empty());
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_NextLogicFrameRun") == (int)fx.logic->getFrame() + 25);
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_IsRunning") == 0);
+	CHECK(ai->brain.targetlessUnported == 6); // Ring, WoTR and roaming are all ported (S-893)
+	// Any difficulty but EASY answers false without scheduling (RW 0x6AA61B).
+	computer->setSkirmishDifficulty(1);
+	ai->brain.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] = 0;
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_NextLogicFrameRun") == 0);
+	CHECK(ai->brain.tactics.empty());
+	// EASY and due: the pool draw starts it; RW 0x9B80FA sets IsRunning in the zero-team setup. The manager starts at frame
+	// 10 (RW 0x6A96B6), so advance there first with the scheduled 25 still in the future.
+	for (int i = 0; i < 10; ++i)
+	{
+		fx.logic->runLogicFrame();
+	}
+	REQUIRE(fx.logic->getFrame() == 10);
+	CHECK(ai->brain.tactics.empty());
+	computer->setSkirmishDifficulty(0);
+	ai->brain.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] = 10;
+	fx.logic->random().clearCallLog();
+	fx.logic->runLogicFrame(); // frame 11: the manager's updateBrain sees the due frame
+	REQUIRE(fx.logic->getFrame() == 11);
+	REQUIRE(ai->brain.tactics.size() == 1);
+	CHECK(ai->brain.tactics[0].kind == "AIRoamingDefenseTactic");
+	CHECK(ai->brain.tactics[0].teams.empty()); // RW 0x851E97: no team
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_IsRunning") == 1);
+	CHECK(ai->brain.targetlessPicks == 1);
+	CHECK(ai->brain.targetlessStarted == 1);
+	const GameLogicRandom::Call &pick = fx.logic->random().callLog().back();
+	CHECK(pick.file == "AITacticsGenerator.cpp");
+	CHECK(pick.line == 0x1BC);
+	auto roundTrip = [&]() {
+		std::vector<std::uint8_t> saved, again;
+		std::string error;
+		const auto hash = fx.logic->computeStateHash();
+		REQUIRE_MESSAGE(fx.logic->saveSnapshot(saved, &error), error);
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		const auto continued = fx.logic->computeStateHash();
+		REQUIRE_MESSAGE(fx.logic->loadSnapshot(saved, &error), error);
+		ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+		CHECK(fx.logic->computeStateHash() == hash);
+		REQUIRE_MESSAGE(fx.logic->saveSnapshot(again, &error), error);
+		CHECK(again == saved);
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		CHECK(fx.logic->computeStateHash() == continued);
+		REQUIRE_MESSAGE(fx.logic->loadSnapshot(saved, &error), error);
+		ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+	};
+	roundTrip(); // scheduled
+	// RW 0x8F232F gives a zero-team prototype its ready flag; RW 0x8F11DA then starts it and its run RW 0x9B7EBD sets the roaming
+	// state (+ 0x58) after the ready frame.
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+	CHECK_FALSE(ai->brain.tactics[0].started);
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+	CHECK(ai->brain.tactics[0].started);
+	CHECK(ai->brain.tactics[0].step == 1);
+	roundTrip(); // started
+	const Coord3D position = ai->brain.tactics[0].position, origin = ai->brain.tactics[0].origin;
+	// RW 0x9B8412: the first idle army unit belongs to another logical team; only the next free one roams.
+	Object *first = fx.make("Roamer", fx.teamOf("C"));
+	Object *free = fx.make("Roamer", fx.teamOf("C"));
+	Object *later = fx.make("Roamer", fx.teamOf("C"));
+	const Coord3D from{ 200, 200, 0 }, destination{ 600, 200, 37 };
+	for (Object *unit : {first, free, later}) unit->setPosition(&from);
+	free->setStatus((unsigned)CombatNames::status("CAN_STEALTH"), true);
+	Object *farm = fx.make("Farm", fx.teamOf("C"));
+	farm->setPosition(&destination);
+	AITactic assigned;
+	assigned.kind = "ReturnTheRing";
+	assigned.kindIndex = 105;
+	assigned.targetless = true;
+	assigned.started = true;
+	assigned.step = 1;
+	assigned.step2 = -1;
+	assigned.id = ai->brain.nextTacticId++;
+	assigned.teams.emplace_back();
+	assigned.teams[0].handedOver = true;
+	assigned.teams[0].members = {first->getID()};
+	bool allAssigned = false, refused = false;
+	SUBCASE("command refusal still follows selection")
+	{
+		refused = true;
+		free->getAIUpdateInterface()->setPreventPlayerCommands(true);
+	}
+	SUBCASE("logical assignment") {}
+	SUBCASE("actual non-default Team")
+	{
+		first->setTeam(fx.teams.createTeam(fx.teams.initTeam("Other", fx.players.findPlayerWithName("C"), false)));
+		assigned.teams[0].members.clear();
+	}
+	SUBCASE("all logically assigned: no destination draw")
+	{
+		assigned.teams[0].members = {first->getID(), free->getID(), later->getID()};
+		allAssigned = true;
+	}
+	ai->brain.tactics.push_back(assigned);
+	fx.logic->random().clearCallLog();
+	// RW 0x9B83A6: dispatch once, then end; RW 0x9B8047 clears
+	// both keys; the same update's targetless pick then sees the cleared next frame and schedules it 5 s on (RW 0x9B7F56).
+	const int before = (int)fx.logic->getFrame();
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+	CHECK(ai->brain.tactics[0].ended);
+	CHECK(ai->brain.tactics[0].position.x == position.x);
+	CHECK(ai->brain.tactics[0].position.y == position.y);
+	CHECK(ai->brain.tactics[0].position.z == position.z);
+	CHECK(ai->brain.tactics[0].origin.x == origin.x);
+	CHECK(ai->brain.tactics[0].origin.y == origin.y);
+	CHECK(ai->brain.tactics[0].origin.z == origin.z);
+	CHECK_FALSE(first->getAIUpdateInterface()->attackMoveActive());
+	CHECK_FALSE(later->getAIUpdateInterface()->attackMoveActive());
+	CHECK(free->getAIUpdateInterface()->attackMoveActive() == (!allAssigned && !refused));
+	REQUIRE(fx.logic->random().callLog().size() == (allAssigned ? 0 : 1));
+	if (!allAssigned)
+	{
+		auto *u = free->getAIUpdateInterface();
+		if (!refused)
+		{
+			CHECK(u->lastCommandSource() == CMD_FROM_PLAYER);
+			CHECK(u->stateMachine().goalPosition().x == destination.x);
+			CHECK(u->stateMachine().goalPosition().y == destination.y);
+			CHECK(u->stateMachine().goalPosition().z == destination.z);
+		}
+		else CHECK(u->isIdle());
+		const auto &draw = fx.logic->random().callLog()[0];
+		CHECK(draw.file == "AIRoamingDefenseTactic.cpp");
+		CHECK(draw.line == 0xA4);
+		CHECK(draw.lo == 0);
+		CHECK(draw.hi == 0);
+		CHECK(draw.result == 0);
+		CHECK_FALSE(draw.real);
+		CHECK(draw.drewNumber);
+	}
+	// The ring tactic's dynamic team count must still average its one team (RW 0x5F2DC6 / 0x9B8878).
+	if (!assigned.teams[0].members.empty())
+	{
+		CHECK(ai->brain.tactics[1].position.x == from.x);
+		CHECK(ai->brain.tactics[1].position.y == from.y);
+	}
+	// RW 0x696266 replaces the old state without routing a type-0 group move.
+	if (!allAssigned && !refused)
+	{
+		free->getAIUpdateInterface()->aiBusy(CMD_FROM_PLAYER);
+		REQUIRE(free->getAIUpdateInterface()->isBusy());
+		fx.logic->random().clearCallLog();
+		const Coord3D next{ 400, 300, 53 };
+		REQUIRE(free->getAIUpdateInterface()->aiAttackMoveToPosition(next, CMD_FROM_PLAYER));
+		CHECK_FALSE(free->getAIUpdateInterface()->isBusy());
+		CHECK(free->getAIUpdateInterface()->stateMachine().goalPosition().x == next.x);
+		CHECK(free->getAIUpdateInterface()->stateMachine().goalPosition().y == next.y);
+		CHECK(free->getAIUpdateInterface()->stateMachine().goalPosition().z == next.z);
+		CHECK(fx.logic->random().callLog().size() == 0);
+	}
+	ai->brain.tactics.pop_back(); // the assignment fixture is separate from the roaming snapshot
+	roundTrip(); // ended, before removal
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_IsRunning") == 0);
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_NextLogicFrameRun") == before + 25);
+}
+
+TEST_CASE("skirmish ai roaming destination: an economy structure within 900 of the base, else 400 from the fortress at the drawn angle (RW 0x9B8160)")
+{
+	AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
+	REQUIRE(fx.w.load("Object Fortress\n KindOf = STRUCTURE DOZER_FACTORY\nEnd\n"
+		"Object Farm\n KindOf = STRUCTURE ECONOMY_STRUCTURE\nEnd\n").empty());
+	REQUIRE(fx.logic->skirmishAI().newGame(true) == 1);
+	auto *ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+	REQUIRE(ai);
+	ai->build.startPosition = { 100.0f, 100.0f, 0.0f };
+	Object *fortress = fx.make("Fortress", fx.teamOf("C"));
+	REQUIRE(fortress);
+	const Coord3D fortressPos{ 500.0f, 500.0f, 0.0f };
+	fortress->setPosition(&fortressPos);
+	Object *farm = fx.make("Farm", fx.teamOf("C"));
+	REQUIRE(farm);
+	const Coord3D farmPos{ 700.0f, 100.0f, 0.0f };
+	farm->setPosition(&farmPos);
+	fx.logic->random().enableCallLog(true);
+	// The economy structure is inside the 900 radius (RW 0xC89CF0): its position, drawn 0 .. 0 at line 0xA4.
+	Coord3D out{};
+	REQUIRE(AITacticalAI::roamDestinationForTest(*fx.logic, *ai, *farm, out));
+	CHECK(out.x == 700.0f);
+	CHECK(out.y == 100.0f);
+	REQUIRE(fx.logic->random().callLog().size() == 1);
+	const GameLogicRandom::Call &economy = fx.logic->random().callLog()[0];
+	CHECK(economy.file == "AIRoamingDefenseTactic.cpp");
+	CHECK(economy.line == 0xA4);
+	CHECK(economy.lo == 0);
+	CHECK(economy.hi == 0);
+	CHECK(economy.result == 0);
+	CHECK(economy.drewNumber); // even 0..0 advances the retail stream
+	CHECK_FALSE(economy.real);
+	// RW 0x9B826A indexes the candidate vector in collector order.
+	Object *second = fx.make("Farm", fx.teamOf("C"));
+	const Coord3D secondPos{ 400, 200, 11 };
+	second->setPosition(&secondPos);
+	fx.logic->random().clearCallLog();
+	auto expectedRandom = fx.logic->random();
+	const int selected = expectedRandom.getValue(0, 1, "AIRoamingDefenseTactic.cpp", 0xA4);
+	REQUIRE(AITacticalAI::roamDestinationForTest(*fx.logic, *ai, *farm, out));
+	const Coord3D expected = selected == 0 ? farmPos : secondPos;
+	CHECK(out.x == expected.x);
+	CHECK(out.y == expected.y);
+	CHECK(out.z == expected.z);
+	REQUIRE(fx.logic->random().callLog().size() == 1);
+	const auto &multiple = fx.logic->random().callLog()[0];
+	CHECK(multiple.file == "AIRoamingDefenseTactic.cpp");
+	CHECK(multiple.line == 0xA4);
+	CHECK(multiple.lo == 0);
+	CHECK(multiple.hi == 1);
+	CHECK(multiple.result == selected);
+	CHECK(multiple.drewNumber);
+	CHECK_FALSE(multiple.real);
+	CHECK(fx.logic->random().seedArray() == expectedRandom.seedArray());
+	fx.logic->destroyObject(second);
+	fx.logic->processDestroyList();
+	// RW 0x9B8251: a nonempty economy list with no nearby member consumes no draw.
+	const Coord3D farFarmPos{ 1200.0f, 100.0f, 0.0f };
+	farm->setPosition(&farFarmPos);
+	fx.logic->random().clearCallLog();
+	out = { 1, 2, 3 };
+	CHECK_FALSE(AITacticalAI::roamDestinationForTest(*fx.logic, *ai, *farm, out));
+	CHECK(fx.logic->random().callLog().size() == 0);
+	CHECK(out.x == 1);
+	CHECK(out.y == 2);
+	CHECK(out.z == 3);
+	// Boundary witness: RW (x²+y²)+z² = 809999.9375f; reversed order = 810000.0f.
+	ai->build.startPosition = { 0, 0, 0 };
+	const Coord3D witness{ 514.9111328125f, 475.62969970703125f, 564.484619140625f };
+	farm->setPosition(&witness);
+	REQUIRE(AITacticalAI::roamDestinationForTest(*fx.logic, *ai, *farm, out));
+	CHECK(out.x == witness.x);
+	CHECK(out.y == witness.y);
+	CHECK(out.z == witness.z);
+	REQUIRE(fx.logic->random().callLog().size() == 1);
+	const auto &boundary = fx.logic->random().callLog()[0];
+	CHECK(boundary.file == "AIRoamingDefenseTactic.cpp");
+	CHECK(boundary.line == 0xA4);
+	CHECK(boundary.lo == 0);
+	CHECK(boundary.hi == 0);
+	CHECK(boundary.result == 0);
+	CHECK(boundary.drewNumber);
+	CHECK_FALSE(boundary.real);
+	// Only an empty economy list reaches the fortress branch (RW 0x9B818E).
+	fx.logic->destroyObject(farm);
+	fx.logic->processDestroyList();
+	fx.logic->random().clearCallLog();
+	REQUIRE(AITacticalAI::roamDestinationForTest(*fx.logic, *ai, *fortress, out));
+	REQUIRE(fx.logic->random().callLog().size() == 1);
+	const GameLogicRandom::Call &angle = fx.logic->random().callLog()[0];
+	CHECK(angle.file == "AIRoamingDefenseTactic.cpp");
+	CHECK(angle.line == 0xBA);
+	CHECK(angle.lo == 0);
+	CHECK(angle.hi == 6);
+	CHECK(angle.drewNumber);
+	CHECK_FALSE(angle.real);
+	const double radians = (double)angle.result;
+	// tolerance: the binary's MSVCR71 sin/cos (double, RW 0xA3CF90 / 0xA3CF84) rounded to float vs this host's libm in double.
+	CHECK(out.x == doctest::Approx(500.0f + 400.0 * std::cos(radians)).epsilon(1e-5));
+	// tolerance: as above.
+	CHECK(out.y == doctest::Approx(500.0f + 400.0 * std::sin(radians)).epsilon(1e-5));
+	CHECK(out.z == 0.0f);
+}
+
+TEST_CASE("skirmish ai roaming destination: no economy structure and no fortress gives no destination (RW 0x9B8160)")
+{
+	AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
+	REQUIRE(fx.w.load("Object SoldierUnit\n KindOf = CAN_ATTACK\nEnd\n").empty());
+	REQUIRE(fx.logic->skirmishAI().newGame(true) == 1);
+	auto *ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+	REQUIRE(ai);
+	Object *unit = fx.make("SoldierUnit", fx.teamOf("C"));
+	REQUIRE(unit);
+	fx.logic->random().enableCallLog(true);
+	Coord3D out{ 1.0f, 2.0f, 3.0f };
+	CHECK_FALSE(AITacticalAI::roamDestinationForTest(*fx.logic, *ai, *unit, out));
+	CHECK(out.x == 1.0f);
+	CHECK(fx.logic->random().callLog().size() == 0);
+}
 
 
 TEST_CASE("skirmish ai farm choice: the farm and production selectors' draws (RW 0x9BBA51 / 0x9BB5E4 / 0x9BBF4C)")
@@ -1131,7 +1448,7 @@ TEST_CASE("skirmish ai WotR battle start: not in a skirmish, past frame 5, once,
 		REQUIRE(fx.logic->getFrame() == 10);
 		const int unportedBefore = ai->brain.targetlessUnported;
 		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
-		CHECK(ai->brain.targetlessUnported - unportedBefore == 8); // WotR's check is ported; the other eight prototypes still count
+		CHECK(ai->brain.targetlessUnported - unportedBefore == 6); // six prototypes remain unported
 		if (skirmish)
 		{
 			CHECK(ai->brain.tacticsByKind.count("AIStartWoTRBattleTactic") == 0); // RW 0x9B8451: game kind 3
