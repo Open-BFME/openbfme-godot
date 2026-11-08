@@ -573,6 +573,7 @@ TEST_CASE("skirmish ai pending attack: recruitment survives a brain update and l
 	REQUIRE(ai->brain.tactics.size() == 1);
 	REQUIRE(ai->brain.tactics[0].teams.size() == 1);
 	CHECK_FALSE(ai->brain.tactics[0].started);
+	CHECK_FALSE(ai->brain.tactics[0].ready); // RW 0x8F2348: an unmet recruiting team is not the zero-team case
 	CHECK(ai->brain.targets[0].teams == 1);
 	CHECK(ai->brain.bestTarget == -1); // The occupied target is unavailable to another attack.
 	std::vector<ObjectID> recruits;
@@ -858,6 +859,11 @@ TEST_CASE("skirmish ai return the ring: a HOLDING_THE_RING unit's one-member tea
 			fx.logic->runLogicFrame();
 		INFO(holder->getPosition()->x << "," << holder->getPosition()->y << " state " << holder->getAIUpdateInterface()->currentStateId() << " contained " << (holder->getContainedBy() != nullptr));
 		CHECK_FALSE(holder->testStatus((unsigned)CombatNames::status("HOLDING_THE_RING")));
+		for (int i = 0; i < 100 && ai->brain.namedCounters.at("AIReturnTheRingTactic_IsRunning") != 0; ++i)
+			fx.logic->runLogicFrame();
+		CHECK(ai->brain.namedCounters.at("AIReturnTheRingTactic_IsRunning") == 0); // RW 0x9B8635 after actual delivery
+		CHECK(live() == nullptr);
+		roundTrip();
 		return;
 	}
 	holderAI = holder->getAIUpdateInterface();
@@ -1076,7 +1082,7 @@ TEST_CASE("skirmish ai roaming defense: EASY only, the 5 s scheduling, the zero-
 	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_NextLogicFrameRun") == before + 25);
 }
 
-TEST_CASE("skirmish ai roaming destination: an economy structure within 900 of the base, else 400 from the fortress at the drawn angle (RW 0x9B8160)")
+TEST_CASE("skirmish ai roaming destination: nearby economy, or an empty economy record and a fortress-ring draw (RW 0x9B8160)")
 {
 	AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
 	REQUIRE(fx.w.load("Object Fortress\n KindOf = STRUCTURE DOZER_FACTORY\nEnd\n"
@@ -1377,11 +1383,13 @@ TEST_CASE("skirmish ai farm choice: the farm and production selectors' draws (RW
 	CHECK(after.back().line == 0x8B);
 }
 
-TEST_CASE("skirmish ai WotR battle start: not in a skirmish, past frame 5, once, and only CAN_ATTACK / HERO units roam (RW 0x9B8451 / 0x9B8556 / 0x9B8160)")
+TEST_CASE("skirmish ai WotR battle start: fixed base orders, exact RNG and save-load continuation (RW 0x9B8451 / 0x9B85AD / 0x9B8608)")
 {
 	for (bool skirmish : { true, false })
+	for (bool hasFortress : { true, false })
 	{
-		INFO(skirmish);
+		CAPTURE(skirmish);
+		CAPTURE(hasFortress);
 		AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
 		if (!skirmish)
 		{
@@ -1407,9 +1415,12 @@ TEST_CASE("skirmish ai WotR battle start: not in a skirmish, past frame 5, once,
 		TheLocomotorStore = &locomotors;
 		fx.w.fx.env.blocks.registerBlock("Locomotor", [](INI *ini) { LocomotorStore::parseLocomotorTemplateDefinitionGlobal(ini); });
 		REQUIRE(fx.w.load(movetest::kLocomotors).empty());
+		AIUpdateInterface::registerClasses(fx.w.modules);
+		InvisibilityModules::registerAll(fx.w.modules);
 		REQUIRE(fx.w.load("Object BattleUnit\n KindOf = CAN_ATTACK INFANTRY\n"
 			" Body = ActiveBody ModuleTag_Body\n MaxHealth = 100\n InitialHealth = 100\n End\n"
-			" Behavior = AIUpdateInterface ModuleTag_AI\n End\n"
+			" Behavior = AIUpdateInterface ModuleTag_AI\n AutoAcquireEnemiesWhenIdle = Yes\n End\n"
+			" Behavior = StealthUpdate ModuleTag_Stealth\n StealthDelay = 10000\n End\n"
 			" LocomotorSet\n Locomotor = WalkerLoco\n Condition = SET_NORMAL\n Speed = 55\n End\nEnd\n"
 			"Object BattleHero\n KindOf = HERO\n"
 			" Body = ActiveBody ModuleTag_Body\n MaxHealth = 100\n InitialHealth = 100\n End\n"
@@ -1420,58 +1431,155 @@ TEST_CASE("skirmish ai WotR battle start: not in a skirmish, past frame 5, once,
 			" Behavior = AIUpdateInterface ModuleTag_AI\n End\n"
 			" LocomotorSet\n Locomotor = WalkerLoco\n Condition = SET_NORMAL\n Speed = 55\n End\nEnd\n"
 			"Object BattleFortress\n KindOf = STRUCTURE DOZER_FACTORY\nEnd\n").empty());
-		AIUpdateInterface::registerClasses(fx.w.modules);
 		REQUIRE(fx.logic->skirmishAI().newGame(true) == 1);
 		auto *ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
 		REQUIRE(ai);
-		ai->build.startPosition = { 100.0f, 100.0f, 0.0f };
+		const Coord3D base{ 100.0f, 100.0f, 37.0f };
+		ai->build.startPosition = base;
 		ai->brain.namedCounters["FarmKillSquad::IsRunning"] = 1;
-		fx.players.findPlayerWithName("C")->setSkirmishDifficulty(1); // AIRoamingDefenseTactic is EASY only
-		Object *fortress = fx.make("BattleFortress", fx.teamOf("C"));
-		REQUIRE(fortress);
-		const Coord3D fortressPos{ 500.0f, 500.0f, 0.0f };
-		fortress->setPosition(&fortressPos);
+		fx.players.findPlayerWithName("C")->setSkirmishDifficulty(1); // isolate WoTR from Easy-only roaming
+		if (hasFortress)
+		{
+			Object *fortress = fx.make("BattleFortress", fx.teamOf("C"));
+			REQUIRE(fortress);
+			const Coord3D fortressPos{ 500.0f, 500.0f, 0.0f };
+			fortress->setPosition(&fortressPos);
+		}
 		Object *unit = fx.make("BattleUnit", fx.teamOf("C"));
 		Object *hero = fx.make("BattleHero", fx.teamOf("C"));
 		Object *worker = fx.make("BattleWorker", fx.teamOf("C"));
 		REQUIRE(unit);
 		REQUIRE(hero);
 		REQUIRE(worker);
-		const Coord3D unitPos{ 200.0f, 200.0f, 0.0f };
-		unit->setPosition(&unitPos);
-		hero->setPosition(&unitPos);
-		worker->setPosition(&unitPos);
-		for (int i = 0; i < 10; ++i)
-		{
-			fx.logic->runLogicFrame();
-		}
-		REQUIRE(fx.logic->getFrame() == 10);
+		const ObjectID unitID = unit->getID(), heroID = hero->getID(), workerID = worker->getID();
+		const Coord3D from{ 200.0f, 200.0f, 0.0f };
+		for (Object *o : { unit, hero, worker }) o->setPosition(&from);
+		unit->setStatus((unsigned)CombatNames::status("CAN_STEALTH"), true);
+		for (int i = 0; i < 5; ++i) fx.logic->runLogicFrame();
+		REQUIRE(fx.logic->getFrame() == 5);
+		fx.logic->random().enableCallLog(true);
+		fx.logic->random().clearCallLog();
+		const auto frame5Seed = fx.logic->random().seedArray();
+		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		CHECK(ai->brain.tactics.empty()); // RW 0x9B8451: frame > 5, even outside skirmish
+		CHECK(ai->brain.namedCounters.at("StartWoTRBattleTacticHasRun") == 0);
+		CHECK(fx.logic->random().callLog().empty());
+		CHECK(fx.logic->random().seedArray() == frame5Seed);
+		fx.logic->runLogicFrame();
+		REQUIRE(fx.logic->getFrame() == 6);
+		// A visible stealth-capable unit starts busy; command 0xF must replace the state without the AIGroup.cpp:0x874 draw.
+		unit->getAIUpdateInterface()->aiBusy(CMD_FROM_PLAYER);
+		REQUIRE(unit->getAIUpdateInterface()->isBusy());
+		fx.logic->random().clearCallLog();
+		auto expected = fx.logic->random();
+		if (!skirmish) expected.getValue(0, 0, "AITacticsGenerator.cpp", 0x1BC);
+		auto checkLog = [&](const GameLogicRandom &want) {
+			const auto &got = fx.logic->random().callLog();
+			const auto &calls = want.callLog();
+			REQUIRE(got.size() == calls.size());
+			CHECK(fx.logic->random().seedArray() == want.seedArray());
+			for (size_t i = 0; i < calls.size(); ++i)
+			{
+				CHECK(got[i].file == calls[i].file);
+				CHECK(got[i].line == calls[i].line);
+				CHECK(got[i].real == calls[i].real);
+				CHECK(got[i].lo == calls[i].lo);
+				CHECK(got[i].hi == calls[i].hi);
+				CHECK(got[i].rlo == calls[i].rlo);
+				CHECK(got[i].rhi == calls[i].rhi);
+				CHECK(got[i].result == calls[i].result);
+				CHECK(got[i].rresult == calls[i].rresult);
+				CHECK(got[i].drewNumber == calls[i].drewNumber);
+			}
+		};
 		const int unportedBefore = ai->brain.targetlessUnported;
 		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
-		CHECK(ai->brain.targetlessUnported - unportedBefore == 6); // six prototypes remain unported
+		CHECK(ai->brain.targetlessUnported - unportedBefore == 6);
+		checkLog(expected); // exactly the ordinary pool draw; no A4, BA or group draw
 		if (skirmish)
 		{
-			CHECK(ai->brain.tacticsByKind.count("AIStartWoTRBattleTactic") == 0); // RW 0x9B8451: game kind 3
-			CHECK(ai->brain.namedCounters["StartWoTRBattleTacticHasRun"] == 0);
+			CHECK(ai->brain.tactics.empty());
+			CHECK(ai->brain.namedCounters.at("StartWoTRBattleTacticHasRun") == 0);
+			CHECK_FALSE(unit->getAIUpdateInterface()->attackMoveActive());
+			CHECK_FALSE(hero->getAIUpdateInterface()->attackMoveActive());
 			continue;
 		}
-		REQUIRE(ai->brain.tacticsByKind.count("AIStartWoTRBattleTactic") == 1);
-		// RW 0x8F11DA: the ready frame first, then the run; RW 0x9B8556 sends the roam orders and ends the tactic (1, 0). The
-		// targetless pick can add a second clone before the run sets its key; that one ends at once, as retail's + 0x65 does.
-		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
-		AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+		REQUIRE(ai->brain.tactics.size() == 1);
+		CHECK(ai->brain.tactics[0].kind == "AIStartWoTRBattleTactic");
+		CHECK_FALSE(ai->brain.tactics[0].started);
+		auto reacquire = [&]() {
+			ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+			unit = fx.logic->findObjectByID(unitID);
+			hero = fx.logic->findObjectByID(heroID);
+			worker = fx.logic->findObjectByID(workerID);
+			REQUIRE(ai);
+			REQUIRE(unit);
+			REQUIRE(hero);
+			REQUIRE(worker);
+		};
+		// Save before/after the one-shot run; compare every following brain state, complete bytes and the entire draw log.
+		auto roundTrip = [&](bool beforeRun) {
+			std::string error;
+			std::vector<std::uint8_t> saved, finalBytes;
+			const auto savedHash = fx.logic->computeStateHash();
+			REQUIRE_MESSAGE(fx.logic->saveSnapshot(saved, &error), error);
+			fx.logic->random().clearCallLog();
+			auto want = fx.logic->random();
+			if (beforeRun) want.getValue(0, 0, "AITacticsGenerator.cpp", 0x1BC); // a second clone before the key is set
+			std::vector<std::uint32_t> hashes;
+			for (int pass = 0; pass < 2; ++pass)
+			{
+				if (pass)
+				{
+					REQUIRE_MESSAGE(fx.logic->loadSnapshot(saved, &error), error);
+					reacquire();
+					CHECK(fx.logic->computeStateHash() == savedHash);
+					std::vector<std::uint8_t> again;
+					REQUIRE_MESSAGE(fx.logic->saveSnapshot(again, &error), error);
+					CHECK(again == saved);
+				}
+				fx.logic->random().clearCallLog();
+				for (int step = 0; step < 2; ++step)
+				{
+					AITacticalAI::updateBrain(*fx.logic, *ai, ai);
+					if (beforeRun && step == 0)
+					{
+						CHECK(ai->brain.tactics[0].ready);
+						CHECK(ai->brain.tactics[0].readyFrame == 6);
+						CHECK_FALSE(ai->brain.tactics[0].started); // RW 0x8F11DA records ready before running
+					}
+					const auto hash = fx.logic->computeStateHash();
+					if (!pass) hashes.push_back(hash);
+					CHECK(hash == hashes[(size_t)step]);
+				}
+				checkLog(want);
+				std::vector<std::uint8_t> after;
+				REQUIRE_MESSAGE(fx.logic->saveSnapshot(after, &error), error);
+				if (!pass) finalBytes = after;
+				CHECK(after == finalBytes);
+			}
+		};
+		roundTrip(true);
 		CHECK(ai->brain.namedCounters.at("StartWoTRBattleTacticHasRun") == 1);
-		bool ended = false;
-		for (const AITactic &t : ai->brain.tactics)
+		REQUIRE(!ai->brain.tactics.empty());
+		CHECK(ai->brain.tactics[0].ended);
+		for (Object *o : { unit, hero })
 		{
-			ended = ended || (t.kind == "AIStartWoTRBattleTactic" && t.ended);
+			auto *u = o->getAIUpdateInterface();
+			REQUIRE(u);
+			CHECK(u->attackMoveActive());
+			CHECK_FALSE(u->isBusy());
+			CHECK(u->stateMachine().goalPosition().x == base.x);
+			CHECK(u->stateMachine().goalPosition().y == base.y);
+			CHECK(u->stateMachine().goalPosition().z == base.z);
+			CHECK(u->lastCommandSource() == CMD_FROM_PLAYER);
+			u->aiIdle(CMD_FROM_PLAYER);
 		}
-		CHECK(ended);
-		REQUIRE(unit->getAIUpdateInterface());
-		REQUIRE(hero->getAIUpdateInterface());
-		REQUIRE(worker->getAIUpdateInterface());
-		CHECK(unit->getAIUpdateInterface()->attackMoveActive()); // CAN_ATTACK (KindOf 3)
-		CHECK(hero->getAIUpdateInterface()->attackMoveActive()); // HERO (KindOf 90)
 		CHECK_FALSE(worker->getAIUpdateInterface()->attackMoveActive());
+		roundTrip(false); // the pending duplicate observes HasRun and ends without reissuing either order
+		CHECK_FALSE(unit->getAIUpdateInterface()->attackMoveActive());
+		CHECK_FALSE(hero->getAIUpdateInterface()->attackMoveActive());
+		CHECK(ai->brain.tactics.empty());
+		CHECK(ai->brain.namedCounters.at("StartWoTRBattleTacticHasRun") == 1);
 	}
 }

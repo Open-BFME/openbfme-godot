@@ -584,6 +584,8 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // frame 2; the Brutal discount and the garrison weapon set leave all three as they were.
 // pin: lane RAI-TL-3 re-recorded the 4-player skirmish on top of main c8aa4603 (OPENBFME_PERF1_REGEN=1): AIStartWoTRBattleTactic's applicability
 // drops the hashed targetless-unported counter 9 -> 8, so the skirmish moves from frame 8. The big battle is unchanged.
+// pin: #271 integrates fixed Ring and roaming with WoTR: six unported applicability checks per pass, named-key insertions,
+// and the enabled Ring/roaming lifecycles change saved/hashed tactical state. The skirmish moves from frame 8; big battle is unchanged.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

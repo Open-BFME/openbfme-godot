@@ -1269,7 +1269,8 @@ int enemyOfGroup(const AISkirmishPlayer &ai)
 }
 
 // RW 0x9B8160: choose where a unit roams. With an economy structure within 900 of the AI's base (RW 0xC89CF0: 810000 = 900^2,
-// squared 3D SSE) one of them is drawn (AIRoamingDefenseTactic.cpp line 0xA4) and its position is the destination; otherwise the first
+// squared 3D SSE) one is drawn (line 0xA4); a nonempty economy list with no nearby candidate gives no destination (RW 0x9B8251).
+// Only an empty economy list reaches the fortress branch (RW 0x9B818E): the first
 // DOZER_FACTORY of the player info record's structures is the centre and the destination is 400 (RW 0xC89CF4) from it at a drawn angle
 // 0 .. 6 radians (line 0xBA; sin/cos RW 0xA3CF90 / 0xA3CF84). No economy structure and no fortress: no destination.
 bool chooseRoamDestination(GameLogic &logic, AISkirmishPlayer &ai, Coord3D &out)
@@ -1340,6 +1341,48 @@ void issueRoamOrder(GameLogic &logic, AISkirmishPlayer &ai, Object &unit)
 		// RW 0x9B8286 / 0x9B8390: select before asking the unit to accept command 0xF.
 		if (auto *u = unit.getAIUpdateInterface()) u->aiAttackMoveToPosition(destination, CMD_FROM_PLAYER);
 	}
+}
+
+// RW 0x9B877C: the first live object of the AI's army list carrying HOLDING_THE_RING (status 0x5E); INVALID_ID when none.
+ObjectID findRingBearer(GameLogic &logic, AISkirmishPlayer &ai)
+{
+	static const int holding = CombatNames::status("HOLDING_THE_RING");
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && alive(o) && o->testStatus((unsigned)holding))
+		{
+			return id;
+		}
+	}
+	return INVALID_ID;
+}
+
+// RW 0x9B88D8: the nearest structure of the player info record that is a DOZER_FACTORY (KindOf 194) and not SUMMONED (179), by
+// squared 2D distance from `from` (no z), the first of equal ones. Null when none.
+Object *nearestNonSummonedFortress(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &from)
+{
+	static const int fortress = KindOfTokens::indexOf("DOZER_FACTORY"), summoned = KindOfTokens::indexOf("SUMMONED");
+	Object *best = nullptr;
+	float bestD = 0.0f;
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		// RW 0x9B8930: death precedes removal from the structure record.
+		if (!alive(o) || !o->isKindOf((unsigned)fortress) || o->isKindOf((unsigned)summoned))
+		{
+			continue;
+		}
+		const Coord3D *p = o->getPosition();
+		const float dx = SimMath::subf32(p->x, from.x), dy = SimMath::subf32(p->y, from.y);
+		const float d = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx));
+		if (!best || d < bestD)
+		{
+			best = o;
+			bestD = d;
+		}
+	}
+	return best;
 }
 
 // vslot 1 (applies) of targetless prototype `index` (the prototype's + 0x24 player is the AI's: RW 0x90C623)
@@ -2492,7 +2535,8 @@ void updateReturnTheRing(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b
 }
 
 // AIStartWoTRBattleTactic's run RW 0x9B8556: once per AI, every live unit of the army that is CAN_ATTACK or HERO (the KindOf mask
-// RW 0x46E72F's bits 3 / 90 through RW 0x70C548) gets RW 0x9B8160's roam order; then the tactic succeeds (1, 0) and the key stays set.
+// RW 0x46E72F's bits 3 / 90 through RW 0x70C548) gets the same base position (RW 0x8F0284 called once at 0x9B85AD).
+// Then the tactic succeeds (1, 0) and the key stays set.
 void startWoTRBattle(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
 	if (namedCounter(ai.brain, "StartWoTRBattleTacticHasRun") != 0)
@@ -2501,14 +2545,16 @@ void startWoTRBattle(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 		return;
 	}
 	ai.brain.namedCounters["StartWoTRBattleTacticHasRun"] = 1;
+	const Coord3D destination = ai.build.startPosition; // RW 0x9B85AD: copied once before the army walk
 	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
 	{
 		Object *o = logic.findObjectByID(id);
-		if (!o || !alive(o) || !(o->isKindOfName("CAN_ATTACK") || o->isKindOfName("HERO")))
+		if (!o || o->isEffectivelyDead() || !(o->isKindOfName("CAN_ATTACK") || o->isKindOfName("HERO")))
 		{
 			continue;
 		}
-		issueRoamOrder(logic, ai, *o);
+		// RW 0x9B8608: command 0xF, INT_MAX shots, source 0; no destination selection or group dispatch.
+		if (auto *u = o->getAIUpdateInterface()) u->aiAttackMoveToPosition(destination, CMD_FROM_PLAYER);
 	}
 	endAnyTactic(logic, ai, b, tac, owner, true);
 }
@@ -3345,7 +3391,7 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 		}
 	}
 	// RW 0x8F11DA
-	// RW 0x8F232F: a prototype with no teams (RW 0x851E97) marks itself ready (byte + 0x51); the port's team count keeps that
+	// RW 0x8F2348 -> 0x8F2424: zero declared teams sets ready; runtime Ring teams retain readiness through handover.
 	tac.ready = tacticTeamCount(tac) == 0 || (!tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; }));
 	if (!tac.ready || tac.ended)
 	{
