@@ -1572,6 +1572,9 @@ float Bfme1SkirmishAI::threat(Object &source, const Coord3D &position, float rad
 	// no health/price/category weighting; alive enemies on the same OFF_MAP
 	// layer, in the partition iterator's order. The cache expires after 25 frames.
 	ThreatCache &cache = m_threat[key];
+	// Native Object ctor 0x1D2DA8 / Team ctor 0xF7830 zero both fields.
+	// Queries 0x1D2580 / 0xF72D0 refresh only for deadline < frame: a new
+	// object/team therefore deliberately returns zero on frame zero.
 	if (cache.next >= m_logic.getFrame()) return cache.value;
 	PartitionFilterFn filter([&source](Object &o) {
 		return !o.isEffectivelyDead() && o.isOffMap() == source.isOffMap() && source.getRelationship(o) == ENEMIES;

@@ -217,6 +217,9 @@ bool TransportContain::isValidContainerFor(const Object &obj, bool checkCapacity
 	{
 		return (unsigned)getContainCount() < (unsigned)getContainMax(); // RW 0x86A07D: CanGrabStructure (data + 0x13D)
 	}
+	// BFME1 0x22DC25 replaces the candidate with its first rider; 0x22DC76
+	// queries that SAME object for capacity. onContaining (0x22DD72) still
+	// accounts for the whole wrapper. Preserve this native overfill quirk.
 	const int slots = transportSlotCount(*checked);
 	if (slots == 0)
 	{

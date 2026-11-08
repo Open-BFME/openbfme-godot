@@ -63,6 +63,9 @@ hold. The original soldier objects survive; no new InitialPayload is made.
   zero-slot wrapper for entry tests. Object's slot query `0x001C2F90` recursively
   sums such a wrapper's payload instead of its own signed-byte slot field.
   The reinforcement partitioner queries capacity through the contain interface.
+  Validation `0x0022DC25..0x0022DC76` keeps the first rider as the capacity
+  candidate too, while `onContaining` (`0x0022DD72`) charges the whole wrapper.
+  This native quirk can overfill a carrier; the regression pins it explicitly.
 - GrabWeapon at `0x0022DEAC..0x0022DF06` is fired at the carrier's position
   when the passenger is not allied. Unless FireGrabWeaponOnVictim is true,
   the passenger is UNATTACKABLE during that area shot; that status then clears.
@@ -513,6 +516,12 @@ reader inherits DefaultBridge's pristine model and scale. `W3DBridge::load`
 midpoint and applies the first endpoint's map properties and orientation. These
 objects precede ordinary map placements and the pathfinder map build in LiveGame.
 No synthetic width or flat replacement height is supplied for a missing model.
+The pristine W3D is an immutable mounted gameplay input on this path, as in
+retail; no active drawable, animation, render LOD or frame state is sampled.
+Peers require matching mounted assets, as they require matching INI and map
+inputs. Negotiating/verifying complete multiplayer asset compatibility remains
+the separate cross-play gate in `docs/PLAN.md`; replacing this geometry with
+an invented constant would change BFME1's map topology.
 
 Layer allocation (`0x003D5850`) uses the first free layer 2..15. Allocation bounds
 (`0x003FBED0`) and cell classification (`0x003FC790`) use native four-corner
@@ -594,3 +603,9 @@ The retail Bridge/Mumak case uses mounted BFME1 data; the existing isolation
 case loads and advances BFME2 and RotWK. It continues to report the existing
 BFME2 S-1321 Living World AddPlayer boundary. These results establish the
 covered paths, not complete BFME1 equivalence or retail save compatibility.
+
+Review regressions additionally pin the native frame-zero threat value and
+transparent-wrapper overfill behavior: 2 cases, 44 assertions passed. Object
+construction (`0x001D2DA8`) and Team construction (`0x000F7830`) initialize
+threat value/deadline to zero; their queries (`0x001D2580`, `0x000F72D0`)
+refresh only when the deadline is strictly less than the current frame.

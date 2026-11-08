@@ -397,11 +397,16 @@ TEST_CASE("bfme1 ai: threat is raw ThreatLevel and keeps BFME1's 25-frame scan c
 	f.logic->scriptEngine().newGame(sides, nullptr, nullptr, false);
 	scout->setName("Scout");
 	f.logic->skirmishAI().useBfme1();
+	// BFME1 0x1D2DA8 initializes value/deadline to zero; 0x1D2580 uses >=.
+	// The first query at frame zero returns zero even with an enemy nearby.
+	REQUIRE(f.logic->getFrame() == 0);
+	auto check = cond("UNIT_THREAT_LEVEL", {sp(14, "Scout"), ip(6, 2), rp(0), rp(100)});
+	CHECK(f.logic->scriptEngine().evaluateCondition(check));
 	frames(1);
 	CHECK(f.logic->scriptEngine().getUnitNamed("Scout") == scout);
 	CHECK(scout->getRelationship(*enemy) == ENEMIES);
 	INFO("threat field kind=" << enemy->getTemplate()->findField("ThreatLevel")->index() << " frame=" << f.logic->getFrame() << " dead=" << enemy->isEffectivelyDead());
-	auto check = cond("UNIT_THREAT_LEVEL", {sp(14, "Scout"), ip(6, 2), rp(7), rp(100)});
+	check.params[2] = rp(7);
 	CHECK(f.logic->scriptEngine().evaluateCondition(check));
 	enemy->setPosition(&far);
 	frames(25);
@@ -1427,6 +1432,16 @@ TEST_CASE("bfme1 ai: transparent wrappers use payload identity and recursive slo
 	wrapper->getContain()->addToContain(a); wrapper->getContain()->addToContain(b); outer->getContain()->addToContain(wrapper);
 	CHECK(TransportContain::transportSlotCount(*wrapper) == 2); CHECK(TransportContain::transportSlotCount(*outer) == 2);
 	CHECK(carrier->getContain()->isValidContainerFor(*wrapper, true, false));
+	// BFME1 0x22DC25/0x22DC76 validates the first rider's cost, whereas
+	// 0x22DD72 accounts for the whole wrapper. Native can overfill this way.
+	Object *already = f.make("Rider", f.teamOf("Alice")); REQUIRE(already);
+	REQUIRE(carrier->getContain()->addToContain(already));
+	CHECK(carrier->getContain()->getContainMax() == 2);
+	CHECK(carrier->getContain()->isValidContainerFor(*wrapper, true, false));
+	REQUIRE(carrier->getContain()->addToContain(wrapper));
+	CHECK(carrier->getContain()->getContainCount() == 2);
+	Object *next = f.make("Rider", f.teamOf("Alice")); REQUIRE(next);
+	CHECK_FALSE(carrier->getContain()->isValidContainerFor(*next, true, false));
 }
 TEST_CASE("bfme1 ai: transport exit obeys the native AI permission virtual")
 {
