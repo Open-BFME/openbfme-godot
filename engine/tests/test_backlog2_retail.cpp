@@ -5,6 +5,7 @@
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
+#include "AISceneTestUtil.h"
 
 #include "Common/NumericState.h"
 #include "Common/Player.h"
@@ -199,6 +200,8 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 4242, g, &error), error);
 	LiveGame &live = *g.live;
 	GameLogic &logic = live.logic();
+	// Keep the rebuild movement vector independent of Easy roaming's shared RNG draws from frame 35.
+	testutil::deferRoamingDefense(logic, live.players().findPlayerWithName(live.report().startSlotPlayers[1])->getPlayerIndex());
 	Player *men = live.players().findPlayerWithName(live.report().startSlotPlayers[0]);
 	REQUIRE(men);
 	// a free Men wall segment far from the bases (KeepObjectDie: it stays in the world dead), killed, then Boromir on its rubble
