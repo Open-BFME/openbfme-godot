@@ -579,6 +579,8 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // frame 2; the Brutal discount and the garrison weapon set leave all three as they were.
 // pin: lane RAI-POW-4 re-recorded the 4-player skirmish on top of main c8aa4603 (OPENBFME_PERF1_REGEN=1): the team threat order (Team + 0x13C, RW 0x7A59CB)
 // moves the skirmish from frame 774. The big battle is unchanged.
+// pin: R3 F2/F7/F8 correct the summed team deficit, entering-member contribution and exclusive threat payload bits (RW 0x7A0291 / 0x86EB1D /
+// 0x7A5AE6). The 4-player skirmish changes from frame 774, its first threat order; big battle, allied blob and BACKLOG2 keep their pins.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

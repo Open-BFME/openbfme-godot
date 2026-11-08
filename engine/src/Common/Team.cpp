@@ -204,13 +204,14 @@ Coord3D hordeCenter(const ContainModuleInterface &contain)
 // AI (+ 0x260) and a current victim (RW 0x668303) is measured by its body's health minus max health (slot 0x18). A HORDE member (RW 0x693A1A(0)) is
 // measured by its horde interface's summed member deficits (slot 0x268) and its centre (slot 0x22C); a horde with a free slot (slot 0x17C's capacity above
 // slot 0x180(0)'s count) counts up `outCount`. The most negative deficit wins (strictly; the first member on a tie); its id and position are the
-// order's target. The initial best is the float at RW 0xC31518 (-0.000244...); with no member the answer is that value and the output id stays 0.
-float teamThreatTarget(Team &team, Coord3D &outPos, ObjectID &outTarget, int &outCount)
+// order's target. RW 0x7A01E8 / 0x7A0249 accumulate a separate total, returned at RW 0x7A0291 (zero with no eligible members).
+float teamThreatTarget(Team &team, GameLogic &logic, Coord3D &outPos, ObjectID &outTarget, int &outCount)
 {
 	static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
 	outCount = 0;
 	outTarget = INVALID_ID;
 	outPos = Coord3D{};
+	float total = 0.0f;
 	float best = -0.00024402147391811013f; // RW 0xC31518
 	for (Object *m = team.getFirstMember(); m; m = m->friend_teamNext())
 	{
@@ -242,6 +243,14 @@ float teamThreatTarget(Team &team, Coord3D &outPos, ObjectID &outTarget, int &ou
 						}
 					}
 				}
+				// RW 0x86EB1D..0x86EB56: contained list first, then entering IDs in tree order.
+				for (ObjectID id : horde->membersEntering())
+				{
+					if (const Object *member = logic.findObjectByID(id))
+					{
+						value = SimMath::addf32(value, healthDeficit(*member));
+					}
+				}
 				if (horde->getSlotCapacity() > (int)horde->countWithEntering()) // RW 0x86C8DE > RW 0x8706DF
 				{
 					++outCount;
@@ -258,6 +267,7 @@ float teamThreatTarget(Team &team, Coord3D &outPos, ObjectID &outTarget, int &ou
 			value = healthDeficit(*m);
 			position = *m->getPosition();
 		}
+		total = SimMath::addf32(total, value); // RW 0x7A01E8 / 0x7A0249: PC24 add and float store per member
 		if (best > value)
 		{
 			best = value;
@@ -265,7 +275,7 @@ float teamThreatTarget(Team &team, Coord3D &outPos, ObjectID &outTarget, int &ou
 			outPos = position;
 		}
 	}
-	return best;
+	return total;
 }
 } // namespace
 
@@ -298,7 +308,7 @@ void Team::updateThreatOrder(GameLogic &logic)
 	Coord3D position{};
 	ObjectID target = INVALID_ID;
 	int count = 0;
-	const float value = teamThreatTarget(*this, position, target, count);
+	const float value = teamThreatTarget(*this, logic, position, target, count);
 	Order order; // RW 0x7A0060: + 4 type 0, + 8 0xFF, + 0xA 0x2004, the rest 0
 	order.flags = 0xFF;
 	if (!(value >= -2500.0f)) // RW 0x7A5A16's ja: -2500 > value, i.e. a deficit above 2500
@@ -341,7 +351,7 @@ void Team::updateThreatOrder(GameLogic &logic)
 				return;
 			}
 		}
-		order.flagsWord |= 0x4000;
+		order.flagsWord = (order.flagsWord & 0x1FFF) | 0x4000; // RW 0x7A5AE6: replace the payload kind
 		order.target = target;
 	}
 	else
@@ -361,7 +371,7 @@ void Team::updateThreatOrder(GameLogic &logic)
 				return;
 			}
 		}
-		order.flagsWord |= 0x8000;
+		order.flagsWord = (order.flagsWord & 0x1FFF) | 0x8000; // RW 0x7A5AA3: replace the payload kind
 		order.position = position;
 	}
 	m_orders.push_back(order); // RW 0x7A5568

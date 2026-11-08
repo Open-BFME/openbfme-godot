@@ -1074,7 +1074,8 @@ bool AISpecialPowerUpdate::decideAttackHealAoe(Object &obj)
 	GameLogic &logic = obj.logic();
 	Team *team = obj.getTeam();
 	const Player *player = obj.getControllingPlayer();
-	if (!team || !player || !m_decision->powerTemplate)
+	// RW 0x9E6930..0x9E6941 uses the persisted power type; the template cache is not needed after snapshot load.
+	if (!team || !player)
 	{
 		return false;
 	}
@@ -1091,7 +1092,7 @@ bool AISpecialPowerUpdate::decideAttackHealAoe(Object &obj)
 		{
 			continue;
 		}
-		if (order.hasTarget())
+		if (order.hasTarget() && order.target != INVALID_ID) // RW 0x9E6991: zero falls back to the position payload
 		{
 			Object *target = logic.findObjectByID(order.target); // RW 0x9E69A2 -> RW 0x449681
 			if (!target)

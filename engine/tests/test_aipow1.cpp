@@ -37,6 +37,8 @@
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "Common/Money.h"
 #include "Common/Team.h"
+#include "Common/StateHash.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -2078,26 +2080,56 @@ TEST_CASE("RAI-POW-4: the team threat orders round-trip in version 3 and older s
 	Team::Order order;
 	order.command = 0x11;
 	order.flags = 0xFF;
-	order.flagsWord = 0x2014 | 0x4000;
+	order.flagsWord = 0x4014; // RW 0x7A5AE6: the target setter clears the constructor's 0x2000
 	order.timestamp = 17;
 	order.target = 42;
 	saved->addOrderForTest(order);
+	Team::Order positionOrder = order;
+	positionOrder.command = 0x1A;
+	positionOrder.flags = 0x0F;
+	positionOrder.flagsWord = 0x8014; // RW 0x7A5AA3
+	positionOrder.timestamp = 18;
+	positionOrder.target = INVALID_ID;
+	positionOrder.position = Coord3D{ 11.0f, 22.0f, 33.0f };
+	saved->addOrderForTest(positionOrder);
 	XferSave save;
 	saved->xfer(save);
 	REQUIRE(!save.data().empty());
 	CHECK(save.data()[0] == 3); // the block's version
-	Team *loaded = f.createTeam(proto);
+	TeamFactory loadedFactory;
+	TeamPrototype *loadedProto = loadedFactory.initTeam("RAI-POW-4 orders", nullptr, false, nullptr);
+	REQUIRE(loadedProto);
+	Team *loaded = loadedFactory.createTeam(loadedProto);
 	REQUIRE(loaded);
 	XferLoad load(save.data());
 	loaded->xfer(load);
-	REQUIRE(loaded->orders().size() == 1);
+	REQUIRE(loaded->orders().size() == 2);
 	const Team::Order &back = loaded->orders()[0];
 	CHECK(back.command == 0x11);
 	CHECK(back.flags == 0xFF);
-	CHECK(back.flagsWord == (0x2014 | 0x4000));
+	CHECK(back.flagsWord == 0x4014);
 	CHECK(back.timestamp == 17);
 	CHECK(back.target == 42);
 	CHECK(back.hasTarget());
+	CHECK(loaded->orders()[1].flagsWord == 0x8014);
+	CHECK(loaded->orders()[1].position.z == 33.0f);
+	XferSave roundTrip;
+	loaded->xfer(roundTrip);
+	CHECK(roundTrip.data() == save.data());
+	for (unsigned frame : { 3017u, 3018u, 3019u })
+	{
+		saved->expireOrders(frame);
+		loaded->expireOrders(frame);
+		CHECK(loaded->orders().size() == 3019u - frame);
+		XferSave a, b;
+		saved->xfer(a);
+		loaded->xfer(b);
+		CHECK(a.data() == b.data());
+		StateHasher ha, hb;
+		saved->crc(ha);
+		loaded->crc(hb);
+		CHECK(ha.value() == hb.value());
+	}
 	// a version 2 snapshot (the registry only) loads into a team whose order list is cleared
 	Team *registry = f.createTeam(proto);
 	REQUIRE(registry);
@@ -2280,13 +2312,308 @@ TEST_CASE("RAI-POW-4: ATTACK_HEAL_AOE (Well of Souls, RW 0x9E691D) consumes the 
 	Team::Order dead;
 	dead.command = 0x11;
 	dead.flags = 0xFF;
-	dead.flagsWord = 0x2004 | 0x4000;
+	dead.flagsWord = 0xC014; // both payload bits: a nonzero unresolved target still has no fallback
+	dead.position = *horde->getPosition();
 	dead.target = 0x7FFFFFF0u;
 	team->addOrderForTest(dead); // tests only
 	CHECK(heal->decideNow() == false);
 	CHECK(team->orders().size() == 1);
 	CHECK(team->orders()[0].target == dead.target);
+	team->eraseOrder(0);
+	dead.target = INVALID_ID;
+	team->addOrderForTest(dead);
+	CHECK(heal->decideNow() == true); // RW 0x9E6991: zero target uses the valid position payload
+	CHECK(team->orders().empty());
 	// any team registry record of the power rejects, even the caster's own (RW 0x9E6941)
 	team->addSpecialPowerRecord(heal->decision()->powerType, a.logic->getFrame(), horde->getID());
 	CHECK(heal->decideNow() == false);
+}
+
+
+namespace
+{
+void setDeficit(Object &object, float deficit)
+{
+	auto *body = dynamic_cast<ActiveBody *>(object.getBodyModule());
+	REQUIRE(body);
+	REQUIRE(body->getMaxHealth() > deficit); // tolerance: keep the fixture alive while setting an exact deficit
+	body->friend_setHealthRaw(body->getMaxHealth() - deficit);
+	REQUIRE(body->getHealth() - body->getMaxHealth() == -deficit);
+}
+
+Team *threatTeam(Arena &a)
+{
+	TeamFactory &factory = a.logic->players().teams();
+	TeamPrototype *proto = factory.initTeam("Threat review", const_cast<Player *>(a.ai), false, nullptr);
+	REQUIRE(proto);
+	Team *team = factory.createTeam(proto);
+	REQUIRE(team);
+	return team;
+}
+} // namespace
+
+TEST_CASE("RAI-POW-4 review: summed threat thresholds retain the first minimum target and exact payload flags")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionMen", 5310, &err), err);
+	Object *one = a.make("GondorAragorn", a.ai, 0.0f, 0.0f);
+	Object *two = a.make("GondorAragorn", a.ai, -60.0f, 0.0f);
+	Object *enemy = a.make("GondorFighter", a.human, 100.0f, 0.0f);
+	Team *team = threatTeam(a);
+	one->setTeam(team);
+	two->setTeam(team);
+	team->updateThreatOrder(*a.logic);
+	CHECK(team->orders().empty()); // no eligible members returns zero (RW 0x7A0291)
+	REQUIRE(one->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));
+	REQUIRE(two->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));
+	struct Row { float one, two; int command, flags; };
+	const Row rows[] = {
+		{ 30.0f, 30.0f, 0x11, 0xFF }, { 800.0f, 800.0f, 0x1A, 0x0F },
+		{ 25.0f, 25.0f, 0, 0 }, { 750.0f, 750.0f, 0x11, 0xFF },
+		{ 1250.0f, 1250.0f, 0x1A, 0x0F }, { 1251.0f, 1251.0f, 0x1A, 0 },
+		{ 20.0f, 40.0f, 0x11, 0xFF }
+	}; // RW 0x7A5A16/2A/3E: strict -2500/-1500/-50 comparisons of the TOTAL
+	a.logic->random().enableCallLog(true);
+	a.logic->random().clearCallLog();
+	const auto seed = a.logic->random().seedArray();
+	for (const Row &row : rows)
+	{
+		CAPTURE(row.one);
+		CAPTURE(row.two);
+		while (!team->orders().empty()) { team->eraseOrder(0); }
+		setDeficit(*one, row.one);
+		setDeficit(*two, row.two);
+		team->updateThreatOrder(*a.logic);
+		if (!row.command) { CHECK(team->orders().empty()); continue; }
+		REQUIRE(team->orders().size() == 1);
+		const Team::Order &order = team->orders()[0];
+		CHECK(order.command == row.command);
+		CHECK(order.flags == row.flags);
+		CHECK(order.flagsWord == 0x4014);
+		CHECK(order.timestamp == 0);
+		CHECK(order.target == (row.one == row.two ? team->getFirstMember()->getID() : two->getID()));
+	}
+	CHECK(a.logic->random().callLog().empty());
+	CHECK(a.logic->random().seedArray() == seed);
+}
+
+TEST_CASE("RAI-POW-4 review: contained and entering deficits join ordinary members before threat selection")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5311, &err), err);
+	Object *horde = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	Object *hero = a.make("GondorAragorn", a.ai, -60.0f, 0.0f);
+	Object *enemy = a.make("GondorFighter", a.human, 100.0f, 0.0f);
+	a.advance(2);
+	Team *team = threatTeam(a);
+	horde->setTeam(team);
+	hero->setTeam(team);
+	REQUIRE(horde->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));
+	REQUIRE(horde->getContain());
+	auto *contain = horde->getContain();
+	auto *hi = contain->getHordeContainInterface();
+	REQUIRE(hi);
+	std::vector<Object *> members(contain->getContainedItemsList()->begin(), contain->getContainedItemsList()->end());
+	REQUIRE(members.size() >= 2); // tolerance: the retail horde supplies at least the two members needed for this case
+	for (Object *member : members) { setDeficit(*member, 0.0f); }
+	const auto count = hi->countWithEntering();
+	setDeficit(*members[0], 40.0f);
+	setDeficit(*members[1], 20.0f);
+	hi->releaseMemberForGarrison(members[1]); // RW 0x86EBF4: real transition into the entering-ID tree
+	REQUIRE(hi->membersEntering() == std::vector<ObjectID>{ members[1]->getID() });
+	CHECK(hi->countWithEntering() == count);
+	team->updateThreatOrder(*a.logic);
+	REQUIRE(team->orders().size() == 1); // -40 + -20 crosses -50 (RW 0x86EB1D / 0x7A5A3E)
+	CHECK(team->orders()[0].command == 0x11);
+	CHECK(team->orders()[0].flags == 0xFF);
+	CHECK(team->orders()[0].flagsWord == 0x4014);
+	CHECK(team->orders()[0].target == horde->getID());
+	team->eraseOrder(0);
+	// The horde and ordinary-body paths both contribute to the total (RW 0x7A01E8 / 0x7A0249).
+	setDeficit(*members[0], 20.0f);
+	setDeficit(*members[1], 0.0f);
+	setDeficit(*hero, 40.0f);
+	REQUIRE(hero->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));
+	team->updateThreatOrder(*a.logic);
+	REQUIRE(team->orders().size() == 1);
+	CHECK(team->orders()[0].command == 0x11);
+	CHECK(team->orders()[0].flags == 0xFF);
+	CHECK(team->orders()[0].target == hero->getID());
+}
+
+TEST_CASE("RAI-POW-4 review: healthy hordes with free slots produce the exclusive position payload")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5312, &err), err);
+	Object *enemy = a.make("GondorFighter", a.human, 100.0f, 0.0f);
+	std::vector<Object *> hordes;
+	for (int i = 0; i < 4; ++i) { hordes.push_back(a.make("AngmarNecromancerHorde", a.ai, -60.0f * i, 0.0f)); }
+	a.advance(2);
+	Team *team = threatTeam(a);
+	for (Object *horde : hordes)
+	{
+		horde->setTeam(team);
+		REQUIRE(horde->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));
+		auto *contain = horde->getContain();
+		REQUIRE(contain);
+		REQUIRE(!contain->getContainedItemsList()->empty());
+		// The initial list includes a banner carrier in addition to the seven capacity slots.
+		for (int i = 0; i < 2; ++i)
+		{
+			Object *removed = contain->getContainedItemsList()->front();
+			contain->removeFromContain(removed);
+			removed->setTeam(a.ai->getDefaultTeam());
+		}
+		for (Object *member : *contain->getContainedItemsList()) { setDeficit(*member, 0.0f); }
+		auto *hi = contain->getHordeContainInterface();
+		REQUIRE(hi);
+		REQUIRE((int)hi->countWithEntering() < hi->getSlotCapacity()); // tolerance: each horde contributes one free-slot count
+	}
+	team->updateThreatOrder(*a.logic);
+	REQUIRE(team->orders().size() == 1);
+	CHECK(team->orders()[0].command == 0x1A);
+	CHECK(team->orders()[0].flags == 0x0F);
+	CHECK(team->orders()[0].flagsWord == 0x8014); // RW 0x7A5AA3: clear 0x2000 before setting 0x8000
+	CHECK(team->orders()[0].target == INVALID_ID);
+	CHECK(team->orders()[0].position.x == 0.0f);
+	CHECK(team->orders()[0].position.y == 0.0f);
+	CHECK(team->orders()[0].position.z == 0.0f);
+}
+
+
+TEST_CASE("RAI-POW-4 review: Attack Heal AoE snapshot resumes the decision reservation and full RNG state")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5313, &err), err);
+	for (int i = 0; i < a.logic->players().getPlayerCount(); ++i)
+	{
+		a.logic->shroud()->revealMapForPlayerPermanently(i);
+	}
+	// the battle sits on the AI fortress's plateau (dry land: Well of Souls has no WATER_OK and its radius cursor is 75 wide)
+	const Object *aiFort = firstOf(*a.logic, a.ai, "COMMANDCENTER");
+	REQUIRE(aiFort);
+	a.where = *aiFort->getPosition();
+	Object *horde = a.make("AngmarNecromancerHorde", a.ai, -200.0f, 0.0f);
+	Object *ally = a.make("AngmarNecromancerHorde", a.ai, 150.0f, 0.0f);
+	Object *enemy1 = a.make("GondorFighterHorde", a.human, -100.0f, 0.0f);
+	Object *enemy2 = a.make("GondorFighterHorde", a.human, 250.0f, 0.0f);
+	AISpecialPowerUpdate *heal = aiPowerOfType(*horde, 49);
+	REQUIRE(heal);
+	heal->initAsIfInCommandSetForTest(); // initialize the attached module before its first scheduled update
+	REQUIRE(heal->active());
+	a.advance(2);
+	REQUIRE(horde->getAIUpdateInterface()->aiAttackObject(enemy1, CMD_FROM_PLAYER));
+	REQUIRE(ally->getAIUpdateInterface()->aiAttackObject(enemy2, CMD_FROM_PLAYER));
+	REQUIRE(horde->getContain());
+	REQUIRE(ally->getContain());
+	for (Object *m : *horde->getContain()->getContainedItemsList())
+	{
+		setHealthRatio(*m, 0.99f);
+	}
+	for (Object *m : *ally->getContain()->getContainedItemsList())
+	{
+		setHealthRatio(*m, 0.8f);
+	}
+	makePowerReady(*horde, *heal);
+	Team *team = horde->getTeam();
+	REQUIRE(team);
+	team->updateThreatOrder(*a.logic);
+	REQUIRE(team->orders().size() == 1);
+	CHECK_FALSE(heal->decideNow()); // RW 0x9E69E9: the pre-distance goal reservation is part of the saved state
+	const ObjectID casterID = horde->getID(), allyID = ally->getID();
+	const auto savedHash = a.logic->computeStateHash();
+	StateHasher moduleHash;
+	heal->crc(moduleHash);
+	std::vector<std::uint8_t> snapshot;
+	REQUIRE_MESSAGE(a.logic->saveSnapshot(snapshot, &err), err);
+	std::vector<std::uint32_t> expectedHashes;
+	std::vector<std::uint8_t> expectedAfterDecision, expectedAfterFrames;
+	std::vector<GameLogicRandom::Call> expectedCalls;
+	GameLogicRandom::Seed expectedSeed{};
+	Coord3D expectedLocation{};
+	for (int pass = 0; pass < 2; ++pass)
+	{
+		CAPTURE(pass);
+		if (pass)
+		{
+			REQUIRE_MESSAGE(a.g.live->loadSnapshot(snapshot, &err), err);
+			a.logic = &a.g.live->logic();
+			horde = a.logic->findObjectByID(casterID);
+			ally = a.logic->findObjectByID(allyID);
+			REQUIRE(horde);
+			REQUIRE(ally);
+			heal = aiPowerOfType(*horde, 49);
+			REQUIRE(heal);
+			team = horde->getTeam();
+			REQUIRE(team);
+			StateHasher loadedHash;
+			heal->crc(loadedHash);
+			CHECK(loadedHash.value() == moduleHash.value());
+			CHECK(a.logic->computeStateHash() == savedHash);
+			std::vector<std::uint8_t> roundTrip;
+			REQUIRE_MESSAGE(a.logic->saveSnapshot(roundTrip, &err), err);
+			CHECK(roundTrip == snapshot);
+		}
+		a.logic->random().enableCallLog(true);
+		a.logic->random().clearCallLog();
+		Coord3D near = *ally->getPosition();
+		near.x += 30.0f;
+		horde->teleportTo(&near, true);
+		a.logic->partition().update();
+		const auto decisionSeed = a.logic->random().seedArray();
+		const auto decisionCalls = a.logic->random().callLog().size();
+		CHECK(heal->decideNow()); // RW 0x9E691D: restored powerType/button suffice; no unsaved template cache
+		CHECK(team->orders().empty());
+		CHECK(a.logic->random().callLog().size() == decisionCalls);
+		CHECK(a.logic->random().seedArray() == decisionSeed);
+		if (!pass) { expectedLocation = heal->decidedLocation(); }
+		CHECK(heal->decidedLocation().x == expectedLocation.x);
+		CHECK(heal->decidedLocation().y == expectedLocation.y);
+		CHECK(heal->decidedLocation().z == expectedLocation.z);
+		std::vector<std::uint8_t> afterDecision;
+		REQUIRE_MESSAGE(a.logic->saveSnapshot(afterDecision, &err), err);
+		if (!pass) { expectedAfterDecision = afterDecision; }
+		CHECK(afterDecision == expectedAfterDecision); // includes both pathfinder goal reservations and consumed orders
+		for (int i = 0; i < 5; ++i)
+		{
+			a.advance(1);
+			const auto hash = a.logic->computeStateHash();
+			if (!pass) { expectedHashes.push_back(hash); }
+			CHECK(hash == expectedHashes[(size_t)i]);
+		}
+		std::vector<std::uint8_t> afterFrames;
+		REQUIRE_MESSAGE(a.logic->saveSnapshot(afterFrames, &err), err);
+		if (!pass)
+		{
+			expectedAfterFrames = afterFrames;
+			expectedCalls = a.logic->random().callLog();
+			expectedSeed = a.logic->random().seedArray();
+		}
+		CHECK(afterFrames == expectedAfterFrames);
+		CHECK(a.logic->random().seedArray() == expectedSeed);
+		const auto &calls = a.logic->random().callLog();
+		REQUIRE(calls.size() == expectedCalls.size());
+		for (size_t i = 0; i < calls.size(); ++i)
+		{
+			const auto &got = calls[i], &want = expectedCalls[i];
+			CHECK(got.real == want.real);
+			CHECK(got.lo == want.lo);
+			CHECK(got.hi == want.hi);
+			CHECK(got.rlo == want.rlo);
+			CHECK(got.rhi == want.rhi);
+			CHECK(got.result == want.result);
+			CHECK(got.rresult == want.rresult);
+			CHECK(got.file == want.file);
+			CHECK(got.line == want.line);
+			CHECK(got.drewNumber == want.drewNumber);
+		}
+	}
 }
