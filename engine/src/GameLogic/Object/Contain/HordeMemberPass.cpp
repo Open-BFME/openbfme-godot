@@ -717,6 +717,7 @@ bool HordeContain::runMemberPass()
 	const HordeAIUpdate *meleeHai = m_meleeEngaged ? dynamic_cast<const HordeAIUpdate *>(hordeAi) : nullptr;
 	for (Object *m : passMembers)
 	{
+		if(m && !participatesInMemberPass(*m))continue;
 		if (m && !m->isDestroyed() && m_core->slotOf(m->getID()) < 0)
 		{
 			Coord3D bannerPos;
@@ -734,6 +735,7 @@ bool HordeContain::runMemberPass()
 		// lane BACKLOG-8 r2: the slot keeps the horde's height (RW 0x877D89 -> RW 0x875847: x / y the horde's position plus the turned offset, z the horde's
 		// position + 0x40); the port put it on the ground, so the near arm's FLOATING_Z rule (RW 0x874F30: the slot as it is) never showed
 		Coord3D slot = m_core->getSlotWorldPos(m->getID(), owner, &slotAngle);
+		if (hasVariantMemberPositions()) slot = getMemberFormationPosition(m);
 		// lane MOVE-2 r3: the pass's slot is the contain's slot 0x1C (RW 0x874080 -> 0x877D89): in a melee the member's melee destination (RW 0x98F819)
 		if (meleeHai)
 		{
@@ -744,7 +746,6 @@ bool HordeContain::runMemberPass()
 			}
 		}
 		float angle = SimMath::addf32(owner.angle, slotAngle);
-		if (!m_data->horde.m_isPorcupineFormation)
 		{
 			// lane MODULES-3: the emotion branches (RW 0x874155 .. 0x874671, HordeEmotion.cpp)
 			const int r = emotionMemberOrder(*m, scarer, slot, angle);

@@ -167,6 +167,10 @@ public:
 	void addObjectBuilt(GameLogic &logic, const Object &obj, int count);
 	void addObjectDestroyed(GameLogic &logic, const Object &victim);
 	void addObjectLost(GameLogic &logic, const Object &victim);
+	// BFME1 0x000EAC60 / 0x000EAA90: explicit template-count corrections,
+	// ungated by live-object filters, scoring/counting flags or alive totals.
+	void bfme1SlaughterLost(const ThingTemplate &type, int count);
+	void bfme1SlaughterDestroyed(const ThingTemplate &type, int victimPlayer, int count);
 	// RW 0x79F704: `frame` is TheGameLogic + 0x40; `player` is the keeper's owner
 	void recordPerFrameStats(GameLogic &logic, const Player &player, unsigned frame);
 	// RW 0x79DFFA without the store at + 0xEC (the client may ask at any time: nothing changes); `frame` is the logic frame

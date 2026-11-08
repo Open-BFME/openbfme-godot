@@ -10,6 +10,8 @@
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 
 #include <algorithm>
+#include <functional>
+#include <map>
 
 MapScriptSetup::MapScriptSetup() = default;
 MapScriptSetup::~MapScriptSetup() = default;
@@ -28,6 +30,62 @@ std::string lowered(std::string s)
 	return s;
 }
 } // namespace
+
+ScriptList MapScriptSetup::mergeBfme1Scripts(const std::vector<const ScriptList *> &lists)
+{
+	// BFME1 RVA 0x0035CE60 pushes the importing list's named versions
+	// onto the dependency's registry. walkNamed 0x003412E0 / walkChild
+	// 0x00343370 accept only a link whose version equals the current one
+	// (0x00355950 / 0x003558C0). A shadowed group stops automatic traversal;
+	// its uniquely named scripts remain available to explicit subroutine calls.
+	std::map<std::string, const Script *> scripts;
+	std::map<std::string, const ScriptGroup *> groups;
+	std::function<void(const std::vector<ScriptItem> &, std::map<std::string, const Script *> &, std::map<std::string, const ScriptGroup *> &)> collect;
+	collect = [&](const std::vector<ScriptItem> &items, auto &ss, auto &gs) {
+		for (const auto &item : items)
+		{
+			if (item.script) ss[item.script->name] = item.script.get();
+			if (item.group) { gs[item.group->name] = item.group.get(); collect(item.group->items, ss, gs); }
+		}
+	};
+	for (const auto *list : lists)
+	{
+		if (!list) continue;
+		std::map<std::string, const Script *> localScripts;
+		std::map<std::string, const ScriptGroup *> localGroups;
+		collect(list->items, localScripts, localGroups);
+		// Last definition within a file, first (importing) file across libraries.
+		scripts.insert(localScripts.begin(), localScripts.end());
+		groups.insert(localGroups.begin(), localGroups.end());
+	}
+	std::function<void(const std::vector<ScriptItem> &, std::vector<ScriptItem> &)> clone;
+	unsigned shadow = 0;
+	clone = [&](const std::vector<ScriptItem> &source, std::vector<ScriptItem> &out) {
+		for (const auto &item : source)
+		{
+			ScriptItem copy;
+			if (item.script && scripts.at(item.script->name) == item.script.get()) copy.script = std::make_unique<Script>(*item.script);
+			else if (item.group)
+			{
+				copy.group = std::make_unique<ScriptGroup>();
+				const bool current = groups.at(item.group->name) == item.group.get();
+				// A private inactive container retains named children for calls,
+				// without making a shadowed group addressable by its retail name.
+				std::string hidden;
+				if (!current) do { hidden = "\x1f" "BFME1-shadow-" + std::to_string(shadow++); } while (groups.count(hidden));
+				copy.group->name = current ? item.group->name : hidden;
+				copy.group->isActive = item.group->isActive && current;
+				copy.group->isSubroutine = item.group->isSubroutine;
+				copy.group->version = item.group->version;
+				clone(item.group->items, copy.group->items);
+			}
+			if (copy.script || copy.group) out.push_back(std::move(copy));
+		}
+	};
+	ScriptList result;
+	for (const auto *list : lists) if (list) clone(list->items, result.items);
+	return result;
+}
 
 bool MapScriptSetup::loadLibraryList(ArchiveFileSystem &fs, const std::vector<std::string> &paths, ScriptEngine::SideScripts &side,
 	std::set<std::string> &loaded, int depth, std::string *error)
@@ -156,9 +214,16 @@ bool MapScriptSetup::build(ArchiveFileSystem &fs, const SkirmishAIStore &aiStore
 	const std::set<std::string> &droppedMapSides, const std::vector<std::string> &aiTypes, std::string *error)
 {
 	m_sides.clear();
+	m_bfme1Scripts.clear();
 	m_libraryTeams.clear();
 	m_teamSides = droppedMapSides;
 	m_sides.resize(sides.sides.size());
+	// BFME1 RVA 0x0019F890 (Rva0019F890FillHelper.cpp) merges a
+	// library's own list in front of its dependencies: local(library),
+	// local.merge(accumulated), accumulated.swap(local). The merge at
+	// RVA 0x0035E510 / 0x0035E5A0 prepends the transferred links.
+	// Keep the existing RW 0x7313B3 path for BFME2/RotWK.
+	const bool prependLibraries = isBfme1Data(fs);
 	for (size_t i = 0; i < sides.sides.size(); ++i)
 	{
 		ScriptEngine::SideScripts &out = m_sides[i];
@@ -181,6 +246,7 @@ bool MapScriptSetup::build(ArchiveFileSystem &fs, const SkirmishAIStore &aiStore
 			out.lists.push_back(&map.playerScripts.lists[(size_t)mapIndex]);
 		}
 		std::set<std::string> loaded;
+		const size_t mapLists = out.lists.size();
 		// RW 0x73161C: the playerAIType's libraries first
 		const std::string aiType = i < aiTypes.size() ? aiTypes[i] : std::string();
 		if (!aiType.empty())
@@ -202,6 +268,14 @@ bool MapScriptSetup::build(ArchiveFileSystem &fs, const SkirmishAIStore &aiStore
 			{
 				return false;
 			}
+		}
+		if (prependLibraries)
+		{
+			std::reverse(out.lists.begin() + mapLists, out.lists.end());
+			std::reverse(out.libraries.begin(), out.libraries.end());
+			auto merged = std::make_unique<ScriptList>(mergeBfme1Scripts(out.lists));
+			out.lists = { merged.get() };
+			m_bfme1Scripts.push_back(std::move(merged));
 		}
 	}
 	return true;

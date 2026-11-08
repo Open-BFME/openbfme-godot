@@ -3,6 +3,7 @@
 // GiantBirdAIUpdate (lane FLY-1); see GiantBirdAIUpdate.h for the target facts, the donor and the stop.
 
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
+#include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 
 #include "Common/GameCommon.h"
 #include "Common/INI/HostRealText.h"
@@ -1258,6 +1259,7 @@ public:
 				m_sub->setGoalObject(target->getID());
 				m_sub->setState(10);
 				ai.setCommandSource(CMD_FROM_AI);
+				Bfme1Melee::autoAcquired(ai); // BFME1 GiantBirdAttackMoveToState 0x002BF9F7.
 				return STATE_CONTINUE;
 			}
 		}

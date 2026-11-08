@@ -638,7 +638,6 @@ int luaObjectEnterRampageState(lua_State *L)
 	LuaObjectInfo o;
 	if (objectArg(L, 1, 1, &id) && findObject(L, id, &o))
 	{
-		inferred(L, "ObjectEnterRampageState: the module at Object+0x25C vtable +0x98 and the AI command 0x3A are not identified (spec G9)");
 		hostOf(L).enterRampageState(id);
 	}
 	return 0;

@@ -3,6 +3,7 @@
 // See GameLogic/AI/AIWaypointPath.h.
 
 #include "GameLogic/AI/AIWaypointPath.h"
+#include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 
 #include "Common/StateHash.h"
 #include "Common/Team.h"
@@ -407,6 +408,7 @@ StateReturnType AIAttackFollowWaypointPathState::update()
 	{
 		m_attackMachine->setGoalObject(victim->getID()); // vslot 0x38
 		m_attackMachine->setState(AI_ATTACK_OBJECT);     // 10 (AI + 0x3C7 = 1 is not ported, S-1189)
+		Bfme1Melee::autoAcquired(self); // BFME1 0x00188DCF; later editions keep their existing state/hash.
 		return STATE_CONTINUE;
 	}
 	if (repath)

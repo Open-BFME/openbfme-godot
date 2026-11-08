@@ -230,6 +230,9 @@ public:
 	Player *currentPlayer() const { return m_currentPlayer; }
 	const std::string &currentSideName() const { return m_currentSide; }
 	std::string currentScriptName() const;
+	// Stable identity of the current condition, including a generic hook's
+	// team/slot copy; used by BFME1's mutable parameter caches in native saves.
+	std::string conditionIdentity(const ScriptCondition &condition) const;
 	GameLogic &logic() const { return m_logic; }
 	ScriptEngineHost *host() const { return m_host; }
 	bool warOfTheRing() const { return m_warOfTheRing; }
@@ -338,6 +341,7 @@ public:
 		std::string sideName;
 		bool active = false;                 ///< + 0x40
 		UnsignedInt frameToEvaluateAt = 0;   ///< + 0x3C
+		std::string cacheIdentity;           ///< derived from the loaded script path, not mutable snapshot state
 	};
 	struct RGroup
 	{
@@ -442,6 +446,9 @@ public:
 	// RW 0x60D053 runs the script's TRUE actions (Script + 0x34, RW 0x60C1C9) with that side current, no team (+ 0x1A210 = 0) and so no current player
 	// (+ 0x1A230 = 0), whatever the script's active flag, difficulty or conditions; all restored after. False (nothing run) while no scripts are loaded
 	bool runTeamCreateActions(TeamPrototype &proto);
+	// BFME1 AIPlayerBuildSpecificAITeam / CheckQueuedTeams: execute the
+	// production script's actions with the building team as <This Team>.
+	bool runTeamProductionActions(Team &team);
 
 	struct RSide
 	{
@@ -454,10 +461,12 @@ public:
 	// test): public for the tests
 	bool evaluateCondition(const ScriptCondition &c);
 	void executeAction(const ScriptActionRec &a);
+	// BFME1 TeamPrototype::evaluateProductionCondition, RVA 0x000ED850.
+	bool evaluateProductionScript(const std::string &name, Player &owner);
 
 private:
 	BreezeInfo m_breeze; ///< lane VISUAL-2
-	void buildGroup(const std::vector<ScriptItem> &items, const std::string &side, RGroup &out);
+	void buildGroup(const std::vector<ScriptItem> &items, const std::string &side, RGroup &out, const std::string &path);
 	void executeScripts(std::vector<std::unique_ptr<RScript>> &scripts);
 	void executeGroups(std::vector<std::unique_ptr<RGroup>> &groups);
 	void executeScript(RScript &s);

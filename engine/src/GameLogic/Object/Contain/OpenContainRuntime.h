@@ -82,7 +82,7 @@ public:
 	static bool isShipOnWater(const Object &container);
 	// RW 0x6E8707 (ZH Pathfinder::validMovementTerrain) on the ground layer for `ai`'s current locomotor at `at`: an obstacle or impassable cell (types 4 / 5)
 	// passes, a clear cell takes the surface test (see TransportContain::isSpecificRiderFreeToExit); false off the map. The caller tests the locomotor.
-	static bool validMovementTerrain(AIUpdateInterface &ai, const Coord3D &at);
+	static bool validMovementTerrain(AIUpdateInterface &ai, const Coord3D &at, int layer = 1);
 	// ---- DieModuleInterface (RW 0x867120) ----
 	void onDie(const DieModuleInterface::Event &event) override;
 
@@ -90,7 +90,7 @@ public:
 	// RW module + 0xDE (interface + 0xBE): the data's Enabled, read by the control bar's transport inventory (RW 0x94251F, lane UI-1)
 	bool isEnabled() const { return m_enabled; }
 	// contain slot 0x70 (OpenContain RW 0x86584C: the data's ContainMax; TransportContain RW 0x869F86: Slots)
-	virtual int getContainMax() const;
+	int getContainMax() const override;
 	// lane MODCOMPAT-MOD1: contain slot 0x170 (RW 0x865A5C): the data's ManualPickUpFilter (+ 0x44, RW 0x7640C1) allows `obj` for the container's player
 	bool manualPickUpAllows(const Object &obj) const;
 	// lane MODCOMPAT-MOD1: contain slot 0xAC (RW 0x865853, the grab's eat): `victim` (interface + 0xC4) is eaten in max(frames, 1) frames (+ 0xCC), credited

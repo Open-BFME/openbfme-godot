@@ -102,6 +102,11 @@ void ClientEventRecorder::objectDestroyed(Object &obj)
 }
 
 // lane STEALTH-2 (RW 0x776F03): the drawable of `tmpl` replaces the object's, with the object's model conditions (RW 0x444D7D / 0x68D64A), position and angle
+void ClientEventRecorder::releaseContainerBone(Object &obj, float snappyness)
+{
+	push(ClientEvent::RELEASE_CONTAINER_BONE, obj).scale = snappyness;
+}
+
 void ClientEventRecorder::fadeIn(Object &obj, UnsignedInt frames)
 {
 	ClientEvent &e = push(ClientEvent::FADE_IN, obj);

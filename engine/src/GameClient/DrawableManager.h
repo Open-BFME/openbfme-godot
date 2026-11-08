@@ -126,6 +126,7 @@ private:
 	};
 	static void collect(const Drawable &d, Sink &sink);
 	static W3DLuaDrawScriptHost::Options hostOptions(const std::uint32_t &frame);
+	void syncContainerBones(const LogicSnapshot &snapshot);
 	void created(const ClientEvent &ev);
 	void destroyed(const ClientEvent &ev);
 

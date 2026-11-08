@@ -265,6 +265,19 @@ void ScoreKeeper::addObjectLost(GameLogic &logic, const Object &victim)
 	}
 }
 
+void ScoreKeeper::bfme1SlaughterLost(const ThingTemplate &type, int count)
+{
+	m_unitsLost += count;
+	addToMap(m_lostByTemplate, type.getName(), count, false);
+}
+
+void ScoreKeeper::bfme1SlaughterDestroyed(const ThingTemplate &type, int victimPlayer, int count)
+{
+	if (victimPlayer < 0 || victimPlayer >= MAX_PLAYERS) throw std::logic_error("BFME1 slaughter: invalid score player");
+	m_unitsDestroyed[victimPlayer] += count;
+	addToMap(m_destroyedByTemplate[victimPlayer], type.getName(), count, false);
+}
+
 // RW 0x79F704
 void ScoreKeeper::recordPerFrameStats(GameLogic &logic, const Player &player, unsigned frame)
 {

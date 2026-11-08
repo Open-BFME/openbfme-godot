@@ -3,6 +3,7 @@
 // TheSkirmishAIManager (lane AI-1, step 1). See SkirmishAIManager.h for the binary facts; each function cites the RW function it ports.
 
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
+#include "GameLogic/SkirmishAI/Bfme1SkirmishAI.h"
 #include "GameLogic/SkirmishAI/AIUpgrade.h"
 #include "GameLogic/Module/GateModules.h"
 
@@ -32,6 +33,11 @@ bool SkirmishAIManager::countsAsAI(const Player &p) const
 	return p.getPlayerType() == PLAYER_COMPUTER || (m_store && m_store->data().makeAllSkirmishSidesAIControlled);
 }
 
+void SkirmishAIManager::useBfme1()
+{
+	m_bfme1 = std::make_unique<Bfme1SkirmishAI>(m_logic);
+}
+
 int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, const std::string &mapFileName)
 {
 	m_mapFileName = mapFileName;
@@ -39,6 +45,10 @@ int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, con
 	if (!skirmishOrMultiplayer || loadingSave)
 	{
 		return 0;
+	}
+	if (m_bfme1)
+	{
+		return m_bfme1->newGame();
 	}
 	if (!m_store || !m_store->dataBlockSeen())
 	{
@@ -238,6 +248,13 @@ Player *SkirmishAIManager::firstAIMember(const AISkirmishGroup &g) const
 
 void SkirmishAIManager::update()
 {
+	if (m_bfme1)
+	{
+		// BFME1 AIPlayer is owned/updated by Player (0x000D9A80),
+		// before that player's generic scripts, not the RW manager row.
+		// GameLogic's player pass calls the BFME1 variant there.
+		return;
+	}
 	// RW 0x6A96A0
 	if (m_groups.empty() || m_logic.getFrame() < kFirstAIFrame)
 	{
@@ -596,6 +613,7 @@ void SkirmishAIManager::structureBuilt(Object &builder, Object &structure)
 
 void SkirmishAIManager::reset()
 {
+	if (m_bfme1) m_bfme1->reset();
 	if (m_worldHooks != 0)
 	{
 		m_logic.removeWorldHooks(m_worldHooks);
@@ -643,6 +661,11 @@ const AISkirmishGroup *SkirmishAIManager::findGroup(int playerIndex) const
 
 void SkirmishAIManager::crc(StateHasher &h) const
 {
+	if (m_bfme1)
+	{
+		m_bfme1->crc(h);
+		return;
+	}
 	h.addU32(0x534B4149u); // "SKAI"
 	h.addBool(m_started);
 	h.addU32(m_attackedAtIds);
@@ -841,6 +864,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 
 std::vector<std::string> SkirmishAIManager::report() const
 {
+	if (m_bfme1) return m_bfme1->report();
 	std::vector<std::string> out = m_errors;
 	if (m_started)
 	{

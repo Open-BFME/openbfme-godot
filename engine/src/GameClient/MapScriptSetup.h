@@ -64,6 +64,9 @@ public:
 	// PlayerList::newGame makes the team prototypes
 	const std::vector<Dict> &libraryTeams() const { return m_libraryTeams; }
 	std::vector<std::string> notes() const { return m_notes; }
+	// BFME1's named ScriptList versions: the importing list shadows its
+	// dependencies, including scripts inside differently named groups.
+	static ScriptList mergeBfme1Scripts(const std::vector<const ScriptList *> &lists);
 
 private:
 	bool loadLibrary(ArchiveFileSystem &fs, const std::string &path, ScriptEngine::SideScripts &side, std::set<std::string> &loaded, int depth,
@@ -72,6 +75,7 @@ private:
 		int depth, std::string *error);
 
 	std::vector<std::unique_ptr<LoadedMap>> m_libraries;
+	std::vector<std::unique_ptr<ScriptList>> m_bfme1Scripts;
 	std::vector<ScriptEngine::SideScripts> m_sides;
 	std::vector<Dict> m_libraryTeams;
 	std::set<std::string> m_teamSides; ///< the sides whose libraries' teams are collected (a started game's slot sides)

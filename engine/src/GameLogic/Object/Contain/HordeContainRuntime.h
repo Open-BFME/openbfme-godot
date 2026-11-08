@@ -68,6 +68,8 @@ public:
 	virtual bool hasFreeSlotFor(const Object &member) = 0;
 	// slot 7 (RW 0x877D89): the world position of the member's slot for the horde's current transform
 	virtual Coord3D getMemberFormationPosition(const Object *member) const = 0;
+	// BFME1 AOD interface slot 0x10C, 0x00231980; ordinary hordes ignore it.
+	virtual void trackLargeUnit(Object *) {}
 	// slot 0xC8 (RW 0x86EF13, lane MOVE-3): called by the pathfinder's updateGoal (RW 0x8E24D3) once the horde's goal changed: unless the horde melees (+ 0x184),
 	// every living member's goal is reserved at its slot turned by the goal's angle around the goal's position
 	virtual void reserveMemberGoals() = 0;
@@ -329,7 +331,7 @@ public:
 	// lane HORDE-2: the stop line of the re-forming after a melee (S-584)
 	static const char *reformStopLine();
 	// the member pass of one update (RW 0x875DC3-class slot, B1 HordeMemberOrder00245420 per member); true when members still have work
-	bool runMemberPass();
+	virtual bool runMemberPass();
 	// the model condition mirror of TransportContain::update (BFME: the owner's MOVING becomes the passengers' TRANSPORT_MOVING)
 	void mirrorMovingCondition();
 	bool movementEnabled() const { return m_movementEnabled; }
@@ -344,6 +346,7 @@ public:
 	void reserveMemberGoals() override;
 	std::string getPayloadMemberTemplateName() const override;
 	int getSlotCapacity() const override;
+	int getContainMax() const override { return getSlotCapacity(); }
 	// horde interface slot 0x264 (RW 0x86EA09, lane MOD-4: AISpecialPowerUpdate's health ratio): each contained member's body slot 0x14 (health / max
 	// health, RW 0x8C1D75), then each member on its way into a garrison (the map at interface + 0x54, by id), added in the FPU and stored as a float each time;
 	// divided (SSE) by slot 0x17C (the Slots, RW 0x86C8DE) taken unsigned when it is above 0
@@ -374,6 +377,12 @@ public:
 	void setModelConditionForHorde(int bit, bool on);
 	static const char *wallScalingStopLine();
 	void setMeleeEngaged(bool on);
+	virtual bool beginNativeMelee(Object &) { return false; }
+	virtual bool endNativeMelee() { return false; }
+	virtual bool tickNativeMelee(Object &) { return false; }
+	virtual void setNativeGather(bool) {}
+	virtual bool usesNativeMelee() const { return false; }
+	virtual bool nativeTargetReady(Object &) { return false; }
 	// the free slot indices in free-list order (HordeContainCore::freeList)
 	std::vector<int> freeSlotIndices() const;
 	bool payloadCreated() const { return m_payloadCreated; }
@@ -399,6 +408,10 @@ public:
 	// RW 0x86C7F6 / 0x875FB2 (slots 0x60 / 0x68): the horde object keeps its id, AI, selection and transform and takes the AlternateFormation template's HordeContain;
 	// the members (and the banner carrier) move into it and walk to their new slots. Returns the new contain (this module is gone afterwards), null when nothing happened
 	HordeContain *toggleFormation();
+	// BFME1 combination (RVA 0x00245BF0): detach without the last-member
+	// death path, then adopt existing soldiers into the new formation.
+	std::vector<Object *> detachBfme1CombinationMembers();
+	void adoptBfme1CombinationMembers(const std::vector<Object *> &members, ObjectID banner);
 	// lane COMBAT-3: the formation's AttributeModifiers (module data + 0x22C): interface slot 0x1E4 (RW 0x86C92D) gives every list to the members and the horde's
 	// own pool (slot 0x1D8 with duration -1: the list's own), slot 0x1E8 (RW 0x86C962) takes them back (slot 0x1DC). The porcupine formations' CRUSHED_DECELERATE
 	// 1000% reaches the pikemen this way.
@@ -428,6 +441,17 @@ public:
 
 	friend struct Horde2HashAccess; // the HORDE-2 hash mutation tests (test_horde2_hash.cpp)
 
+protected:
+	virtual int emotionMemberOrder(Object &member,Object *scarer,Coord3D &pos,float &angle);
+	virtual bool participatesInMemberPass(const Object &) const { return true; }
+	virtual bool hasVariantMemberPositions() const { return false; }
+	HordeContainCore &variantCore() { return *m_core; }
+	virtual void memberOrder(Object &member, const Coord3D &slotPos, float orientation, bool force);
+	virtual void moveHub(Object &member, const Coord3D &dest, float orientation);
+	bool variantHasQuarrel() const { return !m_quarrelDistance.empty(); }
+	void markMemberWork() { m_workDone = true; }
+	bool slotCellClear(Object &member) const;
+	bool isMemberAheadOfSlot(const Object &member, const Coord3D &slotPos) const;
 private:
 	void createPayload();
 	void placeMember(Object *member);
@@ -436,16 +460,12 @@ private:
 	// lane GARRISON-3: a member on the way that is gone or dead gives its kept slot back (S-1620 inference)
 	void forgetMemberOnTheWay(ObjectID id);
 	// the member pass pieces (HordeMemberPass.cpp)
-	void memberOrder(Object &member, const Coord3D &slotPos, float orientation, bool force);
-	void moveHub(Object &member, const Coord3D &dest, float orientation);
 	void reassignMembersToNearestSlots();
-	bool slotCellClear(Object &member) const;
-	bool isMemberAheadOfSlot(const Object &member, const Coord3D &slotPos) const;
 	// lane MODULES-3: the emotion branches of the member pass (RW 0x873FE8 .. 0x874671): 0 order the member at `pos` / `angle`, 1 skip it, 2 the quarrel ended (the
 	// pass stops)
-	int emotionMemberOrder(Object &member, Object *scarer, Coord3D &pos, float &angle);
 
 	const HordeContainBehaviorData *m_data;
+	friend class Bfme1HordeContain; // BFME1 variant reuses the saved logical emotion records.
 	std::unique_ptr<HordeContainCore> m_core;
 	friend struct XpTestAccess; // lane XP-1 tests: isolated state hash mutations
 	ContainedItemsList m_members;

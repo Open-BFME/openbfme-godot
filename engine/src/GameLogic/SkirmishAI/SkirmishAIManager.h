@@ -36,6 +36,7 @@
 // reported (stop S-412).
 
 #pragma once
+#include "GameLogic/SkirmishAI/Bfme1SkirmishAI.h"
 
 #include "Common/NameKeyGenerator.h"
 #include "GameLogic/SkirmishAI/AIBaseBuilder.h"
@@ -55,6 +56,7 @@ class Player;
 class PlayerList;
 class SkirmishAIStore;
 class StateHasher;
+class Bfme1SkirmishAI;
 struct ArmyDefinition;
 
 // AISkirmishPlayer (0x188 bytes, RW ctor 0x6C7C27 over the AIPlayer base RW 0x8F0783)
@@ -97,6 +99,8 @@ public:
 	// the data of this game's world (Default\SkirmishAIData.ini): set before newGame; null = the AI cannot start (reported, never a default)
 	void setStore(const SkirmishAIStore *store) { m_store = store; }
 	const SkirmishAIStore *store() const { return m_store; }
+	void useBfme1();
+	Bfme1SkirmishAI *bfme1() const { return m_bfme1.get(); }
 
 	// RW 0x6AA030. `skirmishOrMultiplayer`: TheGameInfo says so (a game started from a skirmish setup); `loadingSave`: RW 0x5FF924. Returns the
 	// number of AI players made.
@@ -225,6 +229,7 @@ private:
 	AISkirmishPlayer *listenerAI(int playerIndex);
 
 	GameLogic &m_logic;
+	std::unique_ptr<Bfme1SkirmishAI> m_bfme1;
 	const SkirmishAIStore *m_store = nullptr;
 	std::vector<std::unique_ptr<AISkirmishGroup>> m_groups;
 	std::vector<int> m_infoPlayers;

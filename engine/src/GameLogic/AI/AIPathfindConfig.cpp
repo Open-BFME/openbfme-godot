@@ -166,8 +166,9 @@ bool PathfindConfigLoader::load(ArchiveFileSystem &fs, PathfindConfig &out, std:
 		// BFME1's pathfinder compiles its search budgets in; BFME2 moved them to GameData MaxCells* (none of which BFME1's gamedata.ini has).
 		// Open-BFME-1 AIPathfind.cpp: PATHFIND_CELLS_PER_FRAME 5000 (:946), adjustDestination MAX_CELLS_TO_TRY 400 (:4754), patchPath
 		// CELL_LIMIT 2000 (:12402), findAttackPath ATTACK_CELL_LIMIT 2500 (:12654), CELL_INFOS_TO_ALLOCATE 30000 (:947, what bounds a
-		// findPath there). INFERENCE (docs/BFME1.md): the horde melee, melee engagement, possible destination and towards-goal budgets
-		// have no BFME1 constant located; RotWK 2.01's values are used
+		// findPath there). INFERENCE (docs/BFME1.md): the horde / single-unit melee, melee engagement and towards-goal budgets
+		// have no BFME1 constant located; RotWK 2.01's values are used. adjustToPossibleDestination
+		// is separately verified: BFME1 0x3EAC80 uses 400 (the matched native loop).
 		c.cellsPerFrame = 5000;
 		c.adjustDestinationLimit = 400;
 		c.patchPathLimit = 2000;

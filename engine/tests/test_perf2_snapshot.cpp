@@ -95,6 +95,11 @@ std::vector<std::uint8_t> bytesOf(const ObjectSnapshot &s)
 	put(b, s.drawableHidden);
 	put(b, s.phantomStructure);
 	put(b, s.containedBy);
+	put(b, s.containerBoneParent);
+	put(b, s.containerBoneCanAim); put(b, s.containerBoneHasTarget);
+	put(b, s.containerBoneTarget.x); put(b, s.containerBoneTarget.y); put(b, s.containerBoneTarget.z);
+	put(b, s.containerBone.size());
+	for (char c : s.containerBone) put(b, c);
 	put(b, s.stealthOpacityMin);
 	put(b, s.stealthOpacityMax);
 	put(b, s.stealthCycleSeconds);

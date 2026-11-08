@@ -396,6 +396,7 @@ public:
 	bool affectedByUpgrade(const UpgradeTemplate *upgrade) const;
 	// RW 0x691438: the upgrade's own bit clears; every upgrade module whose resetUpgrade(that bit) succeeds is removed (RW 0x8D2688)
 	void removeUpgrade(const UpgradeTemplate *upgrade);
+	void resetBfme1Upgrades();
 	// RW 0x6936FE: the controlling player's completed upgrades | the object's | its castle keep's (a CastleMemberBehavior's keepId); attemptUpgrade on every mux that did not
 	// execute, then postUpgradeCheck on every mux
 	void updateUpgradeModules();
@@ -413,6 +414,15 @@ public:
 
 	// ---- modules ----------------------------------------------------------------------------------------------------------
 	const std::vector<std::unique_ptr<BehaviorModule>> &modules() const { return m_modules; }
+	// BFME1 Object +0x370, constructor 0x001D2DD8; setter/broadcast
+	// 0x001BF2E0 / 0x001BF2A0. A palette index, independent of owner.
+	int bfme1IndicatorColorIndex() const { return m_bfme1IndicatorColorIndex; }
+	void setBfme1IndicatorColorIndex(int index);
+	// BFME1 Object +0x3A0 (0x002A5930), used by the native collision variant.
+	ObjectID takeBfme1FiringTarget() { const auto id=m_bfme1FiringTarget; m_bfme1FiringTarget=INVALID_ID; return id; }
+	void setBfme1FiringTarget(ObjectID id) { m_bfme1FiringTarget=id; }
+	ObjectID bfme1CollisionIgnoreID() const { return m_bfme1CollisionIgnore; }
+	void setBfme1CollisionIgnoreID(ObjectID id) { m_bfme1CollisionIgnore=id; }
 	size_t helperCount() const { return m_helperCount; }
 	BodyModuleInterface *getBodyModule() const { return m_body; }
 	ContainModuleInterface *getContain() const { return m_contain; }
@@ -451,7 +461,7 @@ public:
 	// lane MODCOMPAT-MOD1: the object's record left TheCollisionManager (RW 0xB6C480; CritterEmitterUpdate RW 0x8CD1F6 removes and re-adds it): the contact
 	// passes (AIWorld::processCollisions, CombatState::processProjectileContacts) leave it out. Saved and hashed by the module that sets it
 	bool isOutOfCollisionManager() const { return m_outOfCollisionManager; }
-	void friend_setOutOfCollisionManager(bool out) { m_outOfCollisionManager = out; }
+	void friend_setOutOfCollisionManager(bool out);
 	// lane GARRISON-1: RW + 0x284, the frame the object was put in its container (RW 0x6901AE; 0 when not contained, RW 0x69024C)
 	UnsignedInt getContainedFrame() const { return m_containedFrame; }
 	void friend_setContainedFrame(UnsignedInt frame) { m_containedFrame = frame; }
@@ -644,6 +654,9 @@ private:
 	std::uint32_t m_originalTeamID = 0;   ///< the id of that team when it was recorded (hashed, as lane HERO-2's pointer was)
 	void recordOriginalTeam();
 	ObjectID m_speechLeader = INVALID_ID; ///< lane HERO-2: + 0x46C
+	int m_bfme1IndicatorColorIndex = -1;
+	ObjectID m_bfme1CollisionIgnore = INVALID_ID;
+	ObjectID m_bfme1FiringTarget = INVALID_ID;
 	bool m_receivingDifficultyBonus = false; ///< lane CAMP-1H: + 0x45C (hashed)
 	std::int8_t m_legendaryFactor = 1;       ///< lane RULES-1 (OpenBFME; hashed when not 1). One byte in the padding after + 0x45C: sizeof(Object) stays as it was (a larger Object changed the move3 crossing games: some code depends on the allocation layout, reported)
 	ObjectID m_capturerID = INVALID_ID;   ///< lane HERO-2: + 0x80

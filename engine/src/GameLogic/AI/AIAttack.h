@@ -23,6 +23,7 @@
 #include <memory>
 
 class Object;
+std::unique_ptr<AIStateMachine> makeBfme1ChargeMachine(class AIUpdateInterface &);
 
 // parent machine ids (B1)
 enum
@@ -121,7 +122,8 @@ public:
 		MADE_GENERIC = 1,
 		MADE_MELEE = 2,
 		MADE_HORDE_MELEE = 3,
-		MADE_HORDE_RANGED = 4
+		MADE_HORDE_RANGED = 4,
+		MADE_BFME1_CHARGING = 5
 	};
 
 private:

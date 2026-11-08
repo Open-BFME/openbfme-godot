@@ -861,8 +861,11 @@ UpdateSleepTime SpecialAbilityUpdate::update()
 		finishAbility(false, true);
 		return calcSleep();
 	}
-	// RW 0x854EE0 .. 0x854F2F: the enum 0x2A (charge) branch: S-860
-	if (handlePackingProcessing())
+	// BFME1 0x2AA9D0 (full module +0xE4/+0xE5); RW 0x854EE0 remains S-860.
+	const bool bfme1Charge=obj->getTemplate()->bfme1Data() && m_data->m_specialPowerTemplate && m_data->m_specialPowerTemplate->m_type==0x2A;
+	if(obj->getTemplate()->bfme1Data() && m_data->m_chargeAttackSpeedBoost && !m_chargeSpeed){m_chargeSpeed=true;setCondition(*obj,CombatNames::modelCondition("CHARGING"),true);}
+	const bool chargeAbort=bfme1Charge && ai->isIdle() && (m_chargeMove || (target() && target()->isEffectivelyDead()));
+	if (handlePackingProcessing() && !chargeAbort)
 	{
 		return calcSleep();
 	}
@@ -870,7 +873,7 @@ UpdateSleepTime SpecialAbilityUpdate::update()
 	// RW 0x854FB8 .. 0x855005 (the capture enums, lane HERO-2): a target of the object's team is captured: done; a dead one too unless it is a CAPTURABLE
 	// in POST_COLLAPSE (ruins stay capturable); the other abilities end at a dead target. INFERENCE (S-1225): a target that is gone ends it too (HERO-1)
 	const int updType = m_data->m_specialPowerTemplate ? m_data->m_specialPowerTemplate->m_type : 0;
-	bool targetDone = m_targetID != INVALID_ID && !t;
+	bool targetDone = chargeAbort || (m_targetID != INVALID_ID && !t);
 	if (t)
 	{
 		if (updType == 0x1D || updType == 0x1A)
@@ -1093,6 +1096,11 @@ void SpecialAbilityUpdate::approachTarget()
 			bird->aiAbilityMoveTo(m_targetPos, CMD_FROM_AI);
 			return;
 		}
+		if(obj->getTemplate()->bfme1Data() && m_data->m_specialPowerTemplate && m_data->m_specialPowerTemplate->m_type==0x2A){
+			// BFME1 0x2A92EC..0x2A9326: location-only charge faces, then
+			// +0xE5 makes the idle test in update end the ability.
+			ai->aiFacePosition(m_targetPos,CMD_FROM_AI);m_chargeMove=true;return;
+		}
 		ai->aiMoveToPosition(m_targetPos, CMD_FROM_AI); // RW 0x852D59(pos, 2): AI command 0x47
 		return;
 	}
@@ -1100,6 +1108,13 @@ void SpecialAbilityUpdate::approachTarget()
 	if (!t || !ai)
 	{
 		return;
+	}
+	// BFME1 0x002A9172..0x002A91AE: grab approaches suppress contact
+	// with the target's horde, or the target itself. RW keeps its own path.
+	if(obj->getTemplate()->bfme1Data() && m_data->m_specialPowerTemplate && m_data->m_specialPowerTemplate->m_type==0x27)
+	{
+		Object *parent=t->getContainedBy();
+		obj->setBfme1CollisionIgnoreID(parent && parent->isKindOfName("HORDE")?parent->getID():t->getID());
 	}
 	m_lastTargetPos = *t->getPosition();
 	if (bird)
@@ -1296,6 +1311,13 @@ void SpecialAbilityUpdate::triggerAbilityEffect()
 	else if (type == 0x27 || type == 0x28)
 	{
 		grabTrigger(type);
+	}
+	else if(type==0x2A && obj->getTemplate()->bfme1Data())
+	{
+		// Native charge switch 0x2A9F48: lock PRIMARY even when it is absent;
+		// only a present primary weapon and AI issue the attack command.
+		auto *ai=obj->getAIUpdateInterface();auto *victim=target();auto *w=obj->getWeapons();
+		if(ai && victim && w){w->setWeaponLock(0,LOCKED_TEMPORARILY);if(w->weaponInSlot(0))ai->aiAttackObject(victim,CMD_FROM_AI,0x7FFFFFFF);}
 	}
 	else if (type == 0x15 || type == 0x2A)
 	{
@@ -1722,6 +1744,7 @@ void SpecialAbilityUpdate::finishAbility(bool ownerDying, bool aborted)
 	}
 	if (type == 0x27 || type == 0x28)
 	{
+		if(obj->getTemplate()->bfme1Data())obj->setBfme1CollisionIgnoreID(INVALID_ID); // BFME1 0x002A869E, even if the target is gone.
 		grabFinish();
 	}
 	if (type == 0x1D || type == 0x1A)

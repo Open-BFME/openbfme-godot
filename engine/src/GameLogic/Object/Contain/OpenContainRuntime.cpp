@@ -26,6 +26,7 @@
 #include "GameLogic/Module/OpenContain.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/Contain/ContainEditionRules.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/SimMath.h"
 
@@ -189,7 +190,10 @@ bool OpenContain::openContainAllows(const Object &obj) const
 	const Object *container = getObject();
 	GameLogic &logic = container->logic();
 	const OpenContainModuleData &d = openData();
-	if (obj.isDestroyed() || obj.testStatus((unsigned)temporarilyDefected) || obj.testStatus((unsigned)holdingTheRing) || !m_enabled)
+	const auto &rules = ContainEditionRules::forObject(*container);
+	// BFME1 0x00226A80 has neither the Ring test, the extra mounted
+	// cavalry exclusion nor CAN_ENTER_ANYTHING's relationship bypass.
+	if (obj.isDestroyed() || obj.testStatus((unsigned)temporarilyDefected) || (!rules.bfme1 && obj.testStatus((unsigned)holdingTheRing)) || !m_enabled)
 	{
 		return false;
 	}
@@ -215,11 +219,11 @@ bool OpenContain::openContainAllows(const Object &obj) const
 		return false; // RW 0x8660E2: PassengerFilter (data + 0x40) with the container's player
 	}
 	// RW 0x866165: a filter excluding CAVALRY refuses a MOUNTED object (RW 0x7634A1(9): the exclude mask's bit 9)
-	if (((d.m_passengerFilter.excludeKindOf[(size_t)cavalry >> 5] >> (cavalry & 31)) & 1u) && obj.testModelCondition(mounted))
+	if (!rules.bfme1 && ((d.m_passengerFilter.excludeKindOf[(size_t)cavalry >> 5] >> (cavalry & 31)) & 1u) && obj.testModelCondition(mounted))
 	{
 		return false;
 	}
-	if (!obj.testStatus((unsigned)canEnterAnything))
+	if (rules.bfme1 || !obj.testStatus((unsigned)canEnterAnything))
 	{
 		const Relationship rel = obj.getRelationship(*container); // RW 0x68D7AB(obj, container)
 		bool ok = false;
@@ -1146,11 +1150,11 @@ bool OpenContain::isShipOnWater(const Object &container)
 	return terrain->isUnderwater(p->x, p->y, nullptr, nullptr);
 }
 
-bool OpenContain::validMovementTerrain(AIUpdateInterface &ai, const Coord3D &at)
+bool OpenContain::validMovementTerrain(AIUpdateInterface &ai, const Coord3D &at, int layer)
 {
 	// RW 0x6E8707: the cell of floor(x * 0.1), floor(y * 0.1) (RW 0xBD83D4, x87 at 24 bits) on the layer given (the callers pass 1, the ground)
 	Pathfinder &pf = ai.world().pathfinder();
-	const PathfindCell *cell = pf.getCell(LAYER_GROUND, SimMath::floorToInt(NumericState::pc24Mul(at.x, 0.1f)), SimMath::floorToInt(NumericState::pc24Mul(at.y, 0.1f)));
+	const PathfindCell *cell = pf.getCell((PathfindLayerEnum)layer, SimMath::floorToInt(NumericState::pc24Mul(at.x, 0.1f)), SimMath::floorToInt(NumericState::pc24Mul(at.y, 0.1f)));
 	if (!cell)
 	{
 		return false;

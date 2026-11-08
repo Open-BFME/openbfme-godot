@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <list>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -110,6 +111,12 @@ public:
 	typedef std::list<Object *> ContainedItemsList;
 	virtual const ContainedItemsList *getContainedItemsList() const = 0;
 	virtual unsigned getContainCount() const = 0;
+	// Native contain capacity is an interface query, not a class-name
+	// dispatch (BFME1 reinforcement helper 0x00300AEE).
+	virtual int getContainMax() const { throw std::logic_error("contain capacity: no runtime implementation"); }
+	// BFME1 0x001C2F90 / 0x0022DBA0: transparent zero-slot
+	// wrappers take their slot cost / entry identity from their payload.
+	virtual bool isSpecialZeroSlotContainer() const { return false; }
 	// true when the object was added
 	virtual bool addToContain(Object *obj) = 0;
 	virtual void removeFromContain(Object *obj) = 0;
@@ -245,6 +252,10 @@ public:
 	// broadcasts it after the map objects are placed (RW 0x62F36B / 0x62F8EA) and after FoundationAIUpdate places a structure (RW 0x858A94). Default nothing
 	// (DynamicPortalBehaviour's RW 0x864341 generates its portals there)
 	virtual void onMapPlacement(const Dict *properties) { (void)properties; }
+	// BFME1 behavior-interface +0xA0: Object 0x001BF2A0 broadcasts
+	// the indicator-color index. Default 0x0011A110 is a no-op,
+	// including HordeContain and both transport classes.
+	virtual void onBfme1IndicatorColorIndexChanged(int index) { (void)index; }
 
 protected:
 	// lane SAVE-4b: BehaviorModule::xfer, version (1, 1) (RW 0x8CD4AA, the base xfer every UpdateModule / UpgradeModule xfer calls; inference: it is

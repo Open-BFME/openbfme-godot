@@ -10,6 +10,7 @@
 // hashed through its AI), every AI module (AIUpdateInterface::xferAIState), the movement failures, the noted stops of the report and the next formation id. Rebuilt, not saved:
 // the per-template movement infos (parsed from the templates on use), the collision pass's scratch arrays, the queue diagnostics (peaks).
 
+#include "GameLogic/AI/Bfme1ContactManager.h"
 #include "GameLogic/AI/AIWorld.h"
 
 #include "GameLogic/AI/AIXfer.h"
@@ -31,8 +32,10 @@ void AIWorld::xferBody(Xfer &x)
 {
 	// version 2 (lane FLANK-1): the next formation id (AI + 0x20, lane BACKLOG-8) is saved: it is hashed once a formation was made, and a fresh game's 1 made a
 	// loaded snapshot's hash differ from the saved one (save2 retail T1); a version 1 snapshot keeps 1
-	XferVersion v{ 1, 2 };
+	XferVersion v{ 1, (unsigned char)(m_bfme1Contacts?4:2) };
 	x.xferVersion(v);
+	if(m_bfme1Contacts && v.current<3)throw XferException("BFME1 legacy AI snapshot has no persistent contact state");
+	if(m_bfme1Contacts && v.current<4)throw XferException("BFME1 legacy AI snapshot has no scalar reservation state");
 	const bool loading = x.isLoading();
 	if (loading)
 	{
@@ -167,6 +170,11 @@ void AIWorld::xferBody(Xfer &x)
 	else if (loading)
 	{
 		nextFormation = 1;
+	}
+	if(v.current>=3)
+	{
+		if(!m_bfme1Contacts)throw XferException("BFME1 contact snapshot requires BFME1 world");
+		m_bfme1Contacts->xfer(x);
 	}
 	AIXfer::blockReadToEnd(x, "ai world"); // inside the transaction: a block with bytes after its state is refused before anything stays changed
 	if (loading)

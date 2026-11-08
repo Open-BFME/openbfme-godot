@@ -22,6 +22,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/GameMessage.h"
@@ -32,6 +33,7 @@
 #include "GameLogic/Object/Contain/HordeContainCore.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/ExperienceTracker.h"
 
 #include <algorithm>
 
@@ -72,6 +74,50 @@ void applyFormationState(Object &member, bool main)
 const char *HordeContain::formationStopLine()
 {
 	return kStop;
+}
+
+std::vector<Object *> HordeContain::detachBfme1CombinationMembers()
+{
+	// BFME1 0x00245BF0, interface slots 0x1C0 / 0x44: recover the
+	// entering members, remove formation modifiers, and preserve the objects.
+	returnToFormation(false);
+	removeFormationModifiers();
+	std::vector<Object *> members(m_members.begin(), m_members.end());
+	m_members.clear();
+	m_producedMembers.clear();
+	m_bannerCarrier = INVALID_ID;
+	for (Object *member : members)
+	{
+		m_core->removeMember(member->getID(), false);
+		member->friend_setContainedBy(nullptr);
+	}
+	return members;
+}
+
+void HordeContain::adoptBfme1CombinationMembers(const std::vector<Object *> &members, ObjectID banner)
+{
+	// BFME1 0x00246247 -> adoption slot 0x74: no fresh InitialPayload;
+	// existing members walk into the result's slots. Keep one selected banner.
+	m_payloadCreated = true;
+	m_bannerCarrier = banner;
+	for (Object *member : members)
+	{
+		// BFME1 0x0023FDB0 (the combination's adoption virtual):
+		// drop the previous horde's goal reservation before joining.
+		auto *ai = member->getAIUpdateInterface();
+		if (ai) ai->world().pathfinder().removeGoal(ai->adapter());
+		acceptCreatedMember(member);
+		m_producedMembers.erase(std::remove(m_producedMembers.begin(), m_producedMembers.end(), member->getID()), m_producedMembers.end());
+		member->setTeam(getObject()->getTeam());
+		if (auto *xp = member->getExperienceTracker())
+			if (auto *ownerXP = getObject()->getExperienceTracker()) xp->gainExpForLevel(ownerXP->getRank() - xp->getRank(), true, false);
+		applyFormationState(*member, m_data->horde.m_thisFormationIsTheMainFormation);
+		if (ai && m_data->horde.m_forcedLocomotorSet != -1 && !ai->chooseLocomotorSet(m_data->horde.m_forcedLocomotorSet))
+			getObject()->logic().reportError("BFME1 combination member lacks ForcedLocomotorSet");
+	}
+	m_dirty = true;
+	updateFormation();
+	applyFormationModifiers();
 }
 
 const ThingTemplate *HordeContain::alternateFormationTemplate() const

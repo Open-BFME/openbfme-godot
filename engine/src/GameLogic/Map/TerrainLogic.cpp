@@ -312,6 +312,7 @@ void TerrainLogic::init(const WorldHeightMap &heightMap, const MapChunks &chunks
 {
 	m_map = &heightMap;
 	m_chunks = &chunks;
+	m_bfme1Bridges.clear();
 	m_waypoints.clear();
 	m_waypointById.clear();
 	for (const MapObject &o : chunks.objects)
@@ -415,4 +416,11 @@ bool TerrainLogic::isUnderwater(float x, float y, float z) const
 {
 	float wz;
 	return getStandingWaterHeight(x, y, wz) && z < wz;
+}
+
+bool TerrainLogic::bfme1InteractsWithBridgeEnd(int layer,const Coord3D &p,float radius) const
+{
+ if(layer==1)return false;
+ for(const auto &bridge:m_bfme1Bridges)if(bridge.layer==layer)return bridge.interactsWithEnd(p,radius);
+ return false;
 }

@@ -75,6 +75,7 @@ public:
 	// lane MODULES-2: Lua ObjectEnterRunAwayPanicState / CowerState / UncontrollableCowerState / AlertState (RW 0x736A69 / 0x736AE1 / 0x736BA0 / 0x736B59):
 	// RW 0x68F37F(type, other, 1), the request of the object's EmotionTrackerUpdate (GameLogic/Module/EmotionModules.h)
 	void enterEmotion(int id, int type, int otherId) override;
+	void enterRampageState(int id) override;
 	// lane HERO-2: the bindings' partition queries (RW 0xA39340 with each binding's filter chain; LiveScripting.cpp)
 	std::vector<int> objectsInRange(int id, float radius, LuaRangeOrder order, int relationship, bool notOfPlayer) override;
 

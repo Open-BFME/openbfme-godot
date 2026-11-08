@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/AI/AIWorld.h for the sources and what is inference.
 
+#include "GameLogic/AI/Bfme1ContactManager.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PortalModules.h"
@@ -576,6 +577,10 @@ const PathfindGeometry &ObjectPathfindAdapter::getGeometry() const
 float ObjectPathfindAdapter::getFenceWidth() const { return info().fenceWidth; }
 float ObjectPathfindAdapter::getFenceXOffset() const { return info().fenceXOffset; }
 float ObjectPathfindAdapter::getPathfindDiameter() const { return info().pathfindDiameter; }
+unsigned ObjectPathfindAdapter::containedMemberCount() const
+{
+	return m_object->getContain()?m_object->getContain()->getContainCount():0;
+}
 int ObjectPathfindAdapter::getSlopeLimitIndex() const { return info().slopeLimitIndex; }
 bool ObjectPathfindAdapter::canPathThroughGates() const { return info().canPathThroughGates; }
 
@@ -860,6 +865,7 @@ void AIWorld::attach()
 	}
 	m_attached = true;
 	m_logic.setAIWorld(this);
+	for(Object *o=m_logic.getFirstObject();o;o=o->getNextObject())objectEnteredWorld(*o);
 	m_hooksToken = m_logic.addWorldHooks([this](Object &o) { objectEnteredWorld(o); }, [this](Object &o) { objectLeftWorld(o); });
 	m_hashToken = m_logic.addStateHashContributor([this](StateHasher &h) { crc(h); }, "pathfinder and AI movers");
 	m_logic.installPhaseWork("pathfinderQueue", [this]() { processPathfindQueue(); });
@@ -1201,6 +1207,13 @@ const ObjectMovementInfo &AIWorld::movementInfo(const ThingTemplate &tt)
 
 void AIWorld::objectEnteredWorld(Object &obj)
 {
+	if(!m_bfme1Contacts && obj.getTemplate()->bfme1Data())
+	{
+		m_bfme1Contacts=std::make_unique<Bfme1ContactManager>(m_logic);
+		m_logic.noteStop("[S-5017] BFME1 contacts: native persistent sweep, cached tests and bucket dispatch; collision-ignore IDs and uninitialized native point/normal storage remain unverified (OpenBFME passes zero coordinates)");
+		for(Object *o=m_logic.getFirstObject();o;o=o->getNextObject())m_bfme1Contacts->changed(*o);
+	}
+	collisionObjectChanged(obj);
 	// a structure's footprint enters the map with newMap (the live game) or addObjectToPathfindMap (construction); nothing to do for the seam itself
 	// lane MODCOMPAT-MOD1: a crate joins the crate contact pass (RW 0x68E31F registers it with the collision manager); a stale list is rebuilt whole
 	if (m_cratesValid && CrateCollide::isCrate(obj))
@@ -1213,8 +1226,14 @@ void AIWorld::objectEnteredWorld(Object &obj)
 	}
 }
 
+void AIWorld::collisionObjectChanged(Object &obj)
+{
+	if(m_bfme1Contacts)m_bfme1Contacts->changed(obj);
+}
+
 void AIWorld::objectLeftWorld(Object &obj)
 {
+	if(m_bfme1Contacts)m_bfme1Contacts->removed(obj);
 	// lane MODCOMPAT-MOD1: RW 0x68C18F unregisters it from the collision manager
 	const auto crate = std::lower_bound(m_crates.begin(), m_crates.end(), obj.getID());
 	if (crate != m_crates.end() && *crate == obj.getID())
@@ -1319,6 +1338,7 @@ void AIWorld::unregisterAI(AIUpdateInterface &ai)
 
 void AIWorld::crc(StateHasher &h)
 {
+	if(m_bfme1Contacts)m_bfme1Contacts->crc(h);
 	h.addBool(m_mapReady);
 	m_pathfinder->crc(h); // grid, occupancy, reservations, zones, queues
 	h.addU32((std::uint32_t)m_ais.size());
@@ -1352,6 +1372,7 @@ void AIWorld::processCollisions()
 {
 	m_collisionPairs = 0;
 	m_collisionPairsSkipped = 0;
+	if(m_bfme1Contacts){m_bfme1Contacts->update();m_collisionPairs=m_bfme1Contacts->contacts();return;}
 	if (!m_mapReady || m_ais.size() < 2)
 	{
 		return;
@@ -1622,6 +1643,7 @@ void AIWorld::processCollisions()
 // GeometryInfo (RW 0xB6D060 -> 0x68C7B2 -> RW 0xAD2CE0)
 void AIWorld::processCrateContacts()
 {
+	if(m_bfme1Contacts)return;
 	if (!m_mapReady)
 	{
 		return;
