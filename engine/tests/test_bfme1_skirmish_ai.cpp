@@ -33,6 +33,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <set>
+#include <sstream>
 #include <cstring>
 
 namespace
