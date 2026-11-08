@@ -11,6 +11,7 @@
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
+#include "AISceneTestUtil.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerHeroList.h"
@@ -179,6 +180,8 @@ Fight fight(starttest::Shared &s, const char *faction, const std::string &hero, 
 	Player *enemy = live.players().findPlayerWithName(live.report().startSlotPlayers[1]);
 	REQUIRE(player);
 	REQUIRE(enemy);
+	// The opponent is scripted: roaming must neither retask it nor perturb the combat scene's shared random stream.
+	testutil::deferRoamingDefense(logic, enemy->getPlayerIndex());
 	player->getMoney()->deposit(1000000, false);
 	player->commandPoints().setFromScript(100000, 100000);
 	const ThingTemplate *tt = logic.things().findTemplate(hero);
@@ -266,13 +269,6 @@ Fight fight(starttest::Shared &s, const char *faction, const std::string &hero, 
 	const Coord3D at = *h->getPosition();
 	Object *horde = live.createObject(foe, enemy->getPlayerIndex(), Coord3D{ at.x + 100.0f, at.y, 0.0f }, 0.0f, &error);
 	REQUIRE_MESSAGE(horde, error);
-	if (ordered && std::string(faction) == "FactionIsengard" && hero == "MordorSauron_RingHero")
-	{
-		// RW 0x9B8412: keep this slow hero's scripted opponent off the default team so roaming cannot retask it.
-		// Correcting roaming membership/direct commands otherwise turns this attack test into a fleeing-target chase.
-		auto &teams = live.players().teams();
-		horde->setTeam(teams.createTeam(teams.initTeam("HeroCombatOpponent", enemy, false)));
-	}
 	const ObjectID hordeId = horde->getID();
 	logic.runLogicFrame();
 	horde = logic.findObjectByID(hordeId);
