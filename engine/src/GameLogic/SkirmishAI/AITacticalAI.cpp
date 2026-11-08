@@ -1285,7 +1285,8 @@ bool chooseRoamDestination(GameLogic &logic, AISkirmishPlayer &ai, Coord3D &out)
 			}
 			const Coord3D *p = o->getPosition();
 			const float dx = SimMath::subf32(base.x, p->x), dy = SimMath::subf32(base.y, p->y), dz = SimMath::subf32(base.z, p->z);
-			const float d = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
+			// RW 0x9B8229 / 0x9B822D: (x*x + y*y) + z*z, each sum rounded.
+			const float d = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)), SimMath::mulf32(dz, dz));
 			if (d < 810000.0f) // RW 0xC89CF0
 			{
 				near.push_back(o);
@@ -1297,6 +1298,7 @@ bool chooseRoamDestination(GameLogic &logic, AISkirmishPlayer &ai, Coord3D &out)
 			out = *near[(size_t)index]->getPosition();
 			return true;
 		}
+		return false; // RW 0x9B8251 -> 0x9B828B: nonempty economy never falls through.
 	}
 	const Object *fortress = nullptr;
 	for (ObjectID id : record.structures())
@@ -1314,11 +1316,13 @@ bool chooseRoamDestination(GameLogic &logic, AISkirmishPlayer &ai, Coord3D &out)
 	}
 	const int angle = logic.random().getValue(0, 6, kRoamingFile, 0xBA);
 	const float a = (float)angle;
-	const float c = SimMath::fstpDword(SimMath::cosd(a)); // RW 0xA3CF84
-	const float s = SimMath::fstpDword(SimMath::sind(a)); // RW 0xA3CF90
+	const float s = SimMath::fstpDword(SimMath::sind(a)); // RW 0x9B830E: sin before cos
+	const float c = SimMath::fstpDword(SimMath::cosd(a)); // RW 0x9B831C
+	const float rx = SimMath::subf32(c, SimMath::mulf32(s, 0.0f));
+	const float ry = SimMath::addf32(SimMath::mulf32(c, 0.0f), s);
 	const Coord3D *centre = fortress->getPosition();
-	out.x = SimMath::addf32(centre->x, SimMath::mulf32(c, 400.0f)); // RW 0xC89CF4
-	out.y = SimMath::addf32(centre->y, SimMath::mulf32(s, 400.0f));
+	out.x = SimMath::addf32(SimMath::mulf32(rx, 400.0f), centre->x); // RW 0xC89CF4
+	out.y = SimMath::addf32(centre->y, SimMath::mulf32(ry, 400.0f));
 	out.z = centre->z;
 	return true;
 }
@@ -1329,7 +1333,8 @@ void issueRoamOrder(GameLogic &logic, AISkirmishPlayer &ai, Object &unit)
 	Coord3D destination{};
 	if (chooseRoamDestination(logic, ai, destination))
 	{
-		attackMove(logic, std::vector<ObjectID>{ unit.getID() }, destination, CMD_FROM_PLAYER);
+		// RW 0x9B8286 / 0x9B8390: select before asking the unit to accept command 0xF.
+		if (auto *u = unit.getAIUpdateInterface()) u->aiAttackMoveToPosition(destination, CMD_FROM_PLAYER);
 	}
 }
 
@@ -1513,8 +1518,12 @@ void updateIdleCounters(GameLogic &logic, const AISkirmishPlayer &ai, AITactic &
 }
 
 // RW 0x8F27AD: with teams (vslot 0x10 != 0) the tactic's position (+ 0x38) is the average of the team centres (x87 sums in team order, times 1 / n)
+int tacticTeamCount(const AITactic &tac);
+
 void updateTacticPosition(GameLogic &logic, AITactic &tac)
 {
+	if (tacticTeamCount(tac) == 0) return; // RW 0x8F27BF..0x8F27C4
+
 	std::vector<Coord3D> centres;
 	for (const AITacticTeam &team : tac.teams)
 	{
@@ -1803,6 +1812,8 @@ int tacticTeamCount(const AITactic &tac)
 {
 	if (tac.targetless)
 	{
+		// ReturnTheRing has a dynamic count: RW 0x5F2DC6 reads +0x58, set at RW 0x9B8878.
+		if (tac.kindIndex == kTargetlessBase + 5) return (int)tac.teams.size();
 		return tac.kindIndex == kTargetlessBase + TL_FARM_KILL || tac.kindIndex == kTargetlessBase + TL_FLAG_CAPTURE ? 1 : 0;
 	}
 	return teamCountOf((OffensiveKind)tac.kindIndex);
@@ -2379,7 +2390,7 @@ void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, 
 
 // AIRoamingDefenseTactic's run RW 0x9B7EBD: the tactic's running flag (+ 0x10) and "roaming" (+ 0x58); setup RW 0x9B80FA has already set
 // the IsRunning key. The update RW 0x9B83A6 sends the first idle, unbusy unit of the player's army (AI slot 0x1B8, status 0x5A clear, the
-// controlling player's id + 0x31C == the AI player's + 0x30C) to RW 0x9B8160's destination and ends the tactic (0, 0).
+// object's Team + 0x31C == the AI player's default Team + 0x30C) to RW 0x9B8160's destination and ends the tactic (0, 0).
 void updateRoamingDefense(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
 	if (tac.step == 0)
@@ -2392,7 +2403,7 @@ void updateRoamingDefense(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &
 	{
 		Object *o = logic.findObjectByID(id);
 		AIUpdateInterface *u = o ? o->getAIUpdateInterface() : nullptr;
-		if (!u || !u->isIdle() || o->testStatus((unsigned)leavingFactory) || o->getControllingPlayer() != me)
+		if (!u || !u->isIdle() || o->testStatus((unsigned)leavingFactory) || !me || o->getTeam() != me->getDefaultTeam() || inAnyTeamOf(b, id))
 		{
 			continue;
 		}
@@ -3210,7 +3221,7 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 	}
 	// RW 0x8F11DA
 	// RW 0x8F232F: a prototype with no teams (RW 0x851E97) marks itself ready (byte + 0x51); the port's team count keeps that
-	tac.ready = tacticTeamCount(tac) == 0 ? tac.teams.empty() : (!tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; }));
+	tac.ready = tacticTeamCount(tac) == 0 ? true : (!tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; }));
 	if (!tac.ready || tac.ended)
 	{
 		return;

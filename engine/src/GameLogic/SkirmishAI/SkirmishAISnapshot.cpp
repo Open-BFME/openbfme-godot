@@ -1026,6 +1026,11 @@ void SkirmishAIManager::checkLoaded() const
 					throw XferException("skirmish ai: a SimpleExpansion whose request is not a plain structure request");
 				}
 				break;
+			case 107:
+				// RW 0x9B7EC6..0x9B7EE4 transfers the roaming flag, including the ended frame.
+				AIXfer::inRange(tac.step, 0, 1, what.c_str());
+				AIXfer::inRange(tac.step2, 0, 0, what.c_str());
+				break;
 			default:
 				AIXfer::inRange(tac.step, 0, 0, what.c_str());
 				AIXfer::inRange(tac.step2, 0, 0, what.c_str());

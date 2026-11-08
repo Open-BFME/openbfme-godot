@@ -266,6 +266,13 @@ Fight fight(starttest::Shared &s, const char *faction, const std::string &hero, 
 	const Coord3D at = *h->getPosition();
 	Object *horde = live.createObject(foe, enemy->getPlayerIndex(), Coord3D{ at.x + 100.0f, at.y, 0.0f }, 0.0f, &error);
 	REQUIRE_MESSAGE(horde, error);
+	if (ordered && std::string(faction) == "FactionIsengard" && hero == "MordorSauron_RingHero")
+	{
+		// RW 0x9B8412: keep this slow hero's scripted opponent off the default team so roaming cannot retask it.
+		// Correcting roaming membership/direct commands otherwise turns this attack test into a fleeing-target chase.
+		auto &teams = live.players().teams();
+		horde->setTeam(teams.createTeam(teams.initTeam("HeroCombatOpponent", enemy, false)));
+	}
 	const ObjectID hordeId = horde->getID();
 	logic.runLogicFrame();
 	horde = logic.findObjectByID(hordeId);
