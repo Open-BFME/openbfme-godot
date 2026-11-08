@@ -502,6 +502,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // Merge queue q32 re-measured both once on the merged tree (OPENBFME_PERF1_REGEN=1, a CI host), compared at each merge point: #137 (the rebuild holes),
 // MODCOMPAT-AI (the skirmish AI's references and completed upgrades) and #156 (the capture release) each move the skirmish; #140, TEAMEVENTS-1 and #159 move
 // neither; the big battle is unchanged.
+// pin: lane RAI-TL-2 re-recorded the 4-player skirmish on top of main c8aa4603 (OPENBFME_PERF1_REGEN=1): ReturnTheRing's applicability
+// check drops the hashed targetless-unported counter 9 -> 8; the big battle is unchanged.
+// pin: the same counter moves BACKLOG2's last hash 0x57D4FF8F -> 0x8ECFDB13; goals and positions stay put.
 // Merge queue q33 re-measured them once on the merged tree (OPENBFME_PERF1_REGEN=1, a CI host), compared at each merge point: #164 (the logic-frame
 // caches) moves neither; MODCOMPAT-MOD1 (its eleven modules in the update vectors and the object hash, MODCOMPAT-MOD1's own vectors were measured on its
 // older base) and #133 (the straight production exits) each move both; #166 (Uber only) moves neither.
