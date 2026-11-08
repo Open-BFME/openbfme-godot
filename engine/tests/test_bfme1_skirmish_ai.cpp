@@ -869,6 +869,9 @@ std::string combinationObjects()
 }
 void startBfme1Scripts(movetest::MoveWorld &f)
 {
+	// Recruitment can issue move orders immediately, before the first frame.
+	// Match LiveGame startup: initialize the pathfinder before running scripts.
+	if (!f.mapBuilt) f.buildMap();
 	std::vector<ScriptEngine::SideScripts> sides(3);
 	for (int i = 0; i < 3; ++i) sides[i].sideName = f.players.getNthPlayer(i)->getPlayerName();
 	f.logic->skirmishAI().useBfme1();
@@ -906,7 +909,6 @@ struct ReinforcementWorld
 		origin.m_properties.setInt("waypointID", 1); origin.m_properties.setAsciiString("waypointName", "Origin"); chunks.objects.push_back(origin);
 		std::vector<std::string> problems; terrain.init(map, chunks, &problems); REQUIRE(problems.empty());
 		f.logic->setTerrain(&terrain); f.logic->scriptEngine().setHost(&host); startBfme1Scripts(f);
-		f.buildMap();
 	}
 	~ReinforcementWorld() { f.logic->scriptEngine().setHost(nullptr); f.logic->setTerrain(nullptr); }
 	TeamPrototype *wave(bool explicitCarrier, bool startsFull, bool exits, int riders = 3)
