@@ -960,4 +960,37 @@ std::vector<std::string> stopLines()
 {
 	return { kStopUpgrade, kStopLayer, kStopRequirements, kStopTypeTest, kStopObjectTypeTest };
 }
+
+// TOP20 #9: RW 0x82CEFB (see ActionManager.h)
+EnterMessage getEnterMessage(const Object &target, const std::vector<const Object *> &selection)
+{
+	static const int kCanEnterAnything = ObjectTemplateInfoBuilder::objectStatusIndex("CAN_ENTER_ANYTHING"); // 0x5D
+	static const int kHoldingTheRing = ObjectTemplateInfoBuilder::objectStatusIndex("HOLDING_THE_RING");     // 0x5E
+	static const int kCommandCenter = ObjectTemplateInfoBuilder::kindOfIndex("COMMANDCENTER");               // 17
+	ContainModuleInterface *contain = const_cast<Object &>(target).getContain(); // Object + 0x258
+	if (selection.empty() || !contain) // RW 0x82CF04 .. 0x82CF22
+	{
+		return ENTER_MESSAGE_ENTER;
+	}
+	if (contain->getContainCount() > 0) // RW 0x82CF2A .. 0x82CF36: vslot 0x114(0)
+	{
+		const Object &first = *selection.front();
+		// RW 0x82CF48 .. 0x82CF75: the contain's vslot 0x20 is RW 0x9188EB (false) in every contain table, so only the status decides
+		if (first.getControllingPlayer() != target.getControllingPlayer() && first.testStatus((unsigned)kCanEnterAnything))
+		{
+			return ENTER_MESSAGE_CONTEST;
+		}
+	}
+	if (target.isKindOf((unsigned)kCommandCenter)) // RW 0x82CF84
+	{
+		for (const Object *o : selection) // RW 0x82CF93 .. 0x82CFAF
+		{
+			if (o->testStatus((unsigned)kHoldingTheRing))
+			{
+				return ENTER_MESSAGE_DELIVER_RING;
+			}
+		}
+	}
+	return contain->isSlaughterContain() ? ENTER_MESSAGE_SLAUGHTER : ENTER_MESSAGE_ENTER; // RW 0x82CFB1 .. 0x82CFC1: vslot 0x30
+}
 } // namespace ActionManager

@@ -75,6 +75,23 @@ bool canDoSpecialPower(Object &obj, const SpecialPowerTemplate *power);
 bool canDoSpecialPowerAtObject(Object &obj, Object *target, CommandSourceType source, const SpecialPowerTemplate *power, unsigned options,
                                bool checkSourceRequirements, bool *unported = nullptr);
 
+// TOP20 #9: RW 0x82CEFB getEnterMessage(target, selection) (BFME2 decomp ActionManager::getEnterMessage 0x0041C5F6, same shape): the kind of enter a
+// selection makes into `target`, the hint message types RotWK's unit voice switches on (RW 0x8DF50D). `selection`: the selected objects in selection order
+// (RW walks the drawable list; null entries are not passed).
+//   * no selection, or a target without a contain module (Object + 0x258): ENTER;
+//   * the contain holds something (vslot 0x114(0) > 0) and the first selected object's controlling player is not the target's (RW 0x68B678): CONTEST when
+//     that object has status CAN_ENTER_ANYTHING (0x5D, RW 0x44DDEC) or the contain's vslot 0x20 answers (RW 0x9188EB false for every contain table);
+//   * a COMMANDCENTER target (template + 0x10A bit 1, KindOf 17) and any selected object with status HOLDING_THE_RING (0x5E): DELIVER_RING;
+//   * the contain's vslot 0x30 (isSlaughterContain): SLAUGHTER; else ENTER.
+enum EnterMessage
+{
+	ENTER_MESSAGE_ENTER = 0xB9,
+	ENTER_MESSAGE_CONTEST = 0xBA,
+	ENTER_MESSAGE_SLAUGHTER = 0xCB,
+	ENTER_MESSAGE_DELIVER_RING = 0xCC
+};
+EnterMessage getEnterMessage(const Object &target, const std::vector<const Object *> &selection);
+
 // tests: the final test of RW 0x82E913 for a power type (0 no, 1 shroud CLEAR, 2 yes, 3 not SHROUDED, 4 the cliff grid 0x48 .. 0x4A, 5 the range 0x92, 6 the
 // unported 0x27 / 0x57, 7 the plane grid 0x59 / 0x68, 8 the army test 0x63) and whether RW 0x82D6B1 accepts a targetless type
 int finalTestKind(int type);

@@ -7,6 +7,7 @@
 #include "Common/Audio/AudioEntryPoints.h"
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/ActionManager.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/BehaviorModule.h"
@@ -225,6 +226,35 @@ UnitVoiceResponse::Voice UnitVoiceResponse::unitSpecificVoice(const ThingTemplat
 	// RW 0x73EDD0: tt + 0x388, the UnitSpecificSounds map (GameLogic/UnitSpecificSound.h)
 	const std::string value = UnitSpecificSound::rawValue(tt, name);
 	return value.empty() ? Voice() : parseVoiceValue(value, std::string());
+}
+
+int UnitVoiceResponse::voiceTargetArgument(int msgType)
+{
+	// TOP20 #9 (the owner's check, 2026-11-04: a horde entering a building said nothing): the target is the object RW 0x8DD74F takes from the pick info (+ 4,
+	// the drawable under the cursor), i.e. the message argument the logic case reads as the target. The layouts are the producers' (this port's message
+	// writers); guessing "the first object id" made MSG_ENTER's entering object its own target
+	switch (msgType)
+	{
+		case MSG_DO_ATTACK_OBJECT:       // CommandXlat: (target, ...)
+		case MSG_DO_FORCE_ATTACK_OBJECT: // CommandXlat: (target, location)
+		case MSG_DO_GUARD_OBJECT:        // GUICommandTranslator: (target, mode)
+		case MSG_DOCK:                   // CommandXlat: (dock)
+			return 0;
+		case MSG_DO_WEAPON_AT_OBJECT:    // GUICommandTranslator: (weapon slot, target, max shots)
+		case MSG_ENTER:                  // CommandXlat: (entering object, container); the logic case RW 0x77AC26 reads argument 1
+			return 1;
+		case MSG_GET_REPAIRED:           // no writer in the port; ZH CommandXlat writes the target alone
+		case MSG_GET_HEALED:
+		case MSG_DO_SALVAGE:
+		case MSG_DOZER_CONSTRUCT:
+		case MSG_RESUME_CONSTRUCTION:
+		case MSG_COMBATDROP_AT_OBJECT:
+		case MSG_DO_REPAIR:
+		case MSG_HARVEST:
+			return 0;
+		default:                         // selections (their ids are the selection, not a target), locations, events: no target
+			return -1;
+	}
 }
 
 bool UnitVoiceResponse::handles(int msgType)
@@ -793,6 +823,23 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 		candidates.emplace_back(obj, ordinal);
 	}
 
+	// TOP20 #9, RW 0x8DEE06 -> RW 0x8DD74F: for MSG_ENTER (0x42C) with a target object, the kind of enter the selection makes (RW [ebp-0x84] =
+	// ActionManager::getEnterMessage RW 0x82CEFB over the selected drawables); -1 otherwise
+	int enterKind = -1;
+	const Object *enterTarget = msgType == MSG_ENTER && info && info->target != INVALID_ID ? m_logic.findObjectByID(info->target) : nullptr;
+	if (enterTarget)
+	{
+		std::vector<const Object *> selected;
+		for (ObjectID id : selection)
+		{
+			if (const Object *o = m_logic.findObjectByID(id))
+			{
+				selected.push_back(o);
+			}
+		}
+		enterKind = (int)ActionManager::getEnterMessage(*enterTarget, selected);
+	}
+
 	const CrowdThreshold *crowd = pickCrowd(candidates); // RW [ebp-0xCC]: one crowd entry for every choice
 	Rank best;
 	best.special = 0;
@@ -911,16 +958,63 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 				break;
 			case MSG_ENTER:
 			{
-				// RW 0x8DF461 .. 0x8DF716: VoiceEnterUnit<target>, else by the enter kind (heal pad / garrison / hostile / ring / slaughterhouse: the kind is
-				// the AI's command classification RW [ebp-0x84], not ported: S-704), else VoiceEnter
-				const Object *target = info && info->target != INVALID_ID ? m_logic.findObjectByID(info->target) : nullptr;
+				// RW 0x8DF484 .. 0x8DF4FF: VoiceEnterUnit<target template>
+				const Object *target = enterTarget;
 				if (target && target->getTemplate())
 				{
 					fillName(c, obj, "VoiceEnterUnit" + target->getTemplate()->getName());
 				}
-				if (!done(c))
+				if (done(c))
+				{
+					break;
+				}
+				if (!target) // RW 0x8DF505 -> 0x8DF6F3
 				{
 					fillName(c, obj, "VoiceEnter");
+					break;
+				}
+				// TOP20 #9, RW 0x8DF50D .. 0x8DF716: by the enter kind (enterKind above)
+				static const int kHealPad = ObjectTemplateInfoBuilder::kindOfIndex("HEAL_PAD");   // template + 0x10C bit 0 (KindOf 32)
+				static const int kStructure = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE"); // template + 0x108 bit 7
+				switch (enterKind)
+				{
+					case ActionManager::ENTER_MESSAGE_ENTER: // 0xB9, RW 0x8DF654
+						if (target->isKindOf((unsigned)kHealPad))
+						{
+							fillName(c, obj, "VoiceGetHealed");
+						}
+						else if (target->isKindOf((unsigned)kStructure))
+						{
+							fillName(c, obj, "VoiceGarrison");
+						}
+						else
+						{
+							fillName(c, obj, "VoiceEnter");
+						}
+						break;
+					case ActionManager::ENTER_MESSAGE_CONTEST: // 0xBA, RW 0x8DF626
+						fillName(c, obj, "VoiceEnterHostile");
+						break;
+					case ActionManager::ENTER_MESSAGE_SLAUGHTER:    // 0xCB, RW 0x8DF571
+					case ActionManager::ENTER_MESSAGE_DELIVER_RING: // 0xCC, RW 0x8DF546
+						fillName(c, obj, enterKind == ActionManager::ENTER_MESSAGE_DELIVER_RING ? "VoiceDeliverRing" : "VoiceSendToSlaughterhouse");
+						// RW 0x8DF5A3 .. 0x8DF5EE: else VoiceMoveToCamp (row 0x11), else in battle (RW 0x8DD7DC) VoiceMoveWhileAttacking (0x14), else VoiceMove (3)
+						if (!done(c))
+						{
+							fillRow(c, obj, VOICE_MOVE_TO_CAMP);
+						}
+						if (!done(c) && inBattle(obj))
+						{
+							fillRow(c, obj, VOICE_MOVE_WHILE_ATTACKING);
+						}
+						if (!done(c))
+						{
+							fillRow(c, obj, VOICE_MOVE);
+						}
+						break;
+					default: // RW 0x8DF5F8
+						fillName(c, obj, "VoiceEnter");
+						break;
 				}
 				break;
 			}
@@ -1103,7 +1197,7 @@ std::vector<std::string> UnitVoiceResponse::acceptanceStops()
 		"[S-704] unit voice: rules of the move / attack / enter helpers not ported: the planning order mode (player + 0x770 == 2 -> MiscAudio PlanningModeOrderGiven), "
 		"VoiceCrush (GameData + 0x8B9, crushable target), the busy gate (GameData + 0x8B0), the castle and camp rules (RW 0x8DDBC4, campness RW 0x8DD6F3 with "
 		"AudioSettings VoiceMoveToCampMaxCampnessAtStartPoint / MinCampnessAtEndPoint), VoiceMoveOverWalls (RW 0x8DE628), the weapon's voice (RW 0x68B58C weapon "
-		"template + 0xD0 / + 0xD8), the enter kinds (heal / garrison / hostile / ring / slaughterhouse), the charge voice's drawable gate (RW 0x671EE4: no drawable, no charge)",
+		"template + 0xD0 / + 0xD8), the charge voice's drawable gate (RW 0x671EE4: no drawable, no charge)",
 		"[S-705] unit voice: the candidate order is selection then member order (retail iterates a hash map keyed by Object pointers), a count tie between "
 		"two sounds goes to the lower-case name order (retail: the lower audio info POINTER, RW 0x8DE522's unsigned compare), and a hero's level is the "
 		"minimum (the experience tracker RW 0x79D12A is lane XP-1's): which sound wins a tie and which object of a bucket speaks may differ from retail",
@@ -1133,18 +1227,17 @@ void PlayUnitVoiceForMessage(UnitVoiceResponse &voice, const std::vector<ObjectI
 	{
 		return;
 	}
-	// ZH PickAndPlayInfo from the command: the target object and the location the command carries (the select messages carry the selected ids, not a target)
+	// ZH PickAndPlayInfo from the command: the target object (the argument voiceTargetArgument names) and the first location the command carries
 	UnitVoiceResponse::Info info;
-	const bool selects = type == MSG_CREATE_SELECTED_GROUP || type == MSG_CREATE_SELECTED_GROUP_IDLE_WORKER_VOICE || type == MSG_CREATE_SELECT_ALL_GROUP ||
-		(type >= MSG_SELECT_TEAM0 && type <= MSG_SELECT_TEAM9);
+	const int targetArg = UnitVoiceResponse::voiceTargetArgument(type);
+	if (targetArg >= 0 && (size_t)targetArg < msg.getArgumentCount() && msg.getArgument((size_t)targetArg)->type == ARGUMENTDATATYPE_OBJECTID)
+	{
+		info.target = msg.getArgument((size_t)targetArg)->objectID;
+	}
 	for (size_t i = 0; i < msg.getArgumentCount(); ++i)
 	{
 		const GameMessageArgument *a = msg.getArgument(i);
-		if (!selects && a->type == ARGUMENTDATATYPE_OBJECTID && info.target == INVALID_ID)
-		{
-			info.target = a->objectID;
-		}
-		else if (a->type == ARGUMENTDATATYPE_LOCATION && !info.hasPosition)
+		if (a->type == ARGUMENTDATATYPE_LOCATION && !info.hasPosition)
 		{
 			info.hasPosition = true;
 			info.position = a->location;

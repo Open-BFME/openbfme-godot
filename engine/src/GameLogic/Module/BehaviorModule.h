@@ -126,6 +126,9 @@ public:
 	// RW 0xC5C9F0). The defaults are OpenContain's answers; a contain class that is not ported answers through UnportedBehaviorModule (no contain at all) ----
 	// slot 0x10 isGarrisonable: GarrisonContain RW 0x8BD372 true, OpenContain RW 0x9188EB false (TunnelContain RW 0xC5DCE0 + 0x10: RW 0x9188EB false, lane UI-1)
 	virtual bool isGarrisonable() const { return false; }
+	// TOP20 #9: slot 0x30, asked by ActionManager::getEnterMessage (RW 0x82CFB5): SlaughterHordeContain RW 0xC5F0D0 and CitadelSlaughterHordeContain RW
+	// 0xC5F2E8 + 0x30 = RW 0x8BD372 true; every other contain table of RW 0xC59AF0 .. 0xC5F688 + 0x30 = RW 0x9188EB false
+	virtual bool isSlaughterContain() const { return false; }
 	// lane UI-1: slot 0xC8 isDisplayedOnControlBar (the control bar's transport inventory RW 0x943D6F -> RW 0x94251F asks it): OpenContain RW 0x9188EB false;
 	// GarrisonContain / HordeGarrisonContain, TransportContain / HordeTransportContain, SiegeEngineContain / HordeSiegeEngineContain and TunnelContain RW 0x8BD372
 	// true (their contain tables RW 0xC5C698, 0xC5C9F0, 0xC5A690, 0xC5C370, 0xC5D668, 0xC5DA10, 0xC5DCE0). HordeContain's table was not read: false (INFERENCE:
