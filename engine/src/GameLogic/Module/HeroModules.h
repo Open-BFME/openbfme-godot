@@ -29,14 +29,15 @@
 //     controlling player a revive record joins its hero list (RW 0x781792, AutoSpawn: cost 0) and gets the tracker's level cap (+0xD8);
 //   * permanently killed (RW 0x8B3349), in a state other than 0 (so never for the alive state RespawnBody calls it in): DeathAnim and RespawnAnim cleared,
 //     DISABLED_PARALYZED cleared, sleep forever, +0x30 = 0, state 2;
-//   * revived (RW 0x8B38A2, called by ProductionUpdate on the new object of a revive entry): the initial spawn (+0x41) sets InitialSpawnAnim and plays
+//   * revived (RW 0x8B38A2, called by ProductionUpdate on the new object of a revive entry): copies the producer's position and, if it has an exit interface,
+//     calls slot 9 getNaturalRallyPoint(out, true) (RW 0x68BB14 / 0x8B38D8); that result is unused. The initial spawn (+0x41) sets InitialSpawnAnim and plays
 //     InitialSpawnFX for InitialSpawnAnimationTime, else RespawnAnim / RespawnFX / RespawnAnimationTime; state 4; with a rule: +0x20 = health, the body's
 //     health set to that share (body vslot 0x58 RW 0x8C47DE(health * 100, false): internalChangeHealth(fraction * body + 0x2C - health)), +0x34 = +0x38 = -1,
 //     wake after the animation time; without a rule sleep forever;
 //   * update (RW 0x8B3A35): state 3 (auto respawn, not reachable from retail data: no AutoSpawn:Yes rule exists; its writer is not located, S-851) moves the
 //     object to its respawn point, RespawnAnim / RespawnFX, DISABLED_PARALYZED until the animation ends, state 4, health; state 4: RespawnAnim and
 //     InitialSpawnAnim cleared, UNSELECTABLE and DISABLED_PARALYZED cleared, state 0, and when the object's producer exists, the object's AI is idle
-//     (AI vslot 0x1B8 isIdle, or RW 0x660AC1 == 16 AI_GUARD) and the producer has an exit interface, the producer's exit sends it out (slot 8, exitObjectViaDoor(obj, 0));
+//     (AI vslot 0x1B8 isIdle, or RW 0x660AC1 == 16 AI_GUARD) and the producer has an exit interface, calls exitObjectViaDoor(obj, 0) (vtable offset +8 / method 2, RW 0x8B3AEA);
 //     sleep forever.
 //   * UnpauseSpecialPowerUpgrade (create RW 0x64FF28 / 0x64FEF0, data 0x140 bytes: the upgrade base then table RW 0xC6EB5C: SpecialPowerTemplate (+0x138,
 //     RW 0x73B22F: the store's template by name, null when unknown) and ObeyRechageOnTrigger (sic, +0x13C, bool); vtables RW 0xC6EA98 / mux RW 0xC6EA50):
