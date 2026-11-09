@@ -96,6 +96,7 @@ def scripts(names: str) -> set[str]:
 # Allowlist: complete checks with no retail data, renderer readback, window or
 # frame-delay assumptions. Each must finish within 20 s on a 6-core/6-GiB host.
 ALLOWLIST = {
+    "shell_movie_audio_test.gd": "movie/audio stubs; no retail assets or extension",
     "app_icon_test.gd": "bundled application icon resources",
     "bfme1_launch_args_test.gd": "command-line parsing only; no game is started",
     "cah_camera_test.gd": "camera geometry against synthetic bounds",
@@ -123,6 +124,7 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "bfme1_battle_school_test.gd": "manual: private BFME1 assets, rebuilt extension and movie playback",
     "options_open_test.gd": "manual: needs a private BFME1 installation and/or private RotWK/BFME2 assets, the built GDExtension and audio setup; optional screenshots require a window/GPU",
     "w3d_shader_reuse_test.gd": "manual: requires the isolated native test extension built by w3d_shader_reuse_test.py; no retail assets",
     "harlindon_creep_combat_test.gd": "manual: requires private retail assets and a live skirmish",
