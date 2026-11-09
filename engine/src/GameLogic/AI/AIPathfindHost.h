@@ -44,6 +44,8 @@ enum PathfindLayerEnum
 };
 
 inline bool isWallLayer(PathfindLayerEnum l) { return (int)l >= (int)LAYER_WALL_FIRST && (int)l <= (int)LAYER_WALL_LAST; }
+// RW 0x76550F (BFME2 0x6E6E6C): a layer of the ground grid, the ground, the ramp or a wall top (no raised walkway grid)
+inline bool isGroundLayer(PathfindLayerEnum l) { return l == LAYER_GROUND || (int)l >= (int)LAYER_RAMP; }
 // RW 0x5E2F24 (IS_BRIDGE_LAYER): 2 .. 15
 inline bool isRaisedLayer(PathfindLayerEnum l) { return (int)l >= (int)LAYER_TOP && (int)l <= (int)LAYER_RAISED_LAST; }
 
@@ -61,6 +63,10 @@ struct PathfindWallSurface
 	float height = 0.0f;                                   // a wall top: its height; a ramp: its highest point
 	// the triangle under (x, y) (edges included) and its height there; false when no triangle holds the point
 	bool heightAt(float x, float y, float &z) const;
+	// lane WALL-4: a ramp's Bridge plane (RW 0x68044E), made from the triangles on first use and kept (the triangles never change): 0 not made yet, 1 a plane
+	// through `planePoint` with the normal `planeNormal`, 2 none (getRamp found no ramp, or the plane is vertical). Neither saved nor hashed
+	mutable int planeState = 0;
+	mutable Coord3D planePoint{ 0.0f, 0.0f, 0.0f }, planeNormal{ 0.0f, 0.0f, 0.0f };
 };
 
 struct PathfindWallGeometry
@@ -192,6 +198,8 @@ enum PathfindRelationship
 };
 
 // One object as the pathfinder sees it.
+struct PathfindLocomotorInfo;
+
 class PathfindObject
 {
 public:
@@ -199,6 +207,9 @@ public:
 	virtual PathfindObjectID getID() const = 0;
 	virtual const Coord3D &getPosition() const = 0;
 	virtual float getOrientation() const = 0;
+	// lane PATH-REBUILD: the unit's 2D direction (RW 0x70B9E0, the Object's cached unit direction vector): the orientation's cosine and sine unless
+	// the adapter answers from the object's transform
+	virtual Coord2D getUnitDirection2D() const;
 	virtual PathfindLayerEnum getLayer() const = 0;
 	virtual float getHeightAboveTerrain() const = 0;
 	virtual bool isMobile() const = 0;
@@ -250,8 +261,8 @@ public:
 	// the object status CAN_NOT_WALK_ON (RW index 0x4D, the binary's status name table): RW 0x936C8A .. 0x936C95 clears a WALK_ON_TOP_OF_WALL template's
 	// wall flag with it (review of #63)
 	virtual bool cannotWalkOn() const { return false; }
-	// RW checkForMovement (0x6EBAA0), enemy branch: `other` (or its container) is the unit's current attack / approach target, so a
-	// parked enemy of that kind does not block it (the AI state machine's target RW 0x8DBACE and 0x668303; S-164)
+	// RW checkForMovement (0x6EBAA0), enemy branch: `other` (or its container) is the unit's current attack / approach target, so an
+	// enemy of that kind does not block it (the AI state machine's goal object RW 0x8DBACE, the current victim RW 0x668303)
 	virtual bool ignoresAsTarget(const PathfindObject &other) const { (void)other; return false; }
 	// KindOf PATH_THROUGH_EACH_OTHER (116)
 	virtual bool pathsThroughEachOther() const { return false; }
@@ -278,6 +289,10 @@ public:
 	virtual bool isSkirmishAIControlled() const { return false; }
 	// lane WALL-2: RW 0x68C053, the first test of the portal search RW 0x6F5547 (a unit it answers true for crosses no portal; name INFERRED: S-4851)
 	virtual bool refusesPortals() const { return false; }
+	// lane QPATH-1: object status 49 = IMMOBILE (RW 0x6F5C30 push 0x31; call 0x44DDEC, Object::testStatus), the first test of QuickDoesPathExist RW 0x6F5BB0
+	virtual bool isStatusImmobile() const { return false; }
+	// lane QPATH-1: the locomotor set of the object's AI (RW AI + 0x1CC, read by QuickDoesPathExist RW 0x6F5BB0 when its caller gives no set); false without an AI
+	virtual bool getAILocomotorInfo(PathfindLocomotorInfo &out) const { (void)out; return false; }
 	// lane WALL-2: RW AI + 0x3CF, the unit's AI is inside a move-away search (RW 0x66DBFB / 0x66DC4B set it around getMoveAwayFromPath); a type 7 waypoint
 	// refuses such a unit (RW 0x68230B)
 	virtual bool inMoveAwaySearch() const { return false; }
@@ -340,4 +355,14 @@ struct PathfindLocomotorInfo
 	unsigned validSurfaces = 0; // LocomotorSurfaceType bits (GameLogic/Locomotor.h): RW loco+0x10
 	bool downhillOnly = false;  // RW loco+0x14
 	bool crusher = false;       // RW loco+0x15 (the 'bC' of the movement struct: a crusher passes obstacle cells with bit 22)
+	// lane PATH-REBUILD: what Path::rebuild (RW 0x767B0E) reads of the current locomotor; `present` false (no locomotor entry, Object + 0x260 ->
+	// + 0x1F0 null) takes the plain copy with the default radius
+	bool present = false;
+	float fastTurnRadius = 0.0f;         // template + 0x38 FastTurnRadius (RW 0x69AE01)
+	float slowTurnRadius = 0.0f;         // template + 0x34 SlowTurnRadius (RW 0x69ADFA)
+	bool fasterThanQuarterSpeed = false; // RW 0x5E4CA7 at the search
+	bool canReverse = false;             // RW 0x5E389C's template part: WHEELS_FOUR (+ 0x74 == 1) with CanMoveBackwards (+ 0xD8)
+	float maxTurnWithoutReform = 0.0f;   // template + 0x84
+	float turnThresholdHS = 0.0f;        // template + 0x40 TurnThresholdHS
+	bool floatingZ = false;              // template + 0x70 ZAxisBehavior == 8 (FLOATING_Z): the facing's bend is taken even where its arc is not valid
 };

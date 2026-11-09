@@ -236,6 +236,17 @@ MapObjectLoopResult MapObjectLoop::create(GameLogic &logic, const LoadedMap &map
 			}
 			if (AIWorld *ai = logic.aiWorld())
 			{
+				// lane WALL-4, RW 0x62E14C .. 0x62E15F (BFME2 decomp GameLogicInit.cpp:5574): once its properties are applied the object takes the layer
+				// TheTerrainLogic->getLayerForDestination (RW 0x680A75) names at its position (Object::setLayer RW 0x68BB9D): a map's unit on a wall top, a ramp or
+				// a walkway placed earlier in the list starts on it. The port keeps a layer for an object with an AI only (the pathfinder's view of a unit)
+				if (AIUpdateInterface *oai = obj->getAIUpdateInterface())
+				{
+					if (ai->mapReady())
+					{
+						const Coord3D &at = *obj->getPosition();
+						oai->setLayer(ai->pathfinder().getLayerAt(oai->adapter(), at));
+					}
+				}
 				ai->addObjectToPathfindMap(*obj); // RW 0x62E192 -> 0x6E85E9: the footprint of a placed structure enters the pathfinder's map at once (lane BUILD-1)
 			}
 			++result.created;

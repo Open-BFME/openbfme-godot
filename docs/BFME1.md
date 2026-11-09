@@ -19,6 +19,23 @@ APT instant-hide function so it no longer covers the continuing movie. This
 main-menu activation rule is also a presentation inference; BFME2 and RotWK
 keep their existing background behaviour.
 
+The settings menu uses BFME1's own `Options.apt`. Its first frame stops after
+`OnInitialized`; the host then calls `assignOpen("normal")` to create the
+controls and footer before opening the OpenBFME settings page. This host call
+is a presentation inference from the movie's script, not a verified retail
+engine port. BFME1's panel and footer paths are a separate options layout;
+BFME2 and RotWK retain their existing layout.
+BFME1 also uses its own detail and audio help labels. Its custom graphics
+controls remain unverified under S-5017: the page says "Not available yet"
+instead of offering BFME2/RotWK's nine custom graphics settings. Detail
+presets and OpenBFME's own graphics settings remain available.
+
+`godot/tests/options_open_test.gd` checks opening, every settings tab, hidden
+retail controls, footer clicks, Accept/Cancel persistence and repeated returns.
+It uses `BFME1_INSTALL` for BFME1 and `BFME2_INSTALL`/`ROTWK_INSTALL` for the
+other two menu presentations, with an isolated temporary profile. Set
+`OPTIONS_OPEN_SHOTS` to an existing folder for screenshots in a windowed run.
+
 `godot/tests/bfme1_menu_backdrop_test.gd` requires `BFME1_INSTALL` and a GPU.
 It compares independently decoded JPEG/PNG and VP6 assets against the menu
 at four resolutions, checks repeated Skirmish/Options returns, looping and
@@ -274,6 +291,14 @@ menu requests display the existing unavailable-screen message instead of trying
 to start a BFME2 linear campaign. BFME1 currently uses the English language view.
 
 ## Checks
+
+When `BFME1_INSTALL` is set, the release gate (`tools/release/test_export.sh`)
+checks the packaged executable reaches `MainMenu.apt`, then runs the packaged
+`bfme1_test.gd` against that package's library and resources. An invalid install,
+a skipped test, a missing success marker, a script error or a nonzero exit fails
+the gate. When `BFME1_INSTALL` is unset or empty, both BFME1 checks print `SKIP`
+without failing publication; BFME1 packaged startup is unverified on that builder.
+Both nightly and stable candidates use these conditional checks.
 
 Synthetic CSF tests are included in `openbfme_tests --test-case="GameText:*"`.
 Legacy portal filtering, both bloodthirsty voice slots, per-sacrifice experience, and BFME2/RotWK rejection are

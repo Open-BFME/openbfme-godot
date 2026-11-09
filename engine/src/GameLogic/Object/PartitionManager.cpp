@@ -6,6 +6,7 @@
 
 #include "GameLogic/Object/PartitionManager.h"
 
+#include "Common/JobSystem.h"
 #include "Common/Player.h"
 #include "Common/StateHash.h"
 #include "Common/Team.h"
@@ -157,12 +158,22 @@ const ThingTemplate *geometrySourceOf(const Object &obj)
 }
 } // namespace
 
-const PartitionManager::Geometry &PartitionManager::entryGeometry(const Entry &e) const
+bool PartitionManager::entryGeometryCurrent(const Entry &e) const
 {
 	if (!e.object->geometryActive().empty())
 	{
+		return e.ownValid && e.ownVersion == e.object->geometryVersion();
+	}
+	return e.geom && e.geomKey == geometrySourceOf(*e.object);
+}
+
+const PartitionManager::Geometry &PartitionManager::entryGeometry(const Entry &e) const
+{
+	const bool current = entryGeometryCurrent(e);
+	if (!e.object->geometryActive().empty())
+	{
 		// lane MODCOMPAT-MOD1: RW reads the object's own GeometryInfo (Object + 0xB8 / + 0xBC / + 0xC8); a change marks the entry dirty (RW 0x68B244 -> 0xA39570)
-		if (!e.ownValid || e.ownVersion != e.object->geometryVersion())
+		if (!current)
 		{
 			PathfindGeometry pg;
 			ObjectGeometry::fillPathfindGeometry(e.object->geometryShapes(), pg);
@@ -174,9 +185,9 @@ const PartitionManager::Geometry &PartitionManager::entryGeometry(const Entry &e
 	}
 	// Sol review of MODCOMPAT-MOD1: the geometry's source (Object::geometryTemplate): a rebuild hole that took an unchanged building's GeometryInfo (RW
 	// 0x699349, no flags of its own) carries the building's shapes, not its own template's
-	const ThingTemplate *key = geometrySourceOf(*e.object);
-	if (!e.geom || e.geomKey != key)
+	if (!current)
 	{
+		const ThingTemplate *key = geometrySourceOf(*e.object);
 		e.geom = &templateGeometryOf(key);
 		e.geomKey = key;
 	}
@@ -543,9 +554,38 @@ void PartitionManager::markDirty(Object &obj)
 
 void PartitionManager::update()
 {
-	// RW 0xA3B4E0: from the head until the list is empty
-	while (Entry *e = m_dirty)
+	// RW 0xA3B4E0: from the head until the list is empty. Performance (every profile, the same result): whether each entry moved (its layer, else its cells)
+	// is a pure function of the entry and its object (re-linking marks nothing dirty), so the job pool tests the dirty entries first; the entries then leave
+	// the list and are re-linked on this thread in the list's order, as before. entryGeometry fills caches on first use (the shared template geometry map,
+	// ObjectGeometry's shapes, the entry's own copy): an entry whose geometry is not current is resolved here, so the jobs only read
+	m_dirtyScan.clear();
+	for (Entry *e = m_dirty; e; e = e->dirtyNext)
 	{
+		if (!entryGeometryCurrent(*e))
+		{
+			entryGeometry(*e);
+		}
+		m_dirtyScan.push_back(e);
+	}
+	m_dirtyMoved.resize(m_dirtyScan.size());
+	constexpr size_t kEntriesPerJob = 256;
+	JobSystem::logic().parallelFor(m_dirtyScan.size(), kEntriesPerJob, [this](size_t, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i)
+		{
+			const Entry &e = *m_dirtyScan[i];
+			bool moved = (e.layerPlus1 != layerOf(*e.object) + 1);
+			if (!moved)
+			{
+				std::uint32_t x, y, mask;
+				computeCells(e, x, y, mask);
+				moved = (x != e.x || y != e.y || mask != e.mask);
+			}
+			m_dirtyMoved[i] = moved ? 1 : 0;
+		}
+	});
+	for (size_t i = 0; i < m_dirtyScan.size(); ++i)
+	{
+		Entry *e = m_dirtyScan[i];
 		if (e->dirtyNext)
 		{
 			e->dirtyNext->dirtyPrev = e->dirtyPrev;
@@ -553,14 +593,7 @@ void PartitionManager::update()
 		*e->dirtyPrev = e->dirtyNext;
 		e->dirtyPrev = nullptr;
 		e->dirtyNext = nullptr;
-		bool moved = (e->layerPlus1 != layerOf(*e->object) + 1);
-		if (!moved)
-		{
-			std::uint32_t x, y, mask;
-			computeCells(*e, x, y, mask);
-			moved = (x != e->x || y != e->y || mask != e->mask);
-		}
-		if (moved)
+		if (m_dirtyMoved[i])
 		{
 			remove(*e);
 			insert(*e);

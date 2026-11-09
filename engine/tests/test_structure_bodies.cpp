@@ -4,8 +4,11 @@
 #include "CombatTestUtil.h"
 
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Construction.h"
+#include "GameLogic/ExperienceLevels.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/StructureModules.h"
+#include "GameLogic/Object/ExperienceTracker.h"
 
 using namespace combattest;
 
@@ -174,6 +177,45 @@ DamageInfo hit(const Object *source, float amount, int type)
 }
 
 } // namespace
+
+// Both editions: RW 0x88DF6B / clean BFME2 1.06 0x88AC76 explicitly evaluate the visual condition at dozer completion.
+// The placement sets health to 1 before UNDER_CONSTRUCTION; healing during construction updates the body state while leaving the visual flags alone.
+TEST_CASE("structure bodies: construction completion refreshes stale damage flags immediately and preserves actual damage")
+{
+	struct Expected
+	{
+		float health;
+		BodyDamageType state;
+	};
+	for (const Expected &expected : { Expected{ 1000.0f, BODY_PRISTINE }, Expected{ 500.0f, BODY_DAMAGED }, Expected{ 200.0f, BODY_REALLYDAMAGED } })
+	{
+		CAPTURE(expected.health);
+		CombatWorld w(kStructures);
+		Object *keep = w.unit("Keep", 'B', 300, 300);
+		ActiveBody *body = dynamic_cast<ActiveBody *>(keep->getBodyModule());
+		REQUIRE(body != nullptr);
+		body->internalChangeHealth(-999.0f);
+		REQUIRE(keep->testModelCondition(CombatNames::modelCondition("REALLYDAMAGED")));
+		keep->setStatus((unsigned)CombatNames::statuses().underConstruction, true);
+		Construction::setModelConditions(*keep, {}, { "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" });
+		keep->setConstructionPercent(99.0f);
+		body->internalChangeHealth(expected.health - 1.0f);
+		CHECK(body->appliedDamageState() == expected.state);
+		CHECK(keep->testModelCondition(CombatNames::modelCondition("REALLYDAMAGED")));
+		// No later module update: the completion itself must synchronize the flags with the body's current state.
+		Construction::completeConstruction(*keep, nullptr);
+		CHECK(body->getHealth() == expected.health);
+		CHECK(body->appliedDamageState() == expected.state);
+		CHECK_FALSE(keep->isUnderConstruction());
+		CHECK(keep->getConstructionPercent() == -1.0f);
+		CHECK(keep->testModelCondition(CombatNames::modelCondition("DAMAGED")) == (expected.state == BODY_DAMAGED));
+		CHECK(keep->testModelCondition(CombatNames::modelCondition("REALLYDAMAGED")) == (expected.state == BODY_REALLYDAMAGED));
+		CHECK_FALSE(keep->testModelCondition(CombatNames::modelCondition("RUBBLE")));
+		CHECK_FALSE(keep->testModelCondition(CombatNames::modelCondition("PARTIALLY_CONSTRUCTED")));
+		CHECK_FALSE(keep->testModelCondition(CombatNames::modelCondition("ACTIVELY_BEING_CONSTRUCTED")));
+		CHECK_FALSE(keep->isDestroyed());
+	}
+}
 
 TEST_CASE("structure bodies: StructureBody is an ActiveBody with a constructor id; its damage and its damage states are ActiveBody's")
 {
@@ -557,4 +599,118 @@ TEST_CASE("structure bodies: LifetimeUpdate kills its object after the random li
 	w.frames(2);
 	CHECK(w.byId(id) == nullptr);
 	CHECK(w.cash('A') == cash + 9); // ScoreKill: the bounty of the fuse (9) goes to Alice
+}
+
+namespace
+{
+// lane SIMSMALL-1: a CombatWorld plus an ExperienceLevelSystem so a structure can hold a veterancy rank
+struct RubbleXpWorld : CombatWorld
+{
+	ExperienceLevelSystem levels;
+	ExperienceLevelSystem *savedLevels = TheExperienceLevelSystem;
+	RubbleXpWorld()
+		: CombatWorld()
+	{
+		TheExperienceLevelSystem = &levels;
+		levels.registerBlocks(w.fx.env.blocks);
+		const std::string err = w.load(
+			"ExperienceLevel KeepRank1\n TargetNames = VeteranKeep\n RequiredExperience = 1\n ExperienceAward = 10\n Rank = 1\nEnd\n"
+			"ExperienceLevel KeepRank2\n TargetNames = VeteranKeep\n RequiredExperience = 100\n ExperienceAward = 20\n Rank = 2\nEnd\n"
+			"Object VeteranKeep\n"
+			"  KindOf = STRUCTURE IMMOBILE SELECTABLE SCORE\n"
+			"  Geometry = BOX\n"
+			"  GeometryMajorRadius = 20\n"
+			"  GeometryMinorRadius = 20\n"
+			"  GeometryHeight = 60\n"
+			"  ArmorSet\n"
+			"    Conditions = None\n"
+			"    Armor = StoneArmor\n"
+			"  End\n"
+			"  Body = StructureBody ModuleTag_Body\n"
+			"    MaxHealth = 500\n"
+			"  End\n"
+			"End\n",
+			INI_LOAD_OVERWRITE, "rubblexp.ini");
+		REQUIRE_MESSAGE(err.empty(), err);
+	}
+	~RubbleXpWorld() { TheExperienceLevelSystem = savedLevels; }
+};
+} // namespace
+
+TEST_CASE("rubble reset: a STRUCTURE at veterancy rank 2 dropped to rubble has its ExperienceTracker reset (RW 0x8C1BB7 -> 0x79DA66)")
+{
+	RubbleXpWorld w;
+	Object *keep = w.unit("VeteranKeep", 'B', 300, 300);
+	Object *a = w.unit("Swordsman", 'A', 200, 300);
+	ExperienceTracker *xp = keep->getExperienceTracker();
+	REQUIRE(xp != nullptr);
+	CHECK(xp->getRank() == 1); // initObject's first level (RW 0x693F1B)
+	xp->setExperienceAndLevel(100.0f, false);
+	CHECK(xp->getRank() == 2);
+	DamageInfo d = hit(a, 100000.0f, DAMAGE_UNRESISTABLE);
+	keep->attemptDamage(d);
+	REQUIRE(keep->getBodyModule()->getDamageState() == BODY_RUBBLE);
+	CHECK(keep->isEffectivelyDead());
+	CHECK(xp->getRank() == 1);    // the reset gains the chain's first level again
+	CHECK(xp->getExperience() == 1.0f); // applyLevel leaves the level's RequiredExperience (a rank 1 level's is 1, the retail floor)
+}
+
+TEST_CASE("attemptHealing: an effectively dead object is healed only when its template keeps it (RW 0x8C2FC1)")
+{
+	CombatWorld w(
+		"Object BridgeTower\n"
+		"  KindOf = STRUCTURE IMMOBILE SELECTABLE BRIDGE_TOWER\n"
+		"  Geometry = BOX\n"
+		"  GeometryMajorRadius = 10\n"
+		"  GeometryMinorRadius = 10\n"
+		"  GeometryHeight = 30\n"
+		"  ArmorSet\n"
+		"    Conditions = None\n"
+		"    Armor = StoneArmor\n"
+		"  End\n"
+		"  Body = StructureBody ModuleTag_Body\n"
+		"    MaxHealth = 500\n"
+		"  End\n"
+		"End\n"
+		"Object KeptDead\n"
+		"  KindOf = STRUCTURE IMMOBILE SELECTABLE\n"
+		"  KeepSelectableWhenDead = Yes\n"
+		"  Geometry = BOX\n"
+		"  GeometryMajorRadius = 10\n"
+		"  GeometryMinorRadius = 10\n"
+		"  GeometryHeight = 30\n"
+		"  Body = StructureBody ModuleTag_Body\n"
+		"    MaxHealth = 500\n"
+		"  End\n"
+		"End\n"
+		"Object Grunt\n"
+		"  KindOf = INFANTRY SELECTABLE SCORE\n"
+		"  Geometry = CYLINDER\n"
+		"  GeometryMajorRadius = 8\n"
+		"  GeometryMinorRadius = 8\n"
+		"  GeometryHeight = 20\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 100\n"
+		"  End\n"
+		"End\n");
+	Object *a = w.unit("Swordsman", 'A', 200, 300);
+	Object *tower = w.unit("BridgeTower", 'B', 300, 300);
+	Object *kept = w.unit("KeptDead", 'B', 340, 300);
+	Object *grunt = w.unit("Grunt", 'B', 380, 300);
+	DamageInfo kill = hit(a, 100000.0f, DAMAGE_UNRESISTABLE);
+	tower->attemptDamage(kill);
+	DamageInfo kill2 = hit(a, 100000.0f, DAMAGE_UNRESISTABLE);
+	kept->attemptDamage(kill2);
+	DamageInfo kill3 = hit(a, 100000.0f, DAMAGE_UNRESISTABLE);
+	grunt->attemptDamage(kill3);
+	REQUIRE(tower->isEffectivelyDead());
+	REQUIRE(kept->isEffectivelyDead());
+	REQUIRE(grunt->isEffectivelyDead());
+	// retail refuses the heal only when the template keeps none of KeepSelectableWhenDead / WALL_UPGRADE / BRIDGE / BRIDGE_TOWER
+	grunt->attemptHealing(50.0f, a);
+	CHECK(w.health(grunt) == 0.0f);
+	tower->attemptHealing(50.0f, a);
+	CHECK(w.health(tower) == 50.0f);
+	kept->attemptHealing(50.0f, a);
+	CHECK(w.health(kept) == 50.0f);
 }

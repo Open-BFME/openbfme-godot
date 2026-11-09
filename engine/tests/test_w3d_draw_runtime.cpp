@@ -763,6 +763,33 @@ TEST_CASE("draw runtime: W3DHordeModelDraw limits the pick of states that are no
 	}
 }
 
+TEST_CASE("draw runtime: a horde draw shares only identical poses; MaxAnimFrameDelta stays parsed (lane PERF-HD, BFME2 ProcessGroup 0x00079FBC)")
+{
+	const std::string text =
+		"LodOptions = LOW\n  MaxAnimFrameDelta = 10\nEnd\n"
+		"LodOptions = MEDIUM\n  MaxAnimFrameDelta = 4\nEnd\n"
+		"LodOptions = HIGH\n  MaxAnimFrameDelta = 4\nEnd\n"
+		+ std::string(kDefaultState) +
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA") + "End\n"
+		"End\n";
+	Rig r({ { "ABUNIT_IDLA", 31 } }, text, W3D_DRAW_HORDE_MODEL);
+	W3DHordeModelDrawModuleData *data = dynamic_cast<W3DHordeModelDrawModuleData *>(r.data);
+	REQUIRE(data != nullptr);
+	CHECK(data->m_lodOptions[0].maxAnimFrameDelta == 10.0f);
+	CHECK(data->m_lodOptions[1].maxAnimFrameDelta == 4.0f);
+	CHECK(data->m_lodOptions[2].maxAnimFrameDelta == 4.0f);
+	// the instancer regroups every frame and does not copy the leader's frame into the members as ProcessGroup does: a member drawn with
+	// a pose 4 frames away would jump back to its own when its group changes, so only an identical frame is shared
+	for (int level = 0; level < 3; ++level)
+	{
+		r.startHorde(level);
+		CHECK(r.draw->poseShareDelta() == 0.0f);
+	}
+	data->m_lodOptions[2].maxAnimFrameDelta = -1.0f; // a negative delta still turns sharing off
+	r.startHorde(2);
+	CHECK(r.draw->poseShareDelta() == -1.0f);
+}
+
 TEST_CASE("draw runtime: a horde draw scales a RANDOMSTART start frame by RandomStartFramePercent (RW 0x478A74)")
 {
 	const std::string text =
@@ -900,6 +927,73 @@ TEST_CASE("draw runtime: RESTART_ANIM_WHEN_COMPLETE starts the state again when 
 	f = r.draw->frame();
 	CHECK(f.trackCount == 1);
 	CHECK(f.tracks[0].frame == doctest::Approx(30.0f)); // no RESTART flag: it holds
+}
+
+TEST_CASE("draw runtime: needsAdvance (S-090): a blend out of a MANUAL track 0 is advanced and promoted; a MANUAL or one-frame track alone is not")
+{
+	const std::string text = std::string(kDefaultState) + "AnimationState = ATTACKING\n" + anim("ABUNIT_ATK", "MANUAL") + "End\n" + "AnimationState = MOVING\n" +
+							 anim("ABUNIT_RUN") + "End\n" + "AnimationState = SELECTED\n" + anim("ABUNIT_ONE") + "End\n" + "End\n";
+	Rig r({ { "ABUNIT_ATK", 21 }, { "ABUNIT_RUN", 31 }, { "ABUNIT_ONE", 1 } }, text);
+	r.start();
+	CHECK_FALSE(r.draw->needsAdvance()); // the empty idle state: nothing plays, nothing pending
+	r.draw->setModelConditionFlags(flagsOf({ "ATTACKING" }));
+	REQUIRE(r.draw->trackCount() == 1);
+	REQUIRE(r.draw->track(0).mode == W3D_ANIM_MODE_MANUAL);
+	CHECK_FALSE(r.draw->needsAdvance()); // a MANUAL track alone: advance() leaves it
+	r.draw->advance(500.0);
+	CHECK(r.draw->track(0).frame == 0.0f);
+	// the run blends in on track 1 while the MANUAL clip holds track 0 (Sharku's ATTACKING -> ATTACKING MOVING)
+	r.draw->setModelConditionFlags(flagsOf({ "MOVING" }));
+	REQUIRE(r.draw->trackCount() == 2);
+	CHECK(r.draw->track(1).clipName.find("ABUNIT_RUN") != std::string::npos);
+	CHECK(r.draw->needsAdvance());
+	CHECK_FALSE(r.draw->advanceIsLocal());
+	r.draw->advance(500.0); // the countdown (at most 5 frames of the run, 30 fps) runs out: the run is promoted to track 0
+	REQUIRE(r.draw->trackCount() == 1);
+	CHECK(r.draw->track(0).clipName.find("ABUNIT_RUN") != std::string::npos);
+	CHECK(r.draw->needsAdvance());
+	const float f0 = r.draw->track(0).frame;
+	r.draw->advance(100.0);
+	CHECK(r.draw->track(0).frame == doctest::Approx(f0 + 3.0f).epsilon(0.001)); // tolerance: 30 fps x 100 ms in float arithmetic (as the stepping test)
+	// a one-frame LOOP alone in a state with conditions, nothing pending: it never completes (RW 0x4B271C), advance() has nothing to do
+	r.draw->setModelConditionFlags(flagsOf({ "SELECTED" }));
+	r.draw->advance(1000.0);
+	REQUIRE(r.draw->trackCount() == 1);
+	REQUIRE(r.draw->track(0).clipName.find("ABUNIT_ONE") != std::string::npos);
+	CHECK_FALSE(r.draw->needsAdvance());
+}
+
+TEST_CASE("draw runtime: needsAdvance (S-090): a one-frame ONCE idle restarts at every advance, and a MANUAL clip with a fade is advanced for its opacity")
+{
+	{
+		// the idle state has no conditions: its one-frame ONCE clip completes at once and the state is applied again (RW 0x4BFA77)
+		const std::string text = std::string(kDefaultState) + "IdleAnimationState\n  StateName = STATE_Idle\n" + anim("ABUNIT_ONE", "ONCE") + "End\nEnd\n";
+		Rig r({ { "ABUNIT_ONE", 1 } }, text);
+		r.start();
+		REQUIRE(r.draw->trackCount() == 1);
+		REQUIRE(r.draw->track(0).clipName.find("ABUNIT_ONE") != std::string::npos);
+		CHECK(r.draw->needsAdvance());
+		CHECK_FALSE(r.draw->advanceIsLocal()); // the restart selects and picks: on the main thread
+		r.draw->advance(33.0);
+		CHECK(r.draw->trackCount() == 2); // apply(state, -1) started the clip again: it waits on track 1 (main's rule never advanced this draw)
+		CHECK(r.draw->track(1).clipName == r.draw->track(0).clipName);
+		CHECK(r.draw->needsAdvance());
+	}
+	{
+		// a MANUAL clip fading in from frame 10 (the Troll Cage's ACTIVELY_BEING_CONSTRUCTED fade, trollcage.ini): RW 0x4B5497 reads its frame
+		const std::string text = std::string(kDefaultState) + "AnimationState = MOVING\n" +
+								 anim("ABUNIT_RUN", "MANUAL", "    FadeBeginFrame = 10\n    FadeEndFrame = 20\n    FadingIn = Yes\n") + "End\nEnd\n";
+		Rig r({ { "ABUNIT_RUN", 31 } }, text);
+		r.start();
+		r.draw->setModelConditionFlags(flagsOf({ "MOVING" }));
+		REQUIRE(r.draw->trackCount() == 1);
+		REQUIRE(r.draw->track(0).mode == W3D_ANIM_MODE_MANUAL);
+		CHECK(r.draw->needsAdvance());
+		CHECK(r.draw->advanceIsLocal()); // the ramp only: it may advance on the client job pool
+		r.draw->advance(100.0); // frame 0, before the fade's begin, fading in: invisible
+		CHECK(r.draw->frame().opacity == 0.0f);
+		CHECK(r.draw->frame().hidden);
+	}
 }
 
 TEST_CASE("draw runtime: the constructor's <DefaultEmptyIdleAnimationState> is the idle fallback when no IdleAnimationState exists (RW 0x4C87DD-0x4C8800)")

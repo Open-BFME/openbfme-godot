@@ -158,7 +158,7 @@ bool Pathfinder::isGroundPathPassable(const Coord3D &start, PathfindLayerEnum la
 
 bool Pathfinder::isLineBlocked(const PathfindObject *obj, unsigned surfaces, PathfindLayerEnum layer, const Coord3D &from, const Coord3D &to)
 {
-	// RW 0x6F2F8F with the line callback of BFME2 0x6ED01E (decomp PathfinderRva002ED15ACellCallback.cpp): radius 0, centred, flags 0x0C
+	// RW 0x6F2F8F with the line callback of BFME2 0x6ED01E (decomp AIPathfind.cpp): radius 0, centred, flags 0x0C
 	PathfindCheckMovement info;
 	info.radius = 0;
 	info.center = true;
@@ -326,7 +326,7 @@ void Pathfinder::optimizeGroundPath(Path &path, int diameter)
 Path *Pathfinder::buildGroundPath(const Coord3D *from, PathfindCell *goalCell, bool center, int diameter, float formationColumnWidth)
 {
 	// RW 0x6F0DA3 (BFME2 decomp PathfinderBuildGroundPath.cpp, tier A)
-	Path *path = new Path();
+	Path *path = new Path(m_uberLimits); // lane UBER-PATH
 	prependCells(path, from, goalCell, center);
 	optimizeGroundPath(*path, diameter);
 	const float spread = SimMath::mulf32(2.0f, formationColumnWidth); // AIData + 0xA0

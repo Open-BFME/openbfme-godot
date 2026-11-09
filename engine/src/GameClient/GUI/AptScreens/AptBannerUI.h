@@ -1,7 +1,7 @@
 // OpenBFME. GPL-3.0.
 //
 // BannerUI.apt (CodePrefix AptBannerUI, WOTR2 milestone 7 step 5): a War of the Ring battle's reinforcement banners (TheBannerUI; BFME2 decomp
-// GameClient/GUI/InGame/Tactical/BannerUI.cpp and BannerUIUpdate.cpp, tier B).
+// GameClient/GUI/InGame/Tactical/BannerUI.cpp, tier B).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001):
 //   * the window: "Apt\\", "BannerUI.apt" through the Apt window manager (BannerUI::init); the commands AptBannerUI::OnInitialized (RW 0x616DA6) and

@@ -390,7 +390,7 @@ test('WOTR-9 phases: a joiner cannot advance or exclude the host without agreeme
   assert.equal(lobby.games.get(id).phases.length, 2);
 });
 
-test('WOTR-9 phases (Option A): each battle and each return to the map is a fresh relay game for the war\'s players, linked to the war; only the next phase is made; rejoin, logs and replays follow the phases', async () => {
+test('WOTR-9 phases (Option A): each battle and each return to the map is a fresh relay game for the war\'s players, linked to the war; only the next phase is made; never rejoined (S-4075); logs and replays follow the phases', async () => {
   const env = fakeEnv();
   const lobby = new Lobby(env, configFromEnv(ENV));
   const guest = async (name) => (await call(lobby, 'POST', '/v1/auth/guest', { body: { name } })).body;
@@ -440,10 +440,11 @@ test('WOTR-9 phases (Option A): each battle and each return to the map is a fres
   const upload = (game) => { const log = relayLog(64, 7, game); return lobby.uploadLog(game, log, uploadSig(log)); };
   assert.equal((await upload(id)).war, id);
   assert.notEqual(lobby.games.get(id).finished, true);
-  // a crash in the battle: the rejoin START is the battle's relay game, generation 1
+  // WOTR2 S-4075: a crash in the battle: RotWK has no reconnect, so a war is never rejoined (named refusal, no ticket); phase 1 is unchanged
   const rj = await call(lobby, 'POST', `/v1/games/${id}/rejoin`, { token: b.token });
-  assert.equal(rj.status, 200, JSON.stringify(rj.body));
-  assert.deepEqual([rj.body.start.game, rj.body.start.phase, rj.body.start.rejoin], [p1.game, 1, 1]);
+  assert.deepEqual([rj.status, rj.body.error], [409, 'war_no_rejoin']);
+  assert.equal(rj.body.start, undefined);
+  assert.equal((await phase(b, { phase: 1, kind: 'battle' })).body.start.game, p1.game);
   // Cid explicitly leaves; neither of the remaining players can make the map phase without the other.
   assert.equal((await call(lobby, 'POST', `/v1/games/${id}/leave`, { token: c.token })).status, 200);
   assert.equal((await phase(b, { phase: 2, kind: 'map', slots: [0, 1] })).body.error, 'phase_wait');

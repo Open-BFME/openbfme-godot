@@ -384,6 +384,21 @@ private:
 	void save();
 	void reset();
 	void cancel();
+	// Presentation variants selected once from the mounted menu data.
+	struct MovieLayout
+	{
+		std::vector<const char *> frames;
+		const char *subtitle;
+		const char *buttons[3];
+		const char *openFunction;
+		bool customGraphics = true;
+		const char *detailLabel = "APT:Graphics";
+		const char *eaxHelp = "ToolTip:Settings/EAX";
+		const char *audioQualityHelp = "ToolTip:Settings/HighQualityAudio";
+	};
+	const MovieLayout *m_movieLayout = nullptr;
+	bool m_movieOpening = false;
+	bool m_movieOpenPending = false;
 	// lane OPTS-4: the volume sliders (RW 0x91F90D, see AptSimpleScreens.cpp)
 	void applyVolume(int type, int value);
 	void trackVolume(int type, int value);
@@ -411,7 +426,6 @@ private:
 	bool m_allowResolution = false; // + 0x280 / + 0x282
 	bool m_allowAdvanced = false;   // + 0x281
 	bool m_networkEnabled = false;  // + 0x283
-	bool m_bfme1OpenPending = false;
 	bool m_advancedOnly = false;    // + 0x284
 	int m_masterOption = 5;         // + 0x310: Options.ini's StaticGameLOD, else Custom (the LOD manager's own level: S-2481)
 	std::string m_customTemplate;   // + 0x314 (lane PLAY-2)

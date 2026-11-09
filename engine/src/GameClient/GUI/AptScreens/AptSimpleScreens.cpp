@@ -4,6 +4,7 @@
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
 #include "Common/BfmeGame.h"
 #include "GameClient/LocalizedText.h"
+#include "Common/BfmeGame.h"
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/Gadgets.h"
@@ -1223,19 +1224,17 @@ namespace
 const char *const kResolutionElsewhere = "Use OpenBFME \xE2\x86\x92 Display.";
 // lane OPTS-5: the page keys of the original game's settings
 const char *const kRetailKeyPrefix = "Retail.";
+const char *const kBfme1CustomGraphics = "[S-5017] BFME1 custom graphics controls are unverified; BFME2/RotWK's nine-option layout does not apply.";
 } // namespace
 
 namespace
 {
 // the basic page's three settings frames (Options.apt: Main.FrameLeft / FrameMiddle / FrameRight, dump_tree of the 2.01 movie) the page takes the
 // place of, the subtitle it renames, the button it copies and the copy's name
-const char *const kBasicFrames[3] = { "Main.FrameLeft", "Main.FrameMiddle", "Main.FrameRight" };
-const char *const kSubtitlePath = "Main.SubTitle";
 const char *const kEntrySourcePath = "Main.FrameLeft.Advanced";
 const char *const kEntryName = "OpenBFMEEntry";
 const char *const kEntryCaption = "OPENBFME";
 const char *const kMirroredKeys[3] = { "ScrollFactor", "AllHealthBars", "AlternateMouseSetup" }; // the retail keys the page shows too
-const char *const kBarButtons[3] = { "Buttons.Cancel", "Buttons.Default", "Buttons.Accept" }; // the basic page's bottom bar
 const char *const kTooltipPrefix = "tooltips"; // the movie's invisible tooltip areas (tooltipsEAX3 ...): hidden with the frames
 constexpr int kEntryScriptDepth = 9000;         // an ActionScript depth above every placed child of FrameLeft
 } // namespace
@@ -1243,6 +1242,19 @@ constexpr int kEntryScriptDepth = 9000;         // an ActionScript depth above e
 AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEnvironment &environment, ShellServices &services)
 	: AptScreen(windows, shell, "Options.apt", "AptOptions"), m_env(environment), m_services(services)
 {
+	static const MovieLayout later = { { "Main.FrameLeft", "Main.FrameMiddle", "Main.FrameRight" }, "Main.SubTitle",
+		{ "Buttons.Cancel", "Buttons.Default", "Buttons.Accept" }, nullptr };
+	// BFME1 Options.apt: assignOpen("normal") seeks _open_normal (frame 1), ending at frame 29.
+	// Its panels and footer use these display-list paths, rather than BFME2/RotWK's Main/Buttons clips.
+	// INFERENCE: the host starts that transition after OnInitialized; the movie stops at frame 0 otherwise.
+	static const MovieLayout first = { { "frameOuterA", "frameOuterB", "instance80", "instance105" }, nullptr,
+		{ "instance136.Cancel", "instance136.Reset", "instance136.Save" }, "assignOpen", false,
+		"APT:Detail", "TOOLTIP:Options/tooltipEAX", "TOOLTIP:Options/tooltipHighAudioQuality" };
+	m_movieLayout = environment.fileSystem && isBfme1Data(*environment.fileSystem) ? &first : &later;
+	if (!m_movieLayout->customGraphics)
+	{
+		windows.note("options-unverified", kBfme1CustomGraphics);
+	}
 	if (!m_env.options)
 	{
 		windows.note("options-unwired", "Options: no OptionPreferences: Save writes nothing [S-1484]");
@@ -1250,7 +1262,7 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 	// RW 0x816157 (the shared OnInitialized): the screen's state + 0x27C becomes 1, the basic page
 	registerCommand("AptOptions::OnInitialized", [this](const std::string &) {
 		m_state = 1;
-		m_bfme1OpenPending = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
+		m_movieOpenPending = m_movieOpening = m_movieLayout->openFunction != nullptr;
 	});
 	// lane OPTS-3: while the OpenBFME page is up the bottom bar's commands are the page's (not retail: RotWK has no such page)
 	registerCommand("AptOptions::Cancel", [this](const std::string &) {
@@ -2139,16 +2151,17 @@ void AptOptionsScreen::save()
 
 void AptOptionsScreen::frameUpdate()
 {
-	if (m_bfme1OpenPending && level() >= 0)
+	if (m_movieOpenPending)
 	{
-		// BFME1 BfmeConv1072 (0x55DC00): open after frame-0 initialization
-		// finishes; calling inside OnInitialized is overwritten by its Stop action.
-		m_bfme1OpenPending = false;
+		// BFME1's first-frame action calls OnInitialized and then stop(). Start the transition only after that action returns.
+		m_movieOpenPending = false;
 		std::string error;
-		if (!windows().invokeAS(level(), "assignOpen", { m_networkEnabled ? "online" : "normal" }, nullptr, &error))
-			windows().note("options-open", "BFME1 assignOpen: " + error);
+		m_movieOpening = windows().invokeAS(level(), m_movieLayout->openFunction, { m_networkEnabled ? "online" : "normal" }, nullptr, &error);
+		if (!m_movieOpening)
+		{
+			windows().note("options-menu", "Options: cannot open the movie: " + error);
+		}
 	}
-
 	// lane OPTS-2 [S-3402]: on the advanced page the rows of the options the device does not draw yet are greyed and take no input (retail greys what
 	// does not apply). A row is found by the label the screen binds to it (APT:AdvancedOption<i>, RW 0x9213F4): the text field showing "$AdvancedOption<i>"
 	// (its bound variable read on its parent timeline); the clip holding that field is the row: _alpha 40 and every button / clip under it disabled
@@ -2341,7 +2354,7 @@ void AptOptionsScreen::setFieldText(AptTextInst *field, const std::string &text)
 std::vector<AptTextInst *> AptOptionsScreen::subtitleTexts() const
 {
 	std::vector<AptTextInst *> out;
-	std::vector<AptCharacterInst *> stack{ find(kSubtitlePath) };
+	std::vector<AptCharacterInst *> stack{ m_movieLayout->subtitle ? find(m_movieLayout->subtitle) : nullptr };
 	while (!stack.empty())
 	{
 		AptCharacterInst *inst = stack.back();
@@ -2376,9 +2389,7 @@ AptButtonInst *AptOptionsScreen::barButton(int i) const
 	// lane SHELLFIX-1: the button is the clip's direct child (RotWK: Buttons.Accept.bttn; BFME2: Buttons.Accept.instance14). Before, only ".bttn" was
 	// looked up, so with the BFME2 1.06 shell the page never took the bar's clicks: the movie played its closing animation (about 0.55 s) before it sent
 	// AptOptions::Save / Cancel, and ACCEPT returned late
-	const bool bfme1 = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
-	const char *bfme1Buttons[] = { "instance136.Cancel", "instance136.Reset", "instance136.Save" };
-	AptCharacterInst *clip = i >= 0 && i < 3 ? find(bfme1 ? bfme1Buttons[i] : kBarButtons[i]) : nullptr;
+	AptCharacterInst *clip = i >= 0 && i < 3 ? find(m_movieLayout->buttons[i]) : nullptr;
 	AptSpriteInst *sprite = clip ? clip->asSprite() : nullptr;
 	if (!sprite || !sprite->globallyVisible())
 	{
@@ -2454,18 +2465,7 @@ void AptOptionsScreen::updateEntry()
 
 void AptOptionsScreen::setExtensionHidden(bool hidden)
 {
-	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
-	{
-		// BFME1 Options.apt has two unnamed settings clips and separate animated
-		// borders, rather than BFME2/RotWK's Main.FrameLeft/Middle/Right.
-		for (const char *path : { "instance80", "instance105", "frameOuterA", "frameOuterB" })
-			if (AptCharacterInst *frame = find(path)) frame->visible = !hidden;
-		if (AptSpriteInst *root = level() >= 0 ? windows().apt().level(level()) : nullptr)
-			for (AptCharacterInst *child : root->children())
-				if (child->instName().rfind("tooltip", 0) == 0) child->visible = !hidden;
-	}
-
-	for (const char *path : kBasicFrames)
+	for (const char *path : m_movieLayout->frames)
 	{
 		if (AptCharacterInst *f = find(path))
 		{
@@ -2523,10 +2523,7 @@ bool AptOptionsScreen::openExtension(std::string *error)
 	}
 	AptGadgetLayer *layer = windows().gadgetLayer();
 	std::string missing;
-	const bool bfme1 = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
-	const std::vector<std::string> frames = bfme1 ? std::vector<std::string>{ "instance80", "instance105" } :
-		std::vector<std::string>(std::begin(kBasicFrames), std::end(kBasicFrames));
-	for (const auto &path : frames)
+	for (const char *path : m_movieLayout->frames)
 	{
 		if (!find(path))
 		{
@@ -2953,8 +2950,24 @@ std::vector<OpenBFMEPageRow> AptOptionsScreen::retailRows() const
 	{
 		OpenBFMEPageRow row;
 		row.key = info.key;
-		row.label = oneLine(fetchOrMissing(m_env.gameText, info.nameLabel));
-		row.help = oneLine(fetchOrMissing(m_env.gameText, info.helpLabel));
+		if (!m_movieLayout->customGraphics && row.key.rfind("Retail.AdvancedOption", 0) == 0)
+		{
+			if (row.key == "Retail.AdvancedOption0")
+			{
+				row.kind = OpenBFMEPageRow::Kind::Text;
+				row.label = u"Custom graphics";
+				row.valueText = u"Not available yet";
+				row.help = asciiToU16(kBfme1CustomGraphics);
+				row.enabled = false;
+				out.push_back(std::move(row));
+			}
+			continue;
+		}
+		const char *label = row.key == "Retail.Detail" ? m_movieLayout->detailLabel : info.nameLabel;
+		const char *help = row.key == "Retail.EAX3" ? m_movieLayout->eaxHelp :
+			row.key == "Retail.HighAudioQuality" ? m_movieLayout->audioQualityHelp : info.helpLabel;
+		row.label = oneLine(fetchOrMissing(m_env.gameText, label));
+		row.help = oneLine(fetchOrMissing(m_env.gameText, help));
 		const std::string name = info.gadget ? info.gadget : "";
 		GameWindow *w = info.gadget ? gadget(name) : nullptr;
 		if (info.gadget && !w)
@@ -2966,7 +2979,7 @@ std::vector<OpenBFMEPageRow> AptOptionsScreen::retailRows() const
 			row.kind = OpenBFMEPageRow::Kind::Choice;
 			for (const auto &item : kDetailItems)
 			{
-				row.items.push_back({ oneLine(fetchOrMissing(m_env.gameText, item.first)), true });
+				row.items.push_back({ oneLine(fetchOrMissing(m_env.gameText, item.first)), m_movieLayout->customGraphics || item.second != GameLODManager::kCustomLevel });
 				if (item.second == m_masterOption)
 				{
 					row.value = (int)row.items.size() - 1;
@@ -3143,6 +3156,10 @@ bool AptOptionsScreen::setRetailValue(const std::string &key, int value, std::st
 	{
 		return fail("the setting '" + key + "' does not take " + std::to_string(value));
 	}
+	if (row->kind == OpenBFMEPageRow::Kind::Choice && !row->items[value].enabled)
+	{
+		return fail("the setting '" + key + "' has a disabled choice");
+	}
 	const std::string name = info->gadget ? info->gadget : "";
 	if (key == "Retail.Detail")
 	{
@@ -3218,9 +3235,26 @@ void AptOptionsScreen::menuUpdate()
 	{
 		return; // AptOptions::OnInitialized has not run: the gadgets are not filled yet
 	}
-	// BFME1's settings gadgets are placed by the opening animation, after
-	// OnInitialized. Keep its frames hidden while waiting for the controls.
-	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem) && (!gadget("Brightness") || !gadget("MusicVolume") || !gadget("ScrollSpeed"))) return;
+	if (m_movieOpening)
+	{
+		const AptSpriteInst *root = windows().apt().level(level());
+		if (root && root->playing)
+		{
+			return; // BFME1 creates its panels, controls and footer during the opening transition.
+		}
+		for (const char *path : m_movieLayout->frames)
+		{
+			AptCharacterInst *panel = find(path);
+			if (AptSpriteInst *sprite = panel ? panel->asSprite() : nullptr)
+			{
+				if (sprite->playing)
+				{
+					return; // The nested control timelines finish after the root and register their gadgets as they open.
+				}
+			}
+		}
+		m_movieOpening = false;
+	}
 	std::string error;
 	if (!openExtension(&error))
 	{

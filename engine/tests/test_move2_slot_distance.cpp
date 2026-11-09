@@ -429,8 +429,9 @@ TEST_CASE("move2 retail: horde members stay near their slots on the march, settl
 				// S-1834 (lane MOVE-3 r3): with RotWK's 3 x 3 line test for a horde (RW 0x6EE12D) the horde's path cuts a corner of the harlindon route; two
 				// uruks fall about 100 behind their slots there and follow at the horde's speed (no catch-up rule found); 62 frames, measured; 65 after the IDLE-1
 				// merge (members step before their horde's member pass, RW 0x851E97 / 0x490AC4); 66 with the formations centred on their hordes (RW 0x86C4EA),
-				// 68 with the destination adjustment spiralling around the cell (RW 0x6FA2A4)
-				CHECK(r.straggleFrames == 68);
+				// 68 with the destination adjustment spiralling around the cell (RW 0x6FA2A4); 69 with the found path's corners rounded and its first segment bent
+				// from the horde's facing (lane PATH-REBUILD, RW 0x767B0E)
+				CHECK(r.straggleFrames == 69);
 			}
 			else if ((std::string(mapName) == "map mp fall back 4p" && run.tracks[i].name == "IsengardFighterHorde") ||
 				(std::string(mapName) == "map mp harlindon" && run.tracks[i].name == "MordorFighterHorde"))
@@ -438,8 +439,9 @@ TEST_CASE("move2 retail: horde members stay near their slots on the march, settl
 				// the block search's block zones (RW 0x9389A6): the corridor no longer runs through the cliffs that cross a block, so the two hordes take shorter
 				// complete routes whose corners bring S-1834's corner effect (above): uruks on fall back 4p 22 frames (12 before), orcs on harlindon 46 (0 before);
 				// on fall back 4p the Dwarven phalanx, which stopped about 450 short before (the corridor's partial path), now marches to its goal. Measured
-				// merge queue q34 (measured once on the merged tree and at each merge point): on the archive's tree with #161 the uruks on fall back 4p straggle 4 frames (#161's 22 was measured on its own base); the orcs keep 46
-				CHECK(r.straggleFrames == (run.tracks[i].name == std::string("IsengardFighterHorde") ? 4 : 46));
+				// merge queue q34 (measured once on the merged tree and at each merge point): on the archive's tree with #161 the uruks on fall back 4p straggle 4 frames (#161's 22 was measured on its own base); the orcs keep 46.
+				// Lane PATH-REBUILD (the found path rebuilt from its optimised nodes with its corners rounded, RW 0x767B0E): the uruks 13, the orcs 21 (measured twice)
+				CHECK(r.straggleFrames == (run.tracks[i].name == std::string("IsengardFighterHorde") ? 13 : 21));
 			}
 			else
 			{

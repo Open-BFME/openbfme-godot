@@ -16,6 +16,9 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/System/InvisibilityManager.h"
 
+#include <utility>
+#include <vector>
+
 namespace
 {
 const FieldValue *field(const ThingTemplate &tt, const char *name)
@@ -38,6 +41,21 @@ Relationship relationTo(const Player &player, const Player &other)
 {
 	return player.getRelationship(other.getDefaultTeam());
 }
+
+// RW 0xC10E14 (allow RW 0x660AFE): the owner controls the object; pure, so the range walk may ask it before the distance
+class OwnedBy : public PartitionFilter
+{
+public:
+	explicit OwnedBy(const Player &owner)
+		: m_owner(&owner)
+	{
+	}
+	bool allow(Object &o) override { return o.getControllingPlayer() == m_owner; }
+	bool beforeDistance() const override { return true; }
+
+private:
+	const Player *m_owner;
+};
 
 // RW 0x694154: the object has the model condition, or its horde (RW 0x693A1A(0): itself when HORDE, else its HORDE container) has it
 bool conditionOnSelfOrHorde(const Object &o, int bit)
@@ -185,12 +203,29 @@ EvaDamageNotice EvaDamage::makeNotice(const GameLogic &logic, const Object &vict
 	}
 	n.scanned = true;
 	// RW 0xC11098 (allow RW 0x671E36): the object's template + 0x590 is the same event; RW 0xC10E14 (allow RW 0x660AFE): the owner controls it
+	// performance (the same hits in the same order): the template's answer is remembered for the call (a big battle puts thousands of objects of a few dozen
+	// templates within the range, each a field lookup and a string compare), and the owner test, the cheaper one, is asked first and before the distance
+	// (both filters are pure)
+	std::vector<std::pair<const ThingTemplate *, bool>> seen;
 	PartitionFilterFn sameEvent([&](Object &o) {
 		const ThingTemplate *ot = o.getTemplate();
-		return ot && AsciiStringUtil::compareNoCase(templateEvent(*ot, "EvaEventDamagedOwner"), damaged) == 0;
+		if (!ot)
+		{
+			return false;
+		}
+		for (const std::pair<const ThingTemplate *, bool> &e : seen)
+		{
+			if (e.first == ot)
+			{
+				return e.second;
+			}
+		}
+		const bool match = AsciiStringUtil::compareNoCase(templateEvent(*ot, "EvaEventDamagedOwner"), damaged) == 0;
+		seen.emplace_back(ot, match);
+		return match;
 	});
-	PartitionFilterFn owned([&](Object &o) { return o.getControllingPlayer() == &owner; });
-	for (const PartitionHit &h : logic.partition().iterateObjectsInRange(*victim.getPosition(), range, FROM_BOUNDINGSPHERE_2D, { &sameEvent, &owned }, ITER_FASTEST))
+	OwnedBy owned(owner);
+	for (const PartitionHit &h : logic.partition().iterateObjectsInRange(*victim.getPosition(), range, FROM_BOUNDINGSPHERE_2D, { &owned, &sameEvent }, ITER_FASTEST))
 	{
 		n.scan.push_back(h.object->getID());
 	}

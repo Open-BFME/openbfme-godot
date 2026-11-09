@@ -29,6 +29,7 @@
 #include "GameLogic/Module/DieModule.h"
 #include "GameLogic/Module/MoneyEventModules.h"
 #include "GameLogic/Module/UpdateModule.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 
 #include <string>
 #include <vector>
@@ -183,6 +184,8 @@ public:
 	// ZH SlowDeathBehavior::getProbabilityModifier: ProbabilityModifier + overkill percent * ModifierBonusPerOverkillPercent, at least 1
 	int probabilityModifier(const DieModuleInterface::Event &event) const;
 	bool isDieApplicable(const DieModuleInterface::Event &event) const;
+	// SlowDeathBehaviorInterface slot 0xC, asked by the roulette (RW 0x861712) before a pick begins: the base answers true (RW 0x8BD372)
+	virtual bool canBeginSlowDeath() { return true; }
 	unsigned sinkFrame() const { return m_sinkFrame; }
 	unsigned destructionFrame() const { return m_destructionFrame; }
 	unsigned midpointFrame() const { return m_midpointFrame; }
@@ -212,4 +215,43 @@ private:
 	bool m_hitGroundPending = false;    ///< RW + 0x40: the module has a HIT_GROUND phase entry (the constructor), cleared when the body is down
 	bool m_fadeBegun = false;           ///< RW + 0x48
 	unsigned m_fadeFrame = 0xFFFFFFFFu; ///< RW + 0x4C (the constructor's -1)
+};
+
+// lane SIEGEFALL-1: ClearanceTestingSlowDeathBehavior (RW create 0x64C1F6, data 0x64C22E, vtable 0xC60788; tables 0xC58A98 + 0xC76BD8 (extra 8) + 0xC60590). A slow death
+// that only begins when the place it falls into is clear. TARGET FACTS (the RotWK field table 0xC60590, engine/data/rotwk-201/field-tables.json): ClearanceGeometry,
+// ClearanceGeometryMajorRadius / MinorRadius / RotationAnchorOffset / Height / IsSmall (GeometryInfo + 0x190: RW 0xAD4040, 0xAD2BC0, 0xAD2C10, 0xAD14C0, 0xAD2B60,
+// 0xAD2B30), ClearanceGeometryOffset (+ 0x1EC, RW 0x42F247 parseCoord3D), ClearanceMaxHeight (+ 0x1F8), ClearanceMaxHeightFraction (+ 0x1FC) and
+// ClearanceMinHeightFraction (+ 0x204) through RW 0x42ED6F, ClearanceMinHeight (+ 0x200) through RW 0x42EDC2. DONOR (BFME2 1.06 game.dat, the same offsets): the
+// table's parsers BFME2 0x42F02F ("invalid Real value %1.7f -- expected >= 0") and 0x42F082 ("... expected <= 0"), the same 0x53 bytes apart as RW 0x42ED6F /
+// 0x42EDC2 (INFERENCE: the same parsers); the data ctor BFME2 0x883E25 (GeometryInfo(type 0, small no, 1.0, 1.0, 1.0), offset 0, MaxHeight 20, MinHeight -20,
+// both fractions 1.1). The RotWK ctor (inside RW 0x64C22E) was not read (S-7163).
+class ClearanceTestingSlowDeathBehaviorModuleData : public SlowDeathBehaviorModuleData
+{
+public:
+	std::vector<ObjectGeometry::Shape> m_clearanceGeometry = std::vector<ObjectGeometry::Shape>(1); ///< + 0x190 (one default shape: SPHERE, 1.0 / 1.0 / 1.0)
+	Coord2D m_clearanceGeometryRotationAnchorOffset{};  ///< parsed (RW 0xAD14C0), not read by the clearance test
+	bool m_clearanceGeometryIsSmall = false;            ///< parsed (RW 0xAD2B30), not read by the clearance test
+	Coord3D m_clearanceGeometryOffset{};                ///< + 0x1EC
+	float m_clearanceMaxHeight = 20.0f;                 ///< + 0x1F8
+	float m_clearanceMaxHeightFraction = 1.1f;          ///< + 0x1FC
+	float m_clearanceMinHeight = -20.0f;                ///< + 0x200
+	float m_clearanceMinHeightFraction = 1.1f;          ///< + 0x204
+	// GeometryInfo + 0x14 (RW 0xAD2860): the largest bounding sphere of the active shapes
+	float clearanceBoundingSphereRadius() const;
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+class ClearanceTestingSlowDeathBehavior : public SlowDeathBehavior
+{
+public:
+	OBFME_MODULE_XFER(ClearanceTestingSlowDeathBehavior) // SlowDeathBehavior's state (BFME2 ClearanceTestingSlowDeathBehavior_xfer.cpp adds none)
+	ClearanceTestingSlowDeathBehavior(Thing *thing, const ClearanceTestingSlowDeathBehaviorModuleData *data);
+	// RW 0x887191 (BFME2 0x883F19, tier A)
+	bool canBeginSlowDeath() override;
+	// RW 0x88701C (BFME2 0x883DA4, tier A): ClearanceGeometryOffset through the object's transform
+	Coord3D getClearanceTestGeometryCenter() const;
+	const ClearanceTestingSlowDeathBehaviorModuleData *clearanceData() const { return m_clearanceData; }
+
+private:
+	const ClearanceTestingSlowDeathBehaviorModuleData *m_clearanceData;
 };

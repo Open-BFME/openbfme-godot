@@ -28,6 +28,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -59,6 +60,8 @@ public:
 		std::string owner;                ///< who ports it: a lane ("SAVE-4b") for a missing block, "SAVE-4a" ...
 		std::vector<std::string> sections; ///< the state hash sections (GameLogic::hashState names) whose state the block holds
 		unsigned lists = 0;               ///< bit n: the block is in list n
+		std::function<void(Xfer &)> prepareLoad;
+		std::function<void()> finishPreparation;
 	};
 
 	// ZH addSnapshotBlock; `sections` names the hash sections the block saves (a section may need several blocks: it is covered when all have an xfer)
@@ -74,6 +77,9 @@ public:
 	void provideSnapshot(const std::string &token, Snapshot *snapshot, const std::string &owner);
 	// lane SAVE-4b: the same, for a snapshot the registry keeps alive
 	void provideOwnedSnapshot(const std::string &token, std::unique_ptr<Snapshot> snapshot, const std::string &owner);
+	// Native load dependencies: stage temporary data after full framing validation, before any normal xfer.
+	// The cleanup must not throw; it runs after post-processing or on any preparation/load failure.
+	void setLoadPreparation(const std::string &token, std::function<void(Xfer &)> prepare, std::function<void()> cleanup);
 
 	const std::vector<Block> &blocks() const { return m_blocks; }
 	const Block *findBlock(const std::string &token) const;
@@ -113,7 +119,7 @@ public:
 
 private:
 	Block *find(const std::string &token);
-	void walkBlocks(class XferLoad &x, const std::vector<std::string> &tokens, bool load); ///< lane SAVE-4e: the framing pass (load false) or the load
+	void walkBlocks(class XferLoad &x, const std::vector<std::string> &tokens, bool load, bool prepare = false); ///< framing, preparation or normal load
 
 	std::vector<Block> m_blocks;
 	std::vector<std::pair<std::string, std::string>> m_rebuilt; ///< (section, why)

@@ -2,8 +2,10 @@
 ## HintSpy step, RotWK RW 0x838225: every move / attack move / force move order that leaves the input stream; one marker at a time, RW 0x69F54F);
 ## this node draws them as RotWK's W3DInGameUI::drawMoveHints (RW 0x48EDED) does: GameData's MoveHintName model (retail "SCMoveHint") while the hint
 ## is younger than 41 client frames, one instance per hint slot. It never changes the game.
-## RotWK's draw (RW 0x48EDED) places the model with TerrainLogic::alignOnTerrain (vslot 0x48): the model's up axis is the terrain normal at the point,
-## taken here from the logic's ground heights 5 units around it; the lift to the water surface (vslot 0x4C) is not ported (stop S-1920). SCMoveHint.w3d
+## RotWK's draw (RW 0x48EDED) places the model with TerrainLogic::alignOnTerrain (vslot 0x48, RW 0x6819D9, stickToGround): it stands at the height of the
+## layer the point is on (a wall top, a ramp, a walkway: 2.5 above it; the terrain), not at the order's own z (lane WALL-3: the world's
+## get_align_on_terrain_height); the model's up axis is the terrain normal at the point, taken here from the logic's ground heights 5 units around it
+## (INFERENCE: retail takes the layer's normal); the lift to the water surface (vslot 0x4C) is not ported (stop S-1920). SCMoveHint.w3d
 ## carries no animation of its own (its "%s.%s" clip does not exist), so its bind pose with the material's own texture animation is the picture.
 extends Node3D
 
@@ -43,8 +45,8 @@ func _process(_delta: float) -> void:
 		return
 	var state: Dictionary = hud.get_move_hints()
 	var live := {}
-	# lane RENDERWAIT-1: the terrain's slope (get_ground_height) is a live read: a hint's basis is taken once, when it is placed, in a render frame the
-	# logic is held (a new hint waits for one; nothing here waits for the logic worker)
+	# lane RENDERWAIT-1: the terrain's slope (get_ground_height) and the layer height are live reads: a hint's basis and position are taken once, when it
+	# is placed, in a render frame the logic is held (a new hint waits for one; nothing here waits for the logic worker)
 	var held: bool = world == null or world.is_logic_held()
 	for h in state.get("hints", []):
 		var slot: int = h.slot
@@ -57,18 +59,26 @@ func _process(_delta: float) -> void:
 		if cur == null:
 			if not held:
 				continue
-			var t := Transform3D(_terrain_basis(h.x, h.y), h.position)
+			var t := Transform3D(_terrain_basis(h.x, h.y), _aligned_position(h))
 			var id: int = _inst.add_instance(_model, t, "", 0.0, 1.0)
 			if id < 0:
 				continue
-			_slots[slot] = {"id": id, "frame": h.frame, "basis": t.basis}
+			_slots[slot] = {"id": id, "frame": h.frame, "basis": t.basis, "origin": t.origin}
 			drawn_total += 1
 		else:
-			_inst.set_instance_transform(cur.id, Transform3D(cur.basis, h.position))
+			_inst.set_instance_transform(cur.id, Transform3D(cur.basis, cur.origin))
 	for slot in _slots.keys():
 		if not live.has(slot):
 			_inst.remove_instance(_slots[slot].id)
 			_slots.erase(slot)
+
+
+## RW 0x6819D9's height for the hint (Godot axes: SAGE z is y); the order's own position without the world
+func _aligned_position(h: Dictionary) -> Vector3:
+	var p: Vector3 = h.position
+	if world != null:
+		p.y = world.get_align_on_terrain_height(h.x, h.y, h.z)
+	return p
 
 
 ## the terrain's normal at SAGE (x, y) as the model's up axis (Godot axes: x, z, -y); identity without the world

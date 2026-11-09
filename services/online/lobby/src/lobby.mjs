@@ -2196,26 +2196,15 @@ export class Lobby {
     if (slot < 0) throw new LobbyError(403, 'not_in_game', 'you have no slot in this game');
     if (g.state !== 'started' || !g.starts?.[slot]) throw new LobbyError(409, 'not_started', 'the game has not started');
     if (g.left?.[slot]) throw new LobbyError(409, 'left', 'you left this game: it can not be rejoined'); // ONLINEUX-1
+    // WOTR2 S-4075: a War of the Ring is never rejoined, in any phase: RotWK 2.01 has no reconnect (a dropped player is gone for good) and the
+    // players' games hand a dropped player over at once (LobbyStart::holdsForRejoin), so a rejoin ticket would only meet a war that moved on
+    if (g.setup.gameMode === 1) throw new LobbyError(409, 'war_no_rejoin', 'a War of the Ring can not be rejoined: a player who dropped is out of the war');
     g.rejoins ??= {};
     const generation = (g.rejoins[slot] ?? 0) + 1;
     if (generation > 0xffff) throw new LobbyError(409, 'rejoins', 'this slot rejoined too often');
     const keyId = Math.max(...this.config.ticketKeys.keys());
     const key = this.config.ticketKeys.get(keyId);
     const expires = Math.floor(this.env.now() / 1000) + this.config.ticketSeconds;
-    // WOTR-9: a war in a later phase is rejoined in that phase's relay game (its own mask and generations)
-    const phase = g.phases?.length ? g.phases[g.phases.length - 1] : null;
-    if (phase) {
-      if (!phase.starts[slot]) throw new LobbyError(409, 'not_in_phase', `you are not in phase ${phase.phase} of this war`);
-      phase.rejoins ??= {};
-      const pg = (phase.rejoins[slot] ?? 0) + 1;
-      if (pg > 0xffff) throw new LobbyError(409, 'rejoins', 'this slot rejoined too often');
-      const pt = await signRejoinTicket(this.env, keyId, key, phase.game, slot, phase.mask, expires, pg);
-      phase.rejoins[slot] = pg;
-      this.event(g, `${g.slots[slot].name} rejoins the war (phase ${phase.phase})`);
-      await this.save(g);
-      this.social.rejoinStarted(g, account);
-      return { v: VERSION, game: this.gameView(g, account), start: { ...phase.starts[slot], ticket: pt, rejoin: pg, session_key: await sessionKey(this.env, key, pt) } };
-    }
     const mask = g.mask ?? g.slots.reduce((m, s, i) => (s.state === 'player' ? m | (1 << i) : m), 0);
     const ticket = await signRejoinTicket(this.env, keyId, key, g.id, slot, mask, expires, generation);
     g.rejoins[slot] = generation;

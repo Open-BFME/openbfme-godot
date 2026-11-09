@@ -454,15 +454,17 @@ TEST_CASE("save4c retail T5: each block's version window (RW 0xA1F5B9's two mess
 		REQUIRE(one.size() > at); // tolerance: an index precondition (the version byte must exist before it is read)
 		// every SAVE-4c block starts with its version: 1, except obfme:SkirmishAI's: (earliest 2, current 2) since lane AI5 (the upgrade builders and the money
 		// reserve), (3, 3) since community #113 (the capture-flag registration history, which older snapshots cannot recover), (3, 4) since lane AIEXPAND-1 (the
-		// EXPANSION heuristic's frame counter)
+		// EXPANSION heuristic's frame counter), (3, 5) since lane RAI-DEF (the DEFENSIVE target's defense size and a SimpleDefense team's recruit origin),
+		// (3, 6) since lane RAI-POW-2 (community #233: the AIPlayer's enemy cache, written only once an AI has asked for an enemy: this scene's AIs never do,
+		// so the block stays version 5, while the loader also accepts the cache's version 6)
 		const bool skirmish = t == "obfme:SkirmishAI";
-		const std::uint8_t version = skirmish ? 4 : 1, earliest = skirmish ? 3 : 1;
+		const std::uint8_t version = skirmish ? 5 : 1, latest = skirmish ? 6 : 1, earliest = skirmish ? 3 : 1;
 		REQUIRE(one[at] == version);
 		std::vector<std::uint8_t> above = one, below = one;
-		above[at] = (std::uint8_t)(version + 1);
+		above[at] = (std::uint8_t)(latest + 1);
 		below[at] = (std::uint8_t)(earliest - 1);
-		CHECK(loadError(late.logic(), { t }, above) == "block '" + t + "': Don't know how to load version " + std::to_string(version + 1) + " (most recent is " +
-			std::to_string(version) + ")");
+		CHECK(loadError(late.logic(), { t }, above) == "block '" + t + "': Don't know how to load version " + std::to_string(latest + 1) + " (most recent is " +
+			std::to_string(latest) + ")");
 		CHECK(loadError(late.logic(), { t }, below) == "block '" + t + "': Found version " + std::to_string(earliest - 1) + " but the earliest supported is " +
 			std::to_string(earliest));
 	}
@@ -748,7 +750,7 @@ TEST_CASE("save4c retail hostile inputs (SAVES.md section 8, rules 3 to 5): for 
 			"block '" + t + "': ai world: the snapshot's AI of object " + std::to_string(u32At(one, id0)) + " where the loaded game has object " +
 				std::to_string(u32At(one, id1)) + "'s");
 		refused(t, secs, withU32(one, run0, big), "block '" + t + "': pathfinder: a run of " + std::to_string(big) + " class words at cell 0 of " + std::to_string(cells));
-		refused(t, secs, withU32(one, word0, (u32At(one, word0) & ~0xFu) | 9u), "block '" + t + "': pathfinder: a cell type 9 is outside 0 .. 7");
+		refused(t, secs, withU32(one, word0, (u32At(one, word0) & ~0xFu) | 9u), "block '" + t + "': pathfinder: a cell type 9 is outside 0 .. 8");
 	}
 }
 
@@ -953,8 +955,11 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	// lane DEVPORT-7: the scene frame is found, not assumed. The test pinned 2700 / 3000, but which units of this 4-AI game live then is the AI's play,
 	// not a retail fact: with BloodthirstyUpdate ported (an update module on every Mordor / Isengard horde, woken at creation and every 2 s + 1 frame as
 	// retail's, RW 0x85123F / BFME2 0x44E0AA; it changes nothing in this game, but its update slots reorder the others', RW 0x62B921) the same seed has
-	// FactionMen (the attacker's and the garrison's player) defeated at frame 2600. A first game of the same seed is scanned every 300 frames from 1500
-	// to 3000 for the latest frame whose actors (below) exist among the objects alive 300 frames before; none: the test fails (it never runs on nothing)
+	// FactionMen (the attacker's and the garrison's player) defeated at frame 2600. A first game of the same seed is scanned every 100 frames from 600
+	// to 3000 for the latest frame whose actors (below) exist among the objects alive 300 frames before; none: the test fails (it never runs on nothing).
+	// Lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E, move the AIs' play; measured on the lane's tree): the Men player
+	// is run down earlier in this game (its hordes die within 300 frames of leaving; no mobile unit of its from 1800 but a porter; on main from 3000, its
+	// scene at 2700), so the scan samples every 100 frames from 600 (every 300 from 1500); its scene is at 1600
 	const int dozerKind = ObjectTemplateInfoBuilder::kindOfIndex("DOZER"), structureKind = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE");
 	const int hordeKind = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
 	const int hordeMember = ObjectTemplateInfoBuilder::objectStatusIndex("HORDE_MEMBER");
@@ -998,11 +1003,16 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		GameLogic &lc = c.logic();
 		const std::vector<int> ids = lc.skirmishAI().infoPlayers();
 		REQUIRE(ids.size() == 4u);
-		for (UnsignedInt t = 1500; t <= 3000; t += 300)
+		std::map<UnsignedInt, std::set<ObjectID>> aliveAt; // the AI objects alive at each sampled frame (the scene's "300 frames before")
+		for (UnsignedInt t = 300; t <= 3000; t += 100)
 		{
-			runTo(c, t - 300);
-			const std::set<ObjectID> before = aiIds(lc);
 			runTo(c, t);
+			aliveAt[t] = aiIds(lc);
+			if (t < 600)
+			{
+				continue;
+			}
+			const std::set<ObjectID> &before = aliveAt[t - 300];
 			std::map<int, std::vector<Object *>> by = candidates(lc, before);
 			auto any = [&](int p, const std::function<bool(Object *)> &ok) {
 				return std::any_of(by[p].begin(), by[p].end(), [&](Object *o) { return ok(o); });
@@ -1027,7 +1037,7 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 			}
 		}
 	}
-	REQUIRE_MESSAGE(scene != 0, "no frame of 1500 .. 3000 (every 300) has the actors among the objects alive 300 frames before"); // tolerance: 0 is "none found"; the frame itself is the AI's play
+	REQUIRE_MESSAGE(scene != 0, "no frame of 600 .. 3000 (every 100) has the actors among the objects alive 300 frames before"); // tolerance: 0 is "none found"; the frame itself is the AI's play
 	MESSAGE("save4c units attacking: the scene is at frame " << scene << " (its modules' earlier state from frame " << scene - 300 << ")");
 	// lane AIDATA-1: the hunter must also keep its hunt through the frame the test steps: a unit the skirmish AI is walking somewhere gets its next order from
 	// the AI in that frame (the frame-2400 scene's only candidate of the fourth player, an Isengard pike horde, was back in AI_MOVE_TO). A scratch game of its
@@ -1203,68 +1213,106 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 		men = p && p->getPlayerTemplate() && p->getPlayerTemplate()->getName() == "FactionMen" ? kv.first : men;
 	}
 	REQUIRE(men != -1);
+	// merge queue q35 (#132's melee reach moves the AIs' game): the Men player can have no unit left besides the actors at frame 2700; the garrison then
+	// goes to the first skirmish player that has one (the keep is made for that player)
 	std::vector<Object *> menUnits;
-	for (Object *u : byPlayer[men])
+	std::vector<int> garrisonOrder{ men };
+	for (int p : playerIds)
 	{
-		if (u != attacker && u != mover && u != guard && u != hunter)
+		if (p != men)
 		{
-			menUnits.push_back(u);
+			garrisonOrder.push_back(p);
 		}
 	}
-	REQUIRE(!menUnits.empty());
-	ObjectID keepId = INVALID_ID;
-	// the keep's spot: the first of the offsets from that unit (80 east, then the other directions and distances) where the unit's pathfinder reaches the
-	// keep's four corners and its entry point (the entry offset is 50 east of the keep: HordeGarrisonContain's EntryOffset), so the garrison order is
-	// legal (review r7: the same fixed spot, 80 east, lay on the neutral Amon Hen structures once the archive's AI changes moved the game's state at
-	// frame 3,000, and the order was refused by RW 0x82CBD5's path test)
-	Coord3D keepSpot{};
+	// lane WARG-1 (the AIs' game at frame 2700 moves with the pathfinder changes): the first player whose non-actor units include one the keep accepts (the
+	// Men player's units can all be horde members or busy then); each candidate player gets the keep in both games, and loses it again when none enters
+	// lane PATH-REBUILD: the spare unit must take the enter order (RW 0x667174's gate for 0x42: the Men player's one spare at its scene is a porter,
+	// which does not)
+	auto spare = [&](Object *u) { return u != attacker && u != mover && u != guard && u != hunter && takes(u, 0x42); };
+	for (int p : garrisonOrder)
 	{
-		Object *near = menUnits.front();
-		Pathfinder &pf = near->getAIUpdateInterface()->world().pathfinder();
-		const Coord3D from = *near->getPosition();
-		auto reaches = [&](float x, float y) {
-			Coord3D q{ x, y, la.getGroundHeight(x, y) };
-			return pf.clientSafeQuickDoesPathExist(near->getAIUpdateInterface()->locomotorInfo(), &from, &q);
-		};
-		bool found = false;
-		for (float r : { 80.0f, 140.0f, 200.0f, 260.0f })
+		if (rider)
 		{
-			for (int d = 0; d < 8 && !found; ++d)
+			break;
+		}
+		menUnits.clear();
+		for (Object *u : byPlayer[p])
+		{
+			if (spare(u))
 			{
-				const float ang = (float)d * 0.78539816f;
-				const float cx = from.x + r * std::cos(ang), cy = from.y + r * std::sin(ang);
-				bool clear = reaches(cx + 50.0f, cy);
-				for (float ox : { -40.0f, 40.0f })
-					for (float oy : { -40.0f, 40.0f })
-						clear = clear && reaches(cx + ox, cy + oy);
-				if (clear)
-				{
-					keepSpot = Coord3D{ cx, cy, la.getGroundHeight(cx, cy) };
-					found = true;
-				}
+				menUnits.push_back(u);
 			}
 		}
-		REQUIRE(found); // tolerance: a precondition (the first Men unit has open ground within 260 of it)
-	}
-	for (Game *g : { &a, &b })
-	{
-		GameLogic &l = g->logic();
-		Object *k = l.newObject(keep, l.players().getNthPlayer(men)->getDefaultTeam(), ObjectStatusMaskType{});
-		REQUIRE(k != nullptr);
-		Coord3D p = keepSpot;
-		k->setPosition(&p);
-		testutil::completeHorde(k); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
-		REQUIRE((keepId == INVALID_ID || keepId == k->getID()));
-		keepId = k->getID();
-	}
-	garrison = la.findObjectByID(keepId);
-	REQUIRE(garrison->getContain() != nullptr);
-	for (Object *u : menUnits)
-	{
-		if (!rider && garrison->getContain()->isValidContainerFor(*u, true, false) && GarrisonRules::canEnterObject(*u, garrison, CMD_FROM_SCRIPT, 0, true) &&
-			u->getAIUpdateInterface()->allowedToRespondToCommand(CMD_FROM_SCRIPT, 0x42))
+		if (menUnits.empty())
 		{
-			rider = u;
+			continue;
+		}
+		men = p;
+		ObjectID keepId = INVALID_ID;
+		// the keep's spot: the first of the offsets from that unit (80 east, then the other directions and distances) where the unit's pathfinder reaches the
+		// keep's four corners and its entry point (the entry offset is 50 east of the keep: HordeGarrisonContain's EntryOffset), so the garrison order is
+		// legal (review r7: the same fixed spot, 80 east, lay on the neutral Amon Hen structures once the archive's AI changes moved the game's state at
+		// frame 3,000, and the order was refused by RW 0x82CBD5's path test)
+		Coord3D keepSpot{};
+		{
+			Object *near = menUnits.front();
+			Pathfinder &pf = near->getAIUpdateInterface()->world().pathfinder();
+			const Coord3D from = *near->getPosition();
+			auto reaches = [&](float x, float y) {
+				Coord3D q{ x, y, la.getGroundHeight(x, y) };
+				return pf.clientSafeQuickDoesPathExist(near->getAIUpdateInterface()->locomotorInfo(), &from, &q);
+			};
+			bool found = false;
+			for (float r : { 80.0f, 140.0f, 200.0f, 260.0f })
+			{
+				for (int d = 0; d < 8 && !found; ++d)
+				{
+					const float ang = (float)d * 0.78539816f;
+					const float cx = from.x + r * std::cos(ang), cy = from.y + r * std::sin(ang);
+					bool clear = reaches(cx + 50.0f, cy);
+					for (float ox : { -40.0f, 40.0f })
+						for (float oy : { -40.0f, 40.0f })
+							clear = clear && reaches(cx + ox, cy + oy);
+					if (clear)
+					{
+						keepSpot = Coord3D{ cx, cy, la.getGroundHeight(cx, cy) };
+						found = true;
+					}
+				}
+			}
+			if (!found)
+			{
+				continue; // no open ground within 260 of the player's first unit: the next player
+			}
+		}
+		for (Game *g : { &a, &b })
+		{
+			GameLogic &l = g->logic();
+			Object *k = l.newObject(keep, l.players().getNthPlayer(men)->getDefaultTeam(), ObjectStatusMaskType{});
+			REQUIRE(k != nullptr);
+			Coord3D at = keepSpot;
+			k->setPosition(&at);
+			testutil::completeHorde(k); // a horde makes its members where it stands (onBuildComplete, RW 0x8718ED)
+			REQUIRE((keepId == INVALID_ID || keepId == k->getID()));
+			keepId = k->getID();
+		}
+		garrison = la.findObjectByID(keepId);
+		REQUIRE(garrison->getContain() != nullptr);
+		for (Object *u : menUnits)
+		{
+			if (!rider && garrison->getContain()->isValidContainerFor(*u, true, false) && GarrisonRules::canEnterObject(*u, garrison, CMD_FROM_SCRIPT, 0, true) &&
+				u->getAIUpdateInterface()->allowedToRespondToCommand(CMD_FROM_SCRIPT, 0x42))
+			{
+				rider = u;
+			}
+		}
+		if (!rider)
+		{
+			// no unit of this player enters the keep: the keep goes and the next player is tried (in both games alike)
+			for (Game *g : { &a, &b })
+			{
+				g->logic().destroyObject(g->logic().findObjectByID(keepId));
+			}
 		}
 	}
 	REQUIRE(rider != nullptr);

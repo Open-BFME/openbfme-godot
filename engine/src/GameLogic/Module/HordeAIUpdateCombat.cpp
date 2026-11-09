@@ -605,10 +605,10 @@ struct HordeMeleeApproachState : AIState
 		h.setPathExtraDistance(100.0f); // RW 0xBD88D8
 		m_goal = now;
 		m_failed = false;
-		// RW 0x74A6C2 .. 0x74A6DF: the lead needs a fleeing target AND a quick path from the horde to it (RW 0x6F5BB0, the port's clientSafeQuickDoesPathExist;
-		// lane ATTACKPATH-1: the port led every fleeing target)
+		// RW 0x74A6C2 .. 0x74A6E6: the lead needs a fleeing target AND a quick path from the horde to it (RW 0x6F5BB0(horde, its position, the target's, 0):
+		// Pathfinder::quickDoesPathExist with the horde and its AI's set, lane QPATH-1; lane ATTACKPATH-1: the port led every fleeing target)
 		if (targetFleeing(self, *goal) &&
-			(h.world().mapReady() && h.world().pathfinder().clientSafeQuickDoesPathExist(h.locomotorInfo(), self.getPosition(), goal->getPosition())))
+			(h.world().mapReady() && h.world().pathfinder().quickDoesPathExist(h.adapter(), self.getPosition(), goal->getPosition(), nullptr)))
 		{
 			const float lead = SimMath::addf32(SimMath::mulf32(CombatQueries::boundingCircleRadius(*goal), 2.0f), 60.0f);
 			m_goal.x = SimMath::addf32(m_goal.x, SimMath::mulf32(lead, SimMath::cosDet(goal->getOrientation())));
@@ -1204,6 +1204,20 @@ static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands)
 	// and candidate) only for a candidate that would beat the best so far; the nearest enemy in range is the same. Uber because the range test leaves the
 	// melee reach it computed in the weapon's range host, which then holds another candidate's value (every reader but a point target's sets it first)
 	const bool rangeLast = m.logic().uber();
+	// performance (the same answers): the weapon's bonus is the attacker's alone, so it is computed once for the candidates, not per range test
+	WeaponBonus bonus;
+	bool haveBonus = false;
+	auto inRange = [&](Object &e) {
+		if (!haveBonus)
+		{
+			haveBonus = true;
+			if (!w->currentWeaponBonus(bonus))
+			{
+				return false;
+			}
+		}
+		return w->isWithinAttackRangeWithBonus(e, bonus);
+	};
 	ObjectID sacrificeTarget = INVALID_ID;
 	if (m.testStatus((unsigned)CombatNames::status("BLOODTHIRSTY")))
 	{
@@ -1236,7 +1250,7 @@ static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands)
 			{
 				continue;
 			}
-			if (!w->isWithinAttackRange(*e))
+			if (!inRange(*e))
 			{
 				continue;
 			}
@@ -1245,7 +1259,7 @@ static Object *amoebaReachAmong(Object &m, const std::vector<Object *> &cands)
 			continue;
 		}
 		// lane UBER-2B: a candidate of a list built before this member (the Uber tick's) may have died since; a fresh list holds only living ones
-		if (!CombatQueries::isAlive(*e) || (!sacrifice && m.getRelationship(*e) != ENEMIES) || !w->isWithinAttackRange(*e))
+		if (!CombatQueries::isAlive(*e) || (!sacrifice && m.getRelationship(*e) != ENEMIES) || !inRange(*e))
 		{
 			continue;
 		}
@@ -1323,6 +1337,7 @@ void HordeAIUpdate::recentreOnMembers()
 	const float cx = SimMath::mulf32(inv, sx), cy = SimMath::mulf32(sy, inv), cz = SimMath::mulf32(sz, inv);
 	float best = -1.0f; // RW 0xBD19DC
 	Coord3D pos = *horde->getPosition();
+	PathfindLayerEnum layer = LAYER_GROUND; // lane WALLHORDE-1: the winner's layer, the ground when none wins (RW 0x86F18F)
 	for (Object *m : ms)
 	{
 		Coord3D p = *m->getPosition();
@@ -1336,6 +1351,8 @@ void HordeAIUpdate::recentreOnMembers()
 		{
 			best = d;
 			pos = *m->getPosition();
+			const AIUpdateInterface *mai = m->getAIUpdateInterface();
+			layer = mai ? mai->adapter().getLayer() : LAYER_GROUND;
 		}
 	}
 	if (best >= 0.0f)
@@ -1352,6 +1369,7 @@ void HordeAIUpdate::recentreOnMembers()
 			hci->setLocomoting(false);
 		}
 	}
+	setLayer(layer); // lane WALLHORDE-1: RW 0x86F18F always sets the layer after the move (BFME2 0x86BEAC), the ground when no member qualified
 }
 
 // lane MOVE-2 r3: RW 0x870A1B (read with Ghidra)
@@ -1529,6 +1547,7 @@ void HordeAIUpdate::meleeTick(Object &targetIn)
 			ICoord2D bestCell = cell;
 			bool valid[3][3] = {};
 			Coord3D cellPos[3][3];
+			const Pathfinder::CrowdStepContext crowd = pf.crowdStepContext(ai->adapter(), ai->locomotorInfo()); // once for the eight candidates (the same answers)
 			for (int ix = -1; ix <= 1; ++ix)
 			{
 				for (int iy = -1; iy <= 1; ++iy)
@@ -1545,7 +1564,7 @@ void HordeAIUpdate::meleeTick(Object &targetIn)
 						"[S-783] amoeba: the step test of RW 0x6F1C90 is ported (Pathfinder::crowdingAllowsStep, footprint extents RW 0x6ED0A0 = N / 2 and N - N / 2 of RW 0x6EAF79, "
 						"the reserving unit's blocked-frame counter for RW AI + 0x16C) and the step moves the member's goal reservation (RW 0x68B3BD); only the ground layer";
 					logic.noteStop(kStopCrowd);
-					if (!pf.crowdingAllowsStep(ai->adapter(), ai->locomotorInfo(), p))
+					if (!pf.crowdingAllowsStep(crowd, ai->adapter(), p))
 					{
 						continue;
 					}
@@ -1705,17 +1724,10 @@ void HordeAIUpdate::meleeTick(Object &targetIn)
 		}
 		if (!moved)
 		{
-			if (Object *e = amoebaReach(*m, target))
-			{
-				clearIdle();
-				rec.historyCount = 0;
-				rec.dirty = true;
-				if (amoebaAttack(*m, *e))
-				{
-					++m_stats.orders;
-				}
-			}
-			else if (world().mapReady())
+			// RW asks the reach check again here (the attack branch of the first ask, above). Between the two asks the member did not move, its weapon did not
+			// change and nothing joined or left the target (the idle cycle draws a random and the step search reads), so the same candidates in the same order
+			// give the first ask's answer, none, and leave the same melee reach in the weapon's range host: the second ask is not repeated (performance)
+			if (world().mapReady())
 			{
 				ICoord2D cell{ 0, 0 };
 				world().pathfinder().worldToCell(m->getPosition(), &cell);
@@ -1870,10 +1882,11 @@ bool HordeAIUpdate::isInCurrentMelee(Object *t)
 	}
 	// RW 0x8701C5 .. 0x8701D4: RW 0x66352C(t, horde) = RW 0x6634BF, the squared nonnegative footprint edge distance (max(0, d - rA - rB))^2, compared with the float at
 	// RW 0xBDE8B8, which is 10000.0f: close means an edge gap below 100 units (review r1 asked for 100.0f, i.e. 10 units; the constant in the binary is 10000)
-	const bool close = CombatQueries::edgeDistanceSquared2D(*t, *t->getPosition(), *getObject(), *getObject()->getPosition()) < 10000.0f;
 	// RW 0x8701E0 .. 0x8701F4 (lane DECOMP-1; BFME2 decomp Rva0046CE9DFinish.cpp, tier A): both sides resolve to their horde (RW 0x693A1A(0), null outside a
-	// horde) and the same answer, two nulls included, is true
-	return t->getHordeObject(false) == target->getHordeObject(false) || close;
+	// horde) and the same answer, two nulls included, is true. Performance (every profile, the same answer): both tests only read, so the horde test goes
+	// first and the distance is measured only when it fails (HordeMemberCollide asks with t the target itself)
+	return t->getHordeObject(false) == target->getHordeObject(false) ||
+		CombatQueries::edgeDistanceSquared2D(*t, *t->getPosition(), *getObject(), *getObject()->getPosition()) < 10000.0f;
 }
 
 // RW 0x86D614

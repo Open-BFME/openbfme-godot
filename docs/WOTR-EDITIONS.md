@@ -353,7 +353,7 @@ These are the retail differences that matter if retail saves are ever read.
 | Item | Verdict | Sources |
 |---|---|---|
 | `CHUNK_LivingWorldLogic` (`LivingWorldLogic::xfer`, v6), shared state (v7), delayed region victories, region manager, armies, battles, build plots, score keeper, award disputes | same (A/B) | RW 0x6BD0D5, 0x6BBD55, 0x6BA784, 0x60FFC4, 0x71BFD9, 0x7F7300, 0x902E0A, 0x8F3A89, 0x900D79 |
-| `LivingWorldPlayer` xfer | **differs (verified)**: BFME2 version 5, RotWK version 6, adding the treasury accumulator (+0x318, `if version > 5`) | RW 0x6E445E (Ghidra) vs B2 0x2E30C8 (decomp `LivingWorldPlayerDtor.cpp` `Rva002E2AAE::xfer`, `Version(1,5)`) |
+| `LivingWorldPlayer` xfer | **differs (verified)**: BFME2 version 5, RotWK version 6, adding the treasury accumulator (+0x318, `if version > 5`) | RW 0x6E445E (Ghidra) vs B2 0x2E30C8 (decomp `LivingWorldPlayer.cpp` `Rva002E2AAE::xfer`, `Version(1,5)`) |
 | Region, owning-army vector, eye tower xfers | same versions, small code edits (B edited), not read | RW 0x7F5279, 0x71C1DB, 0x7FB5E5 |
 | Campaign xfer | differs (D) | RW 0x932570 vs B2 0x52BAFE |
 | Enum-name xfers (`RegionBonusRuleID`, `Battle::ResolutionType`) | differs only in the debug name string (C) | RW 0x6E17E2, 0x7F563F |
@@ -416,7 +416,7 @@ Source: `edition_census.json` `bfme2_only`, subsystem "War of the Ring / LivingW
 | 0x210C66 | 33 | `Rva00210C66CmpBoolField::get` | LivingWorldLogic.cpp | GameLogic "in a multiplayer game" (+0x114 in 1..2) | RW 0x610A21 (23 B) |
 | 0x2B28B1 | 164 | `LivingWorldLogic::armyMoveRequest` | LivingWorldLogic.cpp | the army move order (target region and position) | RW 0x6B5847 (142 B) |
 | 0x2B9FDB | 1047 | `LivingWorldLogic::PrepareRetreats` | LivingWorldLogic.cpp | phase-4 retreat preparation | RW 0x6BABA8 (782 B) |
-| 0x2E07CC | 46 | `Rva002E2AAE::loadPostProcess` | LivingWorldPlayerDtor.cpp | LivingWorldPlayer post-load | RW 0x6E1A1E (34 B) |
+| 0x2E07CC | 46 | `Rva002E2AAE::loadPostProcess` | LivingWorldPlayer.cpp | LivingWorldPlayer post-load | RW 0x6E1A1E (34 B) |
 | 0x2E1257 | 506 | `LivingWorldPlayer::FindArmyWithHero` | LivingWorldPlayer.cpp | finds the player's army holding a given hero | RW 0x6E2589 / 0x6E2625 / 0x6E267E |
 | 0x2E1948 | 344 | `Rva002E1948Lookup::find` | Rva002BA8F1Lookups.cpp | player vector lookup by name | RW 0x6E2CC0..0x6E2D92 |
 | 0x31996D | 165 | `AttackOrdersMember::rva0031996D` | ConsumeGarrisonUnitsFromRTS.cpp | army summary entry lookup by hero key | RW 0x71B26B / 0x71B2D0 |

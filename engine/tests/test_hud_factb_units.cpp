@@ -2985,7 +2985,14 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	// so the Taint line passes; it still asserts no effect of TaintSpecialPower of its own (S-1997 keeps the explanation)
 	// merge queue q26 (community #73's slot table centred on the horde, as #73's own run found): the scene misses the 500 heuristic again (1536 with the cast,
 	// 1732 without), so Taint is a KNOWN line once more
-	r.check({ { "spell SpellBookDevastation", "S-921 (SPELL-3)" }, { "spell SpellBookIndustry", "S-1997" },
+	// merge queue q37 (measured once on the merged tree and at each merge point): at #187's the Devastation scene still misses the 500 heuristic (1536 with
+	// the cast, 1672 without); ATKRESET-1 (attack orders end the FiringDuration lock) moves the fight so it meets it (532 more lost with the cast), so its
+	// line passes; S-921 keeps the explanation (no effect of its own is asserted)
+	// merge queue q38 (measured once on the merged tree and at each merge point): LOCODIST-1's retail locomotor distance to the goal (RW 0x664127) moves the
+	// fight so the Devastation scene misses the 500 heuristic again (1600 lost with the cast, 1604 without): a KNOWN line once more (S-921)
+	// lane DECOMPFIX-1104B (AIMAIM-1's aim and RW 0x70B9E0's facing in relAngle, measured on the lane's tree): the Devastation scene meets the 500 heuristic
+	// again (664 more lost with the cast), so its line passes; S-921 keeps the explanation (no effect of its own is asserted). Dragon Strike stays KNOWN (S-1997)
+	r.check({ { "spell SpellBookIndustry", "S-1997" },
 		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" }, { "spell SpellBookIsengardTaint", "S-1997" } });
 }
 
@@ -3267,6 +3274,19 @@ void fortressOf(const std::string &faction, Results &res)
 	g.logic().combat().setAutoAcquireEnabled(false);
 	const Coord3D at = g.rig.freeSpot(kp.x + 450.0f, kp.y + 250.0f, 120.0f);
 	Object *target = g.rig.make("GondorFighterHorde", at.x, at.y, enemy);
+	// merge queue q38: with LOCODIST-1's retail locomotor distance to the goal (RW 0x664127) the scene's computer opponent marches the new horde off before the
+	// stone lands (it lands about 280 from the horde), so the target is held where it was made (DISABLED_HELD, the scene's control, not a retail rule)
+	{
+		std::vector<Object *> held{ target };
+		if (target->getContain() && target->getContain()->getContainedItemsList())
+		{
+			held.insert(held.end(), target->getContain()->getContainedItemsList()->begin(), target->getContain()->getContainedItemsList()->end());
+		}
+		for (Object *x : held)
+		{
+			x->setDisabled(DISABLED_HELD, 0x7FFFFFFFu);
+		}
+	}
 	g.step(10);
 	toughen(g.logic(), target->getID());
 	target = g.logic().findObjectByID(target->getID());
@@ -3522,6 +3542,7 @@ void upgradeEffectsOf(const std::string &faction, Results &res)
 				{
 					std::vector<float> drops, expected;
 					std::string text;
+					const ArmorTemplate *armour = nullptr; // an armour scene: the carrier's armour after the scene
 				};
 				auto scene = [&](bool bought, std::string &why) -> Scene {
 					const Coord3D home = g.home();
@@ -3648,6 +3669,10 @@ void upgradeEffectsOf(const std::string &faction, Results &res)
 							member = !member && x && (x->hasUpgrade(ut) || x->affectedByUpgrade(ut)) ? x : member;
 						}
 						Object *attacker = weapon ? member : hero, *victim = weapon ? hero : member;
+						if (const ActiveBody *vb = !weapon && victim ? dynamic_cast<const ActiveBody *>(victim->getBodyModule()) : nullptr)
+						{
+							out.armour = vb->currentArmor();
+						}
 						for (int slot = 0; attacker && victim && attacker->getWeapons() && slot < 3; ++slot)
 						{
 							if (const Weapon *w = attacker->getWeapons()->weaponInSlot(slot); w && w->getTemplate())
@@ -3716,6 +3741,13 @@ void upgradeEffectsOf(const std::string &faction, Results &res)
 				else if (before.drops.empty() || after.drops.empty())
 				{
 					res.fail(item, str("no hit %s (%zu without, %zu with)", how, before.drops.size(), after.drops.size()));
+				}
+				else if (fresh.empty() && !weapon && before.armour && after.armour && before.armour != after.armour)
+				{
+					// lane WARG-1: the upgrade swapped the armour set, and the new armour gives the hero's damage the coefficient the old one did: the scene's
+					// hero cannot show it, whatever its hits (the smallest-hit test below passed or failed on whether a two-hit frame happened, S-2008)
+					res.fail(item, str("the armour changed (%s -> %s) but gives the hero's damage the same coefficient (%s)", before.armour->m_name.c_str(),
+									   after.armour->m_name.c_str(), after.text.c_str()));
 				}
 				else if (fresh.empty() && !weapon)
 				{
@@ -3919,7 +3951,11 @@ TEST_CASE("factc upgrade effects: every Goblin and Angmar weapon and armour upgr
 	// (600 -> 300), so the line passes as in q31 (MODCOMPAT-MOD1's last expectation was measured on its older base)
 	// fix/horde-contain-no-follow (members walk to their slots, RW 0x871536): a two-hit frame without the armour again (600 -> 300), so the line passes and
 	// its pin goes; the armour still does not change Boromir's HERO hit (S-2008 keeps the explanation)
-	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf, {});
+	// lane WARG-1: an armour scene whose upgrade swaps the armour set to one with the same coefficient for the hero's damage is reported as such, without
+	// reading the hits (the line no longer passes or fails on a two-hit frame): the snow trolls' Dark Iron Armor (SnowTrollArmor -> SnowTrollHeavyArmor, both
+	// HERO 100%) is S-2008's again
+	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf,
+			  { { "upgrade effect AngmarSnowTrollHorde Upgrade_AngmarDarkIronArmor", "S-2008|gives the hero's damage the same coefficient" } });
 }
 
 TEST_CASE("factc spell book: every Goblin and Angmar spell bought in the store and cast through the spell bar shows its effect")

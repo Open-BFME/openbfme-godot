@@ -47,8 +47,10 @@
 //   * a porter (a dozer without a supply interface, RW 0x88B897) that reaches a structure it is to place goes into it (RW 0x88C51B: UNSELECTABLE, UNATTACKABLE,
 //     DO_NOT_PICK_ME and WONT_RIDE_WITH_YOU set, out of the world RW 0x68C18F) and comes out (RW 0x88D6AE) when the build ends (walking BuilderMoveFromNewStructure
 //     Distance away from it, a PLAYER-sourced move) or the task is cancelled: back in the world RW 0x68E31F, the statuses cleared.
+// Both editions: HudInput mirrors the deselection when the porter hides (RW 0x88C51B / BFME2 0x489256), removing it through the command stream;
+// the drawable's fade out at the work and in at the exit is ported, lane PORTERFOG-1.
 // INFERENCE / NOT PORTED (stops S-304, S-1282): the placement's TerrainLogic calls (RW 0x684BCA / 0x684CBA, lane FBSIM-1 ported the phantom and its placement); the
-// selection removed at the hiding (TheInGameUI; the drawable's fade out at the work and in at the exit is ported, lane PORTERFOG-1); the face command 0x26 (the AI face state 36) runs as nothing; the bridge tower branch of the dock position; the bored wander (RW 0x88E17F, an AI player's dozer); the TheInGameUI idle worker
+// face command 0x26 (the AI face state 36) runs as nothing; the bridge tower branch of the dock position; the bored wander (RW 0x88E17F, an AI player's dozer); the TheInGameUI idle worker
 // list is the marked flag (isIdleWorker); the primary machine reset after a PLAYER command runs before the command (RW: after it); the dozer's "a task ended"
 // notification to the AI player is also sent when a task is cancelled or fails (S-890).
 //
