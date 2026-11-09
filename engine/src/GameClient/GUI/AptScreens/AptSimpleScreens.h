@@ -384,6 +384,21 @@ private:
 	void save();
 	void reset();
 	void cancel();
+	// Presentation variants selected once from the mounted menu data.
+	struct MovieLayout
+	{
+		std::vector<const char *> frames;
+		const char *subtitle;
+		const char *buttons[3];
+		const char *openFunction;
+		bool customGraphics = true;
+		const char *detailLabel = "APT:Graphics";
+		const char *eaxHelp = "ToolTip:Settings/EAX";
+		const char *audioQualityHelp = "ToolTip:Settings/HighQualityAudio";
+	};
+	const MovieLayout *m_movieLayout = nullptr;
+	bool m_movieOpening = false;
+	bool m_movieOpenPending = false;
 	// lane OPTS-4: the volume sliders (RW 0x91F90D, see AptSimpleScreens.cpp)
 	void applyVolume(int type, int value);
 	void trackVolume(int type, int value);

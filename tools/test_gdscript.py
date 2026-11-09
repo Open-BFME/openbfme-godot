@@ -125,10 +125,12 @@ CI_GATES = scripts("""
 DENYLIST = {
     "tutorial_builders_test.gd": "manual: installed tutorial construction and dozer pathfinding",
     "mission_script_presentation_test.gd": "manual: mounted retail tutorials and GPU/rendered marker checks",
-
+    "options_open_test.gd": "manual: needs a private BFME1 installation and/or private RotWK/BFME2 assets, the built GDExtension and audio setup; optional screenshots require a window/GPU",
+    "w3d_shader_reuse_test.gd": "manual: requires the isolated native test extension built by w3d_shader_reuse_test.py; no retail assets",
     "harlindon_creep_combat_test.gd": "manual: requires private retail assets and a live skirmish",
     "fortress_exit_test.gd": "manual: requires private retail assets and a live skirmish",
     "water_normal_test.gd": "manual: requires GPU rendering for fixed-input water normals",
+    "draw_cull_test.gd": "manual: requires GPU rendering and a frame_pre_draw for the draw-cull compaction",
     "standing_water_test.gd": "manual: requires private retail assets and GPU water rendering",
     "ini_error_in_extension_test.gd": "manual: requires private retail assets (a synthetic mod INI over a retail map)",
     "map_water_ini_error_test.gd": "manual: requires private retail assets (a synthetic mod water.ini over a retail map)",
@@ -137,15 +139,15 @@ DENYLIST = {
                     "manual: needs a private BFME1 installation"),
     **dict.fromkeys(scripts("""
         audio_stress backlog3_focus bfme2camp1 buildperf cah_awards_display camp2 campsave1 floating_money_text
-        hero_radius_cursor hudredraw hud_globe_visibility menustyle_native menustyle net_uber netlag1 occlude1 opts4 opts5
-        packed_model_texture pathperf1_render perf3_cull perfclient_views play3 player_house_color player_message_log
+        apt_view3d_visibility hero_radius_cursor hudredraw hud_globe_visibility menustyle_native menustyle net_uber netlag1 occlude1 opts4 opts5
+        macos_trackpad packed_model_texture pathperf1_render perf3_cull perfclient_views play3 player_house_color player_message_log
         pose_buffer pose_buffer_cull_query pose_buffer_query_trigger
         renderwait1_teardown road_shading selperf shellfix1 spellbook_reload terrain_lighting uberjoin1 ui4_resize
         controller_main_menu formation_placement mixed_formation_placement online16_fix_bridge p16_ui_dictionary
         p16_ui_legacy_shape spellbook_rightclick cah_camera_retail shellfb1_cursor shellfb1_spell_store_escape
     """) | {"object_corpus_sweep.gd"}, "manual: needs private RotWK/BFME2 assets and game/frame setup"),
     **dict.fromkeys(scripts("""
-        apt_canvas_pixel building_render fx_render gamma_composite glow hud_image_mode_pixel
+        apt_canvas_pixel building_damage_fx building_render fx_render gamma_composite glow hud_image_mode_pixel
         menu_backdrop_resize object_shadow_building object_shadow_instances object_shadow_render online_branding
         pro_camera pro_camera_bokeh radial_background render4 road_shader shader tangent_convention
     """), "manual: GPU/window/render readback required (some also need retail assets)"),

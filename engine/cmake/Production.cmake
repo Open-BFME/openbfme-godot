@@ -22,4 +22,6 @@ set(OPENBFME_PROD_TESTS
     tests/test_prod_hash.cpp
     tests/test_prod_retail.cpp
     tests/test_production1_retail.cpp # lane PRODUCTION1
+    tests/test_brutalai1.cpp # lane BRUTALAI-1
+    tests/test_build_brutal_cheats.cpp # Community PR #247 (admiraly): the Brutal AI build reductions of the thing cost / time sites
 )

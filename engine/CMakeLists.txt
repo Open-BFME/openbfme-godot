@@ -307,6 +307,7 @@ include(cmake/Bridge1.cmake)    # BRIDGE-1: retail bridges crossed and destroyed
 include(cmake/Siege1.cmake)     # SIEGE-1: the siege units (appends to OPENBFME_SIM_SOURCES; OPENBFME_SIEGE1_TESTS)
 include(cmake/Castlearea1.cmake) # CASTLEAREA-1: the castle area triggers (OPENBFME_CASTLEAREA1_TESTS)
 include(cmake/Weather1.cmake)   # WEATHER-1: snow, rain, darkness, lightning, the weather sound (client sources; OPENBFME_WEATHER1_TESTS)
+include(cmake/Bldfx1.cmake)     # FEAT-BLDFX-1: the FXList nugget sinks, scorches, decals, light pulses, camera shakers (OPENBFME_BLDFX1_SOURCES / _TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -314,6 +315,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_EVADAMAGE1_CLIENT_SOURCES}
     ${OPENBFME_DECOMP2_CLIENT_SOURCES}
     ${OPENBFME_FX_SOURCES}
+    ${OPENBFME_BLDFX1_SOURCES}
     ${OPENBFME_PROD_SOURCES}
     ${OPENBFME_AUDIO_SOURCES}
     ${OPENBFME_START_SOURCES}
@@ -365,6 +367,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_VISUAL2_SOURCES}
     ${OPENBFME_CAMPSAVE1_SOURCES}
     src/Common/AsciiString.cpp
+    src/Common/ShaderVaryings.cpp
     src/Common/LogicFrameClock.cpp
     src/Common/MD5.cpp
     src/Common/MiniJson.cpp
@@ -406,6 +409,7 @@ add_library(openbfme_core STATIC
     src/Libraries/WWVegas/WW3D2/meshrender.cpp
     src/Libraries/WWVegas/WW3D2/w3dstops.cpp
     src/Libraries/WWVegas/WW3D2/w3dshadergen.cpp
+    src/Libraries/WWVegas/WW3D2/fxshadergen.cpp
     src/Libraries/WWVegas/WW3D2/w3dfxconvert.cpp
     src/Libraries/WWVegas/WW3D2/textureloader.cpp
     src/GameEngineDevice/W3DDevice/GameClient/HouseColor.cpp
@@ -631,6 +635,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotPathfindView.cpp
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
+    src/GodotDevice/GodotShaderBudget.cpp # SHADER-BUDGET-1
     # START-1: the new-game message and the load screen as Godot data
     ${OPENBFME_START_GODOT_SOURCES}
     ${OPENBFME_RENDER3_GODOT_SOURCES}
@@ -652,6 +657,12 @@ add_library(openbfme SHARED
     ${OPENBFME_WEATHER1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
 target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    enable_language(OBJCXX)
+    target_sources(openbfme PRIVATE src/GodotDevice/MacOSTrackpad.mm)
+    target_compile_options(openbfme PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>) # ARC for the Objective-C++ trackpad monitor only, no per-file list
+    target_link_libraries(openbfme PRIVATE "-framework AppKit")
+endif()
 if(UNIX AND NOT APPLE)
     # The extension links libstdc++ statically; without this its exported locale facet ids collide with the system runtime that Mesa loads into a
     # windowed Godot, and the first stream integer extraction (std::istream >> int) dispatches into the wrong codecvt and crashes (PROD-1 review r1).
@@ -735,6 +746,7 @@ add_executable(openbfme_tests
     ${OPENBFME_FX2_TESTS}
     ${OPENBFME_FX3_TESTS}
     ${OPENBFME_FX4_TESTS}
+    ${OPENBFME_BLDFX1_TESTS}
     ${OPENBFME_FOGFX1_TESTS}
     ${OPENBFME_HERO_TESTS}
     ${OPENBFME_MOD1_TESTS}
@@ -859,7 +871,9 @@ add_executable(openbfme_tests
     tests/test_workerpool.cpp
     tests/test_w3d_mapper.cpp
     tests/test_w3d_shader.cpp
+    tests/test_shader_varyings.cpp
     tests/test_w3d_shadergen.cpp
+    tests/test_fx_shadergen.cpp
     tests/test_w3d_fxconvert.cpp
     tests/test_w3d_stops.cpp
     tests/test_w3d_render.cpp
@@ -934,6 +948,7 @@ add_executable(openbfme_tests
     tests/test_pathfind_numerics.cpp
     tests/test_locodist1.cpp
     tests/test_sails1.cpp
+    tests/test_airborne1.cpp # lane AIRBORNE-1
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp

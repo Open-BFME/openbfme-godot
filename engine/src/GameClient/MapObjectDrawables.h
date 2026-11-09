@@ -170,6 +170,15 @@ struct MapObjectRecord
 	std::string detail;              ///< why (non-drawn fates), or the case-insensitive match for an unresolved name
 };
 
+// A map's Scorch object (S-117): the terrain visual adds it to the scorch buffer at load (BFME2 decomp W3DTerrainVisualLoad.cpp:526 /
+// W3DTerrainVisual.cpp:566), radius = the object's objectRadius dict field, type = its scorchType.
+struct MapScorch
+{
+	Coord3D position;
+	float radius = 0.0f;
+	int type = 0;
+};
+
 struct MapObjectOptions
 {
 	bool useTrees = true;                       ///< the trees-off switch of the loop is off (S-114)
@@ -229,6 +238,7 @@ struct MapObjectReport
 	std::map<std::string, size_t> creationHookShows;              ///< sub object (lower case) the handlers show permanently -> objects
 	std::vector<std::string> errors;                              ///< per-object problems that must reach a test (unresolved names, bad KindOf, ...)
 	std::vector<std::string> stops;                               ///< the stop lines that apply, "[S-1xx] ..."
+	std::vector<MapScorch> scorches;                              ///< the map's Scorch objects, in ObjectsList order (S-117)
 };
 
 struct MapObjectDrawables

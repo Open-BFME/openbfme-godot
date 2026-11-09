@@ -8,6 +8,7 @@ set(OPENBFME_SKIRMISH_AI_SOURCES
     src/GameLogic/SkirmishAI/AITacticalAI.cpp
     src/GameLogic/SkirmishAI/AIThreatFinder.cpp
     src/GameLogic/SkirmishAI/AIStatCollector.cpp
+    src/GameLogic/SkirmishAI/AIPositionSampler.cpp
     src/GameLogic/SkirmishAI/AIUpgrade.cpp)
 
 set(OPENBFME_SKIRMISH_AI_TESTS
@@ -18,5 +19,9 @@ set(OPENBFME_SKIRMISH_AI_TESTS
     tests/test_skirmish_ai_vs_ai.cpp
     tests/test_skirmish_ai_u22.cpp
     tests/test_skirmish_ai_upgrades.cpp
+    tests/test_skirmish_ai_siege.cpp
     tests/test_aiexpand1_expansion.cpp
+    tests/test_rai_defense_records.cpp
+    tests/test_rai_defensive_tactic.cpp
+    tests/test_rai_defensive_state.cpp
     tests/test_horde_cavalry_retail.cpp)
