@@ -933,7 +933,7 @@ TEST_CASE("skirmish ai roaming defense: EASY only, the 5 s scheduling, the zero-
 	AITacticalAI::updateBrain(*fx.logic, *ai, ai);
 	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_NextLogicFrameRun") == 0);
 	CHECK(ai->brain.tactics.empty());
-	// EASY and due: the pool draw starts it; RW 0x9B80FA sets IsRunning in the zero-team setup. The manager starts at frame
+	// EASY and due: the pool draw starts it; IsRunning stays 0 (RW 0x8F232F never calls the team setup RW 0x9B80FA without a team). The manager starts at frame
 	// 10 (RW 0x6A96B6), so advance there first with the scheduled 25 still in the future.
 	for (int i = 0; i < 10; ++i)
 	{
@@ -949,12 +949,14 @@ TEST_CASE("skirmish ai roaming defense: EASY only, the 5 s scheduling, the zero-
 	REQUIRE(ai->brain.tactics.size() == 1);
 	CHECK(ai->brain.tactics[0].kind == "AIRoamingDefenseTactic");
 	CHECK(ai->brain.tactics[0].teams.empty()); // RW 0x851E97: no team
-	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_IsRunning") == 1);
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_IsRunning") == 0);
 	CHECK(ai->brain.targetlessPicks == 1);
 	CHECK(ai->brain.targetlessStarted == 1);
 	const GameLogicRandom::Call &pick = fx.logic->random().callLog().back();
 	CHECK(pick.file == "AITacticsGenerator.cpp");
 	CHECK(pick.line == 0x1BC);
+	// isolate this one tactic from the further clones the next brain updates would start while it waits (the case below pins those)
+	ai->brain.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] = 0x7fffffff;
 	auto roundTrip = [&]() {
 		std::vector<std::uint8_t> saved, again;
 		std::string error;
@@ -1080,6 +1082,42 @@ TEST_CASE("skirmish ai roaming defense: EASY only, the 5 s scheduling, the zero-
 	roundTrip(); // ended, before removal
 	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_IsRunning") == 0);
 	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_NextLogicFrameRun") == before + 25);
+}
+
+TEST_CASE("skirmish ai roaming defense (prtrlp): no IsRunning, so the brain updates before the first run start more clones (RW 0x8F232F / 0x9B80FA / 0x9B8047)")
+{
+	AIFixture fx({ { "H", "FactionA", true, 0, 0, 0 }, { "C", "FactionA", false, 1, 0, 1 } });
+	REQUIRE(fx.logic->skirmishAI().newGame(true) == 1);
+	auto *ai = const_cast<AISkirmishPlayer *>(fx.logic->skirmishAI().findAI(fx.indexOf("C")));
+	REQUIRE(ai);
+	Player *computer = fx.players.findPlayerWithName("C");
+	REQUIRE(computer);
+	ai->brain.namedCounters["FarmKillSquad::IsRunning"] = 1; // isolate this prototype from FarmKillSquad
+	computer->setSkirmishDifficulty(0); // EASY
+	fx.logic->runLogicFrame();
+	const int frame = (int)fx.logic->getFrame();
+	REQUIRE(frame == 1);
+	ai->brain.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] = frame; // due
+	auto roaming = [&]() {
+		int n = 0;
+		for (const AITactic &t : ai->brain.tactics) n += t.kind == "AIRoamingDefenseTactic" && !t.ended ? 1 : 0;
+		return n;
+	};
+	// RW 0x8F232F: the zero-team prototype is only marked ready; vslot 3 (RW 0x9B80FA, the IsRunning setter) runs once per team, so never here.
+	// Each brain update (RW 0x90CB85) updates the tactics, then picks: the pending clones leave the key clear and the frame due, so each update
+	// starts one more until the first clone's run ends and its cleanup RW 0x9B8047 clears the next run frame.
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai); // A picked
+	CHECK(roaming() == 1);
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_IsRunning") == 0);
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai); // A's ready frame, B picked
+	CHECK(roaming() == 2);
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai); // A started, C picked
+	CHECK(roaming() == 3);
+	AITacticalAI::updateBrain(*fx.logic, *ai, ai); // A's run ends it and clears the keys; the pick then schedules 5 s on
+	CHECK(roaming() == 2);
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_IsRunning") == 0);
+	CHECK(ai->brain.namedCounters.at("AIRoamingDefenseTactic_NextLogicFrameRun") == frame + 25);
+	CHECK(ai->brain.targetlessStarted == 3);
 }
 
 TEST_CASE("skirmish ai roaming destination: nearby economy, or an empty economy record and a fortress-ring draw (RW 0x9B8160)")

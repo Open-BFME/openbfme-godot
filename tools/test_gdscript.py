@@ -123,6 +123,7 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "options_open_test.gd": "manual: needs a private BFME1 installation and/or private RotWK/BFME2 assets, the built GDExtension and audio setup; optional screenshots require a window/GPU",
     "w3d_shader_reuse_test.gd": "manual: requires the isolated native test extension built by w3d_shader_reuse_test.py; no retail assets",
     "harlindon_creep_combat_test.gd": "manual: requires private retail assets and a live skirmish",
     "fortress_exit_test.gd": "manual: requires private retail assets and a live skirmish",
@@ -144,7 +145,7 @@ DENYLIST = {
         p16_ui_legacy_shape spellbook_rightclick cah_camera_retail shellfb1_cursor shellfb1_spell_store_escape
     """) | {"object_corpus_sweep.gd"}, "manual: needs private RotWK/BFME2 assets and game/frame setup"),
     **dict.fromkeys(scripts("""
-        apt_canvas_pixel building_render fx_render gamma_composite glow hud_image_mode_pixel
+        apt_canvas_pixel building_damage_fx building_render fx_render gamma_composite glow hud_image_mode_pixel
         menu_backdrop_resize object_shadow_building object_shadow_instances object_shadow_render online_branding
         pro_camera pro_camera_bokeh radial_background render4 road_shader shader tangent_convention
     """), "manual: GPU/window/render readback required (some also need retail assets)"),

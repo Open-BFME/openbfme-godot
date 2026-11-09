@@ -50,6 +50,7 @@ const HELP := {
 	"max_fps": "The most frames drawn a second. The game itself always runs at its own pace.",
 	"show_fps": "The frame counter in the top left corner.",
 	"render_scale": "The 3D view is drawn at this share of the window's pixels, then scaled up; the menus and the interface stay sharp.",
+	"preset": "Automatic starts on the full picture and measures the first match. A GPU slower than 40 fps on the 3D view alone switches to Low: 70% 3D scale and, unless a detail level is chosen in Options, no terrain normal map, fewer particles and no object shadow map. High is the full picture.",
 	"scaler_full": "How a render scale below 100% is scaled up. At 100% the scaler does nothing (FSR 2 still smooths edges).",
 	"scaler_scaled": "How a render scale below 100% is scaled up. FSR keeps more detail than bilinear.",
 	"OpenBFMEWidescreen": "Original: the original game's view, which shows less from top to bottom on screens wider than 4:3. Wider: the 4:3 view from top to bottom, more to the sides.",
@@ -502,9 +503,15 @@ func _frame_limits() -> Array:
 	return limits
 
 
+const PRESET_LABELS := {"auto": "Automatic", "high": "High", "low": "Low"}
+
+
 func _display_rows() -> Array:
 	var p = _pending
 	var rows := []
+	var detected: String = DisplaySettings.detected_preset(str(p.probe))
+	var preset_items: Array = DisplaySettings.PRESETS.map(func(q): return "%s (%s)" % [PRESET_LABELS[q], PRESET_LABELS[detected]] if q == "auto" else PRESET_LABELS[q])
+	rows.append(_choice("preset", "Graphics preset", preset_items, DisplaySettings.PRESETS.find(p.preset), HELP.preset))
 	rows.append(_choice("window_mode", "Window mode", DisplaySettings.WINDOW_MODES.map(func(m): return WINDOW_MODE_LABELS[m]),
 		DisplaySettings.WINDOW_MODES.find(p.window_mode), HELP.window_mode))
 	var res := _resolution_choices()
@@ -726,6 +733,13 @@ func _on_value(key: String, value: int) -> void:
 		_sync()
 		return
 	match key:
+		"preset":
+			if value >= 0 and value < DisplaySettings.PRESETS.size():
+				var bundle: Dictionary = DisplaySettings.preset_values(DisplaySettings.PRESETS[value], str(_pending.probe))
+				bundle["preset"] = DisplaySettings.PRESETS[value]
+				_pending.from_dict(bundle)
+				_apply_pending()
+				_sync()
 		"window_mode":
 			if value >= 0 and value < DisplaySettings.WINDOW_MODES.size():
 				set_value("window_mode", DisplaySettings.WINDOW_MODES[value])

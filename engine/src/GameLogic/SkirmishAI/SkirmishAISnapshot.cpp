@@ -488,9 +488,16 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 	// it: the fields load at 0 / none
 	// version 6 (lane RAI-POW-2, community #233): each AI's cached enemy player and its refresh frame, written only when some AI's cache holds a value, so
 	// a game that never asked for an enemy keeps version 5's bytes
+	// version 7 (lane RAI-SMALL): the groups' task vectors (RW 0x8EDB2C), written only when some group holds a task. Retail's group task list is never
+	// filled by the AI code, so a live game keeps version 5 or 6; a version 5 / 6 snapshot has no tasks
 	bool enemyCache = x.isLoading();
+	bool hasTasks = x.isLoading();
 	for (const std::unique_ptr<AISkirmishGroup> &g : m_groups)
 	{
+		if (!g->tasks.empty())
+		{
+			hasTasks = true;
+		}
 		for (const auto &kv : g->players)
 		{
 			if (kv.second->enemyIndex != -1 || kv.second->enemyRefreshFrame != 0)
@@ -499,7 +506,9 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 			}
 		}
 	}
-	XferVersion v{ 3, (std::uint8_t)(enemyCache ? 6 : 5) };
+	// a task list needs the enemy-cache fields too: version 7 always carries version 6's bytes
+	const int written = hasTasks ? 7 : (enemyCache ? 6 : 5);
+	XferVersion v{ 3, (std::uint8_t)written };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	bool started = loading ? false : m_started;
@@ -718,6 +727,34 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 				ai->groupFirst = first;
 			}
 		}
+		// version 7 (lane RAI-SMALL): the group's tasks (+ 0x18), RW 0x8EDB2C. Versions 5 and 6 are main's DEFENSIVE fields and enemy cache.
+		if (v.current >= 7)
+		{
+			std::uint32_t tasks = (std::uint32_t)g->tasks.size();
+			x.xferCount(&tasks, 20, sizeof(AIGroupTask)); // five 4-byte fields (state, two players, remaining, per-update)
+			std::vector<AIGroupTask> loaded;
+			for (std::uint32_t i = 0; i < tasks; ++i)
+			{
+				AIGroupTask task = loading ? AIGroupTask{} : g->tasks[i];
+				x.xferInt(&task.state);
+				x.xferInt(&task.fromPlayer);
+				x.xferInt(&task.toPlayer);
+				x.xferUnsignedInt(&task.remaining);
+				x.xferUnsignedInt(&task.perUpdate);
+				if (loading)
+				{
+					AIXfer::inRange(task.state, AIGroupTask::TASK_ACTIVE, AIGroupTask::TASK_FAILED, "skirmish ai: a group task's state");
+					// the money transfer's players (RW 0x99EEF4 fails the task on a missing one; the unset -1 is the constructor's)
+					AIXfer::inRange(task.fromPlayer, -1, m_logic.players().getPlayerCount() - 1, "skirmish ai: a group task's paying player");
+					AIXfer::inRange(task.toPlayer, -1, m_logic.players().getPlayerCount() - 1, "skirmish ai: a group task's paid player");
+					loaded.push_back(task);
+				}
+			}
+			if (loading)
+			{
+				g->tasks = std::move(loaded);
+			}
+		}
 	}
 	AIXfer::strings(x, m_errors);
 	for (unsigned long long *c : { &m_counters.managerUpdates, &m_counters.gatedUpdates, &m_counters.playerInfoUpdates, &m_counters.groupUpdates,
@@ -791,6 +828,11 @@ void SkirmishAIManager::checkLoaded() const
 		if (!g->players.empty() && firsts != 1)
 		{
 			throw XferException("skirmish ai: a group has " + std::to_string(firsts) + " first AIs");
+		}
+		for (const AIGroupTask &t : g->tasks)
+		{
+			player(t.fromPlayer, "skirmish ai: a group task's payer");
+			player(t.toPlayer, "skirmish ai: a group task's payee");
 		}
 	}
 	for (const auto &kv : ais)

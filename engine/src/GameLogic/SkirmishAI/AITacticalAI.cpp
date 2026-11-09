@@ -2559,8 +2559,8 @@ void startWoTRBattle(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 	endAnyTactic(logic, ai, b, tac, owner, true);
 }
 
-// AIRoamingDefenseTactic's run RW 0x9B7EBD: the tactic's running flag (+ 0x10) and "roaming" (+ 0x58); setup RW 0x9B80FA has already set
-// the IsRunning key. The update RW 0x9B83A6 sends the first idle, unbusy unit of the player's army (AI slot 0x1B8, status 0x5A clear, the
+// AIRoamingDefenseTactic's run RW 0x9B7EBD: the tactic's running flag (+ 0x10) and "roaming" (+ 0x58); the IsRunning key stays 0 (its setter, the
+// team setup RW 0x9B80FA, is never called for this zero-team prototype). The update RW 0x9B83A6 sends the first idle, unbusy unit of the player's army (AI slot 0x1B8, status 0x5A clear, the
 // object's Team + 0x31C == the AI player's default Team + 0x30C) to RW 0x9B8160's destination and ends the tactic (0, 0).
 void updateRoamingDefense(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
 {
@@ -3470,11 +3470,9 @@ void startTargetless(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
 		}
 		tac.teams.push_back(team);
 	}
-	if (count == 0 && tac.kindIndex == kTargetlessBase + TL_ROAMING_DEFENSE)
-	{
-		// RW 0x9B80FA (vslot 3, the team setup): set IsRunning, then RW 0x8F121F with no team.
-		ai.brain.namedCounters["AIRoamingDefenseTactic_IsRunning"] = 1;
-	}
+	// AIRoamingDefenseTactic's vslot 3 (RW 0x9B80FA: IsRunning = 1, then RW 0x8F121F) is a team setup: RW 0x8F232F calls it once per team only, and the
+	// prototype has none (RW 0x851E97), so retail never sets IsRunning. While a roaming tactic waits for its run, the next brain updates start more
+	// (each a pool pick) until the first one's cleanup RW 0x9B8047 clears the next run frame
 }
 
 // RW 0x90C5E2
@@ -3772,7 +3770,7 @@ bool hasAnyLiveObject(GameLogic &logic, const Player &player)
 	return false;
 }
 
-// RW 0x7A1129 (Team::hasAnyObjectOfClass): a member whose template ThingClass (RW + 0x5F6) is not 0. INFERENCE: the port has no ThingClass parser, so
+// RW 0x7A1129 (Team::hasAnyObjectOfClass): a member whose template ThingClass (RW + 0x5F6) is not 0. The port does not parse ThingClass (stop S-4257), so
 // every object is taken as classified and any object of the player answers yes (a mod with classless objects differs)
 bool hasAnyClassified(GameLogic &logic, const Player &player)
 {
@@ -3815,6 +3813,10 @@ void baseBounds(GameLogic &logic, const Player &player, Coord3D &min, Coord3D &m
 	}
 }
 
+const char *const kStopClassified =
+	"[S-4257] skirmish ai enemy classification: RW 0x7A1129's ThingClass test (template + 0x5F6) is not parsed, so hasAnyClassified takes any object as "
+	"classified; a mod whose players have only classless objects is treated as reachable (retail: unreachable)";
+
 // RW 0x8F457D (AIPlayer::acquireEnemy): the enemy player is the nearest candidate base whose player is an ENEMY with live objects, is not PlyrCreeps,
 // has units and classified objects (else it counts as unreachable), adjusted by the other AIs' current enemies: +250000 for each AI that already targets it,
 // -625 for each AI that targets this AI's player (never below 0). Ties keep the earlier player index
@@ -3834,6 +3836,7 @@ void acquireEnemy(GameLogic &logic, AISkirmishPlayer &ai)
 	{
 		return; // RW 0x8F45A8 .. 0x8F45C0: the cached enemy is still valid (RW 0x6ABD44 -> 0x7A07D8, RW 0x6ABE2C -> 0x7A1129)
 	}
+	logic.noteStop(kStopClassified); // the ThingClass read RW 0x7A1129 makes is the unported one (once per acquire)
 	int best = -1;
 	float bestDistance = kInitial;
 	for (int i = 0; i < logic.players().getPlayerCount(); ++i)
@@ -4174,7 +4177,9 @@ void AITacticalAI::updateBrain(GameLogic &logic, AISkirmishPlayer &ai, AISkirmis
 	{
 		expansionTactic(logic, ai, b, owner->brain, best, owner->playerIndex, *player); // RW 0x90C50C (lane AIEXPAND-1)
 	}
-	// RW 0x90CCCB: not ported (S-417)
+	// RW 0x6C7506: the brain update tail-jumps to RW 0x90CCCB, the FlagCaptureSquad prototype refresh (RW 0x90CC23 adds one prototype per capture flag of the
+	// player's list, then each prototype's slot 0 RW 0x9BC5D6 runs). The port's FlagCaptureSquad is one prototype over the live capture registry (S-893), so
+	// there is no per-flag prototype list to refresh; S-417's old "generator teardown" reading of 0x90CCCB is corrected there.
 }
 
 void AITacticalAI::updateIdleArmy(GameLogic &logic, AISkirmishPlayer &ai)
