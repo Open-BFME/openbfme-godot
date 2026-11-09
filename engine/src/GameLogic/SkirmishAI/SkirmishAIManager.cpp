@@ -4,6 +4,7 @@
 
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/SkirmishAI/AIUpgrade.h"
+#include "GameLogic/Module/GateModules.h"
 
 #include <algorithm>
 #include <iterator>
@@ -291,11 +292,117 @@ void SkirmishAIManager::updateGroup(AISkirmishGroup &g)
 		return;
 	}
 	g.lastLiveCount = live;
-	// RW 0x8ED6DC (manager + 0xA74, before), every AI by player index, RW 0x8EDB2C (the group's tasks), RW 0x8ED726 (after): the + 0xA74 object and the
-	// tasks are not ported (S-412)
+	// RW 0x8EDE50 .. 0x8EDE5B: the manager's gate list temporarily closes the enemy gates whose OPEN geometry is the one in the pathfinder's map, before
+	// the group's AIs run
+	Player *first = firstAIMember(g);
+	if (first)
+	{
+		updateGates(true, *first);
+		traceGateWalk(true);
+	}
+	// RW 0x8EDE60 .. 0x8EDE86: every AI by player index, then RW 0x8EDB2C (the group's tasks), then RW 0x8ED726 (the gates reopen)
 	for (auto &kv : g.players)
 	{
 		updateAI(*kv.second, g);
+	}
+	updateTasks(g);
+	if (first)
+	{
+		updateGates(false, *first);
+		traceGateWalk(false);
+	}
+}
+
+// diagnostics only (setGateWalkTrace): the listed gates' geometry states after a walk, in list order
+void SkirmishAIManager::traceGateWalk(bool before)
+{
+	if (!m_gateWalkTrace)
+	{
+		return;
+	}
+	for (GateOpenAndCloseBehavior *gate : m_gates)
+	{
+		if (gate)
+		{
+			m_gateWalkTrace->push_back({ before, gate, (int)gate->geometryState() });
+		}
+	}
+}
+
+// RW 0x8ED6DC / RW 0x8ED726: the manager + 0xA74's vector, in registration order. `before`: every gate whose OPEN (passable) geometry is the one in the
+// pathfinder's map (RW 0x89C12F) and whose owner is the AI player's ENEMY (RW 0x89C18E: Player::getRelationship, ENEMIES) gets the CLOSED geometry
+// (RW 0x89C9FA(0)); after the group's AIs the same gates get the OPEN geometry (RW 0x89CA84(1, 0), forced even when already open). Both walks change the
+// geometry only through GateOpenAndCloseBehavior::setGeometry, so they take lane WALLFOOT-1's keeping removal (RW 0x6E861E). The pathfinder's portal refresh
+// RW 0x6E85B0 follows each walk; the port's add / removeObjectFromPathfindMap apply at once, so it has nothing left to do.
+void SkirmishAIManager::updateGates(bool before, Player &player)
+{
+	for (GateOpenAndCloseBehavior *gate : m_gates)
+	{
+		if (!gate || !gate->openGeometryInPathfindMap() || gate->relationshipTo(player) != ENEMIES)
+		{
+			continue;
+		}
+		gate->setGeometry(!before, false, true);
+	}
+}
+
+void SkirmishAIManager::registerGate(GateOpenAndCloseBehavior &gate)
+{
+	// RW 0x8EDA39: a duplicate is not appended
+	if (std::find(m_gates.begin(), m_gates.end(), &gate) == m_gates.end())
+	{
+		m_gates.push_back(&gate);
+	}
+}
+
+void SkirmishAIManager::unregisterGate(GateOpenAndCloseBehavior &gate)
+{
+	// RW 0x8ED772: the first entry of the pointer is erased
+	m_gates.erase(std::remove(m_gates.begin(), m_gates.end(), &gate), m_gates.end());
+
+}
+
+// RW 0x8EDB2C: the group's task vector (+ 0x18) in order. A finished entry (RW 0x8EDA5E: state 2 or 3) is deleted; an active one runs its tick (RW 0x99EEF4).
+void SkirmishAIManager::updateTasks(AISkirmishGroup &g)
+{
+	for (auto it = g.tasks.begin(); it != g.tasks.end();)
+	{
+		AIGroupTask &task = *it;
+		if (task.state == AIGroupTask::TASK_DONE || task.state == AIGroupTask::TASK_FAILED)
+		{
+			it = g.tasks.erase(it);
+			continue;
+		}
+		if (task.state == AIGroupTask::TASK_ACTIVE)
+		{
+			// RW 0x99EEF4: the money transfer: a missing player fails the task (state 3); the payer's cash, the per-update cap and what is left bound the
+			// payment; 0 pays nothing and leaves the task active; the last payment completes it (state 2)
+			Player *from = m_logic.players().getNthPlayer(task.fromPlayer);
+			Player *to = m_logic.players().getNthPlayer(task.toPlayer);
+			if (!from || !to)
+			{
+				task.state = AIGroupTask::TASK_FAILED;
+			}
+			else
+			{
+				std::uint32_t amount = std::min(from->getMoney()->countMoney(), task.perUpdate);
+				if (amount != 0)
+				{
+					amount = std::min(amount, task.remaining);
+					if (amount != 0)
+					{
+						from->getMoney()->withdraw(amount, &from->getScoreKeeper(), true); // RW 0x7B17EF
+						to->getMoney()->deposit(amount, &to->getScoreKeeper(), true);      // RW 0x7B18B8
+						task.remaining -= amount;
+					}
+					if (task.remaining == 0)
+					{
+						task.state = AIGroupTask::TASK_DONE;
+					}
+				}
+			}
+		}
+		++it;
 	}
 }
 
@@ -543,6 +650,7 @@ void SkirmishAIManager::reset()
 	m_groups.clear();
 	m_infoPlayers.clear();
 	m_captureFlags.clear();
+	m_gates.clear(); // every gate unregisters in its destructor (RW 0x89BF87); a reset has none left
 	m_records.clear();
 	m_farmSites.clear();
 	m_started = false;
@@ -628,6 +736,19 @@ void SkirmishAIManager::crc(StateHasher &h) const
 		{
 			h.addI32(m);
 		}
+		// only a non-empty list is hashed: retail's AI code never fills it, so a live game's hash is the same as before this port
+		if (!g->tasks.empty())
+		{
+			h.addU32((std::uint32_t)g->tasks.size());
+			for (const AIGroupTask &t : g->tasks)
+			{
+				h.addI32(t.state);
+				h.addI32(t.fromPlayer);
+				h.addI32(t.toPlayer);
+				h.addU32(t.remaining);
+				h.addU32(t.perUpdate);
+			}
+		}
 		for (const auto &kv : g->players)
 		{
 			const AISkirmishPlayer &ai = *kv.second;
@@ -642,6 +763,11 @@ void SkirmishAIManager::crc(StateHasher &h) const
 			h.addString(ai.dozerTemplate);
 			h.addU32(ai.shutdownFrame);
 			h.addU32(ai.retryTimer);
+			if (ai.enemyIndex != -1 || ai.enemyRefreshFrame != 0) // lane RAI-POW-2: the enemy cache (RW 0x8F47EB), only once it holds a value
+			{
+				h.addI32(ai.enemyIndex);
+				h.addU32(ai.enemyRefreshFrame);
+			}
 			AIBaseBuilder::crc(ai.build, h);
 			AITacticalAI::crc(ai.brain, h);
 		}
@@ -655,7 +781,10 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"tables have no terminating row, so an unknown field crashes retail where the port reports it; a CombatChainDefinition without Unit writes "
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
-		"0x6C7946); the bodies they call are not: the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
+		"0x6C7946); the manager's gate list (+ 0xA74, RW 0x8ED6DC / 0x8ED726: every gate registers at construction, RW 0x89C04B -> 0x8EDA39, and the group update "
+		"closes the passable enemy gates (their open geometry in the pathfinder map, RW 0x89C12F) before its AIs and reopens them after) is ported; the group's "
+		"tasks (+ 0x18, RW 0x8EDB2C: the money task RW 0x99EEF4 with the finished test RW 0x8EDA5E, a missing player fails it, the payer's "
+		"cash / the per-update cap / what is left bound each payment) are ported; the bodies they call are not: "
 		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the wall builder (RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419), attacks with its tactic teams (S-417) and (lane AI5) buys its units' and structures' upgrades and its plots' expansions "
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "
@@ -668,8 +797,10 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"FlankAttack, PincerAttack, FeintAttack and AIBasePenetrationTroopsTactic with their draws (FlankAttack RW 0x9B4642 / 0x9B4720, PincerAttack RW 0x9B4067, "
 		"FeintAttack RW 0x9B398D / 0x9B3A5A / 0x9B3AE4) are ported; lane BACKLOG6: AIGroup's stealth delay draw RW 0x774CEB is ported for the groups the formation "
 		"manager does not take (S-895); not ported: the siege bodies, the end's merge into a nearby AI team with its draw RW 0x8F1F08 (the units are released), "
-		"the DEFENSIVE heuristic and tactics (RW 0x90C436) (only the One Ring OPPORTUNITY heuristic is "
-		"ported; the tech-building OPPORTUNITY heuristic remains unported), the targetless tactics other than FarmKillSquad and FlagCaptureSquad, RW 0x90CCCB, the AI team objects; "
+		"the tech-building OPPORTUNITY heuristic (only the One Ring OPPORTUNITY heuristic is "
+		"ported), the targetless tactics other than FarmKillSquad and FlagCaptureSquad, RW 0x90CCCB, the AI team objects; "
+		"lane RAI-DEF ported the DEFENSIVE heuristic (RW 0x97D74F, the player info record's position sampler groups) and the DEFENSIVE tactic (RW 0x90C436, "
+		"SimpleDefense RW 0x9B4F8F / 0x9B4EF0 / 0x9B4EB7, the recruit order RW 0x9A2CA5); "
 		"lane AIEXPAND-1 ported the EXPANSION heuristic (RW 0x97D035 / 0x97D191: the nearest free Player_N_Start as a position target; its frame "
 		"counter is per game, retail's runs on across a process's games) and the EXPANSION tactic (RW 0x90C50C, SimpleExpansion RW 0x9B5190 / 0x9B52BD: "
 		"a MenFortress request at the target, then a second base, RW 0x9B5020); "
@@ -688,11 +819,11 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"unfinished structures as targets (lane DECOMP-2: RW's AI::findClosestEnemy RW 0x701443 -> 0x7006D7 and its attack test RW 0x68D6A6 / 0x6C9147 / "
 		"0x6C8652 never test UNDER_CONSTRUCTION); INFERENCE: the worker kill runs at the port's delete point, the defeat frames are engine pins",
 		"[S-418] skirmish ai tactical layer inference: (lane DECOMP-3: the player info record AIStatCollector RW 0x8E46D9 is ported and filled by the object "
-		"events RW 0x6A9D9C / 0x6A99CB, so its lists keep RW's event order; its position sampler and listeners are not ported; newGame's pass walks the port's "
+		"events RW 0x6A9D9C / 0x6A99CB, so its lists keep RW's event order; its position sampler (RW 0x8E4042, AIPositionSampler) is ported, its listeners are not; newGame's pass walks the port's "
 		"default team backwards as RW's prepended member list); (lane DECOMP-2: the team builder's recruit test "
 		"RW 0x9A24FC, the SUPPORT rule, the hand-over at the minimum when DEFENSIVE, full or meeting the target's threat RW 0x9A26A1, the pooled defaults and the "
 		"idle dispatch RW 0x9A3040 are ported; its unit list is taken as the army list) a unit in another team is never taken (RW's priority and DEFENSIVE-target branches), a member counts until it is destroyed, the threat sum runs "
-		"newest member first; RW 0x9EF9AF's path check is taken as reachable; the enemy score root is the double root of the float sum",
+		"newest member first; RW 0x9EF9AF's path check is RW 0x6F5F65 (the target object) or RW 0x6F5BB0 (its position); the enemy score root is the double root of the float sum",
 		"[S-415] skirmish ai unit builder (+ 0x38, RW 0x9A1196): the factories by unit (RW 0x9A0838, BuildAssistant slot 0x68), the composition from the "
 		"ArmyDefinition percentages blended by the phase fraction (RW 0x9A0E2B / 0x82FCAB), the request list (RW 0x9A0D4F), one new request per frame among "
 		"the members below their share of the command point limit with a free factory (RW 0x9A0BC0 / 0x9A0B26, one logic random draw), priority 500 in Rush "
@@ -741,8 +872,8 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"the horde's turn is kept from carrying the members (the port's contain would place them); G2 measured, not solved: GondorFighterHorde engages 20 % of "
 		"its members on average against MordorFighterHorde (test_move2_slot_distance's MOVE2 MELEE report)",
 		"[S-893] skirmish ai targetless tactics (lane AI-2 r3): the 11 prototypes, FarmKillSquad's constructor draw, the per-frame pick RW 0x90C5E2 and FarmKillSquad's "
-		"applicability, setup, cleanup and update flow are ported, as is FlagCaptureSquad (RW 0x9BC39F / 0x9BC1A0 / 0x9BBFDC / 0x9BC3F4); the other 9 prototypes' applicability and bodies and FarmKillSquad's farm choice (RW 0x9BBA51 / "
-		"0x9BB5E4 and their draws) are not (a nearest-farm stand-in)",
+		"applicability, setup, cleanup and update flow are ported, as is FlagCaptureSquad (RW 0x9BC39F / 0x9BC1A0 / 0x9BBFDC / 0x9BC3F4); the other 9 prototypes' applicability and bodies are not; FarmKillSquad's farm and production "
+		"target choice (RW 0x9BBA51 / 0x9BB5E4 and their draws, lane RAI-TL) is ported",
 		"[S-894] produced member of a destroyed horde (lane AI-2 r4): a member the queue exit hands to a horde that is already destroyed is destroyed with it "
 		"(HordeContain::acceptCreatedMember); RW's acceptance slot for a destroyed horde is not read",
 		"[S-895] skirmish ai offensive tactic bodies (lane AI-2 r5): Formation, Flank, Pincer, Feint and BasePenetration launch / update with their draws "

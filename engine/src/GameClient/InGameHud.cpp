@@ -1548,7 +1548,7 @@ std::vector<std::string> InGameHud::stops() const
 				  "the radius > 110 flag are not used, the cursor texture is composited by the terrain shader alongside selection decals (S-2522)");
 	out.push_back(TerrainResourceFeedback::stopLine()); // lane OWNERFIX-2
 	out.push_back("[S-5032] placement ghost decal shadows (lane OWNERFIX-2): the ghost draws its model state's SHADOW_ALPHA_DECAL / SHADOW_ADDITIVE_DECAL "
-				  "(a well's / statue's area of effect) with the selection decals (lane PLACEDECAL-1) at ShadowOpacityPeak; an additive one is refused; the "
+				  "(a well's / statue's area of effect) with the selection decals (lane PLACEDECAL-1) at ShadowOpacityPeak; an additive one is added (lane ECOCIRCLE-2); the "
 				  "_DYNAMIC types' opacity fade, addShadow's LOD gate and every other drawable's decal shadow are not ported (S-3304)");
 	for (const std::string &l : m_cursorStops)
 	{

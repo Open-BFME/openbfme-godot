@@ -14,6 +14,7 @@
 #pragma once
 
 #include "Common/Dict.h"
+#include "Common/INIDataTypes.h"
 #include "GameLogic/ObjectTypes.h"
 
 #include <cstdint>
@@ -28,9 +29,11 @@
 class Object;
 class Player;
 class PlayerList;
+class SpecialPowerTemplate;
 class StateHasher;
 class TeamFactory;
 class TeamPrototype;
+class GameLogic;
 
 typedef std::uint32_t TeamID;
 enum
@@ -137,6 +140,46 @@ public:
 	}
 	bool isActive() const { return m_script.active; }
 
+	// lane RAI-POW: the team's special-power registry (Team + 0x140). Retail keeps a circular list of five-word records (the power template, the
+	// frame, two zeros and the caster's object id; RW 0x7A5582 appends one, RW 0x7A3EF5 looks one up and answers the caster the id resolves to).
+	// AIPOW-1's SOUL_FREEZE decision writes it, and RW 0x9E6941 (ATTACK_HEAL_AOE) reads it.
+	struct SpecialPowerRecord
+	{
+		int powerType = 0;                           ///< + 0x08: the power's type (SpecialPowerTemplate + 0x1C, the decision's + 0x08 set by RW 0x8B714F)
+		std::uint32_t frame = 0;                      ///< + 0x0C
+		ObjectID caster = INVALID_ID;                 ///< + 0x18 (the record's fifth word; the two between stay 0)
+	};
+	// RW 0x7A3EF5: the first record of the power, in insertion order. `caster` null answers the object the record's id resolves to; a caster that
+	// does not match the record continues the walk (retail loops forever on that path, which no caller reaches: both pass null). The logic resolves
+	// the record's id (retail's GameLogic::findObjectByID through TheGameLogic, which the port passes)
+	Object *findSpecialPowerRecord(int powerType, const Object *caster, GameLogic &logic) const;
+	// RW 0x7A5582: appended at the end of the registry (retail's circular list insert before its sentinel)
+	void addSpecialPowerRecord(int powerType, std::uint32_t frame, ObjectID caster);
+	const std::vector<SpecialPowerRecord> &specialPowerRecords() const { return m_specialPowers; }
+
+	// lane RAI-POW-4: the team's threat-order list (Team + 0x13C, a pointer to a circular list of orders; RW 0x7A59CB adds one, RW 0x7A1C5E
+	// erases one, RW 0x7A2004 expires them after 3000 frames). Its commands and payload words are at RW_0x9E691D.md: + 0x0C the command, + 0x13
+	// the flags byte (0x40 target id at + 0x24, 0x80 position at + 0x18), + 0x14 the timestamp. The AI's ATTACK_HEAL_AOE decision reads them.
+	struct Order
+	{
+		std::int32_t command = 0;        ///< + 0x04 (node + 0x0C): 0x11 / 0x1A from RW 0x7A59CB
+		std::uint16_t flagsWord = 0;     ///< + 0x0A (node + 0x12): 0x2004, | 0x10; 0x8000 position, 0x4000 target
+		std::uint8_t flags = 0;          ///< + 0x08 (node + 0x10): 0xFF / 0x0F / 0 from the threat size
+		std::uint32_t timestamp = 0;     ///< + 0x0C (node + 0x14): written 0 by RW 0x7A59CB's producer (RW 0x7A0060)
+		Coord3D position{};              ///< + 0x10 (node + 0x18)
+		ObjectID target = INVALID_ID;    ///< + 0x1C (node + 0x24)
+		bool hasPosition() const { return (flagsWord & 0x8000u) != 0; } ///< RW 0x79F922 tests byte + 0xB bit 0x80
+		bool hasTarget() const { return (flagsWord & 0x4000u) != 0; }   ///< the decision tests byte + 0xB bit 0x40
+	};
+	// RW 0x7A1C5E: the order at `index` leaves the list
+	void eraseOrder(std::size_t index);
+	const std::vector<Order> &orders() const { return m_orders; }
+	// RW 0x7A2004: every order older than 3000 frames (node + 0x14 + 0xBB8 < frame) goes
+	void expireOrders(std::uint32_t frame);
+	// RW 0x7A59CB: the team's most damaged member (RW 0x7A0141), turned into an order of 0x11 / 0x1A unless one is already there
+	void updateThreatOrder(class GameLogic &logic);
+	void addOrderForTest(const Order &order) { m_orders.push_back(order); } // tests only (never called by the game)
+
 	// the members, in insertion order
 	Object *getFirstMember() const { return m_head; }
 	// lane AIPOW-1: retail's member list (Team + 0x38, walked by RW 0x66362D / 0x6632C9) starts at the NEWEST member (Object::prependToTeamMemberList RW
@@ -165,6 +208,8 @@ private:
 	int m_currentWaypoint = -1;             ///< lane SCRIPT-3: + 0x6C
 	bool m_hadMembers = false;              ///< lane CAMP-1: + 0x128
 	ScriptState m_script;                   ///< lane CAMP-1H
+	std::vector<SpecialPowerRecord> m_specialPowers; ///< lane RAI-POW: + 0x140, in insertion order (never cleared in a game)
+	std::vector<Order> m_orders;                    ///< lane RAI-POW-4: + 0x13C, in insertion order (RW 0x7A59CB inserts, RW 0x7A2004 expires)
 };
 
 // lane CAMP-1H: the team scripts of a prototype's TeamTemplateInfo (prototype + 0x12C), read from the map's team dict by RW 0x7A2C96 with the keys of RW

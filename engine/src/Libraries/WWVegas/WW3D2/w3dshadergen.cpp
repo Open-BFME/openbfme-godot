@@ -233,6 +233,18 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("global uniform mat3 w3d_lcol_inf;");
 	line("global uniform mat3 w3d_ldir_inf;");
 	line("global uniform float w3d_fogged_frac;"); // lane VISUAL-2: RW 0x46DFD0 FogAlpha / ClearAlpha
+	// lane FEAT-BLDFX-1: the dynamic light pool's contribution to the object lighting (TARGET RW 0x5DFAA3; DONOR BFME2 0x4423C / 0x6DE3D; the retail dynamic lights light
+	// objects, not terrain). xyz = the light's position in VIEW space (the device passes it there), w = its current far attenuation end (0 = off);
+	// the second vec4 is its current colour (the On_Frame_Update scale already applied). Four lights: the retail pool grows, but no retail FXList
+	// keeps more than a few pulses alive at once (the rest are reported, stop S-687).
+	line("global uniform vec4 w3d_pulse0;");
+	line("global uniform vec4 w3d_pulse0_col;");
+	line("global uniform vec4 w3d_pulse1;");
+	line("global uniform vec4 w3d_pulse1_col;");
+	line("global uniform vec4 w3d_pulse2;");
+	line("global uniform vec4 w3d_pulse2_col;");
+	line("global uniform vec4 w3d_pulse3;");
+	line("global uniform vec4 w3d_pulse3_col;");
 	if (k.OcclusionPass == W3D_OCCLUSION_PASS_COLOR)
 	{
 		// lane OCCLUDE-1: the players' occluded colours by slot (0xAARRGGBB as RGBA8 texels, RTS3DSceneOcclusion::occludedColor) and the switch
@@ -322,6 +334,16 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("}");
 	line("vec3 w3d_to_godot(vec3 v) { return vec3(v.x, v.z, -v.y); }");
 	line("vec3 w3d_to_linear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }");
+	// lane FEAT-BLDFX-1: one dynamic light, in view space: the retail W3DDynamicLight with FarAttenStart 1 and FarAttenEnd w (DONOR BFME2 0x4423C /
+	// 0x6DE3D). Linear far attenuation (INFERENCE, S-687) and a Lambert term against the surface normal; the caller adds it to its light sum.
+	line("vec3 w3d_dynamic_light(vec4 pulse, vec4 col, vec3 vpos, vec3 vnrm) {");
+	line("\tif (pulse.w <= 0.0) return vec3(0.0);");
+	line("\tvec3 d = pulse.xyz - vpos;");
+	line("\tfloat dl = length(d);");
+	line("\tfloat att = max(1.0 - dl / pulse.w, 0.0);");
+	line("\tif (att <= 0.0) return vec3(0.0);");
+	line("\treturn col.rgb * (att * max(dot(vnrm, d / max(dl, 1e-4)), 0.0));");
+	line("}");
 	if (k.Fog != W3DHardwareFog::FOG_DISABLE)
 	{
 		// lane RENDER-4 (S-1651): the map's hardware fog (globals w3d_fog / w3d_fog_color, W3DHardwareFog.h)
@@ -503,6 +525,11 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		// D3D9 lit clamps the power to [-127.9961, 127.9961]
 		line("\t\t\tssum += lc[i] * ((ndl > 0.0 && ndh > 0.0) ? pow(ndh, clamp(w3d_shininess, " + fmt(-W3D_LIT_POWER_LIMIT) + ", " + fmt(W3D_LIT_POWER_LIMIT) + ")) : 0.0);");
 		line("\t\t}");
+		// lane FEAT-BLDFX-1: the dynamic light pool's contribution (DONOR BFME2 0x4423C), added to the directional sum like a retail scene light
+		line("\t\tdsum += w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm);");
+		line("\t\tdsum += w3d_dynamic_light(w3d_pulse1, w3d_pulse1_col, v_vpos, v_vnrm);");
+		line("\t\tdsum += w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm);");
+		line("\t\tdsum += w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm);");
 		line(k.HasDCG ? "\t\tvec4 vc = COLOR;" : "\t\tvec4 vc = vec4(1.0);");
 		line("\t\tv_lit0 = clamp(vec4((dsum * w3d_diffuse.rgb + amb * w3d_ambient_mat + w3d_emissive) * vc.rgb * 0.5, vc.a * w3d_diffuse.a), 0.0, 1.0);");
 		line("\t\tv_lit1 = clamp(ssum * w3d_spec_color * 0.5, 0.0, 1.0);");
@@ -630,6 +657,10 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t\tfloat sp = (ndh > 0.0 && ndl > 0.0) ? pow(ndh, w3d_shininess) : 0.0;");
 		line("\t\tcol += lc[i] * (base * ndl * on + w3d_spec_color * sp);");
 		line("\t}");
+		// lane FEAT-BLDFX-1: the dynamic light pool's contribution on the normal-mapped path (DONOR BFME2 0x4423C), diffuse like the
+		// directional lights above: times the surface colour, so a black texel stays black
+		line("\tcol += base * (w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm) + w3d_dynamic_light(w3d_pulse1, w3d_pulse1_col, v_vpos, v_vnrm)");
+		line("\t\t+ w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm) + w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm));");
 		line("\tcur = vec4(col, t0.a);");
 	}
 	else if (k.SimpleFx)
@@ -778,14 +809,15 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		// only where the surface faces up (SEL_WALL_MIN_UP: the walkable top, a ramp, a stair's tread; not the wall's side faces)
 		line("\tbool sel_up = normalize(v_wnrm).y >= SEL_WALL_MIN_UP;");
 		line("\tvec3 sel_at = vec3(sel_world.x, -sel_world.z, sel_world.y);");
-		line("\tvec4 sela = sel_up ? sel_alpha_at(sel_at, true) : vec4(0.0);");
+		line("\tvec4 sela = sel_up ? sel_alpha_at(sel_at, true, clamp(cur.rgb, 0.0, 1.0)) : vec4(0.0);");
 		line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
 		line("\tvec3 sel_ground = ALBEDO;");
 		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader);
-		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows
+		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows.
+		// Lane ECOCIRCLE-2: an additive decal has a == 0 and only rgb, so either share draws the pair
 		line("\tvec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);");
 		line("\tvec3 sel_over = vec3(0.0);");
-		line("\tif (sela.a > 0.0) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
+		line("\tif (sela.a > 0.0 || any(greaterThan(sela.rgb, vec3(0.0)))) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
 		line("\tALBEDO = mix(ALBEDO, w3d_to_linear(clamp(sel.rgb, 0.0, 1.0)), sel.a);");
 		line("\tfloat sel_keep = 1.0 - sel.a;");
 	}
