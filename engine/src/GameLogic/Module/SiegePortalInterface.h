@@ -26,4 +26,5 @@ public:
 	virtual void clearPortalWaypoints() = 0;             // RW 0x8639EF
 	virtual Coord3D topAttackPosition() = 0;             // RW 0x863D77
 	virtual float topAttackRadius() const = 0;           // RW 0x863D30
+	virtual bool portalCreated() const = 0;              // + 0x3C, set by the creation (RW 0x864224); RW 0x6CC07C's layer exception reads it
 };

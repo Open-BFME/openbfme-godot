@@ -61,7 +61,7 @@ the template and no percent-built factor. x86 NEG wraps when negating paid.
 The function itself does not require paid>0 before calling Money's helper.
 Matched donors: GameLogicFindObjectByID.cpp, MoneyRva003B0D7C.cpp (deposit),
 Rva0039BAD2Method.cpp (money-spent categories), ScoreKeeperReset.cpp
-(ScoreKeeper::addObjectBuilt), stlport_list_int_remove_guard.cpp (global list
+(ScoreKeeper::addObjectBuilt), InGameUI.cpp (global list
 remove), Rva002ACECCRemove.cpp (player list remove, same-shape). TheGameLogic
 destroyObject and Object owner accessor are same-shape donor mappings.
 

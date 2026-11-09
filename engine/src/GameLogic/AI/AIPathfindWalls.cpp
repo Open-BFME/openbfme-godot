@@ -1110,8 +1110,8 @@ PathfindLayerEnum Pathfinder::getLayerAt(const PathfindObject &obj, const Coord3
 	}
 	// TerrainLogic::getLayerForDestination (RW 0x680A75) with the object, as its callers pass it: a ramp at the point first (RW 0x6E89EE), then RW 0x6EE600
 	// with the object, which moves the point by 5 in x and y for an even footprint (RW 0x6EE62D .. 0x6EE64C, 5.0 at RW 0xBDAE58, the parity RW 0x6ECFC5)
-	// before the walkway scan and the ground grid cell's layer. RotWK first returns the ground for an object whose byte + 0x4AC is set (RW 0x68C053); that
-	// flag is not identified and the port has none (S-4840)
+	// before the walkway scan and the ground grid cell's layer. RotWK first returns the ground for an object whose byte + 0x4AC is set (RW 0x68C053): HordeContain's
+	// transform reaction (RW 0x871536 -> 0x68C02E) sets it on a horde and its members for 13 frames; the port has none (S-4840)
 	if (isPointOnRamp(pos.x, pos.y))
 	{
 		return LAYER_RAMP;

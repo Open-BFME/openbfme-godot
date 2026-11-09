@@ -10,10 +10,14 @@
 #include "Libraries/WWVegas/WW3D2/fxshadergen.h"
 
 #include <godot_cpp/classes/camera3d.hpp>
+#include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/geometry_instance3d.hpp>
 #include <godot_cpp/classes/geometry_instance3d.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
+#include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/aabb.hpp>
@@ -114,6 +118,8 @@ void FXPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("advance", "delta"), &FXPlayer::advance);
 	ClassDB::bind_method(D_METHOD("step_once"), &FXPlayer::step_once);
 	ClassDB::bind_method(D_METHOD("rebuild"), &FXPlayer::rebuild);
+	ClassDB::bind_method(D_METHOD("get_scorch_count"), &FXPlayer::scorchCount); // lane FEAT-BLDFX-1
+	ClassDB::bind_method(D_METHOD("get_decal_count"), &FXPlayer::decalCount);   // lane FEAT-BLDFX-1
 	ClassDB::bind_method(D_METHOD("set_paused", "paused"), &FXPlayer::set_paused);
 	ClassDB::bind_method(D_METHOD("is_paused"), &FXPlayer::is_paused);
 	ClassDB::bind_method(D_METHOD("set_max_particles", "count"), &FXPlayer::set_max_particles);
@@ -126,6 +132,9 @@ void FXPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_soft_particles", "enabled"), &FXPlayer::set_soft_particles);
 	ClassDB::bind_method(D_METHOD("get_soft_particles"), &FXPlayer::get_soft_particles);
 	ClassDB::bind_method(D_METHOD("set_batch_summary", "enabled"), &FXPlayer::set_batch_summary); // lane RENDER-4
+	ClassDB::bind_method(D_METHOD("set_extra_pose_frustum", "planes"), &FXPlayer::set_extra_pose_frustum); // lane GPUPERF-3 (caster_pip.gd calls it)
+	ClassDB::bind_method(D_METHOD("set_frustum_culling", "enabled"), &FXPlayer::set_frustum_culling);
+	ClassDB::bind_method(D_METHOD("get_frustum_culling"), &FXPlayer::get_frustum_culling);
 	ClassDB::bind_method(D_METHOD("get_batch_summary"), &FXPlayer::get_batch_summary);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "soft_particles"), "set_soft_particles", "get_soft_particles");
 }
@@ -137,6 +146,7 @@ void FXPlayer::set_soft_particles(bool enabled)
 		return;
 	}
 	m_soft = enabled;
+	m_buildDirty = true;
 	for (Batch &b : m_batches)
 	{
 		b.key.clear(); // every slot rebuilds its node and material with the other shader at the next upload
@@ -172,6 +182,23 @@ Dictionary FXPlayer::setup(const Ref<RetailFileSystem> &fs)
 	m_preloadQueue.clear();
 	m_preloadNext = 0;
 	m_preloadQueued = false;
+	if (m_decalRoot)
+	{
+		// lane FEAT-BLDFX-1: the previous data's decal nodes and their state go with the previous playback
+		for (auto &kv : m_decalNodes)
+		{
+			kv.second->queue_free();
+		}
+		m_decalNodes.clear();
+		if (m_scorchNode)
+		{
+			m_scorchNode->queue_free();
+		}
+		m_scorchVersion = 0;
+		m_scorchNode = nullptr;
+		m_scorchMesh.unref();
+		m_hadDecals = false;
+	}
 	m_playback = std::make_unique<FXPlayback>(*fs->archive(), RandomAlgorithm::RotWK_GameDat_LCG);
 	for (const std::string &e : m_playback->loadRetailData())
 	{
@@ -181,6 +208,10 @@ Dictionary FXPlayer::setup(const Ref<RetailFileSystem> &fs)
 	m_renderRandom->seed(1);
 	m_builder = std::make_unique<ParticleDrawBuilder>(*m_renderRandom);
 	m_quad = makeQuadMesh();
+	// lane GPUPERF-3 review: a second setup replaces the playback (and the builder) but the uploaded batches belong to the old one; the render nodes and
+	// the cache flags stay, so invalidate them: the next advance rebuilds from the new playback instead of keeping the old effects
+	m_built = false;
+	m_buildDirty = true;
 	result["ok"] = errors.is_empty();
 	result["errors"] = errors;
 	result["particle_systems"] = (int64_t)m_playback->particleTemplates().templateCount();
@@ -220,11 +251,15 @@ int64_t FXPlayer::play_particle_system(const String &name, const Vector3 &positi
 	{
 		return 0;
 	}
+	m_buildDirty = true;
+	m_playGen.fetch_add(1, std::memory_order_relaxed);
 	return (int64_t)m_playback->playParticleSystem(toNative(name), toSage(position));
 }
 
 bool FXPlayer::play_fx_list(const String &name, const Vector3 &position, bool as_object)
 {
+	m_buildDirty = true;
+	m_playGen.fetch_add(1, std::memory_order_relaxed);
 	return m_playback && m_playback->playFXList(toNative(name), toSage(position), as_object);
 }
 
@@ -236,6 +271,8 @@ Array FXPlayer::define_ini(const String &name, const String &text)
 		errors.push_back("FXPlayer.setup has not run");
 		return errors;
 	}
+	m_buildDirty = true;
+	m_playGen.fetch_add(1, std::memory_order_relaxed);
 	for (const std::string &e : m_playback->loadIniText(toNative(name), toNative(text)))
 	{
 		errors.push_back(toGodot(e));
@@ -253,6 +290,8 @@ Dictionary FXPlayer::play_w3d_emitter(const String &name, const Vector3 &positio
 		return d;
 	}
 	std::string error;
+	m_buildDirty = true;
+	m_playGen.fetch_add(1, std::memory_order_relaxed);
 	ParticleEmitterInstance *e = m_playback->playW3DEmitter(toNative(name), toSage(position), &error);
 	d["ok"] = e != nullptr;
 	d["error"] = toGodot(error);
@@ -266,7 +305,10 @@ void FXPlayer::clear()
 		m_playback->emitters().clear();
 		m_playback->particles().reset();
 		m_playback->clearEvents();
+		m_playback->clearClientEffects(); // lane FEAT-BLDFX-1: scorches, decals and light pulses belong to the game that is going
 	}
+	updateClientEffects();
+	updateLightPulseUniforms(); // the shader globals outlive the game: switch the cleared pulses off now, not at the next advance
 	rebuild();
 }
 
@@ -305,7 +347,283 @@ void FXPlayer::step_once()
 	}
 	const auto t0 = std::chrono::steady_clock::now();
 	m_playback->step();
+	// lane GPUPERF-3 review: a step taken by hand (a paused caller, a test) changes the particles and emitters outside advance()'s accumulator loop, so
+	// the next advance must rebuild even if it takes no step of its own; otherwise the picture stays at the last built frame
+	m_buildDirty = true;
 	m_stepUs = usSince(t0);
+	updateClientEffects();
+}
+
+const ScorchBuffer &FXPlayer::scorches() const
+{
+	static const ScorchBuffer empty;
+	return m_playback ? m_playback->scorches() : empty;
+}
+
+int64_t FXPlayer::decalCount() const
+{
+	return m_playback ? (int64_t)m_playback->decals().size() : 0;
+}
+
+// lane FEAT-BLDFX-1: the terrain decals. Retail draws the scorches as one terrain-conforming grid per scorch in a 3 x 3 atlas cell
+// (DONOR BFME2 0x678BB) and the dynamic decals as projected quads with the opacity envelope of DONOR BFME2 0x10C785. Both are client-only presentation;
+// this renderer batches each texture into one ArrayMesh and never feeds anything back into the simulation.
+void FXPlayer::updateClientEffects()
+{
+	if (!m_playback)
+	{
+		return;
+	}
+	if (!m_decalRoot)
+	{
+		m_decalRoot = memnew(Node3D);
+		m_decalRoot->set_name("TerrainDecals");
+		add_child(m_decalRoot);
+	}
+	// ---- scorches (TARGET RW 0x5E0045; DONOR BFME2 0x67EA3 / 0x678BB) ----
+	const ScorchBuffer &scorches = m_playback->scorches();
+	if (scorches.version() != m_scorchVersion)
+	{
+		m_scorchVersion = scorches.version();
+		if (!m_scorchNode)
+		{
+			m_scorchMaterial.instantiate();
+			Ref<Shader> shader;
+			shader.instantiate();
+			shader->set_code("shader_type spatial;\n"
+							 "render_mode blend_mix, depth_draw_never, cull_disabled, unshaded, shadows_disabled;\n"
+							 "uniform sampler2D decal_tex : filter_linear_mipmap, repeat_disable;\n"
+							 "void fragment() {\n"
+							 "\tvec4 t = texture(decal_tex, UV);\n"
+							 "\tALBEDO = t.rgb * COLOR.rgb;\n"
+							 "\tALPHA = t.a * COLOR.a;\n"
+							 "}\n");
+			m_scorchMaterial->set_shader(shader);
+			m_scorchNode = memnew(MeshInstance3D);
+			m_scorchNode->set_name("Scorches");
+			m_scorchNode->set_material_override(m_scorchMaterial);
+			m_scorchNode->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			m_decalRoot->add_child(m_scorchNode);
+		}
+		const int kCells = 4; // 4 x 4 cells per scorch: the retail grid's 10-unit cells are finer; 4 keeps 500 scorches at 12.5k vertices
+		PackedVector3Array verts;
+		PackedVector2Array uvs;
+		PackedColorArray colors;
+		PackedInt32Array indices;
+		for (const ScorchFx &s : scorches.entries())
+		{
+			if (!(s.radius > 0.0f))
+			{
+				continue;
+			}
+			const int type = s.type < 0 || s.type >= 9 ? 0 : s.type; // DONOR BFME2 0x678BB: a type outside 0 .. 8 draws SCORCH_1
+			const float u0 = (float)(type % 3) / 3.0f;
+			const float v0 = (float)(type / 3) / 3.0f;
+			const int32_t base = (int32_t)verts.size();
+			for (int j = 0; j <= kCells; ++j)
+			{
+				for (int i = 0; i <= kCells; ++i)
+				{
+					const float fx = (float)i / (float)kCells;
+					const float fy = (float)j / (float)kCells;
+					const float x = s.position.x + (fx * 2.0f - 1.0f) * s.radius;
+					const float y = s.position.y + (fy * 2.0f - 1.0f) * s.radius;
+					const float z = m_playback->groundHeight(x, y) + 1.0f; // DONOR BFME2 0x678BB: the scorch sits one unit above the terrain
+					verts.push_back(toGodotSpace(Coord3D{ x, y, z }));
+					uvs.push_back(Vector2(u0 + fx / 3.0f, v0 + fy / 3.0f));
+					colors.push_back(Color(1, 1, 1, 1));
+				}
+			}
+			for (int j = 0; j < kCells; ++j)
+			{
+				for (int i = 0; i < kCells; ++i)
+				{
+					const int32_t a = base + j * (kCells + 1) + i;
+					const int32_t b = a + 1;
+					const int32_t c = a + (kCells + 1);
+					const int32_t d = c + 1;
+					indices.push_back(a); indices.push_back(b); indices.push_back(c);
+					indices.push_back(b); indices.push_back(d); indices.push_back(c);
+				}
+			}
+		}
+		Ref<ArrayMesh> mesh;
+		mesh.instantiate();
+		if (!verts.is_empty())
+		{
+			Array arrays;
+			arrays.resize(Mesh::ARRAY_MAX);
+			arrays[Mesh::ARRAY_VERTEX] = verts;
+			arrays[Mesh::ARRAY_TEX_UV] = uvs;
+			arrays[Mesh::ARRAY_COLOR] = colors;
+			arrays[Mesh::ARRAY_INDEX] = indices;
+			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+		}
+		// bound at every rebuild: an asset-pack switch clears the texture cache (clearTextureCache) and keeps this material
+		m_scorchMaterial->set_shader_parameter("decal_tex", particleTexture("exscorch01.tga"));
+		m_scorchMesh = mesh;
+		m_scorchNode->set_mesh(m_scorchMesh);
+	}
+	// ---- dynamic decals (TARGET RW 0x5E05AB; DONOR BFME2 0x1E0E43 / 0x10C785) ----
+	const std::vector<DecalFx> &decals = m_playback->decals();
+	if (decals.empty() && !m_hadDecals)
+	{
+		return;
+	}
+	m_hadDecals = !decals.empty();
+	// two materials: the DynamicDecal Shader field ADDITIVE (1) makes an additive decal (type 0x800), every other value an alpha decal (type 0x400):
+	// DONOR BFME2 0x1E0E43 `m_type = m_shader == 1 ? 0x800 : 0x400` (SUBTRACT draws as ALPHA; no retail FXList sets the field)
+	for (int shader = 0; shader < 2; ++shader)
+	{
+		if (m_decalShaders[shader].is_valid())
+		{
+			continue;
+		}
+		const char *mode = shader == 1 ? "blend_add" : "blend_mix";
+		Ref<Shader> s;
+		s.instantiate();
+		const std::string code = std::string("shader_type spatial;\nrender_mode ") + mode
+			+ ", depth_draw_never, cull_disabled, unshaded, shadows_disabled;\n"
+			  "uniform sampler2D decal_tex : filter_linear_mipmap, repeat_disable;\n"
+			  "void fragment() {\n"
+			  "\tvec4 t = texture(decal_tex, UV);\n"
+			  "\tALBEDO = t.rgb * COLOR.rgb;\n"
+			  "\tALPHA = t.a * COLOR.a;\n"
+			  "}\n";
+		s->set_code(toGodot(code));
+		m_decalShaders[shader] = s;
+	}
+	std::map<DecalKey, std::vector<const DecalFx *>> groups;
+	for (const DecalFx &d : decals)
+	{
+		const int shader = d.desc.shader == 1 ? 1 : 0;
+		groups[DecalKey{ d.desc.name, shader }].push_back(&d);
+	}
+	for (auto &kv : groups)
+	{
+		MeshInstance3D *node = nullptr;
+		auto it = m_decalNodes.find(kv.first);
+		if (it != m_decalNodes.end())
+		{
+			node = it->second;
+		}
+		else
+		{
+			node = memnew(MeshInstance3D);
+			node->set_name(toGodot(kv.first.name));
+			Ref<ShaderMaterial> mat;
+			mat.instantiate();
+			mat->set_shader(m_decalShaders[kv.first.shader]);
+			mat->set_shader_parameter("decal_tex", particleTexture(kv.first.name));
+			node->set_material_override(mat);
+			node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			m_decalRoot->add_child(node);
+			m_decalNodes[kv.first] = node;
+		}
+		PackedVector3Array verts;
+		PackedVector2Array uvs;
+		PackedColorArray colors;
+		PackedInt32Array indices;
+		for (const DecalFx *d : kv.second)
+		{
+			const float opacity = (float)d->opacityAt(m_playback->clientFrame()) / 255.0f;
+			const float r = (float)((d->desc.color >> 16) & 0xff) / 255.0f;
+			const float g = (float)((d->desc.color >> 8) & 0xff) / 255.0f;
+			const float b = (float)(d->desc.color & 0xff) / 255.0f;
+			// ShadowTypeInfo's sizeX / sizeY are the decal's full width / height (ZH W3DProjectedShadowManager::addDecal: m_decalSizeX = sizeX,
+			// the quad's corners at objPos -+ size * 0.5)
+			const float h = d->desc.size * 0.5f;
+			const float c = std::cos(d->desc.yaw), s = std::sin(d->desc.yaw);
+			const int32_t base = (int32_t)verts.size();
+			const float corner[4][2] = { { -h, -h }, { h, -h }, { h, h }, { -h, h } };
+			for (int k = 0; k < 4; ++k)
+			{
+				const float lx = corner[k][0], ly = corner[k][1];
+				const float x = d->desc.position.x + lx * c - ly * s;
+				const float y = d->desc.position.y + lx * s + ly * c;
+				const float z = m_playback->groundHeight(x, y) + 1.0f;
+				verts.push_back(toGodotSpace(Coord3D{ x, y, z }));
+				colors.push_back(Color(r, g, b, opacity));
+				uvs.push_back(k == 0 ? Vector2(0, 0) : k == 1 ? Vector2(1, 0) : k == 2 ? Vector2(1, 1) : Vector2(0, 1));
+			}
+			indices.push_back(base); indices.push_back(base + 1); indices.push_back(base + 2);
+			indices.push_back(base); indices.push_back(base + 2); indices.push_back(base + 3);
+		}
+		Ref<ArrayMesh> mesh;
+		mesh.instantiate();
+		if (!verts.is_empty())
+		{
+			Array arrays;
+			arrays.resize(Mesh::ARRAY_MAX);
+			arrays[Mesh::ARRAY_VERTEX] = verts;
+			arrays[Mesh::ARRAY_TEX_UV] = uvs;
+			arrays[Mesh::ARRAY_COLOR] = colors;
+			arrays[Mesh::ARRAY_INDEX] = indices;
+			mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+		}
+		node->set_mesh(mesh);
+		node->set_visible(!verts.is_empty());
+	}
+	// a texture / shader group that no longer has a decal
+	for (auto it = m_decalNodes.begin(); it != m_decalNodes.end();)
+	{
+		if (groups.find(it->first) == groups.end())
+		{
+			it->second->queue_free();
+			it = m_decalNodes.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+
+}
+
+void FXPlayer::updateLightPulseUniforms()
+{
+	if (!m_playback)
+	{
+		return;
+	}
+	W3D_Ensure_Light_Globals(); // the four pulse names must exist before the first set (the material factory usually registers them first)
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (!rs)
+	{
+		return;
+	}
+	// the shader's lights are view-space (the object shaders light in view space); the camera is the one the next frame draws
+	Transform3D view;
+	bool haveView = false;
+	if (Viewport *vp = get_viewport())
+	{
+		if (Camera3D *c = vp->get_camera_3d())
+		{
+			view = c->get_global_transform().affine_inverse();
+			haveView = true;
+		}
+	}
+	size_t used = 0;
+	for (const LightPulseFx &l : m_playback->lightPulses().lights())
+	{
+		if (!l.enabled || used >= 4)
+		{
+			continue;
+		}
+		const Vector3 world = toGodotSpace(l.position);
+		const Vector3 pos = haveView ? view.xform(world) : world;
+		const RGBColor c = l.colorNow();
+		const String base = String("w3d_pulse") + String::num_int64((int64_t)used);
+		rs->global_shader_parameter_set(StringName(base), Vector4(pos.x, pos.y, pos.z, l.range()));
+		rs->global_shader_parameter_set(StringName(base + String("_col")), Vector4(c.red, c.green, c.blue, 0.0f));
+		++used;
+	}
+	for (size_t i = used; i < 4; ++i)
+	{
+		const String base = String("w3d_pulse") + String::num_int64((int64_t)i);
+		rs->global_shader_parameter_set(StringName(base), Vector4());
+		rs->global_shader_parameter_set(StringName(base + String("_col")), Vector4());
+	}
 }
 
 void FXPlayer::advance(double delta)
@@ -314,6 +632,7 @@ void FXPlayer::advance(double delta)
 	{
 		return;
 	}
+	bool stepped = false;
 	if (!m_paused)
 	{
 		m_accumulator += delta;
@@ -329,8 +648,87 @@ void FXPlayer::advance(double delta)
 		{
 			m_accumulator = 0.0; // never spiral
 		}
+		stepped = steps > 0;
 	}
+	// lane GPUPERF-3 (presentation only): the batches are a function of the particles (changed by a step, or by the live game's effect calls between
+	// steps: the playback signature), the cameras (the billboards' sides, the sort, the culling) and the draw settings; a render frame with none of
+	// them changed keeps the batches it has (retail draws once per particle step: its 30 Hz Display::draw), so the render stream is not drawn from
+	// either (the GpuDraw alpha keys are sampled once per built frame, RW 0x5f66b7)
+	if (!stepped && m_built && !m_buildDirty && !m_summaryEnabled)
+	{
+		Transform3D cam;
+		if (Viewport *vp = get_viewport())
+		{
+			if (Camera3D *c = vp->get_camera_3d())
+			{
+				cam = c->get_global_transform();
+			}
+		}
+		if (cam == m_builtCamera && (m_frustumCulling ? cullPlanes() : std::vector<Plane>()) == m_builtPlanes && playbackSignature() == m_builtSignature)
+		{
+			++m_rebuildsSkipped;
+			return;
+		}
+	}
+	updateLightPulseUniforms();
 	rebuild();
+}
+
+bool FXPlayer::set_extra_pose_frustum(const TypedArray<Plane> &planes)
+{
+	if (planes.size() != 0 && planes.size() != 6)
+	{
+		return false;
+	}
+	m_extraFrustum.clear();
+	for (int64_t i = 0; i < planes.size(); ++i)
+	{
+		m_extraFrustum.push_back(planes[i]);
+	}
+	return true;
+}
+
+std::vector<Plane> FXPlayer::cullPlanes() const
+{
+	std::vector<Plane> out;
+	Viewport *vp = is_inside_tree() ? get_viewport() : nullptr;
+	Camera3D *c = vp ? vp->get_camera_3d() : nullptr;
+	if (!c)
+	{
+		return out; // no camera: nothing is culled
+	}
+	const TypedArray<Plane> main = c->get_frustum();
+	if (main.size() != 6)
+	{
+		return out;
+	}
+	for (int64_t k = 0; k < main.size(); ++k)
+	{
+		out.push_back(main[k]);
+	}
+	for (const Plane &pl : m_extraFrustum)
+	{
+		out.push_back(pl);
+	}
+	return out;
+}
+
+uint64_t FXPlayer::playbackSignature() const
+{
+	// lane GPUPERF-3: what changes the batches between particle steps is a play call (the live game's effect calls, on the logic thread): a counter,
+	// not a walk of the playback's containers, which the logic thread may be adding to while the render thread reads them
+	return m_playGen.load(std::memory_order_relaxed);
+}
+
+void FXPlayer::setNodeAabb(Batch &b, GeometryInstance3D *node, const AABB &box)
+{
+	if (!node || (b.haveAabb && b.lastAabb == box))
+	{
+		return;
+	}
+	node->set_custom_aabb(box);
+	b.lastAabb = box;
+	b.haveAabb = true;
 }
 
 Ref<Texture2D> FXPlayer::loadTexture(const std::string &name)
@@ -596,6 +994,45 @@ void FXPlayer::rebuild()
 			cam.forward = toSage(-t.basis.get_column(2));
 		}
 	}
+	// lane GPUPERF-3: the systems no camera can see are not built (ParticleDrawBuilder::setVisibilityTest); the boxes are SAGE space, the planes Godot's
+	const std::vector<Plane> planes = m_frustumCulling ? cullPlanes() : std::vector<Plane>();
+	if (planes.size() >= 6)
+	{
+		m_builder->setVisibilityTest([planes](const float lo[3], const float hi[3]) {
+			// SAGE (x, y, z) -> Godot (x, z, -y)
+			const Vector3 gmin(lo[0], lo[2], -hi[1]), gmax(hi[0], hi[2], -lo[1]);
+			const Vector3 c = (gmin + gmax) * 0.5f, e = (gmax - gmin) * 0.5f;
+			auto inside = [&](size_t first, size_t last) {
+				for (size_t k = first; k < last; ++k)
+				{
+					const Plane &pl = planes[k];
+					const real_t r = std::abs(pl.normal.x) * e.x + std::abs(pl.normal.y) * e.y + std::abs(pl.normal.z) * e.z;
+					if (pl.distance_to(c) > r)
+					{
+						return false;
+					}
+				}
+				return true;
+			};
+			return inside(0, 6) || (planes.size() >= 12 && inside(6, 12));
+		});
+	}
+	else
+	{
+		m_builder->setVisibilityTest(nullptr);
+	}
+	m_builtPlanes = planes;
+	m_builtSignature = playbackSignature();
+	m_builtCamera = Transform3D();
+	if (Viewport *vp = get_viewport())
+	{
+		if (Camera3D *c = vp->get_camera_3d())
+		{
+			m_builtCamera = c->get_global_transform();
+		}
+	}
+	m_built = true;
+	m_buildDirty = false;
 	const auto t0 = std::chrono::steady_clock::now();
 	std::vector<DrawBatch> batches = m_builder->build(m_playback->particles(), cam);
 	m_emitterStops = BuildEmitterBatches(m_playback->emitters(), cam, batches);
@@ -661,12 +1098,24 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 		std::vector<const DrawBatch *> parts;
 	};
 	std::vector<Merged> merged;
+	// lane GPUPERF-3: a culled batch (nothing of it in view) takes no slot, but it still separates its neighbours: two batches a drawn one stood
+	// between are not merged, so the depth-sorted ones keep their order
+	bool separated = false;
+	m_culledBatches = 0;
 	for (const DrawBatch &b : batches)
 	{
+		if (b.culled)
+		{
+			separated = true;
+			++m_culledBatches;
+			continue;
+		}
+		const bool joinable = !separated;
+		separated = false;
 		if (b.kind == DrawBatch::SPRITES)
 		{
 			const std::string key = "S|" + b.texture + "|" + std::to_string(b.shader) + "|" + (b.groundAligned ? "g" : "b") + (b.volume ? "v" : "") + "|" + (b.deferred ? "d" : "n");
-			if (!merged.empty() && merged.back().key == key)
+			if (joinable && !merged.empty() && merged.back().key == key)
 			{
 				merged.back().parts.push_back(&b);
 			}
@@ -714,8 +1163,8 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 				bp->multiNode->set_multimesh(bp->multi);
 				bp->multiNode->set_material_override(bp->material);
 				bp->multiNode->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
-				bp->multiNode->set_custom_aabb(AABB(Vector3(-1e5f, -1e5f, -1e5f), Vector3(2e5f, 2e5f, 2e5f)));
 				add_child(bp->multiNode);
+				bp->haveAabb = false;
 			}
 			applyOrder(*bp, order);
 			// gather: VOLUME_PARTICLE re-submits the set in 6 layers shifted toward the camera (RW 0x57efb0, depth 6, 0.1 / depth)
@@ -767,6 +1216,21 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 				}
 			}
 			setBufferIfChanged(*bp, buf);
+			// lane GPUPERF-3: the batch's box (Godot culls it per camera): the centres written, grown by 3 x the largest size (the billboard corners
+			// reach size / sqrt(2), the ground-aligned ones sqrt(2) x size)
+			{
+				AABB box;
+				float big = 0.0f;
+				for (size_t i = 0; i < n; ++i)
+				{
+					const float *o = w + i * 20;
+					const AABB pt(Vector3(o[3], o[7], o[11]), Vector3());
+					box = i == 0 ? pt : box.merge(pt);
+					big = std::max(big, std::fabs(o[16]));
+				}
+				box = box.grow(3.0f * big + 1.0f);
+				setNodeAabb(*bp, bp->multiNode, box);
+			}
 			m_sprites += count;
 		}
 		else if (m.kind == DrawBatch::GPU)
@@ -893,6 +1357,16 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 				bp->lastTexture = tex;
 			}
 			applyOrder(*bp, order);
+			// lane GPUPERF-3: the same geometry as the last build keeps its mesh (no new ArrayMesh, nothing uploaded)
+			const bool same = bp->meshNode->get_mesh().is_valid() && d.vertices.size() == bp->lastVertices.size() && d.indices == bp->lastIndices &&
+				(d.vertices.empty() || std::memcmp(d.vertices.data(), bp->lastVertices.data(), d.vertices.size() * sizeof(MeshVertex)) == 0);
+			if (same)
+			{
+				m_vertices += d.vertices.size();
+				continue;
+			}
+			bp->lastVertices = d.vertices;
+			bp->lastIndices = d.indices;
 			PackedVector3Array v;
 			PackedVector2Array uv;
 			PackedColorArray col;
@@ -921,7 +1395,14 @@ void FXPlayer::upload(const std::vector<DrawBatch> &batches)
 			Ref<ArrayMesh> am;
 			am.instantiate();
 			am->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
-			am->set_custom_aabb(AABB(Vector3(-1e5f, -1e5f, -1e5f), Vector3(2e5f, 2e5f, 2e5f)));
+			// lane GPUPERF-3: the vertices' own box (they are world positions), so Godot culls the batch per camera
+			AABB box;
+			for (int64_t i = 0; i < v.size(); ++i)
+			{
+				const AABB pt(v[i], Vector3());
+				box = i == 0 ? pt : box.merge(pt);
+			}
+			am->set_custom_aabb(box.grow(1.0f));
 			bp->meshNode->set_mesh(am);
 			m_vertices += d.vertices.size();
 		}
@@ -977,6 +1458,8 @@ Dictionary FXPlayer::get_stats() const
 	}
 	d["missing_textures"] = missing;
 	d["soft_particles"] = m_soft; // lane FX-3 round 2
+	d["culled_batches"] = (int64_t)m_culledBatches;  // lane GPUPERF-3: systems of the last build not built (out of every camera's view)
+	d["rebuilds_skipped"] = m_rebuildsSkipped;       // advances that kept the batches (no step, no change)
 	return d;
 }
 
@@ -1033,6 +1516,7 @@ Array FXPlayer::get_events() const
 
 void FXPlayer::clearTextureCache()
 {
+	m_buildDirty = true;
 	m_textures.clear();
 	m_preloaded.clear();
 	m_preloadQueue.clear();

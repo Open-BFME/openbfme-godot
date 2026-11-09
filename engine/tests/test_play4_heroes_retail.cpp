@@ -11,6 +11,7 @@
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
+#include "AISceneTestUtil.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerHeroList.h"
@@ -179,6 +180,8 @@ Fight fight(starttest::Shared &s, const char *faction, const std::string &hero, 
 	Player *enemy = live.players().findPlayerWithName(live.report().startSlotPlayers[1]);
 	REQUIRE(player);
 	REQUIRE(enemy);
+	// The opponent is scripted: roaming must neither retask it nor perturb the combat scene's shared random stream.
+	testutil::deferRoamingDefense(logic, enemy->getPlayerIndex());
 	player->getMoney()->deposit(1000000, false);
 	player->commandPoints().setFromScript(100000, 100000);
 	const ThingTemplate *tt = logic.things().findTemplate(hero);
