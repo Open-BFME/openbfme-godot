@@ -348,3 +348,10 @@ Neither invocation needs retail files, a window or GPU rendering. `--window`
 creates a real rendering device for the same resource checks; it does not draw
 or compare pixels. Resource sharing alone is not a claim that live first-use
 frame stalls have been eliminated.
+
+## BFME2-only installation
+
+| Script | Runner | Requirements |
+| --- | --- | --- |
+| `launcher/tests/bfme2_offer_test.gd` | `tools/release/test_bfme2_standalone.py` | Asset-free launcher package, selection and folder checks. |
+| `godot/tests/bfme2_standalone_test.gd` | Manual invocation | Private BFME2 1.06 data and the native extension. |

@@ -392,13 +392,17 @@ TEST_CASE("aio1: the launcher's downloaded folders are offered first (downloaded
 	CHECK(discover(env).size() == 1);
 	writeFile(marker, "SOURCE=x\nROTWK_INSTALL=" + rotwk.u8string() + "\n");
 	CHECK_FALSE(readDownloaded(marker.u8string(), d, &error));
-	CHECK(error.find("SOURCE, ROTWK_INSTALL and BFME2_INSTALL are all needed") != std::string::npos);
+	CHECK(error.find("SOURCE and BFME2_INSTALL are needed; ROTWK_INSTALL is optional for BFME2-only installs") != std::string::npos);
 	CHECK(discover(env).empty());
 	writeFile(marker, "SOURCE=x\nROTWK_INSTALL=a\nBFME2_INSTALL=b\nMOD=c\n");
 	CHECK_FALSE(readDownloaded(marker.u8string(), d, &error));
 	CHECK(error.find("an unknown key 'MOD'") != std::string::npos);
 	CHECK_FALSE(readDownloaded((t.path / "nothing.cfg").u8string(), d, &error));
 	CHECK(error.find("cannot be read") != std::string::npos);
+	writeFile(marker, "SOURCE=x\nBFME2_INSTALL=/games/bfme2\n");
+	REQUIRE(readDownloaded(marker.u8string(), d, &error));
+	CHECK(d.rotwk.empty());
+	CHECK(d.bfme2 == "/games/bfme2");
 }
 
 TEST_CASE("release1: remembering the pick")
@@ -409,7 +413,11 @@ TEST_CASE("release1: remembering the pick")
 	const std::string cfg = (t.path / "user" / "install-paths.cfg").u8string();
 	CHECK(configured(cfg).source == "none");
 	std::string error;
-	CHECK_FALSE(remember(cfg, "", "x", &error));
+	CHECK_FALSE(remember(cfg, "", "", &error));
+	REQUIRE(remember(cfg, "", "/games/bfme2", &error));
+	CHECK(configured(cfg).source == "config");
+	CHECK(configured(cfg).rotwk.empty());
+	CHECK(configured(cfg).bfme2 == "/games/bfme2");
 	CHECK_FALSE(remember(cfg, "a\nROTWK_INSTALL=evil", "x", &error));
 	REQUIRE(remember(cfg, "/games/rotwk with space", "/games/bfme2", &error));
 	Configured c = configured(cfg);

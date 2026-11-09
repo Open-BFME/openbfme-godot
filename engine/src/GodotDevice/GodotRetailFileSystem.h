@@ -42,6 +42,7 @@ public:
 	// (hashes cached in user://retail-md5-cache.tsv by path+size+mtime). Returns a report; on any
 	// error nothing is mounted.
 	Dictionary mount_retail();
+	Dictionary mount_bfme2_path(const String &root);
 	// Standalone BFME1 installation, using its own archives for both menus and gameplay.
 	Dictionary mount_bfme1_path(const String &root);
 	bool is_bfme1() const { return m_bfme1; }
@@ -127,6 +128,7 @@ protected:
 private:
 	Dictionary mountFrom(const std::string &rotwkRoot, const std::string &bfme2Root, PackedStringArray errors);
 	Dictionary mountBfme2Shell(const std::string &bfme2Root);
+	void checkAssetPackModels(PackedStringArray &errors, Dictionary &result);
 	void mountMods(const std::string &rotwkRoot, PackedStringArray &errors); // lane MODS-1
 
 	std::unique_ptr<Win32BIGFileSystem> m_fs;
