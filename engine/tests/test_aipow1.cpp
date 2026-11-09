@@ -1638,6 +1638,13 @@ TEST_CASE("RAI-POW-2: DEBUFFECONOMYBUILDING (RW 0x9E74B7) takes the enemy record
 	REQUIRE(ai);
 	const Player *enemy = AITacticalAI::enemyPlayer(*a.logic, *ai);
 	REQUIRE(enemy == a.human);
+	// RW 0x7A1129's ThingClass read is not ported: the acquire says so once (S-4257)
+	bool classifiedStop = false;
+	for (const std::string &line : a.logic->report().stops)
+	{
+		classifiedStop = classifiedStop || line.rfind("[S-4257]", 0) == 0;
+	}
+	CHECK(classifiedStop);
 	CHECK(ai->enemyIndex == a.human->getPlayerIndex());
 	const std::uint32_t refresh = ai->enemyRefreshFrame;
 	CHECK(refresh >= a.logic->getFrame()); // tolerance: the refresh frame is this frame + 25, read at its boundary
@@ -2393,7 +2400,8 @@ TEST_CASE("RAI-POW-4 review: summed threat thresholds retain the first minimum t
 		CHECK(order.flags == row.flags);
 		CHECK(order.flagsWord == 0x4014);
 		CHECK(order.timestamp == 0);
-		CHECK(order.target == (row.one == row.two ? team->getFirstMember()->getID() : two->getID()));
+		// a tie keeps the first member of retail's walk, the newest (RW 0x66362D: the member list is newest first, the port's getLastMember)
+		CHECK(order.target == two->getID());
 	}
 	CHECK(a.logic->random().callLog().empty());
 	CHECK(a.logic->random().seedArray() == seed);
@@ -2443,6 +2451,39 @@ TEST_CASE("RAI-POW-4 review: contained and entering deficits join ordinary membe
 	CHECK(team->orders()[0].command == 0x11);
 	CHECK(team->orders()[0].flags == 0xFF);
 	CHECK(team->orders()[0].target == hero->getID());
+}
+
+TEST_CASE("RAI-POW-4 review (prtrlp): a soldier inside a horde adds nothing of its own to the team's threat total (RW 0x693A1A(0) / 0x68C866)")
+{
+	OPENBFME_REQUIRE_START(s);
+	Arena a;
+	std::string err;
+	REQUIRE_MESSAGE(a.start(*s, "FactionAngmar", 5313, &err), err);
+	Object *horde = a.make("AngmarNecromancerHorde", a.ai, 0.0f, 0.0f);
+	Object *enemy = a.make("GondorFighter", a.human, 100.0f, 0.0f);
+	a.advance(2);
+	Team *team = threatTeam(a);
+	horde->setTeam(team);
+	REQUIRE(horde->getAIUpdateInterface()->aiAttackObject(enemy, CMD_FROM_PLAYER));
+	auto *contain = horde->getContain();
+	REQUIRE(contain);
+	auto *hi = contain->getHordeContainInterface();
+	REQUIRE(hi);
+	for (Object *member : *contain->getContainedItemsList()) { setDeficit(*member, 0.0f); }
+	Object *soldier = contain->getContainedItemsList()->front();
+	REQUIRE(soldier->getAIUpdateInterface());
+	soldier->getAIUpdateInterface()->setCurrentVictim(enemy); // a soldier in melee holds its own victim (AIAttackMelee.cpp's RW 0x6682B1 write)
+	soldier->setTeam(team); // a horde's soldiers can share its team (as the factory makes them)
+	REQUIRE(soldier->getHordeObject(false) == horde);
+	setDeficit(*soldier, 30.0f);
+	team->updateThreatOrder(*a.logic);
+	// retail: the horde's -30 only (above -50: no order); counting the soldier as well would make -60 and an order on the soldier
+	CHECK(team->orders().empty());
+	setDeficit(*soldier, 60.0f);
+	team->updateThreatOrder(*a.logic);
+	REQUIRE(team->orders().size() == 1);
+	CHECK(team->orders()[0].command == 0x11);
+	CHECK(team->orders()[0].target == horde->getID()); // the soldier itself never wins
 }
 
 TEST_CASE("RAI-POW-4 review: healthy hordes with free slots produce the exclusive position payload")

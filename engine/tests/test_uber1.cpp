@@ -1,10 +1,6 @@
 // OpenBFME unit tests. GPL-3.0.
 // Lane UBER-1: the Uber performance mode (docs/UBER.md): the simulation profile in the game setup, the wire, the replay, the profile identity and the
 // state hash; mismatches refused; the Uber simulation identical across runs and logic thread counts.
-// pin: lane RAI-POW-4 re-measured the Uber pin (OPENBFME_UBER1_REGEN=1): the team threat order (Team + 0x13C, writer RW 0x7A59CB) is hashed once it has an
-// order, so the battle differs from frame 12.
-// pin: re-measured on the merged #217 / #214 main (first 0xd4d54986, last 0xc044f68e -> 0xbb41e447); it still differs from frame 12.
-// pin: re-recorded on top of main c8aa4603 (OPENBFME_UBER1_REGEN=1): the same threat order still moves the battle from frame 12 (last fecda5ca -> f9ca9383).
 
 #include "doctest.h"
 
@@ -149,8 +145,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // and ATKRESET-1 (attack orders end the FiringDuration lock) moves it again.
 // pin: merge queue q44 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (AIRBORNE_TARGET
 // from the locomotor height, RW 0x66A472) moves it from frame 0.
-// pin: R3 F2/F7/F8 correct team threat totals, entering-member health and exclusive payload bits (RW 0x7A0291 / 0x86EB1D / 0x7A5AE6).
-// The threat order first enters this battle at frame 12; frames 12..39 change, while all thread counts retain the same vector.
+// pin: merge queue q46 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: #270 (the team threat orders,
+// Team + 0x13C) moves it from frame 12, and the review fix (the threat walk newest first, RW 0x66362D; a horde soldier counts nothing, RW 0x693A1A) from frame 13.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

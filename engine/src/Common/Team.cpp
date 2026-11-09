@@ -16,6 +16,7 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/SnapshotXfer.h"
 
 #include <stdexcept>
 
@@ -202,18 +203,18 @@ Coord3D hordeCenter(const ContainModuleInterface &contain)
 
 // RW 0x7A0141: the team's most damaged member (or horde): a member that is not dead (RW 0x7A0183's + 0x458 bit 0) or destroyed (+ 0x94 bit 0), has an
 // AI (+ 0x260) and a current victim (RW 0x668303) is measured by its body's health minus max health (slot 0x18). A HORDE member (RW 0x693A1A(0)) is
-// measured by its horde interface's summed member deficits (slot 0x268) and its centre (slot 0x22C); a horde with a free slot (slot 0x17C's capacity above
+// measured by its horde interface's summed member deficits (slot 0x268) and its centre (slot 0x22C), a soldier inside a horde not at all; a horde with a free slot (slot 0x17C's capacity above
 // slot 0x180(0)'s count) counts up `outCount`. The most negative deficit wins (strictly; the first member on a tie); its id and position are the
 // order's target. RW 0x7A01E8 / 0x7A0249 accumulate a separate total, returned at RW 0x7A0291 (zero with no eligible members).
 float teamThreatTarget(Team &team, GameLogic &logic, Coord3D &outPos, ObjectID &outTarget, int &outCount)
 {
-	static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
 	outCount = 0;
 	outTarget = INVALID_ID;
 	outPos = Coord3D{};
 	float total = 0.0f;
 	float best = -0.00024402147391811013f; // RW 0xC31518
-	for (Object *m = team.getFirstMember(); m; m = m->friend_teamNext())
+	// RW 0x66362D / 0x6632C9: retail's member list is newest first (RW 0x68AD89 links at the head), the port's is its reverse
+	for (Object *m = team.getLastMember(); m; m = m->friend_teamPrev())
 	{
 		if (m->isEffectivelyDead() || m->isDestroyed())
 		{
@@ -226,7 +227,9 @@ float teamThreatTarget(Team &team, GameLogic &logic, Coord3D &outPos, ObjectID &
 		}
 		float value = 0.0f;
 		Coord3D position{};
-		if (kHorde >= 0 && m->isKindOf((unsigned)kHorde))
+		// RW 0x693A1A(0): the HORDE itself or a member inside one. RW 0x68C866 then asks the member's own contain, so a soldier in the team (no contain)
+		// adds nothing to the total and never wins (RW 0x7A01CE jumps to the compare with a value that cannot be below the best)
+		if (m->getHordeObject(false))
 		{
 			ContainModuleInterface *contain = m->getContain();
 			HordeContainInterface *horde = contain ? contain->getHordeContainInterface() : nullptr;
@@ -759,42 +762,31 @@ void Team::xfer(Xfer &x)
 	}
 	std::uint32_t orders = (std::uint32_t)m_orders.size();
 	x.xferCount(&orders, 4u + 4u + 4u + 4u + 12u + 4u, sizeof(Order));
-	if (x.isLoading())
+	std::vector<Order> loaded;
+	for (std::uint32_t i = 0; i < orders; ++i)
 	{
-		m_orders.clear();
-		m_orders.reserve(orders);
-		for (std::uint32_t i = 0; i < orders; ++i)
+		Order o = x.isLoading() ? Order{} : m_orders[i];
+		std::uint32_t flags = o.flags, flagsWord = o.flagsWord;
+		x.xferInt(&o.command);
+		x.xferUnsignedInt(&flags);
+		x.xferUnsignedInt(&flagsWord);
+		x.xferUnsignedInt(&o.timestamp);
+		x.xferReal(&o.position.x);
+		x.xferReal(&o.position.y);
+		x.xferReal(&o.position.z);
+		x.xferObjectID(&o.target);
+		if (x.isLoading())
 		{
-			Order o;
-			std::uint32_t flags = 0, flagsWord = 0;
-			x.xferInt(&o.command);
-			x.xferUnsignedInt(&flags);
-			x.xferUnsignedInt(&flagsWord);
-			x.xferUnsignedInt(&o.timestamp);
-			x.xferReal(&o.position.x);
-			x.xferReal(&o.position.y);
-			x.xferReal(&o.position.z);
-			x.xferObjectID(&o.target);
+			SnapshotXfer::checkRange(flags, 0, 0xFF, "a team threat order's flag byte");      // node + 0x10, a byte
+			SnapshotXfer::checkRange(flagsWord, 0, 0xFFFF, "a team threat order's flag word"); // node + 0x12, a word
 			o.flags = (std::uint8_t)flags;
 			o.flagsWord = (std::uint16_t)flagsWord;
-			m_orders.push_back(o);
+			loaded.push_back(o);
 		}
 	}
-	else
+	if (x.isLoading())
 	{
-		for (const Order &o : m_orders)
-		{
-			Order copy = o;
-			std::uint32_t flags = o.flags, flagsWord = o.flagsWord;
-			x.xferInt(&copy.command);
-			x.xferUnsignedInt(&flags);
-			x.xferUnsignedInt(&flagsWord);
-			x.xferUnsignedInt(&copy.timestamp);
-			x.xferReal(&copy.position.x);
-			x.xferReal(&copy.position.y);
-			x.xferReal(&copy.position.z);
-			x.xferObjectID(&copy.target);
-		}
+		m_orders = std::move(loaded);
 	}
 }
 

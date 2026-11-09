@@ -716,7 +716,10 @@ syncTime += TheW3DFrameLengthInMsec (= 1000/30 = 33) * delta;  WW3D::Sync(syncTi
 - `W3DScriptedModelDraw::processAnimations` (0x0BFDFE) blends 3 animation slots.
   When an animation completes, `adjustAnimation` picks the next one at random from
   the current model condition.
-- It runs only from `doDrawModule`, so only for drawables inside the frustum (I).
+- It runs through the lazy wrapper RW 0x4BFAF4 (BFME2 0x4C0386), once a track plays at most once per animation clock value: from
+  `doDrawModule` (RW 0x4C72BE), so for drawables inside the frustum, and from six ObjectDrawInterface queries (the playing animation's
+  name and frame ranges, and a pose query, slot 48, RW 0x4C0E53), drawn or not. A draw catches up by the clock's delta since its last
+  advance or state change (select resets it, RW 0x4BF1A6). The port advances every draw that needs it every render frame (S-090).
 - One logic frame is 6 × 33 ms = 200 ms of animation, so animation stays locked to
   game speed, not the wall clock.
 - Animation stops when the client frame does not advance (pause) or the window is

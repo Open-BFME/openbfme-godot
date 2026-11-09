@@ -1120,7 +1120,7 @@ bool AISpecialPowerUpdate::decideAttackHealAoe(Object &obj)
 	if (AIUpdateInterface *ai = obj.getAIUpdateInterface())
 	{
 		Pathfinder &pf = ai->world().pathfinder();
-		pf.updateGoal(ai->pathfindObject(), &position, pf.getLayerAt(position.x, position.y));
+		pf.updateGoal(ai->pathfindObject(), &position, pf.getLayerAt(ai->pathfindObject(), position)); // RW 0x8E28AC: RW 0x680A75(object, point)
 	}
 	const Coord3D &p = *obj.getPosition();
 	const float dx = SimMath::subf32(p.x, position.x), dy = SimMath::subf32(p.y, position.y), dz = SimMath::subf32(p.z, position.z);

@@ -36,11 +36,17 @@ The manual packed-texture CPU oracle is also separate from the GDScript runner:
 python godot/tests/packed_texture_merge_test.py --build-dir engine/build --scratch workspace/packed-merge-check --godot "$GODOT"
 ```
 
-On macOS it reuses the configured godot-cpp archive and builds a scratch extension
-containing the actual packed loader. All 65,536 channel pairs are compared with
+On macOS, Linux and Windows it reuses the configured godot-cpp archive and builds a scratch extension
+containing the actual packed loader. Use a native build for the same host/architecture
+and a matching Godot executable; compile flags come from `compile_commands.json`.
+GNU-style compilers and MSVC/clang-cl are supported. `--bindings-library <archive>`
+selects a specific matching archive when `build/bin` contains several configurations.
+No normal build or post-build commands run, and outputs stay in the new scratch
+directory. All 65,536 channel pairs are compared with
 Godot's previous C++ `get_pixel`/`set_pixel` Color operations, including PNG alpha
 replacement. Full JPEG/PNG loads at 256, 512 and 1024 pixels compare exact output
-bytes, RGB-only masks and nearest resizing. Read counters require supplied JPEG
+bytes, RGB-only masks and nearest resizing. Direct short/oversized mask checks
+require a named error and unchanged image/mask bytes at the internal RGBA8 boundary. Read counters require supplied JPEG
 bytes to avoid rereading the file; invalid supplied bytes must fail even when a
 valid file exists. Valid/corrupt DDS precedence, missing JPEGs and corrupt or
 unreadable companions are checked. Rounded RGB and multiplied-alpha alternatives
@@ -163,6 +169,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/audio_stress_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/audio_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/backlog3_focus_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/building_damage_fx_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/bfme1_castle_path_test.gd` | Manual only; no generic pytest runner | Denied here: needs a private BFME1 installation. |
 | `godot/tests/bfme1_hud_test.gd` | Manual only; no generic pytest runner | Denied here: needs a private BFME1 installation. |
 | `godot/tests/bfme1_launch_args_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: command-line parsing only; no game is started; headless, 20 s timeout. |
@@ -241,6 +248,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/online_war_walk.gd` | `godot/scripts/game.gd` | Two-peer relay war fixture; `tools/net/online_war_test.sh` supplies the local lobby, relay and game data. Not a generic pytest game test. |
 | `godot/tests/http_timed_test.gd` | `tools/net/test_http_timed.py` | Argument-aware fixture runner (a fake server that answers late or never); needs Godot. |
 | `godot/tests/opts1_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. Checks both RotWK and BFME2 presentation sources in menus and a live game. |
+| `godot/tests/options_open_test.gd` | Manual only; no generic pytest runner | Denied here: needs the built GDExtension and private BFME1 and/or RotWK/BFME2 installations; boots audio and checks settings entry, tabs, hidden controls, footer actions and persistence. Headless runs are supported; optional `OPTIONS_OPEN_SHOTS` captures need a window/GPU. |
 | `godot/tests/opts2_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/opts4_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/opts5_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |

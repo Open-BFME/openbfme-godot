@@ -577,10 +577,10 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: merge queue q44 re-measured all three once on the merged tree (OPENBFME_PERF1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (the locomotor
 // update sets AIRBORNE_TARGET from the height above terrain, RW 0x66A472) moves the big battle and the allied blob from frame 0 and the skirmish from
 // frame 2; the Brutal discount and the garrison weapon set leave all three as they were.
-// pin: lane RAI-POW-4 re-recorded the 4-player skirmish on top of main c8aa4603 (OPENBFME_PERF1_REGEN=1): the team threat order (Team + 0x13C, RW 0x7A59CB)
-// moves the skirmish from frame 774. The big battle is unchanged.
-// pin: R3 F2/F7/F8 correct the summed team deficit, entering-member contribution and exclusive threat payload bits (RW 0x7A0291 / 0x86EB1D /
-// 0x7A5AE6). The 4-player skirmish changes from frame 774, its first threat order; big battle, allied blob and BACKLOG2 keep their pins.
+// pin: merge queue q46 re-measured the skirmish once on the merged tree (OPENBFME_PERF1_REGEN=1), compared at each merge point: #262 keeps it (the group
+// task adder has no caller); #270 (the team threat orders, Team + 0x13C) moves it from frame 774; #267, #269 and #271 each port a targetless tactic, so the
+// hashed unported-tactic counter moves it from frame 8; the review fix (the threat walk newest first, RW 0x66362D; a horde soldier counts nothing, RW 0x693A1A)
+// moves it from frame 868. The big battle and the allied blob do not move.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

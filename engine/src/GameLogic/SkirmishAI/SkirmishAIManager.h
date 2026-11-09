@@ -31,8 +31,9 @@
 //     + 0x178 != -1), RW 0x6C7677, the AIPlayer part RW 0x8F0EB4 (its sub systems at + 0x4, + 0xE4, + 0x38, + 0x90, + 0xC0, + 0x108, + 0x12C -> + 0xC
 //     each through RW 0x90CD00 "update unless disabled"), then the brain (+ 0x164, RW 0x90CD00).
 // What is ported here: the creation rules, the grouping, the disabled rule, the cadence and the order of every call above, with the state each
-// step owns (hashed), and the gate list (+ 0xA74: every GateOpenAndCloseBehavior registers itself, RW 0x89C04B -> 0x8EDA39). The bodies of the
-// called components (player info, the group tasks, the AIPlayer sub systems, the brain, the shutdown) are not ported: each call is counted and
+// step owns (hashed), the gate list (+ 0xA74: every GateOpenAndCloseBehavior registers itself, RW 0x89C04B -> 0x8EDA39) and the group's task vector
+// (+ 0x18: the money task RW 0x99EEF4 and its cleanup RW 0x8EDA5E). The bodies of the called components (player info, the AIPlayer sub systems, the
+// brain, the shutdown) are not ported: each call is counted and
 // reported (stop S-412).
 
 #pragma once
@@ -81,12 +82,41 @@ struct AISkirmishPlayer
 };
 
 // the 0x28-byte group of allied AI players (ctor RW 0x8EDD10)
+struct AIGroupTask
+{
+	// AITask (base ctor RW 0x961B48, 0x3C bytes): + 0x10 the state (RW 0x8EDA5E: 2 and 3 are finished, 1 runs); the group's vector (+ 0x18) holds these.
+	// The only task the group's add (RW 0x8EDEAC) makes is the money transfer (ctor RW 0x99EFD7, tick RW 0x99EEF4): + 0x2C / + 0x30 the player indices,
+	// + 0x34 the amount left, + 0x38 the most one tick pays.
+	enum State
+	{
+		TASK_ACTIVE = 1,
+		TASK_DONE = 2,
+		TASK_FAILED = 3
+	};
+	int state = TASK_ACTIVE;      ///< + 0x10
+	int fromPlayer = -1;          ///< + 0x2C
+	int toPlayer = -1;            ///< + 0x30
+	std::uint32_t remaining = 0;  ///< + 0x34
+	std::uint32_t perUpdate = 0;  ///< + 0x38
+};
+
 struct AISkirmishGroup
 {
 	std::map<int, std::unique_ptr<AISkirmishPlayer>> players; ///< + 0x00 by player index
 	std::vector<int> members;                                  ///< + 0x0C players in the order they joined
+	std::vector<AIGroupTask> tasks;                            ///< + 0x18 (RW 0x8EDB2C / 0x8EDA5E)
 	bool active = true;                                        ///< + 0x24
 	int lastLiveCount = 0;                                     ///< the count RW 0x8EDA8E gave the last update (fed to the brains)
+	// RW 0x8EDEAC: the money task (from, to, amount, the most one update pays)
+	void addTask(int from, int to, std::uint32_t amount, std::uint32_t perUpdate)
+	{
+		AIGroupTask task;
+		task.fromPlayer = from;
+		task.toPlayer = to;
+		task.remaining = amount;
+		task.perUpdate = perUpdate;
+		tasks.push_back(task);
+	}
 };
 
 class SkirmishAIManager
@@ -219,6 +249,8 @@ private:
 	// RW 0x8ED6DC (before the group's AIs: the enemy gates' CLOSED geometry) / RW 0x8ED726 (after them: OPEN, forced)
 	void updateGates(bool before, Player &player);
 	void traceGateWalk(bool before); // diagnostics only (setGateWalkTrace)
+	// RW 0x8EDB2C: the group's tasks (+ 0x18): finished entries are deleted (RW 0x8EDA5E), active ones tick (RW 0x99EEF4)
+	void updateTasks(AISkirmishGroup &g);
 	void updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g);
 	AISkirmishPlayer *eventAI(const Object &obj);
 	// lane AI5: the AI of a player whatever its state (the record's listeners keep listening after a shutdown); null without one

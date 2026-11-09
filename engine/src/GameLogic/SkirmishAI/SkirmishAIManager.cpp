@@ -305,6 +305,7 @@ void SkirmishAIManager::updateGroup(AISkirmishGroup &g)
 	{
 		updateAI(*kv.second, g);
 	}
+	updateTasks(g);
 	if (first)
 	{
 		updateGates(false, *first);
@@ -358,6 +359,51 @@ void SkirmishAIManager::unregisterGate(GateOpenAndCloseBehavior &gate)
 {
 	// RW 0x8ED772: the first entry of the pointer is erased
 	m_gates.erase(std::remove(m_gates.begin(), m_gates.end(), &gate), m_gates.end());
+
+}
+
+// RW 0x8EDB2C: the group's task vector (+ 0x18) in order. A finished entry (RW 0x8EDA5E: state 2 or 3) is deleted; an active one runs its tick (RW 0x99EEF4).
+void SkirmishAIManager::updateTasks(AISkirmishGroup &g)
+{
+	for (auto it = g.tasks.begin(); it != g.tasks.end();)
+	{
+		AIGroupTask &task = *it;
+		if (task.state == AIGroupTask::TASK_DONE || task.state == AIGroupTask::TASK_FAILED)
+		{
+			it = g.tasks.erase(it);
+			continue;
+		}
+		if (task.state == AIGroupTask::TASK_ACTIVE)
+		{
+			// RW 0x99EEF4: the money transfer: a missing player fails the task (state 3); the payer's cash, the per-update cap and what is left bound the
+			// payment; 0 pays nothing and leaves the task active; the last payment completes it (state 2)
+			Player *from = m_logic.players().getNthPlayer(task.fromPlayer);
+			Player *to = m_logic.players().getNthPlayer(task.toPlayer);
+			if (!from || !to)
+			{
+				task.state = AIGroupTask::TASK_FAILED;
+			}
+			else
+			{
+				std::uint32_t amount = std::min(from->getMoney()->countMoney(), task.perUpdate);
+				if (amount != 0)
+				{
+					amount = std::min(amount, task.remaining);
+					if (amount != 0)
+					{
+						from->getMoney()->withdraw(amount, &from->getScoreKeeper(), true); // RW 0x7B17EF
+						to->getMoney()->deposit(amount, &to->getScoreKeeper(), true);      // RW 0x7B18B8
+						task.remaining -= amount;
+					}
+					if (task.remaining == 0)
+					{
+						task.state = AIGroupTask::TASK_DONE;
+					}
+				}
+			}
+		}
+		++it;
+	}
 }
 
 AISkirmishPlayer *SkirmishAIManager::groupFirstAI(AISkirmishGroup &g) const
@@ -690,6 +736,19 @@ void SkirmishAIManager::crc(StateHasher &h) const
 		{
 			h.addI32(m);
 		}
+		// only a non-empty list is hashed: retail's AI code never fills it, so a live game's hash is the same as before this port
+		if (!g->tasks.empty())
+		{
+			h.addU32((std::uint32_t)g->tasks.size());
+			for (const AIGroupTask &t : g->tasks)
+			{
+				h.addI32(t.state);
+				h.addI32(t.fromPlayer);
+				h.addI32(t.toPlayer);
+				h.addU32(t.remaining);
+				h.addU32(t.perUpdate);
+			}
+		}
 		for (const auto &kv : g->players)
 		{
 			const AISkirmishPlayer &ai = *kv.second;
@@ -723,7 +782,9 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
 		"0x6C7946); the manager's gate list (+ 0xA74, RW 0x8ED6DC / 0x8ED726: every gate registers at construction, RW 0x89C04B -> 0x8EDA39, and the group update "
-		"closes the passable enemy gates (their open geometry in the pathfinder map, RW 0x89C12F) before its AIs and reopens them after) is ported; the bodies they call are not: the group tasks (RW 0x8EDB2C), "
+		"closes the passable enemy gates (their open geometry in the pathfinder map, RW 0x89C12F) before its AIs and reopens them after) is ported; the group's "
+		"tasks (+ 0x18, RW 0x8EDB2C: the money task RW 0x99EEF4 with the finished test RW 0x8EDA5E, a missing player fails it, the payer's "
+		"cash / the per-update cap / what is left bound each payment) are ported; the bodies they call are not: "
 		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the wall builder (RW 0x8F0EB4's + 0xE4); a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419), attacks with its tactic teams (S-417) and (lane AI5) buys its units' and structures' upgrades and its plots' expansions "
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "

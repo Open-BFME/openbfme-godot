@@ -143,7 +143,7 @@ std::vector<std::string> MapObjectCreation::stopLines()
 		"[S-114] GameData switches the object loop reads that have no INI field or no ported GameData block: the trees-off byte (GlobalData +0xEC, treated as off), the low-detail tree replacement templates (GlobalData +0xD8 / +0xDC..+0xE4, treated as high detail), and the draw module LOD gate (RW 0xDE4364 +0x24, treated as every module created); ForceModelsToFollowTimeOfDay / Weather are read from gamedata.ini by a name-level scan",
 		"[S-115] static draw fields: W3DFloorDraw StartHidden (the floor is not drawn at map start; when retail shows it is not recovered) and the fields that change how a W3DPropDraw / W3DFloorDraw model is drawn are stored, not applied: ForceToBack (draw order), StaticModelLODMode, and DistanceFog = No (the model takes the scene fog); the report counts the placed models per field (MapRuntimeReport::ignoredDrawFields); WeatherTexture (the snowy / normal texture swap) is drawn by inference (S-5015, MapRuntimeReport::inferredDrawFields)",
 		"[S-116] map.ini: only the Object / ChildObject / ObjectReskin blocks of a map.ini are applied (load type 2); its other blocks are recorded by the stub registry and not applied",
-		"[S-117] scorch decals (Scorch objects, 412 in the corpus) are terrain decals the terrain visual draws; they are not drawn",
+		"[S-117] scorch decals (Scorch objects, 412 in the corpus) are terrain decals the terrain visual draws; lane FEAT-BLDFX-1 adds every one of them to the 500-entry scorch buffer at map load (BFME2 W3DTerrainVisualLoad.cpp:526; position, objectRadius, scorchType) and the client draws that buffer (the group's exact vertex shade and terrain grid remain: see docs/STOPS.md)",
 		"[S-118] horde members: the members of a horde object's InitialPayload stand on HordeContainCore's formation slots at the horde's position and angle (RW 0x877751 / 0x873F30 / 0x875847); that they are created with the horde in payload order and take the free slots one by one, that a member faces its horde's angle, and that banner carriers, leaders and the minimum horde size are ignored is inference; RandomOffset slot draws use a fixed-seed generator, not the map start's logic RNG",
 		"[S-119] house colour: the owner's colour is the SidesList playerColor, or when the map sets none the PreferredColor of its faction's PlayerTemplate (templates that define a StartingBuilding only: Civilian, Neutral and Observer have none; retail takes the lobby colour of the slot), and a model draws it as base = mix(base, base * team, house texture alpha) where housecolor.ini names a texture for the stage 0 texture (the HC_ textures are 64 x 64 images whose alpha marks the team region). The combine is a HYPOTHESIS: defaultw3d.fxo has HouseColorEnable / HouseColorTexture parameters (the engine sets the texture, RW 0x54C0D2) but none of its pixel shaders samples a house colour texture, so the real combine is not recoverable from the effect (S-022)",
 	};
@@ -767,6 +767,12 @@ void MapObjectCreation::build(const LoadedMap &map, const std::string &mapName, 
 			{
 				fate = MAPOBJ_SCORCH;
 				why = "scorchType";
+				// S-117: the terrain visual adds it at load (BFME2 W3DTerrainVisualLoad.cpp:526): position, objectRadius, scorchType
+				MapScorch s;
+				s.position = Coord3D{ o.m_location.x, o.m_location.y, z };
+				s.radius = p.getReal("objectRadius");
+				s.type = p.getInt("scorchType");
+				out.report.scorches.push_back(s);
 			}
 			else if (p.getReal("lightHeightAboveTerrain", &ex), ex)
 			{
