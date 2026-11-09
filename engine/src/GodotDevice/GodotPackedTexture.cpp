@@ -6,6 +6,7 @@
 #include "Libraries/Source/Apt/AptLoad.h"
 
 #include <godot_cpp/variant/color.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 
 #include <cstring>
@@ -19,11 +20,16 @@ namespace
 // against Godot 4.7.2's C++ Image get_pixel/set_pixel operation establish that
 // its float colour product stores floor(a*b/255), with the companion alpha
 // replacing the colour alpha. Work on bytes to avoid three ABI calls per texel.
-void mergePackedRgba8(const Ref<Image> &image, const Ref<Image> &mask)
+bool mergePackedRgba8(const Ref<Image> &image, const Ref<Image> &mask)
 {
 	PackedByteArray pixels = image->get_data();
 	const PackedByteArray maskPixels = mask->get_data();
 	const int64_t bytes = pixels.size();
+	if (maskPixels.size() != bytes)
+	{
+		UtilityFunctions::push_error("Packed texture RGBA8 image and mask byte counts differ");
+		return false;
+	}
 	uint8_t *out = pixels.ptrw();
 	const uint8_t *in = maskPixels.ptr();
 	for (int64_t i = 0; i < bytes; i += 4)
@@ -34,6 +40,7 @@ void mergePackedRgba8(const Ref<Image> &image, const Ref<Image> &mask)
 		out[i + 3] = in[i + 3];
 	}
 	image->set_data(image->get_width(), image->get_height(), false, Image::FORMAT_RGBA8, pixels);
+	return true;
 }
 } // namespace
 
@@ -77,12 +84,13 @@ Ref<godot::Image> loadPackedTexture(AptFileSource &source, const std::string &st
 		if (!read(stem + ".png", pngData) || png->load_png_from_buffer(pngData) != OK)
 			return Ref<godot::Image>();
 		png->convert(godot::Image::FORMAT_RGBA8);
-		*pairedPng = true;
 		if (png->get_width() != image->get_width() || png->get_height() != image->get_height())
 		{
 			png->resize(image->get_width(), image->get_height(), godot::Image::INTERPOLATE_NEAREST);
 		}
-		mergePackedRgba8(image, png);
+		if (!mergePackedRgba8(image, png))
+			return Ref<godot::Image>();
+		*pairedPng = true;
 	}
 	return image;
 }

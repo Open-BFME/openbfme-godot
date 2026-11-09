@@ -1293,6 +1293,11 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	if (m_fxPlayer && m_fxPlayer->playback())
 	{
 		m_liveFX.reset(new LiveFX(*m_game, *m_fxPlayer->playback())); // lane FX-2: from here on the logic's effect calls play
+		// lane FEAT-BLDFX-1 (S-117): the map's Scorch objects enter the terrain scorch buffer (BFME2 W3DTerrainVisualLoad.cpp:526)
+		for (const MapScorch &s : m_game->classified().report.scorches)
+		{
+			m_fxPlayer->playback()->addMapScorch(s.position, s.radius, s.type);
+		}
 		// lane PERF-1 r2: every particle texture decoded during the load (280 retail textures, about 30-70 ms), not at its first use in a battle
 		const double tp = nowMs();
 		m_fxPlayer->preload_textures(0.0);
@@ -6939,9 +6944,26 @@ Dictionary GameWorld::get_fx_report() const
 		}
 	}
 	d["stops"] = stops;
-	if (m_fxPlayer)
+	if (m_fxPlayer && m_fxPlayer->playback())
 	{
 		d["particles"] = m_fxPlayer->get_stats();
+		// lane FEAT-BLDFX-1: the client effect state (scorches RW 0x5E0045, dynamic decals RW 0x5E05AB, light pulses RW 0x5DFAA3, camera shakers RW 0x5DFE90; the bodies are DONOR BFME2 0x67EA3 / 0x10C785 / 0x6DE3D / 0x65DAD)
+		const FXPlayback &playback = *m_fxPlayer->playback();
+		Dictionary scorches;
+		scorches["count"] = (int64_t)playback.scorches().entries().size();
+		scorches["additions"] = (int64_t)playback.scorches().additions();
+		scorches["duplicates"] = (int64_t)playback.scorches().duplicates();
+		scorches["evictions"] = (int64_t)playback.scorches().evictions();
+		d["scorches"] = scorches;
+		Dictionary decals;
+		decals["count"] = (int64_t)playback.decals().size();
+		d["decals"] = decals;
+		Dictionary lights;
+		lights["active"] = (int64_t)playback.lightPulses().enabledCount();
+		lights["additions"] = (int64_t)playback.lightPulses().additions();
+		lights["refused_range"] = (int64_t)playback.lightPulses().refusedRange();
+		lights["overflow"] = (int64_t)playback.lightPulses().overflow();
+		d["light_pulses"] = lights;
 	}
 	return d;
 }

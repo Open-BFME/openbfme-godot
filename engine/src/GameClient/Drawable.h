@@ -89,7 +89,7 @@ struct DrawEntry
 	std::string staticModel;          ///< tree / prop / floor kinds: the model the module shows ("" when none)
 	std::string notDrawnReason;       ///< why a non-model entry draws nothing
 	std::unique_ptr<W3DScriptedModelDraw> draw; ///< MODEL kind
-	bool animated = false;            ///< the idle animation moves: advance() each render frame
+	bool animated = false;            ///< advance() would change the draw (W3DScriptedModelDraw::needsAdvance, set at creation and on every flag change, never lowered by an advance: the pose after a blend's promotion is still pushed): advance() each render frame
 	bool missingModel = false;        ///< the model is not in the mounted archives (a retail data defect): not drawn
 	std::string lastModel;            ///< the model last handed to the device layer (the device layer keeps its own handle)
 	bool moduleHidden = false;        ///< a CurDrawableHideModule / ObjectHideModule request of a script hid this module (Drawable::showModule, RW 0x6789B4): not drawn
