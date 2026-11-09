@@ -1037,6 +1037,7 @@ void GameLogic::noteRadarEvent(int type, const Coord3D &position, RadarEventNoti
 	n.source = source;
 	n.playerIndex = playerIndex;
 	m_radarEventNotices.push_back(n);
+	noteRadarLogicWrite();
 }
 
 void GameLogic::reset()
@@ -1399,9 +1400,10 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	{
 		section("damage over time", [&](StateHasher &x) { m_dot->crc(x); }); // lane DECOMP-1: only while a record runs (a game without one keeps its hash)
 	}
-	if (m_trees->anyChanged())
+	if (m_trees->anyChanged() || m_trees->anyClusterUsed())
 	{
-		section("terrain trees", [&](StateHasher &x) { m_trees->crc(x); }); // lane SPELL-3: only once a tree toppled or was harvested (a game without keeps its hash)
+		// lane SPELL-3: only once a tree toppled or was harvested, or (RAI-POW-3) a tree killer marked a cluster: a game without keeps its hash
+		section("terrain trees", [&](StateHasher &x) { m_trees->crc(x); });
 	}
 	section("large group audio", [&](StateHasher &x) { m_largeGroupAudio.crc(x); }); // lane AUDIO-4: TheLargeGroupAudio's gate (+ 0x38 / + 0x3C)
 	if (m_scriptEngine->loaded())

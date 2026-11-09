@@ -307,6 +307,7 @@ include(cmake/Bridge1.cmake)    # BRIDGE-1: retail bridges crossed and destroyed
 include(cmake/Siege1.cmake)     # SIEGE-1: the siege units (appends to OPENBFME_SIM_SOURCES; OPENBFME_SIEGE1_TESTS)
 include(cmake/Castlearea1.cmake) # CASTLEAREA-1: the castle area triggers (OPENBFME_CASTLEAREA1_TESTS)
 include(cmake/Weather1.cmake)   # WEATHER-1: snow, rain, darkness, lightning, the weather sound (client sources; OPENBFME_WEATHER1_TESTS)
+include(cmake/Bldfx1.cmake)     # FEAT-BLDFX-1: the FXList nugget sinks, scorches, decals, light pulses, camera shakers (OPENBFME_BLDFX1_SOURCES / _TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -314,6 +315,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_EVADAMAGE1_CLIENT_SOURCES}
     ${OPENBFME_DECOMP2_CLIENT_SOURCES}
     ${OPENBFME_FX_SOURCES}
+    ${OPENBFME_BLDFX1_SOURCES}
     ${OPENBFME_PROD_SOURCES}
     ${OPENBFME_AUDIO_SOURCES}
     ${OPENBFME_START_SOURCES}
@@ -744,6 +746,7 @@ add_executable(openbfme_tests
     ${OPENBFME_FX2_TESTS}
     ${OPENBFME_FX3_TESTS}
     ${OPENBFME_FX4_TESTS}
+    ${OPENBFME_BLDFX1_TESTS}
     ${OPENBFME_FOGFX1_TESTS}
     ${OPENBFME_HERO_TESTS}
     ${OPENBFME_MOD1_TESTS}
@@ -946,6 +949,7 @@ add_executable(openbfme_tests
     tests/test_pathfind_numerics.cpp
     tests/test_locodist1.cpp
     tests/test_sails1.cpp
+    tests/test_airborne1.cpp # lane AIRBORNE-1
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp
@@ -1036,11 +1040,13 @@ if(OPENBFME_BUILD_FUZZERS)
     target_compile_options(openbfme_reader_corpus PRIVATE -fsanitize=address,undefined)
 endif()
 
+# Instruction-level MD5 kernel bench. Header only: it does not link openbfme_core. Its timer is POSIX (clock_gettime), so not on Windows.
+# Not in the default build (`cmake --build <dir> --target md5_kernel_bench`). It compiles Common/MD5Kernel.h, so it takes the simulation flags (sim_audit).
+if(NOT WIN32)
+    add_executable(md5_kernel_bench EXCLUDE_FROM_ALL tests/md5_kernel_bench.cpp)
+    target_include_directories(md5_kernel_bench PRIVATE src)
+    openbfme_sim_register_target(md5_kernel_bench)
+endif()
+
 # the contract holds for every target that carries simulation code or links it: nothing added to a target after its registration may override it
 openbfme_sim_check_targets()
-
-# Instruction-level MD5 kernel bench. Header only: it does not link openbfme_core. Its timer is POSIX (clock_gettime), so not on Windows.
-if(NOT WIN32)
-    add_executable(md5_kernel_bench tests/md5_kernel_bench.cpp)
-    target_include_directories(md5_kernel_bench PRIVATE src)
-endif()

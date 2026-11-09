@@ -919,7 +919,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		{
 			return false;
 		}
-		// TEAMUNITS-1: RW 0x7A07D8 Team::hasAnyUnits (donor Open-BFME-2 Team_hasAnyUnits.cpp:41-56, BFME2 0x79DEC4, same shape: both editions): a
+		// TEAMUNITS-1: RW 0x7A07D8 Team::hasAnyUnits (donor Open-BFME-2 Team.cpp (Team::hasAnyUnits), BFME2 0x79DEC4, same shape: both editions): a
 		// member counts when it is not dead (+ 0x458 bit 0), not DESTROYED (+ 0x94 bit 0) and its template is not STRUCTURE (KindOf 7, + 0x108 bit 7),
 		// PROJECTILE (25, + 0x108 & 0x2000000) or IGNORE_FOR_VICTORY (148, + 0x11A & 0x10). Not teamHasAnyUnits above (RW 0x7A0956, another filter)
 		for (const Object *o : members(*tm))

@@ -1075,6 +1075,18 @@ ObjectPathfindAdapter *AIWorld::findAdapter(PathfindObjectID id) const
 	return m_adapters[(size_t)id].get();
 }
 
+PathfindLayerEnum AIWorld::objectLayer(const Object &obj)
+{
+	if (const AIWorld *w = obj.logic().aiWorld())
+	{
+		if (const ObjectPathfindAdapter *a = w->findAdapter(obj.getID()))
+		{
+			return a->getLayer();
+		}
+	}
+	return LAYER_GROUND;
+}
+
 Object *AIWorld::findObject(PathfindObjectID id) const
 {
 	return m_logic.findObjectByID(id);
