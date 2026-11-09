@@ -307,8 +307,22 @@ TEST_CASE("placedecal1: the terrain and wall shaders' sel_alpha_at reads the y s
 	ss << in.rdbuf();
 	const std::string s = ss.str();
 	CHECK(s.find("float sel_mask_at(int header, vec2 w)") != std::string::npos);
-	CHECK(s.find("if (wall && (rec3.w != 0.0 || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT)))") != std::string::npos);
+	CHECK(s.find("if (wall && ((rec3.w != 0.0 && rec3.w != -3.0) || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT)))") != std::string::npos);
 	CHECK(s.find("vec2 uv = vec2((d.x * co + d.y * si) / rec0.z + 0.5, (d.x * si - d.y * co) / rec3.z + 0.5);") != std::string::npos);
 	CHECK(s.find("a *= sel_mask_at(int(rec3.w), w.xy) / 255.0;") != std::string::npos);
 	CHECK(s.find("float fx = clamp(w.x / 10.0 - h.x, 0.0, float(mw - 1));") != std::string::npos);
+	// review (Greptile P2 on #243): retail's frame buffer clips after every draw, so the running surface is clamped between the decals
+	CHECK(s.find("vec4 sel_alpha_at(vec3 w, bool wall, vec3 surface)") != std::string::npos);
+	CHECK(s.find("cur = clamp(cur + src * a, 0.0, 1.0);") != std::string::npos);
+	CHECK(s.find("cur = clamp(cur * (1.0 - a) + src * a, 0.0, 1.0);") != std::string::npos);
+	// review (PRTRLE): the callers composite surface * (1 - a) + rgb with a = 1 - keep, so the share is cur - surface * keep (surface * (1 - keep)
+	// doubled a ground no alpha decal covers and darkened one under an opaque decal: prtrle selprobe 0.800 / 0.600 for 0.400 / 1.000)
+	CHECK(s.find("return vec4(cur - surface * keep, 1.0 - keep);") != std::string::npos);
+	CHECK(s.find("return vec4(cur - surface * (1.0 - keep)") == std::string::npos);
+	// the terrain passes the gamma ground it draws the decals over; the wall's generated line (w3dshadergen.cpp) passes its clamped output
+	std::ifstream terrain(std::string(OPENBFME_DOCS_DIR) + "/../godot/shaders/terrain.gdshader", std::ios::binary);
+	REQUIRE(terrain.good());
+	std::stringstream ts;
+	ts << terrain.rdbuf();
+	CHECK(ts.str().find("vec4 sela = sel_alpha_at(vec3(v_sage_xy, 0.0), false, gamma);") != std::string::npos);
 }

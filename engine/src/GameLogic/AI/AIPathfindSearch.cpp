@@ -249,6 +249,86 @@ bool Pathfinder::clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco,
 	return obj != nullptr && portalPathExists(obj, loco, z1, z2); // RW 0x6F5EDA .. 0x6F5EE7 (lane WALL-2)
 }
 
+bool Pathfinder::pathToObject(const PathfindObject &unit, const PathfindLocomotorInfo &loco, const Coord3D &from, const PathfindObject &target)
+{
+	// RW 0x6F5F65 (the shared path-to-object test lane GARRISON-2 ported for the horde garrison; RW 0x6F5F6F .. 0x6F5F9A): the movement set's ground / water /
+	// cliff / air / deep-water bit, else "no path"; the caller's set, the unit's AI's otherwise. The unit must have an AI for the quick path test's own
+	// locomotor answers (RW 0x6F5BB0 reads AI + 0x1CC when the caller passes none)
+	if ((loco.validSurfaces & (LOCOMOTORSURFACE_GROUND | LOCOMOTORSURFACE_WATER | LOCOMOTORSURFACE_CLIFF | LOCOMOTORSURFACE_AIR | LOCOMOTORSURFACE_DEEP_WATER)) == 0 ||
+		!unit.hasAI())
+	{
+		return false;
+	}
+	// RW 0x6F5FAA .. 0x6F5FED: the target's position, its layer (RW 0x680A75) and centred cell (RW 0x6EA076)
+	Coord3D to = target.getPosition();
+	const PathfindLayerEnum layer = searchDestinationLayer(to);
+	ICoord2D centre;
+	worldToCell(&to, true, &centre);
+	const PathfindCell *goal = getCell(layer, centre.x, centre.y);
+	if (!goal)
+	{
+		return false;
+	}
+	// RW 0x6F6009 / 0x6F600C: an OBSTACLE cell (the target's own footprint) walks from it at once. Any other cell retries at the position plus the first
+	// shape's offset (RW 0x6F600E .. 0x6F6061: RW 0xAD1AE0(0), + 0x10 / 0x14 / 0x18); not an obstacle there either, the quick path test to that offset point
+	// (RW 0x6F6070); an obstacle there, the walk from that cell
+	if (goal->getType() != PathfindCell::CELL_OBSTACLE)
+	{
+		const PathfindShape first = target.getGeometry().shape(0);
+		to.x = SimMath::addf32(to.x, first.offsetX);
+		to.y = SimMath::addf32(to.y, first.offsetY);
+		to.z = SimMath::addf32(to.z, first.offsetZ);
+		worldToCell(&to, true, &centre);
+		goal = getCell(layer, centre.x, centre.y);
+		if (!goal)
+		{
+			return false;
+		}
+		if (goal->getType() != PathfindCell::CELL_OBSTACLE)
+		{
+			return quickDoesPathExist(unit, &from, &to, &loco); // RW 0x6F6070
+		}
+	}
+	// RW 0x6F607A .. 0x6F6137: the footprint's own obstacle id, the from cell's effective zone (RW 0x938D89), d from the bounding circle radius
+	const PathfindMovement mv = makeMovement(&unit, loco);
+	const PathfindCell *fromCell = getClippedCell(searchDestinationLayer(from), &from);
+	if (!fromCell)
+	{
+		return false;
+	}
+	// RW 0x938D89 is the odd (flag 1) table with the strict type rules: getEffectiveZone(mv, false, ..) (lane QPATH-1, S-162; as quickDoesPathExist)
+	const zoneStorageType fromZone = m_zoneManager.getEffectiveZone(mv, false, fromCell->getZone());
+	const PathfindObjectID obstacle = goal->getObstacleID();
+	const int d = 2 - SimMath::truncToInt32(SimMath::mulf32(target.getGeometry().boundingCircleRadius(), -0.1f));
+	const int dirs[4][2] = { { d, 0 }, { -d, 0 }, { 0, d }, { 0, -d } };
+	for (const auto &dir : dirs) // RW 0x6F5EF3, four times (+x, -x, +y, -y)
+	{
+		// RW 0x6E94B2: Bresenham from the centre to the end cell, both included
+		const int x0 = centre.x, y0 = centre.y, x1 = centre.x + dir[0], y1 = centre.y + dir[1];
+		const int steps = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
+		for (int k = 0; k <= steps; ++k)
+		{
+			const int x = steps == 0 ? x0 : x0 + (x1 - x0) * k / steps;
+			const int y = steps == 0 ? y0 : y0 + (y1 - y0) * k / steps;
+			const PathfindCell *c = getCell(layer, x, y);
+			if (!c)
+			{
+				break; // off the grid: this direction finds nothing
+			}
+			if (c->getObstacleID() != obstacle)
+			{
+				const zoneStorageType z = m_zoneManager.getEffectiveZone(mv, false, c->getZone()); // RW 0x6F5F2B (RW 0x938D89)
+				if (z == fromZone || portalPathExists(&unit, loco, fromZone, z, false)) // RW 0x6F5547
+				{
+					return true;
+				}
+				break;
+			}
+		}
+	}
+	return false;
+}
+
 bool Pathfinder::quickDoesPathExist(const PathfindObject &obj, const Coord3D *from, const Coord3D *to, const PathfindLocomotorInfo *overrideSet)
 {
 	// lane QPATH-1. TARGET RW 0x6F5BB0 (BFME2 0x6F477E, Open-BFME-2 58a44077a5 GameLogic/Pathfinder/pathfinder.cpp:2951); RotWK only moves Object's AI

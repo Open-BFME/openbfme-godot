@@ -948,9 +948,11 @@ func _game_world(fs: RefCounted) -> void:
 	_check(playable_cp_ok, "every playable player has its command point limit (base 100) and its cash")
 	var instancers := world.find_children("*", "W3DInstancer", false, false)
 	_check(instancers.size() == 2, "the scene is two W3DInstancer nodes (static client-only layer, live layer)")
-	# lane RENDER-1: one "Streaks" node draws every W3DStreakDraw trail (one ImmediateMesh), the only mesh node of the world
-	var mesh_nodes: Array = world.find_children("*", "MeshInstance3D", true, false).filter(func(n): return n.name != "Streaks")
-	_check(mesh_nodes.is_empty(), "no per-object mesh node (the streak layer is one node)")
+	# lane RENDER-1: one "Streaks" node draws every W3DStreakDraw trail (one ImmediateMesh), the only object mesh node of the world; lane
+	# FEAT-BLDFX-1: the FX player's TerrainDecals layer (one batched scorch mesh, one mesh per dynamic decal texture) is not per object either
+	var mesh_nodes: Array = world.find_children("*", "MeshInstance3D", true, false).filter(
+		func(n): return n.name != "Streaks" and String(n.get_parent().name) != "TerrainDecals")
+	_check(mesh_nodes.is_empty(), "no per-object mesh node (the streak layer and the terrain decal layer are batched)")
 	var live_inst: Node3D = world.get_node("LiveObjects")
 	_check(live_inst.get_stats().instances == d.models_shown and d.models_shown > 1500, "the live instancer holds an instance per model shown (%d of %d model draws)" % [live_inst.get_stats().instances, d.model_draws])
 	# the objects: a horde and its members

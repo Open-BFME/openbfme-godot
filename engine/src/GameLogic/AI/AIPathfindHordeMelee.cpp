@@ -4,7 +4,7 @@
 // Lane ATTACKPATH-1: the pathfinder helpers of a horde's melee approach goal (AIAttackMeleeHordeApproachTargetState::computePath RW 0x74A594, stop S-590),
 // ported from the RotWK disassembly with the BFME2 decomp's byte-matched sources as names and cross-checks:
 //   * RW 0x6F2FFF Pathfinder::IsHordeMeleeLinePassable (tier A, decomp AI/PathfinderCoordLineWalk.cpp; its record RW 0x6EE496 and cell callback RW 0x6EE524,
-//     decomp Pathfinder/PathfinderRva002ED15ACellCallback.cpp Rva002ED15AInfo);
+//     decomp AI/AIPathfind.cpp Rva002ED15AInfo);
 //   * RW 0x746783 (tier B same-shape, decomp AI/AIStatesBfmeOnExit.cpp AIAttackMeleeHordeApproachTargetState::rva00344D60): the goal walked back toward the horde;
 //   * RW 0x6FB67A Pathfinder::AdjustHordeMeleeDestination (tier A, decomp Pathfinder/pathfinder.cpp) with its ring RW 0x6FA733 (decomp rva002F92BC,
 //     "IterateCircular1"), the functor RW 0x6EEAF5 / 0x6F8540 (Pathfinder_IsCheckForMeleeHordeAdjust), its cell test RW 0x6F6C18 and footprint test RW 0x6EB2EF.

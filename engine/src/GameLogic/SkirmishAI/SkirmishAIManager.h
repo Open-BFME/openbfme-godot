@@ -23,15 +23,18 @@
 //     record in player index order (RW 0x8E3CF3), then every group in creation order (RW 0x8EDDF6).
 //   * group update RW 0x8EDDF6 (only while active): the first COMPUTER member (or any member when MakeAll..., RW 0x8EDACE) — none makes the group
 //     inactive; its AI's brain's shared part (+ 0x164 -> + 0x14) is updated with the number of live AI members (RW 0x8EDA8E: not defeated
-//     (Player + 0x754), and COMPUTER or MakeAll...); the manager's object at + 0xA74 runs before and after (RW 0x8ED6DC / 0x8ED726); every AI of the
-//     group, in player index order, gets that shared part and is updated (RW 0x6C7946); the group's tasks (+ 0x18) are updated (RW 0x8EDB2C).
+//     (Player + 0x754), and COMPUTER or MakeAll...); the manager's gate list (+ 0xA74) temporarily closes every enemy gate whose OPEN geometry is the one in
+//     the pathfinder's map (RW 0x8ED6DC, the poll RW 0x89C12F), every AI of the group, in player index order, gets that shared part and is updated
+//     (RW 0x6C7946); the group's tasks (+ 0x18) are updated (RW 0x8EDB2C); the gate list then restores those gates' OPEN geometry (RW 0x8ED726).
 //   * AI update RW 0x6C7946: a disabled AI only updates its brain while its group still has more than one live AI member, or exactly one and the AI
 //     has an army; an enabled AI whose player is defeated is shut down (RW 0x6C78D9 / 0x6C7928) and disabled; otherwise RW 0x6C75B5 (when
 //     + 0x178 != -1), RW 0x6C7677, the AIPlayer part RW 0x8F0EB4 (its sub systems at + 0x4, + 0xE4, + 0x38, + 0x90, + 0xC0, + 0x108, + 0x12C -> + 0xC
 //     each through RW 0x90CD00 "update unless disabled"), then the brain (+ 0x164, RW 0x90CD00).
 // What is ported here: the creation rules, the grouping, the disabled rule, the cadence and the order of every call above, with the state each
-// step owns (hashed). The bodies of the called components (player info, the + 0xA74 object, the group tasks, the AIPlayer sub systems, the brain,
-// the shutdown) are not ported: each call is counted and reported (stop S-412).
+// step owns (hashed), the gate list (+ 0xA74: every GateOpenAndCloseBehavior registers itself, RW 0x89C04B -> 0x8EDA39) and the group's task vector
+// (+ 0x18: the money task RW 0x99EEF4 and its cleanup RW 0x8EDA5E). The bodies of the called components (player info, the AIPlayer sub systems, the
+// brain, the shutdown) are not ported: each call is counted and
+// reported (stop S-412).
 
 #pragma once
 
@@ -47,6 +50,7 @@
 #include <vector>
 
 class GameLogic;
+class GateOpenAndCloseBehavior;
 class Object;
 class Player;
 class PlayerList;
@@ -68,6 +72,8 @@ struct AISkirmishPlayer
 	std::string dozerTemplate;                ///< RW 0x8F04F7's argument: the side's AIDozerAssignment unit
 	std::uint32_t shutdownFrame = 0;          ///< the frame the AI was shut down for a defeated player (0 = running)
 	std::uint32_t retryTimer = 0;             ///< AIPlayer + 0x158 = LOGICFRAMES_PER_SECOND * 30 at creation (RW 0x8F0855)
+	int enemyIndex = -1;                      ///< AIPlayer + 0xA0: the cached enemy player (RW 0x8F47EB), -1 when none
+	std::uint32_t enemyRefreshFrame = 0;      ///< AIPlayer + 0x9C: the frame the enemy cache refreshes (RW 0x8F47EB: now + 25)
 	const SkirmishAIStore *store = nullptr;   ///< the data the AI reads (not state)
 	AIBuildState build;                       ///< step 2: the base builder, the build requests, the dozer list, the game phase (AIBaseBuilder.h)
 	std::vector<std::shared_ptr<AIBuildRequest>> *farmSites = nullptr; ///< the manager's farm site pool (RW: a global vector, RW 0xDE9EEC)
@@ -76,12 +82,41 @@ struct AISkirmishPlayer
 };
 
 // the 0x28-byte group of allied AI players (ctor RW 0x8EDD10)
+struct AIGroupTask
+{
+	// AITask (base ctor RW 0x961B48, 0x3C bytes): + 0x10 the state (RW 0x8EDA5E: 2 and 3 are finished, 1 runs); the group's vector (+ 0x18) holds these.
+	// The only task the group's add (RW 0x8EDEAC) makes is the money transfer (ctor RW 0x99EFD7, tick RW 0x99EEF4): + 0x2C / + 0x30 the player indices,
+	// + 0x34 the amount left, + 0x38 the most one tick pays.
+	enum State
+	{
+		TASK_ACTIVE = 1,
+		TASK_DONE = 2,
+		TASK_FAILED = 3
+	};
+	int state = TASK_ACTIVE;      ///< + 0x10
+	int fromPlayer = -1;          ///< + 0x2C
+	int toPlayer = -1;            ///< + 0x30
+	std::uint32_t remaining = 0;  ///< + 0x34
+	std::uint32_t perUpdate = 0;  ///< + 0x38
+};
+
 struct AISkirmishGroup
 {
 	std::map<int, std::unique_ptr<AISkirmishPlayer>> players; ///< + 0x00 by player index
 	std::vector<int> members;                                  ///< + 0x0C players in the order they joined
+	std::vector<AIGroupTask> tasks;                            ///< + 0x18 (RW 0x8EDB2C / 0x8EDA5E)
 	bool active = true;                                        ///< + 0x24
 	int lastLiveCount = 0;                                     ///< the count RW 0x8EDA8E gave the last update (fed to the brains)
+	// RW 0x8EDEAC: the money task (from, to, amount, the most one update pays)
+	void addTask(int from, int to, std::uint32_t amount, std::uint32_t perUpdate)
+	{
+		AIGroupTask task;
+		task.fromPlayer = from;
+		task.toPlayer = to;
+		task.remaining = amount;
+		task.perUpdate = perUpdate;
+		tasks.push_back(task);
+	}
 };
 
 class SkirmishAIManager
@@ -124,6 +159,12 @@ public:
 
 	const std::vector<std::unique_ptr<AISkirmishGroup>> &groups() const { return m_groups; }
 	const AISkirmishPlayer *findAI(int playerIndex) const;
+	// lane RAI-POW-2: the same AI for a caller that updates its state (the enemy cache, RW 0x8F457D)
+	AISkirmishPlayer *findAI(int playerIndex) { return const_cast<AISkirmishPlayer *>(static_cast<const SkirmishAIManager *>(this)->findAI(playerIndex)); }
+	// RW 0x89C04B -> 0x8EDA39 / 0x8ED772: the manager's gate list (+ 0xA74), the gates the AI opens and closes for itself (RW 0x8ED6DC / 0x8ED726)
+	void registerGate(GateOpenAndCloseBehavior &gate);
+	void unregisterGate(GateOpenAndCloseBehavior &gate);
+	const std::vector<GateOpenAndCloseBehavior *> &gates() const { return m_gates; }
 	// RW 0x6A9D9C: historical registration order; dead and captured flags stay listed.
 	const std::vector<ObjectID> &captureFlags() const { return m_captureFlags; }
 	const AISkirmishGroup *findGroup(int playerIndex) const;
@@ -159,6 +200,15 @@ public:
 		int playerIndex;          ///< its controlling player at the event (-1: none)
 	};
 	void setEventTrace(std::vector<ObjectEvent> *trace) { m_eventTrace = trace; }
+	// diagnostics only (not game state, not saved or hashed): a sink for the gate walk's results, set by tests. After each walk (RW 0x8ED6DC before the
+	// group's AIs, RW 0x8ED726 after them) one sample per listed gate: the walk, the gate and its geometry state at that moment.
+	struct GateWalkSample
+	{
+		bool before;
+		const GateOpenAndCloseBehavior *gate;
+		int geometryState; ///< GateOpenAndCloseBehavior::GeometryState
+	};
+	void setGateWalkTrace(std::vector<GateWalkSample> *trace) { m_gateWalkTrace = trace; }
 
 	void crc(StateHasher &h) const;
 	// lane SAVE-4c: the obfme:SkirmishAI block (SkirmishAISnapshot.cpp): the groups, every AI's builders and brain, the player info records, the farm site pool
@@ -196,6 +246,11 @@ private:
 	AISkirmishPlayer *groupFirstAI(AISkirmishGroup &g) const; ///< the group's first AI (firstOfGroup: the target chooser's owner)
 	bool countsAsAI(const Player &p) const;
 	void updateGroup(AISkirmishGroup &g);
+	// RW 0x8ED6DC (before the group's AIs: the enemy gates' CLOSED geometry) / RW 0x8ED726 (after them: OPEN, forced)
+	void updateGates(bool before, Player &player);
+	void traceGateWalk(bool before); // diagnostics only (setGateWalkTrace)
+	// RW 0x8EDB2C: the group's tasks (+ 0x18): finished entries are deleted (RW 0x8EDA5E), active ones tick (RW 0x99EEF4)
+	void updateTasks(AISkirmishGroup &g);
 	void updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g);
 	AISkirmishPlayer *eventAI(const Object &obj);
 	// lane AI5: the AI of a player whatever its state (the record's listeners keep listening after a shutdown); null without one
@@ -206,6 +261,7 @@ private:
 	std::vector<std::unique_ptr<AISkirmishGroup>> m_groups;
 	std::vector<int> m_infoPlayers;
 	std::vector<ObjectID> m_captureFlags;
+	std::vector<GateOpenAndCloseBehavior *> m_gates; ///< manager + 0xA74 (a 12-byte vector in retail, made by the manager's ctor)
 	std::map<int, std::unique_ptr<AIStatCollector>> m_records; ///< manager + 0xA3C: the player info records by player index (lane DECOMP-3)
 	void makeRecord(const Player &player);
 	std::vector<std::shared_ptr<AIBuildRequest>> m_farmSites; ///< RW 0xDE9EEC (made by the first economy builder, RW 0x8EEBAC)
@@ -213,5 +269,6 @@ private:
 	std::vector<std::string> m_errors;
 	Counters m_counters;
 	std::vector<ObjectEvent> *m_eventTrace = nullptr; ///< diagnostics only (setEventTrace)
+	std::vector<GateWalkSample> *m_gateWalkTrace = nullptr; ///< diagnostics only (setGateWalkTrace)
 	int m_worldHooks = 0; ///< the GameLogic world hook token while a game runs (0: none)
 };
