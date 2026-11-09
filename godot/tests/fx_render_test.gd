@@ -78,6 +78,8 @@ func _run() -> int:
 	await _case_saturation()
 	await _case_dust_soft_edges()
 	await _case_soft_ground()
+	await _case_manual_step()
+	await _case_culling()
 	return EXIT_PASS if _failures == 0 else EXIT_FAIL
 
 
@@ -190,6 +192,9 @@ func _case_alpha_reference() -> void:
 ## off screen; the second of every pair must end on top. Each system has its own texture name, so each is its own batch.
 func _case_many_batches() -> void:
 	_fx.clear()
+	# lane GPUPERF-3 review: culling must stay off here, or the 280 off-screen filler systems never reach OrderForBatch and the >120-priority ordering
+	# path this case exists for is not exercised (the stats count the culled batches too, so the case still looked green)
+	_fx.set_frustum_culling(false)
 	var pair_first := [10, 118, 120, 122, 150, 200, 254, 256, 258, 298]
 	var cells := []
 	var first_of := {}
@@ -213,12 +218,18 @@ func _case_many_batches() -> void:
 	await _settle()
 	var stats: Dictionary = _fx.get_stats()
 	_check(stats.batches >= 290, "about 300 batches reach the device layer (%d)" % stats.batches)
+	var drawn := 0
+	for n in _fx.get_children():
+		if n is MultiMeshInstance3D or n is MeshInstance3D:
+			drawn += 1
+	_check(drawn == 300, "all 300 batches are drawn, not only the 20 on screen (%d)" % drawn)
 	var wrong := []
 	for n in cells.size():
 		var c := _pixel(cells[n].x, cells[n].y)
 		if not _near(c, 0.0, 1.0, 0.0, 0.05):
 			wrong.append("pair %d at rank %d: %s" % [n, pair_first[n], _fmt(c)])
 	_check(wrong.is_empty(), "the later system of every pair is on top, also above rank 120 %s" % [wrong])
+	_fx.set_frustum_culling(true)
 
 
 ## Lane RENDER-3 (S-831): retail composites in gamma space. White ALPHA at alpha 0.25 over black displays 0.25 (D3D9 SRCALPHA / INVSRCALPHA on the
@@ -319,3 +330,64 @@ func _case_soft_ground() -> void:
 	_check(_near(add_mid, 0.5, 0.5, 0.5, 0.04), "soft: an additive particle 8 units in front of the plane adds half its colour: %s" % _fmt(add_mid))
 	plane.queue_free()
 	_fx.soft_particles = false
+
+
+## Lane GPUPERF-3 review (Greptile P2 "Manual steps keep old pictures"): step_once() changes the playback outside advance()'s accumulator; a paused caller
+## that steps by hand and then calls advance() (which takes no step) must still get a rebuild. A system and its one particle live two steps: after _settle
+## the billboard is there, two manual steps kill it, and advance(0.001) must show the empty frame, not the picture built before the steps.
+func _case_manual_step() -> void:
+	_fx.clear()
+	_fx.set_paused(true)
+	var name := "RTStep"
+	var text := "FXParticleSystem %s\n  System\n    Priority = ALWAYS_RENDER\n    Shader = ALPHA\n    ParticleName = TexStep.tga\n    SystemLifetime = 2\n    Lifetime = 2 2\n    Size = 80 80\n    BurstCount = 1 1\n    BurstDelay = 1000 1000\n    SortLevel = 0\n  End\n" % name
+	text += "  EmissionVolume = PointEmissionVolume\n  End\n  EmissionVelocity = OrthoEmissionVelocity\n  End\n"
+	text += "  Color = DefaultColor\n    Color1 = R:255 G:255 B:255 0\n  End\n  Alpha = DefaultAlpha\n    Alpha1 = 1 1 0\n  End\n"
+	text += "  Update = DefaultUpdate\n  End\n  Draw = DefaultDraw\n  End\nEnd\n"
+	var errors: Array = _fx.define_ini(name + ".ini", text)
+	_check(errors.is_empty(), "manual step: define %s" % [errors])
+	_play(name, Vector3.ZERO)
+	await _settle()
+	# tolerance: the billboard is white 1.0 at the centre and the background black; half is far above both readback errors
+	_check(_pixel(0, 0).r > 0.5, "manual step: the short-lived billboard shows before the steps %s" % _fmt(_pixel(0, 0)))
+	var shot := OS.get_environment("FX_STEP_SHOT")
+	if not shot.is_empty():
+		_check(root.get_texture().get_image().save_png(shot.get_basename() + "-built.png") == OK, "manual step: built screenshot saved")
+	var skipped := int(_fx.get_stats().rebuilds_skipped)
+	_fx.step_once()
+	_fx.step_once()
+	_fx.advance(0.001) # paused and below a 30 Hz step: only a rebuild can show the two steps
+	await RenderingServer.frame_post_draw
+	if not shot.is_empty():
+		_check(root.get_texture().get_image().save_png(shot.get_basename() + "-advanced.png") == OK, "manual step: advanced screenshot saved")
+	_check(_near(_pixel(0, 0), 0.0, 0.0, 0.0, 2.0 / 255.0), "manual steps: the next advance redraws the stepped state (%s)" % _fmt(_pixel(0, 0)))
+	_check(int(_fx.get_stats().rebuilds_skipped) == skipped, "manual steps: advance rebuilt instead of keeping the old batches")
+	_fx.set_paused(false)
+
+
+## Lane GPUPERF-3: a system out of the camera's view is not built (culled_batches), the picture is the one without the culling, and an advance
+## with no particle step and nothing else changed keeps the batches (rebuilds_skipped); a camera move rebuilds them.
+func _case_culling() -> void:
+	_fx.clear()
+	var seen := _define("ALPHA", "TexCull.tga", Color(0, 1, 0), 1.0)
+	_play(seen, Vector3.ZERO)
+	_play(_define("ALPHA", "TexFar.tga", Color(1, 0, 0), 1.0), Vector3(50000, 0, 0))
+	await _settle()
+	var st: Dictionary = _fx.get_stats()
+	_check(int(st.culled_batches) == 1 and int(st.sprites) == 1, "culling: the system out of view is not built (%d culled, %d sprites)" % [int(st.culled_batches), int(st.sprites)])
+	var with_culling := _pixel(0, 0)
+	_fx.set_frustum_culling(false)
+	_fx.rebuild()
+	await _settle()
+	st = _fx.get_stats()
+	var without := _pixel(0, 0)
+	_check(int(st.culled_batches) == 0 and int(st.sprites) == 2, "culling off: both systems built (%d sprites)" % int(st.sprites))
+	_check(with_culling.is_equal_approx(without) and _near(with_culling, 0, 1, 0), "culling: the picture is the same %s %s" % [_fmt(with_culling), _fmt(without)])
+	_fx.set_frustum_culling(true)
+	_fx.rebuild()
+	var s0 := int(_fx.get_stats().rebuilds_skipped)
+	_fx.advance(0.001) # below a 30 Hz step: nothing changes
+	_check(int(_fx.get_stats().rebuilds_skipped) == s0 + 1, "an advance without a step or a change keeps the batches")
+	_camera.position.x += 1.0
+	_fx.advance(0.001)
+	_check(int(_fx.get_stats().rebuilds_skipped) == s0 + 1, "a camera move rebuilds them")
+	_camera.position.x -= 1.0

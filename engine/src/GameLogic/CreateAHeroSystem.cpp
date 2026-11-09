@@ -737,7 +737,8 @@ void CreateAHeroGame::onCreated(Object &obj)
 			if (entry.second.objectID == obj.getID())
 			{
 				buildLevels(entry.second, obj);
-				// Both editions: the fresh drawable needs its saved presentation colors (RW 0x80AF0B).
+				// Both editions: the fresh drawable needs its saved presentation colors.
+				// Inspected RW image (S-001 caveat): flag-8 branch 0x80AF43; colour calls 0x80AF5B / 0x80AF7F.
 				// Send them directly; apply() would regrant upgrades and consume saved flags.
 				if (ObjectClientHooks *client = m_logic.clientHooks())
 				{
@@ -930,7 +931,8 @@ void CreateAHeroGame::apply(CreateAHeroHero &hero, Object &obj, std::uint32_t fl
 		}
 		hero.flags = (hero.flags & ~3u) | 0x80u;
 	}
-	// RW 0x80AF0B: flag 8 colours the drawable (RW 0x80959A: kind 3 with +0x2C / +0x30 / +0x34 pushed as its three colours, then RW 0x6727B0) and clears;
+	// Inspected RW image (S-001 caveat): 0x80AF43 tests flag 8; 0x80AF5B calls RW 0x80959A with the three record colours
+	// (+0x2C / +0x30 / +0x34, kind 3); 0x80AF7F calls RW 0x6727B0 on the drawable, and 0x80AF6F clears flag 8.
 	// lane CAH-2: the colours go to the client through its hooks (never logic state). INFERENCE: retail clears flag 8 only when the object has a drawable
 	// (RW 0x80AF6F inside that branch); the port clears it always so a run without a client hashes the same flags. RW 0x80AF60: 0x200 is RW 0x80A77C
 	// (the stats, S-1226)
