@@ -200,7 +200,9 @@ bool GameLogic::loadSnapshot(const std::vector<std::uint8_t> &bytes, std::string
 		}
 		return false;
 	}
-	return m_gameState->loadSnapshot(stateHashSectionNames(), bytes, error);
+	const bool loaded = m_gameState->loadSnapshot(stateHashSectionNames(), bytes, error);
+	noteRadarLogicWrite(); // the objects' radar attack frames were restored (Object::xfer): a HUD that sampled this frame number reads again
+	return loaded;
 }
 
 // OpenBFME native layout of the frame state (retail's CHUNK_GameLogic RW 0x6308F3, window (1, 8), starts with two ints and holds the object TOC and the

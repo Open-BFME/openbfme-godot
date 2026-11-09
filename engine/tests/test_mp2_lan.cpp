@@ -43,6 +43,43 @@ std::uint16_t testPortBase()
 	return (std::uint16_t)(40000 + (pid % 1000) * 16);
 }
 
+// The sixteen-peer test fills its entire lobby range. On Linux that range overlaps the ephemeral UDP pool, so an earlier peer's
+// game socket can take a later peer's lobby port. Reserve the whole block, then release each port only when its lobby is about to bind it.
+// A busy block belongs to another test/process: keep looking with real binds, rather than relying on the PID hash to make it free.
+struct LobbyPortReservations
+{
+	static constexpr int count = 16;
+	std::uint16_t base = 0;
+	std::vector<std::unique_ptr<UDP>> sockets;
+
+	explicit LobbyPortReservations(std::uint16_t first = testPortBase())
+	{
+		std::string error;
+		for (int attempt = 0; attempt < 1000; ++attempt)
+		{
+			const int candidate = 40000 + (((int)first - 40000) / count + attempt) % 1000 * count;
+			sockets.clear();
+			for (int i = 0; i < count; ++i)
+			{
+				auto socket = std::make_unique<UDP>();
+				if (!socket->bind(0, (std::uint16_t)(candidate + i), &error))
+				{
+					break;
+				}
+				sockets.push_back(std::move(socket));
+			}
+			if (sockets.size() == count)
+			{
+				base = (std::uint16_t)candidate;
+				return;
+			}
+		}
+		FAIL("cannot reserve sixteen consecutive LAN test ports in 40000 .. 55999: " << error);
+	}
+
+	void release(int index) { sockets[(size_t)index].reset(); }
+};
+
 struct Lan
 {
 	std::vector<std::unique_ptr<LANAPI>> peers;
@@ -495,22 +532,50 @@ TEST_CASE("wotr2 m8 lan (Sol wotr2m8s4 follow-up 2): a joiner's check of another
 	CHECK_FALSE(host.started());
 }
 
+TEST_CASE("p16 net: lobby port reservations skip partially occupied blocks and hold every port until released")
+{
+	LobbyPortReservations occupied;
+	for (int i = 0; i < LobbyPortReservations::count - 1; ++i)
+	{
+		occupied.release(i);
+	}
+	LobbyPortReservations selected(occupied.base);
+	CHECK_FALSE(selected.base == occupied.base);
+	std::string error;
+	UDP abandonedCandidate;
+	REQUIRE_MESSAGE(abandonedCandidate.bind(0, occupied.base, &error), error);
+	for (int i = 0; i < LobbyPortReservations::count; ++i)
+	{
+		CAPTURE(i);
+		UDP contender;
+		CHECK_FALSE(contender.bind(0, (std::uint16_t)(selected.base + i), &error));
+	}
+	selected.release(0);
+	UDP released;
+	REQUIRE_MESSAGE(released.bind(0, selected.base, &error), error);
+	UDP stillOccupied;
+	CHECK_FALSE(stillOccupied.bind(0, (std::uint16_t)(occupied.base + LobbyPortReservations::count - 1), &error));
+}
+
 TEST_CASE("p16 net: sixteen LAN lobby peers receive the same START over real loopback UDP")
 {
+	LobbyPortReservations lobbyPorts;
 	LANAPI::Options options;
 	options.playerTemplateCount = 16;
 	options.colorCount = 16;
-	options.lobbyPortBase = testPortBase();
-	options.lobbyPorts = 16;
+	options.lobbyPortBase = lobbyPorts.base;
+	options.lobbyPorts = LobbyPortReservations::count;
 	options.broadcast = false;
 	options.extraTargets = { 0x7F000001u };
 	std::vector<std::unique_ptr<LANAPI>> peers;
 	std::string error;
 	for (int i = 0; i < 16; ++i)
 	{
+		lobbyPorts.release(i);
 		const std::string name = "Player" + std::to_string(i);
 		peers.push_back(std::make_unique<LANAPI>(profileFor(""), std::u16string(name.begin(), name.end()), options));
 		REQUIRE_MESSAGE(peers.back()->open(&error), error);
+		CHECK(peers.back()->lobbyPort() == lobbyPorts.base + i);
 	}
 	std::uint64_t clock = 1000;
 	auto advance = [&]() {

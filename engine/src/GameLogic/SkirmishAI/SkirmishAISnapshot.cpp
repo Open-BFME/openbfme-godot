@@ -732,31 +732,27 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 		{
 			std::uint32_t tasks = (std::uint32_t)g->tasks.size();
 			x.xferCount(&tasks, 20, sizeof(AIGroupTask)); // five 4-byte fields (state, two players, remaining, per-update)
-			if (loading)
+			std::vector<AIGroupTask> loaded;
+			for (std::uint32_t i = 0; i < tasks; ++i)
 			{
-				g->tasks.clear();
-				for (std::uint32_t i = 0; i < tasks; ++i)
+				AIGroupTask task = loading ? AIGroupTask{} : g->tasks[i];
+				x.xferInt(&task.state);
+				x.xferInt(&task.fromPlayer);
+				x.xferInt(&task.toPlayer);
+				x.xferUnsignedInt(&task.remaining);
+				x.xferUnsignedInt(&task.perUpdate);
+				if (loading)
 				{
-					AIGroupTask task;
-					x.xferInt(&task.state);
-					x.xferInt(&task.fromPlayer);
-					x.xferInt(&task.toPlayer);
-					x.xferUnsignedInt(&task.remaining);
-					x.xferUnsignedInt(&task.perUpdate);
 					AIXfer::inRange(task.state, AIGroupTask::TASK_ACTIVE, AIGroupTask::TASK_FAILED, "skirmish ai: a group task's state");
-					g->tasks.push_back(task);
+					// the money transfer's players (RW 0x99EEF4 fails the task on a missing one; the unset -1 is the constructor's)
+					AIXfer::inRange(task.fromPlayer, -1, m_logic.players().getPlayerCount() - 1, "skirmish ai: a group task's paying player");
+					AIXfer::inRange(task.toPlayer, -1, m_logic.players().getPlayerCount() - 1, "skirmish ai: a group task's paid player");
+					loaded.push_back(task);
 				}
 			}
-			else
+			if (loading)
 			{
-				for (AIGroupTask &task : g->tasks)
-				{
-					x.xferInt(&task.state);
-					x.xferInt(&task.fromPlayer);
-					x.xferInt(&task.toPlayer);
-					x.xferUnsignedInt(&task.remaining);
-					x.xferUnsignedInt(&task.perUpdate);
-				}
+				g->tasks = std::move(loaded);
 			}
 		}
 	}
@@ -1071,6 +1067,25 @@ void SkirmishAIManager::checkLoaded() const
 				{
 					throw XferException("skirmish ai: a SimpleExpansion whose request is not a plain structure request");
 				}
+				break;
+			case 105:
+				// RW 0x9B869B..0x9B86D3: created/entry flags and the issued fortress ID survive death.
+				AIXfer::inRange(tac.step, 0, 2, what.c_str());
+				if (tac.step == 0)
+					AIXfer::inRange(tac.step2, 0, 0, what.c_str());
+				else
+				{
+					AIXfer::inRange(tac.step2, -1, 0x7fffffff, what.c_str());
+					if (tac.step2 != -1)
+						AIXfer::issued((ObjectID)tac.step2, "skirmish ai: ReturnTheRing fortress");
+					if (tac.step == 2 && tac.step2 == -1)
+						throw XferException(what + " entered without a fortress");
+				}
+				break;
+			case 107:
+				// RW 0x9B7EC6..0x9B7EE4 transfers the roaming flag, including the ended frame.
+				AIXfer::inRange(tac.step, 0, 1, what.c_str());
+				AIXfer::inRange(tac.step2, 0, 0, what.c_str());
 				break;
 			default:
 				AIXfer::inRange(tac.step, 0, 0, what.c_str());
