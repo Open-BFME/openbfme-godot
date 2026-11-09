@@ -4,7 +4,7 @@
 
 #include <cctype>
 
-ParticleTextureResolution ResolveParticleTexture(const std::string &name, const std::function<bool(const std::string &)> &exists)
+ParticleTextureResolution ResolveParticleTexture(const std::string &name, const std::function<bool(const std::string &)> &exists, bool flatLayout)
 {
 	ParticleTextureResolution out;
 	std::string lower = name;
@@ -22,7 +22,7 @@ ParticleTextureResolution ResolveParticleTexture(const std::string &name, const 
 	{
 		return out;
 	}
-	const bool textures = stem.compare(0, 4, "apt_") == 0 || stem.size() < 2;
+	const bool textures = flatLayout || stem.compare(0, 4, "apt_") == 0 || stem.size() < 2;
 	const std::string folder = textures ? "art\\textures\\" : "art\\compiledtextures\\" + stem.substr(0, 2) + "\\";
 	struct Candidate
 	{

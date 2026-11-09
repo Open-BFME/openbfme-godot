@@ -239,6 +239,9 @@ public:
 	const std::string &explicitTemplateName() const { return m_explicitTemplate; }
 	// RW 0x79AC19
 	void registerOwnedObject(Object &obj);
+	// BFME1 Gen00371340StructureCompletionScan: available construction pad.
+	bool hasFreeBuildSlot(const ThingTemplate *tt) const;
+	Object *buildInSlot(const ThingTemplate &tt, int slot) { return preBuild(tt, slot, false); }
 	// lane MODS-3: edain-unchained.foundation-rebind's keep step (its 0xEDA097): a keep that was the replaced object leaves + 0x38; an empty keep slot then
 	// takes the new keep piece (registerOwnedObject) and the castle state becomes 4 (unpacked)
 	void rebindKeep(ObjectID replaced, Object &piece)

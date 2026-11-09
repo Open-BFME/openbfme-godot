@@ -849,6 +849,44 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		return false; // retail's default case
 	}
 	GameLogic &logic = engine.logic();
+	if (t->name == "COMPARE_NUM_PLAYERS_IN_GAME" && logic.things().bfme1Data())
+	{
+		int count = 0;
+		for (int index = 0; index < logic.players().getPlayerCount(); ++index)
+		{
+			const Player *player = logic.players().getNthPlayer(index);
+			if (player && !player->isObserver() && (player->getPlayerType() == PLAYER_HUMAN || player->isSkirmishAI())) ++count;
+		}
+		return compare(param(c, 0).intValue, count, param(c, 1).intValue);
+	}
+	if ((logic.things().bfme1Data() && t->name == "CAN_BUILD_OBJECTTYPE_AT_BASE") || (t->name == "CAN_BUILD_AT_BASE" &&
+		engine.getUnitNamed(param(c, 1).stringValue) && engine.getUnitNamed(param(c, 1).stringValue)->getTemplate()->bfme1Data()))
+	{
+		// DONOR BFME1 ScriptConditionsCanBuildAtBase.cpp (0x323E50).
+		Object *base = engine.getUnitNamed(param(c, 1).stringValue);
+		// S-5017: BFME1 script base references can name the keep after unpack;
+		// resolve its existing CastleMember link to the owning castle controller.
+		if (base && base->getTemplate()->bfme1Data())
+			if (auto *member = dynamic_cast<CastleMemberBehavior *>(base->findModule("CastleMemberBehavior")))
+				if (!base->findModule("CastleBehavior") && !base->isKindOfName("BASE_FOUNDATION"))
+				{
+					engine.note("[S-5017] BFME1 script base references resolve the keep through its CastleMember link");
+					base = logic.findObjectByID(member->castleId());
+				}
+		Player *owner = firstPlayer(engine, param(c, 0).stringValue);
+		if (!base || !owner || base->getControllingPlayer() != owner) return false;
+		const ThingTemplate *tt = t->name == "CAN_BUILD_OBJECTTYPE_AT_BASE" ? logic.things().findTemplate(param(c, 2).stringValue) : nullptr;
+		if (t->name == "CAN_BUILD_OBJECTTYPE_AT_BASE" && !tt) return false;
+		if (auto *castle = dynamic_cast<CastleBehavior *>(base->findModule("CastleBehavior"))) return castle->hasFreeBuildSlot(tt);
+		if (!tt && base->isKindOfName("BASE_FOUNDATION"))
+		{
+			auto *member = dynamic_cast<CastleMemberBehavior *>(base->findModule("CastleMemberBehavior"));
+			if (member && member->plotIsTaken()) return false;
+			for (const auto &module : base->modules()) if (module->getFoundationAIUpdate()) return true;
+		}
+		return false;
+	}
+
 	switch (c.resolved)
 	{
 	case NAMED_DESTROYED: // RW 0x7E49D4: the unit, else "did it exist"

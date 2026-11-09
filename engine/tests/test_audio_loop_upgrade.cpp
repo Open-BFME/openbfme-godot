@@ -324,4 +324,3 @@ TEST_CASE("audio loop upgrade retail: a retail wall's build loop is held by the 
 	CHECK(AudioApi::heldSound(AudioApi::HELD_UPGRADE_LOOP, l->soundKey()) == 0);
 	logic.reset();
 }
-

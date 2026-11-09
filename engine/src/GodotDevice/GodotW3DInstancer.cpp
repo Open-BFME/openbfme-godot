@@ -801,7 +801,6 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 		if (blends && surf.Sorted)
 		{
 			gpu->HasSorted = true;
-			gpu->SortPriorities.insert(std::clamp(surf.Pass - std::min(surf.SortLevel, 31) * 4, -128, 127)); // the render_priority the material gets
 		}
 		if (surf.Kind == MATERIAL_FX || (surf.Kind == MATERIAL_CLASSIC && surf.State.Blend == W3D_GODOT_BLEND_OPAQUE)) gpu->HasOpaque = true;
 		Array arrays;
@@ -865,6 +864,7 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 		const int surfaceIndex = gpu->Mesh->get_surface_count() - 1;
 
 		W3DMaterialResult mat = Materials->Create(d, surf, mesh, hasUv2);
+		if (blends && surf.Sorted) gpu->SortPriorities.insert(mat.Material->get_render_priority());
 		gpu->Mesh->surface_set_material(surfaceIndex, mat.Material);
 		gpu->Materials.push_back(mat.Material);
 		gpu->Keys.push_back(mat.Key);
@@ -952,7 +952,7 @@ int64_t W3DInstancer::add_model(const String &model_name)
 		BuildSuffix = savedSuffix;
 		return id;
 	}
-	if (PendingSwaps.empty())
+	if (PendingSwaps.empty() && !PendingFloorSampling)
 	{
 		return build_model(model_name);
 	}
@@ -960,15 +960,20 @@ int64_t W3DInstancer::add_model(const String &model_name)
 	std::vector<std::pair<std::string, std::string>> swaps;
 	swaps.swap(PendingSwaps);
 	const std::string savedSuffix = BuildSuffix;
+	const bool floorSampling = PendingFloorSampling;
+	PendingFloorSampling = false;
 	BuildSuffix += Texture_Swap_Suffix(swaps);
+	if (floorSampling) BuildSuffix += "#floor-sampling";
 	if (Materials)
 	{
 		Materials->Set_Texture_Swaps(swaps);
+		Materials->Set_Floor_Sampling(floorSampling);
 	}
 	const int64_t id = build_model(model_name);
 	if (Materials)
 	{
 		Materials->Set_Texture_Swaps({});
+		Materials->Set_Floor_Sampling(false);
 	}
 	BuildSuffix = savedSuffix;
 	return id;

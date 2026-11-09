@@ -401,6 +401,7 @@ bool ListCommandMap(ArchiveFileSystem &fs, std::vector<CommandMapEntry> &out, st
 	{
 		return false;
 	}
+	if (bfme1Keys) map.addBfme1SelectionBinding();
 	out.clear();
 	const std::vector<MetaMapRec> &records = map.records(); // the translator's order: the reverse of the files'
 	for (auto it = records.rbegin(); it != records.rend(); ++it)
@@ -420,4 +421,16 @@ bool ListCommandMap(ArchiveFileSystem &fs, std::vector<CommandMapEntry> &out, st
 		out.push_back(e);
 	}
 	return true;
+}
+
+// BFME1's shipped CommandMap.ini is empty; Q selects the player's army.
+// Owner-requested default. Explicit user bindings retain precedence.
+void MetaMap::addBfme1SelectionBinding()
+{
+	if (find(CMSG_META_SELECT_ALL) || isBound(keyByName("KEY_Q"), MOD_NONE)) return;
+	auto &record = getMetaMapRec(CMSG_META_SELECT_ALL);
+	record.key = keyByName("KEY_Q");
+	record.usableIn = COMMANDUSABLE_GAME;
+	record.transition = TRANSITION_DOWN;
+	record.modState = MOD_NONE;
 }

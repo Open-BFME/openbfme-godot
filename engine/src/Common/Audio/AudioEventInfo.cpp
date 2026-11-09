@@ -16,8 +16,8 @@ const char *const theSoundTypeNames[] = { "UI", "WORLD", "SHROUDED", "GLOBAL", "
 // "not used"; the escape ate the n). No INI line can name it.
 const char *const theAudioControlNames[] = { "LOOP", "SEQUENTIAL", "RANDOMSTART", "INTERRUPT", "FADE_ON_KILL", "FADE_ON_START", "\not used by INI files", "PLAY_ONE", nullptr };
 // community PR #36 (BFME1 data only): BFME1's control names (lotrbfme.exe 1.03 strings: LOOP, RANDOM, RANDOMSTART, INTERRUPT, FADE_ON_KILL,
-// FADE_ON_START). INFERENCE (S-5017): RANDOM takes RotWK's unused bit 6 (no RotWK code reads it, so a BFME1 event keeps RotWK's random pick, the
-// default without SEQUENTIAL); BFME1's own bit layout was not decoded
+// FADE_ON_START). RANDOM uses random selection, the default without SEQUENTIAL. Clear its temporary bit after parsing:
+// RotWK uses bit 6 internally for filenames without a folder or extension. BFME1's own bit layout was not decoded.
 const char *const theBfme1AudioControlNames[] = { "LOOP", "SEQUENTIAL", "RANDOMSTART", "INTERRUPT", "FADE_ON_KILL", "FADE_ON_START", "RANDOM", "PLAY_ONE", nullptr };
 const char *const theSubmixSliderNames[] = { "SOUNDFX", "VOICE", "MUSIC", "AMBIENT", "MOVIE", "NONE", nullptr };
 
@@ -27,6 +27,10 @@ namespace
 void parseAudioControl(INI *ini, void *instance, void *store, const void *)
 {
 	INI::parseBitString32(ini, instance, store, ini->bfme1Data() ? theBfme1AudioControlNames : theAudioControlNames);
+	if (ini->bfme1Data())
+	{
+		*static_cast<unsigned *>(store) &= ~static_cast<unsigned>(AC_NOT_USED_BY_INI);
+	}
 }
 
 // RW 0x5DA345 (the Sounds / Attack / Decay / Subsounds token grammar). `eventName` is the event being parsed (error text only).
@@ -292,7 +296,7 @@ void ParseMultisoundBlock(INI *ini, AudioEventInfoStore &store)
 
 	struct MultisoundParse
 	{
-		static void parseControl(INI *ini2, void *, void *s, const void *ud) { INI::parseBitString32(ini2, nullptr, s, ini2->bfme1Data() ? theBfme1AudioControlNames : ud); }
+		static void parseControl(INI *ini2, void *, void *s, const void *ud) { parseAudioControl(ini2, nullptr, s, ud); }
 		static void parseSubsounds(INI *ini2, void *instance, void *, const void *ud)
 		{
 			AudioEventInfo *self = static_cast<AudioEventInfo *>(instance);

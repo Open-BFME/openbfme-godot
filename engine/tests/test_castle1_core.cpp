@@ -447,3 +447,21 @@ TEST_CASE("castle1: PreBuiltList builds one instant structure per entry on the p
 	CHECK(nb->ownedObjects().empty());
 	CHECK(nobody->getControllingPlayer() == f.alice());
 }
+
+TEST_CASE("BFME1 script base construction: free-slot query and first-free construction share pad occupancy")
+{
+	CastleFx f;
+	Object *base = f.castle("CFortress", "Alice", 1000.0f, 1000.0f);
+	f.frames(1);
+	CastleBehavior *castle = f.cb(base);
+	REQUIRE(castle);
+	REQUIRE(castle->isUnpacked());
+	CHECK(castle->hasFreeBuildSlot(nullptr));
+	CHECK(castle->hasFreeBuildSlot(f.w.get("CHall")));
+	Object *made = castle->buildInSlot(*f.w.get("CHall"), -2);
+	REQUIRE(made);
+	CHECK(made->isUnderConstruction());
+	CHECK(made->getConstructionPercent() == 0.0f);
+	CHECK_FALSE(castle->hasFreeBuildSlot(nullptr));
+	CHECK(castle->buildInSlot(*f.w.get("CHall"), -2) == nullptr);
+}

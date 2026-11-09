@@ -2,6 +2,7 @@
 // See GameClient/GUI/AptScreens/AptSimpleScreens.h.
 
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
+#include "Common/BfmeGame.h"
 #include "GameClient/LocalizedText.h"
 #include "Common/BfmeGame.h"
 
@@ -2155,7 +2156,7 @@ void AptOptionsScreen::frameUpdate()
 		// BFME1's first-frame action calls OnInitialized and then stop(). Start the transition only after that action returns.
 		m_movieOpenPending = false;
 		std::string error;
-		m_movieOpening = windows().invokeAS(level(), m_movieLayout->openFunction, { "normal" }, nullptr, &error);
+		m_movieOpening = windows().invokeAS(level(), m_movieLayout->openFunction, { m_networkEnabled ? "online" : "normal" }, nullptr, &error);
 		if (!m_movieOpening)
 		{
 			windows().note("options-menu", "Options: cannot open the movie: " + error);

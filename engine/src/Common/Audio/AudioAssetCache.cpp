@@ -3,6 +3,7 @@
 #include "Common/Audio/AudioAssetCache.h"
 
 #include "Common/AsciiString.h"
+#include "Common/BfmeGame.h"
 
 #include <chrono>
 
@@ -10,7 +11,8 @@ AudioAssetCache::AudioAssetCache(ArchiveFileSystem *files, std::uint64_t decoded
 
 bool AudioAssetCache::exists(const std::string &virtualPath) const
 {
-	return m_files && m_files->doesFileExist(virtualPath);
+	return m_files && (m_files->doesFileExist(virtualPath) ||
+		(isBfme1Data(*m_files) && m_files->doesFileExist("lang/english/" + virtualPath)));
 }
 
 std::shared_ptr<const std::vector<std::uint8_t>> AudioAssetCache::readFile(const std::string &virtualPath, std::string *error)
@@ -25,7 +27,9 @@ std::shared_ptr<const std::vector<std::uint8_t>> AudioAssetCache::readFile(const
 	}
 	auto bytes = std::make_shared<std::vector<std::uint8_t>>();
 	std::string e;
-	if (!m_files->readFile(virtualPath, *bytes, &e))
+	// BFME1 keeps localized speech below lang/english, alongside the root sound archives.
+	const std::string path = !m_files->doesFileExist(virtualPath) && isBfme1Data(*m_files) ? "lang/english/" + virtualPath : virtualPath;
+	if (!m_files->readFile(path, *bytes, &e))
 	{
 		++m_stats.errors;
 		if (error)

@@ -123,6 +123,23 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "bfme1_audio_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_building_floor_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_live_plot_zoom_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_live_tooltip_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_music_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_options_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_plot_zoom_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_resource_farm_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_save_folder_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_score_screen_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_script_ai_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_skirmish_menu_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_starting_armies_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_startup_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_wall_upgrade_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+    "bfme1_weather_test.gd": "manual: requires private BFME1 assets and a live game or GPU rendering",
+
     "options_open_test.gd": "manual: needs a private BFME1 installation and/or private RotWK/BFME2 assets, the built GDExtension and audio setup; optional screenshots require a window/GPU",
     "w3d_shader_reuse_test.gd": "manual: requires the isolated native test extension built by w3d_shader_reuse_test.py; no retail assets",
     "harlindon_creep_combat_test.gd": "manual: requires private retail assets and a live skirmish",

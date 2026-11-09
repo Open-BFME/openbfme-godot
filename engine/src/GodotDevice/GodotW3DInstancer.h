@@ -129,6 +129,8 @@ public:
 	// state: KBHall.tga -> KBHall_snow.tga): its meshes are built again, under a name that carries Texture_Swap_Suffix, with every texture A loaded as B.
 	// The add clears them.
 	void Set_Build_Texture_Swaps(const std::vector<std::pair<std::string, std::string>> &swaps) { PendingSwaps = swaps; }
+	// S-5017: BFME1 blended floor markings; consumed by the next add, with a separate mesh cache key.
+	void Set_Build_Floor_Sampling(bool enabled) { PendingFloorSampling = enabled; }
 	// lane SELWALL-1 (C++ only): the next add_model / add_model_colored builds a wall top or bridge model (KINDOF_WALK_ON_TOP_OF_WALL): its meshes are built
 	// again under a name with "#sel", their opaque surfaces draw the selection decals (W3DShaderKey::SelectionDecals: the merge decals and, lane HERORING-1,
 	// the alpha decals). The add clears it
@@ -382,6 +384,8 @@ private:
 	bool AlphaOverride = false; // lane BUILD-5 r3
 	std::map<std::string, std::shared_ptr<MeshGpu>> MeshCache;
 	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
+	bool PendingFloorSampling = false;
+	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-4832: Set_Build_Texture_Swaps, taken by the next add_model
 	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-5015: Set_Build_Texture_Swaps, taken by the next add_model
 	bool PendingSelectionDecals = false; // lane SELWALL-1: Set_Build_Selection_Decals, taken by the next add_model
 	std::vector<std::unique_ptr<Model>> Models;

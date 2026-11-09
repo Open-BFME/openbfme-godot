@@ -284,9 +284,12 @@ void InGameHud::bootHud6()
 	});
 	if (isBfme1Data(m_config.fs))
 	{
-		// BFME1 has no OnHelpBoxLoaded callback/content-frame protocol.
-		// Its native tooltip is drawn by the device over the HUD.
-		m_helpBox.loaded("_level" + std::to_string(palantir->movieLevel()) + ".BFME1Help", [](const auto &, const auto &, const auto &) { return true; });
+		// BFME1 has no OnHelpBoxLoaded callback. Its Palantir movie owns the
+		// bordered HelpBox and invokes the fixed HelpBoxText render callback
+		// (BFME1 0x593E60 / 0x5649A0 / 0x592640).
+		m_helpBox.loadedBfme1("_level" + std::to_string(palantir->movieLevel()), [palantir](const std::string &path, const std::string &fn, const std::vector<std::string> &args) {
+			return palantir->invoke(path, fn, args);
+		});
 	}
 
 }
@@ -525,6 +528,10 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	const float pixelPerStageX = (float)m_windowW / (sx1 - sx0), pixelPerStageY = (float)m_windowH / (sy1 - sy0);
 	const float fontScale = pixelPerStageX < pixelPerStageY ? pixelPerStageX : pixelPerStageY;
 	const HelpBoxSettings &settings = m_helpSettings;
+	// The attached live HUD can update before Palantir.apt has loaded its first
+	// frame. BFME1 has no OnHelpBoxLoaded handshake: wait for OnInitialized
+	// before requesting the native text-width sample, or it is lost forever.
+	if (isBfme1Data(m_config.fs) && (!m_palantirRef || !m_palantirRef->initialized())) return;
 	m_helpBox.update(
 		[&](CommandButtonHelp &h, int width) { return h.setWidthAndComputeHeight(width, settings, fontScale, pixelPerStageX, pixelPerStageY, metrics); },
 		stagePerPixelY);

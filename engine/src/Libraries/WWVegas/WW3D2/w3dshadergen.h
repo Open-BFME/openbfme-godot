@@ -72,6 +72,8 @@ struct W3DShaderKey
 	// an additive surface keeps its blend with its diffuse scaled. Here an opaque surface becomes blend_mix with ALPHA = alpha * the instance fade (v_fade
 	// carries the opacity), no dither; the other blends already scale by v_fade. Only instancers that ask for it (W3DInstancer::set_alpha_override) use it
 	bool AlphaOverride = false;
+	// S-5017: OpenBFME BFME1 floor-overlay lift; not a retail shader setting.
+	bool FloorOverlay = false;
 	// lane OCCLUDE-1: one of the behind-building marker passes chained after an opaque surface (W3DInstancer::set_instance_occlusion; RotWK
 	// RTS3DScene::flushOccludedObjectsIntoStencil RW 0x470176, GameClient/RTS3DSceneOcclusion.h). The vertex code is the surface's own; an instance whose
 	// INSTANCE_CUSTOM.w occlusion bits (W3D_OCCLUSION_*) do not ask for the pass collapses to a point. Both passes keep the surface's alpha test and dither.
