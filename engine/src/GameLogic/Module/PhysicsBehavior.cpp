@@ -27,6 +27,7 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
+#include "Libraries/WWVegas/WWMath/quat.h"
 
 #include <cstddef>
 #include <variant>
@@ -36,8 +37,9 @@ namespace
 {
 const char *const kStop =
 	"[S-782] physics: PhysicsBehavior's fling flight, the shock stun (RW 0x792A69 / 0x792AFF, ShockStunnedTime*, ShockStandingTime), the end of the flight (RW 0x793372: "
-	"GroundHitFX, SPLATTED, STUNNED), the rest (RW 0x79308D, KillWhenRestingOnGround), the bounce (RW 0x793224) and the fling's AI halt are ported (RW 0x792DBD, 0x792997, "
-	"0x79261A, 0x79350E; lane MODCOMPAT-MOD1: the AI's temporary machine given back, RW 0x6630D7); NOT ported: OrientToFlightPath / TumbleRandomly (the angle is not set), "
+	"GroundHitFX, SPLATTED, STUNNED), the rest (RW 0x79308D, KillWhenRestingOnGround), the bounce (RW 0x793224), the step's OrientToFlightPath orientation (RW 0x7935F7 .. "
+	"RW 0x7936F7: the look-along transform RW 0xB26610 / 0x70BA76 or setPosition RW 0x70C201; TumbleRandomly only gates it, RW 0x793612) and the fling's AI halt are ported "
+	"(RW 0x792DBD, 0x792997, 0x79261A, 0x79350E; lane MODCOMPAT-MOD1: the AI's temporary machine given back, RW 0x6630D7); NOT ported: "
 	"the pathfinder's landing clip (RW 0x6EF8A8) and per step update (RW 0x6F0741), the status 70 call (RW 0x693919), the fling's extra words (RW 0x6CF590), the drawable's refresh and projectile "
 	"type (client), the callers of the fling other than the crush knockback (shockwaves S-1600, slow death, weapons: their lanes)";
 
@@ -399,7 +401,55 @@ UpdateSleepTime PhysicsBehavior::update()
 		endOfFlight();
 		return sleepTime();
 	}
-	obj->setPosition(&m_points[m_step]); // RW 0x70C201 (OrientToFlightPath's transform: S-782)
+	// RW 0x7935F7 .. 0x7936F7 (stop S-782's look-at, issue #61; the branch map: docs/ennorath/port8-orient-rw.md): esi = &point[step] (12-byte points), then
+	// OrientToFlightPath (data + 0x41, RW 0x793608) clear, TumbleRandomly (data + 0x40, RW 0x793612) set or step <= 0 (RW 0x79361E) all jump to RW 0x7936FE:
+	// a plain setPosition (RW 0x70C201) and the angle stays as it is. Otherwise the direction is point[step] - point[step - 1] (subss, RW 0x793628 ..
+	// RW 0x79364F); with the bounce index above 0 (this + 0x54, the dword cmp RW 0x793624 / jle RW 0x793654) its z is REPLACED by GlobalData Gravity
+	// (+ 0xC4) * GravityMult (data + 0x4C) * 100.0 (DAT 0xBD88D8, RW 0x793656 .. RW 0x793670). The squared length (x*x + y*y) + z*z (SSE, RW 0x793675 ..
+	// RW 0x79368F) equal to 0 skips the scaling (ucomiss / lahf / test 0x44, jnp at RW 0x79369F: equality only, an unordered length scales too), else every
+	// component takes a WWMath::Inv_Sqrt (RW 0x441C56) x87 product (RW 0x7936A1 .. RW 0x7936C0). The transform is Matrix3D::buildTransformMatrix
+	// (RW 0xB26610: the yaw about Z by (dir.x, dir.y) / planar length with a + X fallback for a zero planar part, then the pitch by (len, dir.z); the columns
+	// are the object's X, Y, Z axes) at point[step], set by RW 0x70BA76 (the matrix copy, the position from its translation column, the angle
+	// atan2(X.y, X.x) at RW 0xB261F0, then the transform-change reaction) -- which replaces the setPosition of the other branch (RW 0x7936FC jmp 0x793707).
+	const Coord3D &point = m_points[m_step];
+	bool turned = false;
+	if (m_data->m_orientToFlightPath && !m_data->m_tumbleRandomly && m_step > 0)
+	{
+		Coord3D dir{ SimMath::subf32(point.x, m_points[m_step - 1].x), SimMath::subf32(point.y, m_points[m_step - 1].y),
+			SimMath::subf32(point.z, m_points[m_step - 1].z) };
+		if (m_bounceIndex > 0)
+		{
+			// RW 0x793656 .. 0x793670: (Gravity * GravityMult) * 100.0 (mulss twice)
+			dir.z = SimMath::mulf32(SimMath::mulf32(obj->logic().settings().gravity, m_data->m_gravityMult), 100.0f); // DAT 0xBD88D8
+		}
+		const float lenSq = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dir.x, dir.x), SimMath::mulf32(dir.y, dir.y)), SimMath::mulf32(dir.z, dir.z));
+		if (!(lenSq == 0.0f)) // RW 0x79368F .. 0x79369F (the ucomiss / lahf / test 0x44 idiom: equality skips the scaling, NaN scales)
+		{
+			const double inv = (double)BFME2_Inverse_Sqrt(lenSq); // RW 0x441C56 (a fast inverse square root, S-452)
+			dir.x = SimMath::fstpDword(SimMath::pc24MulW((double)dir.x, inv)); // RW 0x7936AD .. 0x7936C0 (x87 fmul + fstp dword)
+			dir.y = SimMath::fstpDword(SimMath::pc24MulW((double)dir.y, inv));
+			dir.z = SimMath::fstpDword(SimMath::pc24MulW((double)dir.z, inv));
+		}
+		// RW 0xB26610 (the same builder the projectile's step ports, ProjectileModules.cpp): the planar length (x87), then the two rotations
+		const float len2 = SimMath::fstpDword(SimMath::sqrtPC24(SimMath::pc24AddW(SimMath::pc24MulW(dir.x, dir.x), SimMath::pc24MulW(dir.y, dir.y))));
+		float siny = 0.0f, cosy = 1.0f; // RW 0xB2665E .. 0xB26672: a zero planar length keeps + X
+		if (len2 != 0.0f)
+		{
+			const float inv2 = SimMath::divf32(1.0f, len2); // divss
+			siny = SimMath::mulf32(inv2, dir.y);
+			cosy = SimMath::mulf32(inv2, dir.x);
+		}
+		const float sinp = dir.z, cosp = len2;
+		// rows of the rotation: X axis (cosy cosp, siny cosp, sinp), Y axis (-siny, cosy, 0), Z axis (-cosy sinp, -siny sinp, cosp)
+		const float basis[9] = { SimMath::mulf32(cosy, cosp), SimMath::subf32(0.0f, siny), SimMath::subf32(0.0f, SimMath::mulf32(cosy, sinp)),
+			SimMath::mulf32(siny, cosp), cosy, SimMath::subf32(0.0f, SimMath::mulf32(siny, sinp)), sinp, 0.0f, cosp };
+		obj->setTransform(&point, basis); // RW 0x70BA76
+		turned = true;
+	}
+	if (!turned)
+	{
+		obj->setPosition(&point); // RW 0x7936FE .. 0x793702 -> RW 0x70C201
+	}
 	// RW 0x793707 .. 0x793786 (lane COMBAT-3): the object's next position (obj + 0x198, + 0x1A6 set) is the next curve point; at the last point
 	// point * 2.0 - the object's position (the point itself once the object stands on it); the pathfinder's per step update RW 0x6F0741 is S-782
 	if (AIUpdateInterface *ai = obj->getAIUpdateInterface())

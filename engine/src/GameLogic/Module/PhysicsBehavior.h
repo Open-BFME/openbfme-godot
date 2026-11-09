@@ -21,7 +21,17 @@
 //   * flyTo RW 0x792997 (landing, apex, speed, a, b): see PhysicsBehavior::flyTo;
 //   * the curve RW 0x79261A (recount, apex): see PhysicsBehavior::buildCurve;
 //   * update RW 0x79350E: one point per frame (the object is put on point `step`, step + 1), the end of the flight RW 0x793372, the sleep RW 0x792A41 (1 while points
-//     remain, else asleep).
+//     remain, else asleep);
+//   * the step's orientation (lane PORT-8, issue #61; the branch map docs/ennorath/port8-orient-rw.md): with OrientToFlightPath (data + 0x41) set, TumbleRandomly
+//     (+ 0x40) clear and step above 0 (RW 0x793608 / 0x793612 / 0x79361E) the object is turned along its flight (RW 0x7935F7 .. 0x7936F7): the direction
+//     point[step] - point[step-1] (subss), whose z is REPLACED by GlobalData Gravity (+ 0xC4) * GravityMult (data + 0x4C) * 100.0 (DAT 0xBD88D8) while the bounce
+//     index (module + 0x54) is above 0 (RW 0x793656 .. 0x793670), scaled by WWMath::Inv_Sqrt (RW 0x441C56) with x87 products unless the squared length is 0
+//     (ucomiss / lahf / test 0x44: equality skips it, an unordered length scales too); the look-along transform RW 0xB26610 (X axis along the direction, Y its
+//     planar right (-y^, x^, 0) with a + X fallback for a zero planar part, Z the cross, no free roll) at point[step] is set by Object::setTransformMatrix
+//     (RW 0x70BA76: the matrix copy, the position from its translation column, the angle atan2(X.y, X.x), RW 0xB261F0) — this replaces setPosition. Every other
+//     case (the flag clear, TumbleRandomly set, step 0) is setPosition (RW 0x70C201, RW 0x7936FE): the angle is never set there. TumbleRandomly's only reader in
+//     the module is that gate (linear read of RW 0x792000 .. 0x793900): RotWK 2.01 has no tumble code here (INFERENCE: the name promises one; the identically
+//     named field of BezierProjectileBehavior, RW 0x85F57E, is the same gate);
 //   * the shock stun (lane COMBAT-3): stun RW 0x792A69 (flag): the stunned flag +0x5C = flag unless the object's or its container's template ShockwaveResistance
 //     (+0x620) is at least 100.0 (RW 0xBD88D8); a cleared flag also clears STUNNED_STANDING_UP (163), STUNNED_FLAILING (127) and STUNNED (128) and the timer +0x58;
 //     standUp RW 0x792AFF (the shockwave handler's second hit on a stunned unit): STUNNED, the flag, the timer = ShockStandingTime, awake next frame;
@@ -40,8 +50,7 @@
 //   * flyTo's transform record between its two updates (RW 0x6260E1) and the flight step's next position obj + 0x198 / + 0x1A6 (RW 0x793707 .. 0x793786);
 //   * the fling's AI halt RW 0x792E0E .. 0x792E32: an AI whose machine's current state does not answer State slot 0x38 is idled (RW 0x5E821A(2), CMD_FROM_AI);
 //   * Object::doKnockback RW 0x692223 (angle in degrees, power, z factor, projectile type): see ObjectKnockback::apply.
-// NOT PORTED (stop S-782, reported by PhysicsBehavior::stopLine the first time a fling runs): OrientToFlightPath / TumbleRandomly (the look-at transform
-// RW 0xB26610 / 0x70BA76: the position is set, the angle is not; one retail template), the pathfinder's landing clip RW 0x6EF8A8 and per step update RW 0x6F0741,
+// NOT PORTED (stop S-782, reported by PhysicsBehavior::stopLine the first time a fling runs): the pathfinder's landing clip RW 0x6EF8A8 and per step update RW 0x6F0741,
 // the status 70 call
 // RW 0x693919, the drawable refresh RW 0x67449C after a stun change and the drawable's projectile type (+0x360: client),
 // RW 0x6CF590 (no ported caller passes the fling's extra words), the shockwave handler RW 0x6968BC (weapons' ShockWave*, RamPower: S-1600) and the other fling
