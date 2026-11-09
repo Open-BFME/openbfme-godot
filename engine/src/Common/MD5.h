@@ -16,6 +16,8 @@ public:
 	std::string finalHex(); // lower-case hex; the object is spent afterwards
 
 	static std::string ofBytes(const void *data, size_t size);
+	// Scalar reference kernel (branched 64-step loop). Same digest as ofBytes.
+	static std::string ofBytesReference(const void *data, size_t size);
 	// Hashes a whole file. Empty string + *error on I/O failure.
 	static std::string ofFile(const std::string &path, std::string *error);
 

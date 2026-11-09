@@ -287,6 +287,33 @@ TEST_CASE("heroring1: an additive decal (lane ECOCIRCLE-2) adds texel x colour x
 	CHECK(at(g, a, 0.0f, 0.0f, 0.0f, DecalReceiver::Wall, 0).drawn);
 }
 
+TEST_CASE("heroring1: retail's frame buffer saturates after every decal draw: an additive decal over white clips before a later alpha decal blends (review)")
+{
+	const Atlas a;
+	MergeDecalGrid g;
+	std::string err;
+	// half-strength additive white over white ground: 255 + 255 x (128 / 255) = 383; retail's D3D9 frame buffer clips it to 255 before the next draw,
+	// and the half-strength black alpha decal over that leaves 255 x (1 - 128 / 255) = 127. Without the per-draw clip the additive share stays 383 and
+	// the later alpha decal blends over it: (255 + 128) x (1 - 128 / 255) = 191.
+	std::vector<SelectionDecal> d = { hero(0, 0, 0, 0x80FFFFFFu), hero(0, 0, 0, 0x80000000u) };
+	d[0].style = 0x40u;
+	REQUIRE_MESSAGE(BuildMergeDecalGrid(d, &Atlas::rect, twoPasses(), g, &err), err);
+	const Rgb c = at(g, a, 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, 255);
+	CHECK(c.drawn);
+	CHECK(c.r == 127);
+	CHECK(c.g == 127);
+	CHECK(c.b == 127);
+	// the later alpha decal over an additive share that does not overflow is unchanged by the clip: over black the additive white share is the texel's
+	// (100, 150, 200) x 0.502 = (50, 75, 100), then the half black leaves about half of that
+	std::vector<SelectionDecal> e = { hero(0, 0, 0, 0x80FFFFFFu), hero(0, 0, 0, 0x80000000u) };
+	e[0].style = 0x40u;
+	REQUIRE_MESSAGE(BuildMergeDecalGrid(e, &Atlas::rect, twoPasses(), g, &err), err);
+	const Rgb k = at(g, a, 0.0f, 0.0f, 0.0f, DecalReceiver::Terrain, 0);
+	CHECK(k.r == 25);
+	CHECK(k.g == 37);
+	CHECK(k.b == 50);
+}
+
 TEST_CASE("heroring1: several alpha decals blend in their list order; the merge decals are drawn over them")
 {
 	const Atlas a;
@@ -364,7 +391,7 @@ TEST_CASE("heroring1: the wall shader blends the alpha decals over the surface's
 	sel.Tex[0] = true;
 	sel.SelectionDecals = true;
 	const std::string code = Generate_W3D_Shader_Code(sel);
-	CHECK(code.find("vec4 sela = sel_up ? sel_alpha_at(sel_at, true) : vec4(0.0);") != std::string::npos);
+	CHECK(code.find("vec4 sela = sel_up ? sel_alpha_at(sel_at, true, clamp(cur.rgb, 0.0, 1.0)) : vec4(0.0);") != std::string::npos);
 	// review r2 (#208): the surface's shadowed share and the ring over it go to light() (one colour space), the shadow split keeps the merge share
 	CHECK(code.find("varying vec3 v_shadow_over;") != std::string::npos);
 	CHECK(code.find("vec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);") != std::string::npos);

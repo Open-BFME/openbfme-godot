@@ -493,7 +493,7 @@ TEST_CASE("decomp2 S-415: the skirmish AI builds heroes of its HeroBuildOrder af
 		INFO(std::string(faction));
 		std::string error;
 		buildtest::Game g;
-		REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", faction, 51, g, &error), error);
+		REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", faction, 52, g, &error), error);
 		GameLogic &logic = g.live->logic();
 		Player *cpu = g.live->players().findPlayerWithName(g.live->report().startSlotPlayers[1]);
 		REQUIRE(cpu);
@@ -576,6 +576,9 @@ TEST_CASE("decomp2 S-415: the skirmish AI builds heroes of its HeroBuildOrder af
 	// Merge queue q37 (#187's rebuilt paths move the AIs' economy): with seed 48 none of the 7 requests a hero on the merged tree; seeds 49..59 measured
 	// there (a CI host): 2 / 3 / 4 / 3 / 0 / 2 / 2 / 1 / 1 / 2 / 2 requests and 1 / 3 / 3 / 0 / 0 / 1 / 1 / 1 / 1 / 2 / 2 heroes out; seed 51: 4 requests and
 	// 3 heroes (Wild WildGoblinKing out at 2477, Angmar AngmarMorgramir 4577, Mordor MordorGothmog 5727; Isengard IsengardSharku requested at 6413)
+	// pin: review R269 corrects roaming membership/destinations and direct orders (RW 0x9B8412 / 0x9B8160 / 0x696266),
+	// changing Easy-AI combat and economy. Original PR seed 51 makes Sharku; fixed seed 51 makes no hero.
+	// Seed 52 retains this path assertion: WildGoblinKing requested at frame 2220, produced at frame 2602.
 	CHECK(requests >= 1);
 	CHECK(heroesOut >= 1);
 }

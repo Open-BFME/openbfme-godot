@@ -892,6 +892,7 @@ add_executable(openbfme_tests
     tests/test_mod5_user_maps.cpp
     tests/RetailTestMount.cpp
     tests/test_md5_json.cpp
+    tests/test_md5_kernel.cpp
     tests/test_textfile.cpp
     tests/test_ini_core.cpp
     tests/test_ini_scanners.cpp
@@ -1037,6 +1038,14 @@ if(OPENBFME_BUILD_FUZZERS)
     target_compile_definitions(openbfme_reader_corpus PRIVATE OPENBFME_READER_CORPUS)
     target_link_libraries(openbfme_reader_corpus PRIVATE openbfme_core)
     target_compile_options(openbfme_reader_corpus PRIVATE -fsanitize=address,undefined)
+endif()
+
+# Instruction-level MD5 kernel bench. Header only: it does not link openbfme_core. Its timer is POSIX (clock_gettime), so not on Windows.
+# Not in the default build (`cmake --build <dir> --target md5_kernel_bench`). It compiles Common/MD5Kernel.h, so it takes the simulation flags (sim_audit).
+if(NOT WIN32)
+    add_executable(md5_kernel_bench EXCLUDE_FROM_ALL tests/md5_kernel_bench.cpp)
+    target_include_directories(md5_kernel_bench PRIVATE src)
+    openbfme_sim_register_target(md5_kernel_bench)
 endif()
 
 # the contract holds for every target that carries simulation code or links it: nothing added to a target after its registration may override it

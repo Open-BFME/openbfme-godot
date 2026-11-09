@@ -21,12 +21,14 @@
 #include "GameClient/SelectionDecals.h"
 #include "GameClient/LiveGame.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
+#include "GameLogic/AI/AIClosestEnemy.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindStops.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
@@ -1688,4 +1690,147 @@ TEST_CASE("wallsearch1: validMovementPosition tests a wall layer only, exactly (
 	CHECK(w.pf->validMovementPosition(u, groundLoco(), LAYER_WALL_FIRST, &top));
 	CHECK_FALSE(w.pf->validMovementPosition(u, groundLoco(), LAYER_WALL_FIRST, &ground));
 	CHECK_FALSE(w.pf->validMovementPosition(u, groundLoco(), (PathfindLayerEnum)((int)LAYER_WALL_FIRST + 1), &top)); // another wall's layer
+}
+
+namespace
+{
+// the skirmish enemy (the Easy AI of slot 1: a computer player the human is at war with)
+Player *enemyOf(WallGame &g, Player *me)
+{
+	for (int i = 0; i < g.game->players().getPlayerCount(); ++i)
+	{
+		Player *p = g.game->players().getNthPlayer(i);
+		if (p && p != me && p->getPlayerType() == PLAYER_COMPUTER && me->getRelationship(p) == ENEMIES)
+		{
+			return p;
+		}
+	}
+	return nullptr;
+}
+
+// the ground cell nearest `top` (a CLEAR ground cell with no connect layer, `drop` or more below the wall's height there): the wall's foot
+bool wallFoot(Pathfinder &pf, const GameLogic &logic, const Coord3D &top, PathfindLayerEnum layer, float drop, Coord3D &foot)
+{
+	const int cx = (int)(top.x / 10.0f), cy = (int)(top.y / 10.0f);
+	const float h = pf.getLayerHeight(top.x, top.y, layer);
+	float best = 1.0e9f;
+	for (int dx = -10; dx <= 10; ++dx)
+	{
+		for (int dy = -10; dy <= 10; ++dy)
+		{
+			const PathfindCell *c = pf.cellAt(cx + dx, cy + dy);
+			if (!c || c->getLayer() != LAYER_GROUND || c->getType() != PathfindCell::CELL_CLEAR || c->getConnectLayer() != LAYER_INVALID)
+			{
+				continue;
+			}
+			const float x = (float)(cx + dx) * 10.0f + 5.0f, y = (float)(cy + dy) * 10.0f + 5.0f;
+			if (logic.getGroundHeight(x, y) > h - drop)
+			{
+				continue;
+			}
+			const float d = (float)(dx * dx + dy * dy);
+			if (d < best)
+			{
+				best = d;
+				foot = { x, y, logic.getGroundHeight(x, y) };
+			}
+		}
+	}
+	return best < 1.0e9f;
+}
+} // namespace
+
+TEST_CASE("wallmelee1 retail: on Helm's Deep a hero ordered to attack an enemy porter on a wall top walks up onto the wall and hits it there (RW 0x6639CF / 0x6EEBC1 on the layer)")
+{
+	OPENBFME_REQUIRE_START(s);
+	WallGame g(*s);
+	g.frames(2);
+	Player *me = g.human();
+	REQUIRE(me);
+	Player *them = enemyOf(g, me);
+	REQUIRE(them);
+	Pathfinder &pf = g.game->ai().pathfinder();
+	const Coord3D start = g.startOfSlot0();
+	std::string error;
+	Object *hero = g.game->createObject("GondorBoromir", me->getPlayerIndex(), start, 0.0f, &error);
+	REQUIRE_MESSAGE(hero, error);
+	g.frames(2);
+	AIUpdateInterface *ai = hero->getAIUpdateInterface();
+	REQUIRE(ai);
+	Coord3D top;
+	PathfindLayerEnum wallLayer = LAYER_INVALID;
+	REQUIRE(reachableWallTop(pf, ai->adapter(), ai->locomotorInfo(), *hero->getPosition(), top, wallLayer));
+	// an enemy porter (no weapon: it does not come down to meet the hero, as an orc does) on the wall top
+	Object *orc = g.game->createObject("MenPorter", them->getPlayerIndex(), top, 0.0f, &error);
+	REQUIRE_MESSAGE(orc, error);
+	g.frames(1);
+	AIUpdateInterface *oai = orc->getAIUpdateInterface();
+	REQUIRE(oai);
+	oai->settleOnLayer();
+	REQUIRE(isWallLayer(oai->adapter().getLayer()));
+	g.game->shroud().revealMapForPlayerPermanently(me->getPlayerIndex()); // the order needs the orc seen
+	const float h0 = orc->getBodyModule()->getHealth();
+	REQUIRE(ai->aiAttackObject(orc, CMD_FROM_PLAYER));
+	int hit = -1;
+	PathfindLayerEnum heroLayer = LAYER_INVALID, orcLayer = LAYER_INVALID;
+	Coord3D at{};
+	for (int f = 1; f <= 900 && hit < 0; ++f)
+	{
+		g.frames(1);
+		if (orc->getBodyModule()->getHealth() < h0)
+		{
+			hit = f;
+			heroLayer = ai->adapter().getLayer();
+			orcLayer = oai->adapter().getLayer();
+			at = *hero->getPosition();
+		}
+	}
+	INFO("hit at " << hit << ": the hero at " << at.x << ", " << at.y << ", " << at.z << " on layer " << (int)heroLayer << ", the porter on layer " << (int)orcLayer
+				   << "; the wall top at " << top.x << ", " << top.y << " (layer " << (int)wallLayer << ")");
+	CHECK(hit == 68); // the walk up the ramp and along the top, then the first blow (measured once on the lane's tree, on main with #220 and #225)
+	CHECK(isWallLayer(heroLayer)); // main: sent to the ground under the orc (the melee goal on the ground layer) and hit it from below
+	CHECK(at.z == pf.getLayerHeight(at.x, at.y, heroLayer));
+}
+
+TEST_CASE("wallmelee1 retail: on Helm's Deep a hero on a wall top does not count an enemy at the wall's foot as in reach (RW 0x6FF7FA / 0x6CC07C)")
+{
+	OPENBFME_REQUIRE_START(s);
+	WallGame g(*s);
+	g.frames(2);
+	Player *me = g.human();
+	REQUIRE(me);
+	Player *them = enemyOf(g, me);
+	REQUIRE(them);
+	Pathfinder &pf = g.game->ai().pathfinder();
+	const Coord3D start = g.startOfSlot0();
+	std::string error;
+	Object *probe = g.game->createObject("GondorBoromir", me->getPlayerIndex(), start, 0.0f, &error);
+	REQUIRE_MESSAGE(probe, error);
+	g.frames(2);
+	AIUpdateInterface *pai = probe->getAIUpdateInterface();
+	REQUIRE(pai);
+	Coord3D top;
+	PathfindLayerEnum wallLayer = LAYER_INVALID;
+	REQUIRE(reachableWallTop(pf, pai->adapter(), pai->locomotorInfo(), *probe->getPosition(), top, wallLayer));
+	Coord3D foot;
+	REQUIRE(wallFoot(pf, g.game->logic(), top, wallLayer, 15.0f, foot));
+	Object *hero = g.game->createObject("GondorBoromir", me->getPlayerIndex(), top, 0.0f, &error);
+	REQUIRE_MESSAGE(hero, error);
+	Object *orc = g.game->createObject("MordorFighter", them->getPlayerIndex(), foot, 0.0f, &error);
+	REQUIRE_MESSAGE(orc, error);
+	g.frames(1);
+	AIUpdateInterface *ai = hero->getAIUpdateInterface();
+	AIUpdateInterface *oai = orc->getAIUpdateInterface();
+	REQUIRE(ai);
+	REQUIRE(oai);
+	ai->settleOnLayer();
+	oai->settleOnLayer();
+	INFO("the hero at " << hero->getPosition()->x << ", " << hero->getPosition()->y << ", " << hero->getPosition()->z << " on layer " << (int)ai->adapter().getLayer()
+						<< "; the orc at " << orc->getPosition()->x << ", " << orc->getPosition()->y << ", " << orc->getPosition()->z << " on layer "
+						<< (int)oai->adapter().getLayer());
+	REQUIRE(isWallLayer(ai->adapter().getLayer()));
+	REQUIRE(oai->adapter().getLayer() == LAYER_GROUND);
+	// the wall-top hero and the orc below: neither reaches the other from where it stands (main: the melee pass by sight and the stubbed RW 0x6CC07C layers)
+	CHECK_FALSE(AI::canAttackFromHere(*hero, *orc));
+	CHECK_FALSE(AI::canAttackFromHere(*orc, *hero));
 }
