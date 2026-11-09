@@ -197,20 +197,6 @@ const Waypoint *closestWaypointOnPath(const TerrainLogic &terrain, const Coord3D
 	return best;
 }
 
-// the waypoint chain from `start`: each waypoint's first link, until a waypoint without links or one already on the path (S-1186: retail's path
-// states choose among several links as they arrive)
-std::vector<Coord3D> waypointChain(const TerrainLogic &terrain, const Waypoint *start)
-{
-	std::vector<Coord3D> path;
-	std::set<int> seen;
-	for (const Waypoint *w = start; w && seen.insert(w->id).second;)
-	{
-		path.push_back(w->location);
-		w = w->linksTo.empty() ? nullptr : terrain.findWaypointById(w->linksTo.front());
-	}
-	return path;
-}
-
 // lane SCRIPT-3: RW 0x7A3D3D, a team's AI group (TheAI's new group RW 0x70042A): every member (the team's list order) but one in a horde (RW 0x6939DF:
 // HORDE_MEMBER with a container, or a HORDE container, + 0x78) and one UNDER_CONSTRUCTION (status 2)
 std::vector<Object *> aiGroupOf(Team &t)
@@ -688,23 +674,29 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
-	if (name == "NAMED_FOLLOW_WAYPOINTS" || name == "NAMED_FOLLOW_WAYPOINTS_EXACT")
+	if (name == "NAMED_FOLLOW_WAYPOINTS" || name == "NAMED_FOLLOW_WAYPOINTS_EXACT" || name == "NAMED_ATTACK_FOLLOW_WAYPOINTS")
 	{
-		// RW 0x7C9196 / 0x7C928D: the waypoint of the label closest to the unit, then AI command 6 / 0x32 (AIWaypointPath.cpp)
+		// RW 0x7C9196 / 0x7C928D / 0x7C920F: the waypoint of the label closest to the unit, then AI command 6 / 0x32 / 0x10 (lane WARG-1: RW 0x754A3C with
+		// 0x7FFFFFFF shots; AIWaypointPath.cpp)
 		Object *o = engine.getUnitNamed(param(a, 0).stringValue);
 		AIUpdateInterface *ai = o ? o->getAIUpdateInterface() : nullptr;
 		const Waypoint *start = (ai && terrain) ? closestWaypointOnPath(*terrain, *o->getPosition(), param(a, 1).stringValue) : nullptr;
-		if (start)
+		if (start && name == "NAMED_ATTACK_FOLLOW_WAYPOINTS")
+		{
+			ai->aiAttackFollowWaypointPath(start->id, 0x7FFFFFFF, CMD_FROM_SCRIPT, false);
+		}
+		else if (start)
 		{
 			ai->aiFollowWaypointPath(start->id, CMD_FROM_SCRIPT, false, name == "NAMED_FOLLOW_WAYPOINTS_EXACT");
 		}
 		return true;
 	}
-	if (name == "TEAM_FOLLOW_WAYPOINTS" || name == "TEAM_FOLLOW_WAYPOINTS_EXACT")
+	if (name == "TEAM_FOLLOW_WAYPOINTS" || name == "TEAM_FOLLOW_WAYPOINTS_EXACT" || name == "TEAM_ATTACK_MOVE_FOLLOW_WAYPOINTS")
 	{
 		// RW 0x7BFE32 / 0x7C0091 (team, label, asTeam[, formation]): the team's AI group; the waypoint of the label closest to the average position of
 		// the team's members (summed in order, times 1 / count); every group member gets command 6 / 7 (exact 0x32 / 0x33); the formation (RW 0x771E7D)
-		// moves as a team (its offsets: S-1189)
+		// moves as a team (its offsets: S-1189). Lane WARG-1: TEAM_ATTACK_MOVE_FOLLOW_WAYPOINTS RW 0x7CB239 -> RW 0x7BFF62 is RW 0x7BFE32 with the group
+		// commands' mode 1: the attack-follow commands 0x10 / 0x11 (RW 0x754A3C / 0x754AAA, 0x7FFFFFFF shots) for 6 / 7
 		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
 		if (!t || !terrain)
 		{
@@ -731,6 +723,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 			return true;
 		}
 		const bool exact = name == "TEAM_FOLLOW_WAYPOINTS_EXACT";
+		const bool attack = name == "TEAM_ATTACK_MOVE_FOLLOW_WAYPOINTS";
 		const bool formation = !exact && param(a, 3).intValue != 0;
 		const bool asTeam = formation || param(a, 2).intValue != 0;
 		std::vector<Object *> group = aiGroupOf(*t);
@@ -754,36 +747,14 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 				{
 					ai->setFormationId(0); // RW 0x771E31
 				}
-				ai->aiFollowWaypointPath(start->id, CMD_FROM_SCRIPT, asTeam, exact);
-			}
-		}
-		return true;
-	}
-	if (name == "NAMED_ATTACK_FOLLOW_WAYPOINTS" || name == "TEAM_ATTACK_MOVE_FOLLOW_WAYPOINTS")
-	{
-		if (!terrain)
-		{
-			return true;
-		}
-		engine.note("[S-1186] " + name + ": the attack-follow state (RW 0x754A3C / 0x754AAA) runs as a move to the path's closest waypoint, then an attack move to the end of the path along each waypoint's first link");
-		for (Object *o : unitOrTeam(engine, param(a, 0).stringValue, name[0] == 'T'))
-		{
-			AIUpdateInterface *ai = o->getAIUpdateInterface();
-			if (!ai)
-			{
-				continue;
-			}
-			const Waypoint *start = closestWaypointOnPath(*terrain, *o->getPosition(), param(a, 1).stringValue);
-			const std::vector<Coord3D> path = waypointChain(*terrain, start);
-			if (!path.empty())
-			{
-				// lane OFFMAP-1: the march starts at once (a sequential script sees the unit busy) toward the path's closest waypoint, where retail's
-				// attack-follow state starts (RW 0x754A3C, ZH AIFollowWaypointPathState: the first goal is the waypoint itself); the armed attack move then
-				// takes the unit on to the path's end when it stands idle there (AIIdleState::update -> resumeAttackMove). The stand-in went straight to the
-				// end: from a unit the map placed off the map (MAP ANG Angmar's 'BNWest WR 1', y -166) that line entered the grid over a cliff cell, no path
-				// was found and the horde stayed OFF_MAP (untargetable) for good
-				ai->aiMoveToPosition(path.front(), CMD_FROM_SCRIPT);
-				ai->armAttackMove(path.back(), CMD_FROM_SCRIPT);
+				if (attack)
+				{
+					ai->aiAttackFollowWaypointPath(start->id, 0x7FFFFFFF, CMD_FROM_SCRIPT, asTeam);
+				}
+				else
+				{
+					ai->aiFollowWaypointPath(start->id, CMD_FROM_SCRIPT, asTeam, exact);
+				}
 			}
 		}
 		return true;

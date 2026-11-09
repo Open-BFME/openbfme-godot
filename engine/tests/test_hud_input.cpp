@@ -6,6 +6,7 @@
 #include "AptPlayerTestUtil.h"
 #include "CombatTestUtil.h"
 #include "GameClient/FormationAssistant.h"
+#include "GameClient/ControlBar.h"
 #include "GameClient/TacticalCamera.h"
 #include "GameEngineDevice/W3DDevice/GameClient/WorldHeightMap.h"
 
@@ -13,6 +14,7 @@
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 
 #include <algorithm>
 
@@ -369,7 +371,7 @@ TEST_CASE("hud input: a batch of raw events gives the messages the same events d
 TEST_CASE("stops S-280 .. S-288: the HUD input reports what it does not port, and an unported meta command is counted, never dropped")
 {
 	const std::vector<std::string> stops = HudInput::acceptanceStops();
-	REQUIRE(stops.size() == 14);
+	REQUIRE(stops.size() == 15); // S-5902 adds the crate context-click adaptation.
 	// the control bar, radar and Palantir report S-289 .. S-294 (their own test: test_hud_palantir.cpp)
 	for (size_t i = 0; i < 9; ++i)
 	{
@@ -379,6 +381,7 @@ TEST_CASE("stops S-280 .. S-288: the HUD input reports what it does not port, an
 	CHECK(stops[10].compare(0, 8, "[S-1920]") == 0); // lane PLAY-1: the move hint
 	CHECK(stops[11].compare(0, 8, "[S-1954]") == 0); // lane HUD-5: RotWK's pick types
 	CHECK(stops[13] == FormationPlacement::stopLine());
+	CHECK(stops[14] == "[S-5902] crate context clicks move to the crate before the enemy attack test unless force-attack is held; this input adaptation is not verified against RotWK evaluateContextCommand RW 0x81E60B");
 	CHECK(stops[12].compare(0, 8, "[S-3302]") == 0); // lane PLAY-1: the placement ghost (renumbered by PLAY-3)
 	if (!haveWorld("hud stops"))
 	{
@@ -675,6 +678,105 @@ TEST_CASE("synthetic HUD: click replaces selection, Shift adds and toggles")
 	r.modifier(KEY_LSHIFT, KEY_STATE_LSHIFT, false);
 	CHECK_FALSE(r.input->ui().isInPreferSelectionMode());
 	r.click(500, 500); r.selected({});
+}
+
+TEST_CASE("synthetic HUD: a porter hidden in construction loses its selection and pending placement")
+{
+	synthetichud::Rig r;
+	REQUIRE(r.w.load("Object TestPorter\n KindOf = SELECTABLE DOZER\n CommandSet = TestPorterSet\nEnd\n") == "");
+	Object *porter = r.place("TestPorter", 100, 100);
+	r.click(100, 100);
+	r.selected({ porter->getID() });
+	ControlBar bar(r.input->context());
+	bar.update();
+	CHECK(bar.sourceObject() == porter->getID());
+	CHECK(bar.commandSetName() == "TestPorterSet");
+	// Both editions: the state after RW 0x88C51B / BFME2 0x489256. A second placement may have been
+	// opened while the porter was still walking; it must not survive the porter entering its first site.
+	r.input->ui().placeBuildAvailable("TestFighter", porter->getID());
+	CommandButton pending;
+	r.input->ui().setGUICommand(&pending);
+	porter->setStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE"), true);
+	r.logic->friend_containLeaveWorld(*porter);
+	r.input->update();
+	REQUIRE(r.input->ui().selected().empty());
+	CHECK_FALSE(r.input->ui().isPlacing());
+	CHECK(r.input->ui().getGUICommand() == nullptr);
+	r.selected({}); // also removes the stale logic selection through the command stream
+	bar.update();
+	CHECK(bar.sourceObject() == INVALID_ID);
+	CHECK(bar.commandSetName().empty());
+	CHECK(bar.sideButtons().empty());
+	CHECK_FALSE(bar.pressButton(0, false));
+	r.click(100, 100);
+	r.selected({}); // cannot pick the hidden builder again
+	// Completion makes the porter selectable again, without automatically reselecting it.
+	r.logic->friend_containEnterWorld(*porter);
+	porter->setStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE"), false);
+	r.input->update();
+	r.selected({});
+	r.click(100, 100);
+	r.selected({ porter->getID() });
+}
+
+TEST_CASE("synthetic HUD: hiding one porter preserves other selections and an unselectable castle")
+{
+	synthetichud::Rig r;
+	REQUIRE(r.w.load("Object TestPorter\n KindOf = SELECTABLE DOZER\nEnd\n"
+		"Object TestCastle\n KindOf = SELECTABLE STRUCTURE CASTLE_CENTER\nEnd\n") == "");
+	Object *porter = r.place("TestPorter", 100, 100);
+	Object *other = r.place("TestFighter", 200, 100);
+	Object *castle = r.place("TestCastle", 300, 100);
+	for (Object *o : { porter, other, castle })
+	{
+		r.input->ui().selectObject(o->getID());
+		r.players.getLocalPlayer()->selection().push_back(o->getID());
+	}
+	const unsigned unselectable = (unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
+	porter->setStatus(unselectable, true);
+	castle->setStatus(unselectable, true);
+	r.logic->friend_containLeaveWorld(*porter);
+	r.input->update();
+	r.selected({ other->getID(), castle->getID() });
+}
+
+TEST_CASE("synthetic HUD: a queued stop cannot reach a porter that just entered construction")
+{
+	synthetichud::Rig r;
+	REQUIRE(r.w.load("Object TestPorter\n KindOf = SELECTABLE DOZER\nEnd\n") == "");
+	Object *porter = r.place("TestPorter", 100, 100);
+	std::vector<ObjectID> remaining;
+	SUBCASE("porter alone") {}
+	SUBCASE("stop still reaches the other selected unit")
+	{
+		Object *other = r.place("TestFighter", 200, 100);
+		r.input->ui().selectObject(other->getID());
+		r.players.getLocalPlayer()->selection().push_back(other->getID());
+		remaining.push_back(other->getID());
+	}
+	r.input->ui().selectObject(porter->getID());
+	r.players.getLocalPlayer()->selection().push_back(porter->getID());
+	std::vector<ObjectID> stopped;
+	int stops = 0;
+	r.dispatch.registerHandler(MSG_DO_STOP, "test", [&](GameLogic &, const GameMessage &) {
+		++stops;
+		stopped = r.players.getLocalPlayer()->selection();
+		return true;
+	});
+	// Both editions: the hide happens before the next client update, but S is already queued.
+	// Dispatch must remove the porter before executing that stop, rather than merely fixing the final selection.
+	porter->setStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE"), true);
+	r.logic->friend_containLeaveWorld(*porter);
+	r.input->key(KEY_S, KEY_STATE_DOWN);
+	r.input->key(KEY_S, KEY_STATE_UP);
+	r.input->update();
+	REQUIRE(r.commands.messages().size() == 2);
+	CHECK(r.commands.messages()[0].getType() == MSG_REMOVE_FROM_SELECTED_GROUP);
+	CHECK(r.commands.messages()[1].getType() == MSG_DO_STOP);
+	r.drain();
+	CHECK(stops == 1);
+	CHECK(stopped == remaining);
+	r.selected(remaining);
 }
 
 TEST_CASE("synthetic HUD: drag selection filters enemies and Shift adds to it")
@@ -1311,4 +1413,29 @@ TEST_CASE("synthetic HUD: two-button hold previews formation without camera pan 
 	button(HudInput::Button::Right, false, 500, 300);
 	REQUIRE(commands.messages().size() == 1);
 	CHECK(commands.messages().front().getType() == MSG_DO_MOVETO);
+}
+
+TEST_CASE("synthetic HUD: attack-move over a crate stays owned by the GUI command translator")
+{
+	synthetichud::Rig r;
+	REQUIRE(r.w.load("Object TestChest\n KindOf = SELECTABLE CRATE\n Geometry = SPHERE\n GeometryMajorRadius = 12\nEnd\n").empty());
+	Object *unit = r.place("TestFighter", 100, 100);
+	Object *chest = r.place("TestChest", 400, 300, "Bob");
+	r.click(100, 100);
+	r.selected({ unit->getID() });
+	bool alternate = true;
+	SUBCASE("alternate mouse orders on right click") {}
+	SUBCASE("standard mouse orders on left click") { alternate = false; }
+	r.input->commandTranslator().setUseAlternateMouse(alternate);
+	CommandButton attackMove;
+	attackMove.m_command = GUI_COMMAND_ATTACK_MOVE;
+	attackMove.m_options = COMMAND_OPTION_NEED_TARGET_POS;
+	attackMove.m_cursorName = "AttackMove";
+	r.input->ui().setGUICommand(&attackMove);
+	r.move(400, 300);
+	CHECK(HudObjects::pickObject(r.input->context(), { 400, 300 }) == chest);
+	CHECK(r.input->ui().cursor() == "AttackMove");
+	r.click(400, 300, alternate ? HudInput::Button::Right : HudInput::Button::Left);
+	r.locationCommand(MSG_DO_ATTACKMOVETO, 400, 300);
+	CHECK(r.input->ui().getGUICommand() == nullptr);
 }

@@ -309,6 +309,39 @@ runs at its own rate (here the 10k soldiers' CPU work bounds it) while the
 logic frames take 200-370 ms. Making the logic finish inside its tick is
 Uber's other half.
 
+**PERF-SNAP: the snapshot's records on the logic job pool.** The worker
+builds the client's snapshot between frames (`LiveGame::publish`,
+`LogicSnapshot::build`), a record per object; at 30,000 troops that was
+31-34 ms per logic frame of serial reads, in no tick's count. The records
+(and the lastMovedFrame pass) are filled on the logic job pool, 256 objects a
+job, after the caches a first read fills are warmed on the worker (every
+template's info; the bounding radii of the radar's wall and command centre
+shapes): 9.9-10.2 ms per logic frame with 16 logic threads. Nothing in the
+snapshot is hashed; `test_perf2_snapshot.cpp` pins every field of every
+record against the single-threaded build.
+
+**PERF-CLIENT: the client pool while the logic is behind.** Both job pools
+default to every hardware thread, so a late worker's single-threaded passes
+compete with the client's slices for the cores. After 3 worker frames in a
+row over the logic frame's budget (200 ms), counted by the worker itself as
+it completes them, the client pool keeps a quarter
+of the hardware threads (at least 2); after 5 worker frames in a row under
+150 ms it has every thread again, and it has every thread again while the
+game is paused and whenever it ends, for the menu and the next load
+(`GameClient/ClientPoolPolicy.h`,
+`GameWorld::adaptClientPool`; `get_frame_timings` `client_pool_behind`).
+Measured on an 8-core / 16-thread PC, 30,000 troops, Uber, 1600x900, vsync
+off, 30 s, twice each: with the rule 2.53 and 2.50 logic frames a second
+against 2.17 and 2.20 with the pool fixed at 16 (+14 to +17 %), for 31-34
+render frames a second against 39-41; a client pool fixed at 4 gave 2.47
+and 2.46 against 2.03 and 2.03 in an earlier pair of runs; the logic pool's
+size (8, 12 or 16) makes no difference; the shrunk size on 8 or 4 hardware
+threads (2) is the rule's, not measured. At 10,000 troops the logic keeps its
+clock, the pool stays full and both runs are the same (5.0 logic frames a
+second, 121-123 fps). `OPENBFME_CLIENT_THREADS` (an explicit size)
+or `OPENBFME_CLIENT_POOL_FIXED` turns the rule off. Nothing of the simulation
+changes.
+
 ## The budget at 40,000 units
 
 **Logic.** On the reference PC the logic tick must finish in its 200 ms (5 fps
@@ -546,6 +579,85 @@ closed 200,000+ cells, plus up to 25,000 of the shortcut walk.
   132 -> 92 ms, 20k 204 -> 133 ms, 40k 345 -> 217 ms; ticks over the 200 ms
   clock at 20k: 23-30 -> 0-1 of 50, at 40k: 49-50 -> 25-29.
 
+### UBER-PATH: the attacker's target in the path search, the follower's tie (done)
+
+Nearly every horde attack search toward its victim failed: the victim's own
+members refused the attacker's goal cell and its way in, so the search flooded
+to its limit and gave the closest free cell or no path, and the horde asked
+again next frame. Retail's movement check (checkForMovement, RW 0x6EBAA0, the
+enemy branch) lets an enemy pass when it is the searcher's target; the port
+left the rule out (stop S-164, `ObjectPathfindAdapter::ignoresAsTarget`).
+
+- **Uber rule change:** the Uber pathfinder applies retail's target rule: an
+  enemy does not refuse a cell when it is the searcher's goal object
+  (RW 0x8DBACE) or current victim (RW 0x668303), contained in one (a horde's
+  member), or the target's own container and its members; every other enemy
+  still refuses. Faithful keeps S-164 for now: on its own the rule brings the
+  Rivendell campaign's starting horde (bfme2camp1) onto a path whose patch
+  doubles back along one line, where retail's follower tie stalls it (next
+  bullet). The relation is the same code in both profiles;
+  test_path_target_rule.cpp pins it (a horde's target horde and its members
+  pass, another enemy horde's members do not, nothing passes without a target;
+  a lone unit's victim, its horde and the horde's other members; the goal
+  object alone and the current victim alone each suffice).
+- **Uber rule change:** a path the Uber pathfinder makes (`Path(true)`) takes a
+  later segment the unit stands exactly on over an earlier one it stands
+  exactly on with t < 1; a unit on a node two consecutive segments share keeps
+  the earlier segment, as RW does. Faithful paths keep retail's tie in every
+  case (`Path::updateClosestSegment`, RW 0x765598: a later leg must be strictly
+  closer). Why: a blocked unit's patch is spliced into its path (RW 0x767A66)
+  and can double back along one line, down to the patch's end and back up to
+  the raw next node; on that line both legs are at distance 0, the earlier one
+  wins, the point ahead runs back down to the tip, and a HORDE reforms 180
+  degrees every frame and never leaves. test_pathfind_path.cpp pins both rules
+  on a stylised path and on the legs captured from the stuck Rivendell horde
+  (fractions bit for bit).
+- What is known of retail here: run through tools/retail_oracle on the
+  captured legs and positions (test_path_follower_oracle.py), RW 0x765598
+  keeps the earlier leg at both positions the horde flipped between, with the
+  engine's own fractions bit for bit. That shows retail's follower choice on
+  the port's path, not that retail builds this path: upstream's review of
+  PR #182 found that RotWK frees a finished path's raw node chain
+  (RW 0x767B0E) while the port keeps it (AIPathfindSearch.cpp, the search's
+  end; AIPathfindPatch.cpp), so a later blocked-unit detour can be offered raw
+  nodes retail no longer has. Porting that is the likely Faithful fix for both
+  stops and is not in this lane; once it is in, the target rule should move to
+  Faithful and the follower tie can go.
+- The Uber pin vector was regenerated; the Faithful pins (perf1, perf2, the
+  retail-data tests) are unchanged. What a player can notice: attacking hordes
+  reach their victims instead of milling at the edge; a unit on a doubled-back
+  patch walks on instead of flipping.
+- Cost (the uber bench, map mp fall back 8p, 30,000 troops, 16 threads,
+  Windows MSVC, measured on the previous base): the searches that now reach
+  their targets cover more cells. Over the first 25 frames, where the cell
+  budget is 100 times larger, a frame took 322 ms instead of 221 ms (2.7 times
+  the cells a search, fewer searches); from frame 25 on, 148 ms instead of
+  140 ms. Retail runs the same rule.
+### PERF-WS: the final list's weapon status conditions on the pool (done)
+
+The final update list (phase 6) is one WeaponStatusHelper per weapon-capable
+object (the troops, the horde controllers, the buildings), each a serial call
+that reads its own object alone and writes its own weapons' slot conditions
+and model conditions, so nothing a module of the pass writes changes what a
+later one computes.
+
+- Both profiles, no rule change: the conditions of every module the pass
+  will update are computed on the logic job pool before the pass, against
+  the list at its start and with the pass's own tests, and applied in list
+  order where update would have computed them (the same writes, the same
+  client events, the same hash: `GameLogic::prepareWeaponStatusWork`). With
+  one logic thread the pass computes in update as before. An awake module of
+  the list that is no such helper makes the frame serial again (counted in
+  `GameLogic::Report::weaponStatusSerialFrames`).
+- Result (the uber bench's battle, map mp fall back 8p, 30,000 troops, 16
+  logic threads, Windows MSVC; the mean of frames 1-175 of one run each, read
+  with a temporary per-phase wall-clock probe of the lane): phase 6 is 6.0 ms
+  a frame instead of 10.1 (Uber) and 10.3 instead of 14.3 (Faithful); the hash
+  chains are unchanged. With one logic thread phase 6 is the serial pass's.
+- It is the first delivered piece of U4's parallel module phases: the
+  compute-then-apply shape, pure reads on the pool and a serial commit in
+  list order, is the one the other phases will take.
+
 ### U2: parallel queries and paths, GPU animation (next)
 
 - **Snapshot queries.** Before each module phase, the queries a module will
@@ -599,7 +711,7 @@ closed 200,000+ cells, plus up to 25,000 of the shortcut walk.
   Its commands are merged in player order into the next frame's command list.
 - Module phases split by spatial tiles with a halo: a tile's modules run in
   parallel when their reads and writes stay inside the tile, and the cross-tile
-  work commits serially in object order.
+  work commits serially in object order (the final list is done: PERF-WS).
 - Shroud and visibility: per player in parallel for the logic, a compute
   shader for the client texture.
 - **Target (unvalidated):** 40k at 144 fps sustained on the reference PC.

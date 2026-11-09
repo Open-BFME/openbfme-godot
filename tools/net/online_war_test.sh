@@ -1,6 +1,8 @@
 #!/bin/bash
 # WOTR2 milestone 9: two independent online War of the Ring clients through a local lobby and classic relay.
 # tools/net/online_war_test.sh [turns] [turns|rts|rtsexit|save|crash|stall] (on a game-data build with godot on PATH).
+# crash / stall (S-4075): RotWK has no reconnect, so the survivor surrenders the dropped joiner at once and plays on; a crashed joiner that starts
+# again is not offered its war (warrejoin walk); a stalled one leaves by itself to the online screens (STALL_SECONDS, 20 by default).
 set -u
 TURNS=${1:-3}
 MODE=${2:-turns}
@@ -56,20 +58,17 @@ run_pair() {
     timeout 900 "$GODOT" "${COMMON[@]}" --online-walk=warjoin --online-name=Joiner "${EXTRA[@]}" "${JOIN_EXTRA[@]}" > "$WORK/joiner.log" 2>&1 &
   JP=$!
   pids+=("$JP")
-  if [ "$MODE" = crash ] || [ "$MODE" = stall ]; then
-    local marker="GAME WOTR NET $MODE: turn 2"
-    for attempt in {1..120}; do
-      grep -q "$marker" "$WORK/joiner.log" 2>/dev/null && break
-      kill -0 "$JP" 2>/dev/null || break
-      sleep 1
-    done
-    # An online relay holds a missing slot instead of declaring it surrendered. Observe the survivor before stopping this test's own process.
-    sleep "$([ "$MODE" = stall ] && echo "$((${STALL_SECONDS:-20} + 20))" || echo 25)"
-    kill "$HP" 2>/dev/null
-    if [ "$MODE" = stall ]; then kill "$JP" 2>/dev/null; fi
+  if [ "$MODE" = crash ]; then
+    # WOTR2 S-4075: RotWK has no reconnect. Once the crashed joiner is gone it starts again with its kept session: the war is listed as its own
+    # running game but never offered (no rejoin box, no REJOIN / WATCH row; the lobby refuses the rejoin itself: war_no_rejoin)
+    wait "$JP"; JRC=$?
+    HOME="$WORK/joiner" XDG_DATA_HOME="$WORK/joiner/.local/share" XDG_CONFIG_HOME="$WORK/joiner/.config" \
+      timeout 300 "$GODOT" "${COMMON[@]}" --online-walk=warrejoin > "$WORK/rejoiner.log" 2>&1 &
+    RP=$!
+    pids+=("$RP")
   fi
   wait "$HP"; HRC=$?
-  wait "$JP"; JRC=$?
+  if [ "$MODE" = crash ]; then wait "$RP"; RRC=$?; else wait "$JP"; JRC=$?; fi
   pids=("${pids[0]}" "${pids[1]}")
 }
 run_pair
@@ -79,25 +78,31 @@ if [ "$MODE" != crash ] && [ "$MODE" != stall ]; then
 fi
 if [ "$MODE" = crash ] || [ "$MODE" = stall ]; then
   grep -q "GAME WOTR NET $MODE: turn 2" "$WORK/joiner.log" || { echo "FAIL: the joiner did not $MODE in turn 2"; rc=1; }
-  grep -q '^GAME WOTR NET turn 2 frame' "$WORK/host.log" || { echo "FAIL: the survivor ran no matching strategic turn"; rc=1; }
   grep -q '^GAME WOTR NET turn 2 frame' "$WORK/joiner.log" || { echo "FAIL: the dropped peer ran no strategic turn"; rc=1; }
-  if grep -qE '^GAME WOTR NET (surrender:|RESULT |left:)' "$WORK/host.log"; then
-    echo "FAIL: the survivor advanced past the relay-held slot"; rc=1;
+  # WOTR2 S-4075: no hold for a rejoin (RotWK has none): the survivor surrenders the dropped player at once, as on a LAN, and plays the war out
+  grep -qE '^GAME WOTR NET surrender: player [0-9]+ at frame [0-9]+ \(ok\)' "$WORK/host.log" || { echo "FAIL: the survivor did not surrender the dropped player"; rc=1; }
+  [ "$HRC" = 0 ] && grep -q '^GAME WOTR NET RESULT ok' "$WORK/host.log" || { echo "FAIL: the survivor did not play the war out (exit $HRC)"; rc=1; }
+  if [ "$MODE" = crash ]; then
+    [ "$RRC" = 0 ] && grep -q '^GAME ONLINE WAR REJOIN ok' "$WORK/rejoiner.log" || { echo "FAIL: the restarted joiner was offered its running war (exit $RRC)"; rc=1; }
+  else
+    [ "$JRC" = 0 ] && grep -q '^GAME WOTR NET STALL RESULT ok' "$WORK/joiner.log" || { echo "FAIL: the stalled joiner did not leave by itself to the online screens (exit $JRC)"; rc=1; }
+    ! grep -q '^GAME WOTR NET surrender: player' "$WORK/joiner.log" || { echo "FAIL: the stalled joiner ran a surrender of its own (a split game)"; rc=1; }
   fi
   if grep -q '^GAME FAIL:' "$WORK/host.log"; then
-    echo "FAIL: the survivor failed rather than waiting"; rc=1;
+    echo "FAIL: the survivor failed"; rc=1;
   fi
   grep -E '^GAME WOTR NET turn [0-9]+ frame [0-9]+ hash [0-9]+' "$WORK/host.log" > "$WORK/host.turns"
   grep -E '^GAME WOTR NET turn [0-9]+ frame [0-9]+ hash [0-9]+' "$WORK/joiner.log" > "$WORK/joiner.turns"
-  [ -s "$WORK/host.turns" ] && cmp -s "$WORK/host.turns" "$WORK/joiner.turns" || {
-    echo "FAIL: the two peers diverged before the relay held the slot"; rc=1;
+  [ -s "$WORK/joiner.turns" ] && head -n "$(wc -l < "$WORK/joiner.turns")" "$WORK/host.turns" | cmp -s - "$WORK/joiner.turns" || {
+    echo "FAIL: the two peers diverged before the drop"; rc=1;
   }
   if [ "$rc" != 0 ]; then
-    for peer in host joiner; do
-      echo "$peer: last war events"; grep -E 'GAME FAIL|GAME WOTR NET|GAME ONLINE WAR' "$WORK/$peer.log" | tail -12
+    for peer in host joiner rejoiner; do
+      [ -f "$WORK/$peer.log" ] || continue
+      echo "$peer: last war events"; grep -E 'GAME FAIL|GAME WOTR NET|GAME ONLINE WAR|GAME ONLINE WALK' "$WORK/$peer.log" | tail -12
     done
   fi
-  echo "ONLINE WAR TEST $([ "$rc" = 0 ] && echo PASS || echo FAIL): mode $MODE, relay held a peer after $(wc -l < "$WORK/host.turns") turns"
+  echo "ONLINE WAR TEST $([ "$rc" = 0 ] && echo PASS || echo FAIL): mode $MODE, the dropped peer surrendered after $(wc -l < "$WORK/joiner.turns") turns, the survivor played $(wc -l < "$WORK/host.turns")"
   exit "$rc"
 fi
 if [ "$MODE" = save ]; then

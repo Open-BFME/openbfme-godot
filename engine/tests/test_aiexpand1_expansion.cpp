@@ -621,12 +621,18 @@ TEST_CASE("aiexpand1 expansion in a game: the Medium Men computer kept above 300
 	// merge queue q33 (measured once on the merged tree and at each merge point): MODCOMPAT-MOD1's own values hold at its merge point; #133's straight
 	// production exits move this AI game: the same start is still chosen at 1519, its request at 2196 (1841), in progress at 2197 (1842), complete with the
 	// second base at 2937 (2611)
-	CHECK(chosenFrame == 1519);
-	CHECK(tacticFrame == 1519);
-	CHECK(requestFrame == 2196);
-	CHECK(inProgressFrame == 2197);
-	CHECK(doneFrame == 2937);
-	CHECK(baseFrame == 2937);
+	// pin: merge queue q42 (CASTLEATK-1: nothing attacks an object with the status UNATTACKABLE, RW 0x6C9207, with ATKSTATE-1a's attack-state gates; measured once on the merged tree and at each merge point, #225 keeps it): the start is chosen at 1519 -> 2123
+	CHECK(chosenFrame == 2123);
+	CHECK(tacticFrame == 2123);
+	// merge queue q35 (#132's ground-structure melee reach, measured once on the merged tree and at each merge point; SIMSMALL-1, #178 and #179 keep the archive's values): the same start is chosen at 1519, its request at 1894 (2196), in progress at 1895 (2197), complete with the second base at 2635 (2937)
+	// lane PATH-REBUILD (RW 0x767B0E: every found path bent from the unit's facing with its corners rounded; measured on the lane's tree, Windows MSVC): the same
+	// start is chosen at 1519, its request at 1569 (1894), in progress at 1570 (1895), complete with the second base at 2372 (2635)
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): request 1569 -> 1894, in progress 1570 -> 1895, complete and second base 2372 -> 2634
+	// pin: merge queue q42 (CASTLEATK-1: nothing attacks an object with the status UNATTACKABLE, RW 0x6C9207, with ATKSTATE-1a's attack-state gates; measured once on the merged tree and at each merge point, #225 keeps it): request 1894 -> 2126, in progress 1895 -> 2127, complete and second base 2634 -> 2867
+	CHECK(requestFrame == 2126);
+	CHECK(inProgressFrame == 2127);
+	CHECK(doneFrame == 2867);
+	CHECK(baseFrame == 2867);
 	MESSAGE("EXPANSION target on frame " << chosenFrame << " at (" << chosenAt.x << ", " << chosenAt.y << "); SimpleExpansion on frame " << tacticFrame
 		<< ", its request on " << requestFrame << " (last state " << lastState << ", in progress on " << inProgressFrame << ", complete on " << doneFrame
 		<< "), the second base on " << baseFrame << "; bases " << aiPtr->build.bases.size() << ", tactics started " << aiPtr->brain.tacticsStarted

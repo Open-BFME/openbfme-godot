@@ -14,6 +14,7 @@
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/SimMath.h"
 #include "GameLogic/BuildStops.h"
 #include "GameLogic/StructureStops.h"
 #include "GameLogic/VictoryConditions.h"
@@ -25,6 +26,7 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/Combat/ObjectWeapons.h" // lane PERF-WS: the final list's weapon status conditions on the pool
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/ObjectHelper.h"
@@ -50,6 +52,7 @@
 #include "GameLogic/System/EmotionSystem.h"
 
 #include <algorithm>
+#include <atomic>
 #include <stdexcept>
 
 GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &players, RandomAlgorithm rng)
@@ -268,6 +271,20 @@ float GameLogic::getLayerHeightForDestination(float x, float y, float z) const
 	{
 		const Pathfinder &pf = m_aiWorld->pathfinder();
 		return pf.getLayerHeight(x, y, pf.getLayerAt(x, y, z));
+	}
+	return getGroundHeight(x, y);
+}
+
+float GameLogic::getAlignOnTerrainHeight(float x, float y, float z) const
+{
+	// RW 0x6819D9: layer = getLayerForDestination(0, pos) (RW 0x680A75), z = getLayerHeight(x, y, layer) (vslot 0x1C), + 2.5 when layer > LAYER_GROUND
+	if (m_aiWorld && m_aiWorld->mapReady())
+	{
+		const Pathfinder &pf = m_aiWorld->pathfinder();
+		constexpr float kAlignOnTerrainLift = 2.5f; // RW 0xBE5AE8 (BFME2 0x00BCFB10): the lift above any layer but the ground
+		const PathfindLayerEnum layer = pf.getLayerAt(x, y, z);
+		const float height = pf.getLayerHeight(x, y, layer);
+		return layer > LAYER_GROUND ? SimMath::addf32(height, kAlignOnTerrainLift) : height;
 	}
 	return getGroundHeight(x, y);
 }
@@ -719,6 +736,19 @@ void GameLogic::runModules(int phase)
 	for (int p = start; p < end; ++p)
 	{
 		std::vector<UpdateModule *> &vec = m_updates[p];
+		if (p == (int)PHASE_FINAL)
+		{
+			// lane PERF-WS: before the pass; the pass applies the results in list order. With one logic thread the pre-pass would only be a second
+			// walk of the list: the pass computes in update as before (so the perf2 pin compares that path with the pool's)
+			if (JobSystem::logic().threadCount() > 1)
+			{
+				prepareWeaponStatusWork(vec);
+			}
+			else
+			{
+				m_weaponStatusWork.clear();
+			}
+		}
 		// RW 0x62E9D4 .. 0x62E9F7: phase 4 starts at size / 2 (i = size / 2 - 1, then ++), the others at 0 (i = -1, then ++)
 		int i = phase == 4 ? (int)(vec.size() >> 1) - 1 : -1;
 		size_t next = (size_t)(i + 1);
@@ -747,6 +777,14 @@ void GameLogic::runModules(int phase)
 				{
 					sleep = (int)UPDATE_SLEEP_FOREVER; // RW 0x62EA85 `test byte [obj + 0x94], 1`
 				}
+				else if (p == (int)PHASE_FINAL && (size_t)i < m_weaponStatusWork.size() && m_weaponStatusWork[(size_t)i].module == u)
+				{
+					// lane PERF-WS: the module's update is its WeaponStatusHelper's: the conditions computed on the pool before the pass are applied
+					// here, where update would have computed them (nothing of the pass so far changed what they read), and the sleep is update's,
+					// UPDATE_SLEEP_NONE. A module without an entry of its own (none at the pre-pass, or another module at this index) runs update
+					const WeaponStatusWork &work = m_weaponStatusWork[(size_t)i];
+					work.weapons->applyWeaponStatusConditions(work.cond);
+				}
 				else
 				{
 					sleep = (int)u->update();
@@ -764,6 +802,61 @@ void GameLogic::runModules(int phase)
 		{
 			migrateForeverModules(p);
 		}
+	}
+}
+
+// lane PERF-WS: the final list is the WeaponStatusHelpers (the FiringTrackerHelper shell sleeps forever; nothing wakes it). A helper's update
+// reads its own object alone (its statuses, its weapons' timers and ammo) and writes its own weapons' slot conditions and model conditions, so
+// no module of the pass changes what a later one computes: the conditions of every module the pass will update are computed here on the logic
+// job pool, against the list at the pass's start, with the pass's own tests, and the pass applies them in list order (the model conditions are
+// ordered client events, and the hash sees the same writes in the same order). A module without an entry (asleep at the pre-pass and woken
+// since, registered meanwhile) runs update as before. An awake module of the list that is not such a helper (a future port, a test's scripted
+// module) would break the premise: then no entry is kept and the pass is the serial one (counted: Report::weaponStatusSerialFrames). An
+// entry's module and weapons live through the pass: no object is deleted in phase 6 (processDestroyList runs in phase 5 only, docs/MAINLOOP.md)
+void GameLogic::prepareWeaponStatusWork(const std::vector<UpdateModule *> &vec)
+{
+	static_assert(WEAPONSLOT_COUNT == 6, "WeaponStatusWork::cond holds one condition per weapon slot");
+	constexpr size_t kModulesPerJob = 256;
+	m_weaponStatusWork.assign(vec.size(), WeaponStatusWork{});
+	std::atomic<bool> other{ false };
+	std::atomic<unsigned> filled{ 0 }; // entries the pass will apply (the #192 review: a frame whose modules all sleep is not a pooled one)
+	JobSystem::logic().parallelFor(vec.size(), kModulesPerJob, [this, &vec, &other, &filled](size_t, size_t begin, size_t end) {
+		unsigned mine = 0;
+		for (size_t i = begin; i < end; ++i)
+		{
+			UpdateModule *u = vec[i];
+			if (!u || u->friend_getNextCallFrame() > m_frame)
+			{
+				continue;
+			}
+			const Object *obj = u->getObject();
+			const DisabledMaskType disabled = obj->getDisabledMask();
+			if (!(disabled == DISABLEDMASK_NONE || (disabled & u->getDisabledTypesToProcess()) != 0) || obj->testStatus(OBJECT_STATUS_DESTROYED))
+			{
+				continue; // the pass skips it, or sleeps it forever
+			}
+			ObjectWeapons *weapons = u->weaponStatusWeapons();
+			if (!weapons)
+			{
+				other.store(true, std::memory_order_relaxed);
+				break; // the chunk's results are discarded below
+			}
+			WeaponStatusWork &work = m_weaponStatusWork[i];
+			weapons->computeWeaponStatusConditions(work.cond);
+			work.weapons = weapons;
+			work.module = u;
+			++mine;
+		}
+		filled.fetch_add(mine, std::memory_order_relaxed);
+	});
+	if (other.load(std::memory_order_relaxed))
+	{
+		m_weaponStatusWork.assign(vec.size(), WeaponStatusWork{});
+		++m_weaponStatusSerialFrames;
+	}
+	else if (filled.load(std::memory_order_relaxed) > 0)
+	{
+		++m_weaponStatusPooledFrames;
 	}
 }
 
@@ -974,6 +1067,9 @@ void GameLogic::reset()
 		vec.clear();
 	}
 	m_sleeping.clear();
+	m_weaponStatusWork.clear(); // lane PERF-WS: no module pointer outlives its game
+	m_weaponStatusSerialFrames = 0;
+	m_weaponStatusPooledFrames = 0;
 	m_objectsToDestroy.clear();
 	m_objectsById.clear();
 	m_templateInfo.clear();
@@ -1303,9 +1399,10 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	{
 		section("damage over time", [&](StateHasher &x) { m_dot->crc(x); }); // lane DECOMP-1: only while a record runs (a game without one keeps its hash)
 	}
-	if (m_trees->anyChanged())
+	if (m_trees->anyChanged() || m_trees->anyClusterUsed())
 	{
-		section("terrain trees", [&](StateHasher &x) { m_trees->crc(x); }); // lane SPELL-3: only once a tree toppled or was harvested (a game without keeps its hash)
+		// lane SPELL-3: only once a tree toppled or was harvested, or (RAI-POW-3) a tree killer marked a cluster: a game without keeps its hash
+		section("terrain trees", [&](StateHasher &x) { m_trees->crc(x); });
 	}
 	section("large group audio", [&](StateHasher &x) { m_largeGroupAudio.crc(x); }); // lane AUDIO-4: TheLargeGroupAudio's gate (+ 0x38 / + 0x3C)
 	if (m_scriptEngine->loaded())
@@ -1570,6 +1667,8 @@ GameLogic::Report GameLogic::report() const
 	r.sleepingModules = m_sleeping.size();
 	r.unportedCreated = m_modules.unportedCreated();
 	r.creationsWithoutDispatch = m_creationsWithoutDispatch;
+	r.weaponStatusSerialFrames = m_weaponStatusSerialFrames;
+	r.weaponStatusPooledFrames = m_weaponStatusPooledFrames;
 	r.errors = m_errors;
 	for (const Object *o = m_objectHead; o; o = o->getNextObject())
 	{

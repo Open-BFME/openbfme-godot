@@ -163,6 +163,33 @@ TEST_CASE("ui2 View3D animation: the mode names (RW 0xDC3BC0), PLAY_TO_FRAME sto
 	AptView3DImageSize(2560.0f, 1440.0f, 2.5f, 1.875f, false, true, w, h);
 	CHECK(w == 2560);
 	CHECK(h == 1440);
+	// lane PERF-2: the menus' 3D frames render at most 1920x1080's pixel count, the clip's aspect kept; a smaller image is not scaled up
+	w = 2880;
+	h = 1800;
+	AptView3DPixelBudget(w, h, 1920 * 1080);
+	CHECK(w == 1821);
+	CHECK(h == 1138);
+	w = 3840;
+	h = 2160;
+	AptView3DPixelBudget(w, h, 1920 * 1080);
+	CHECK(w == 1920);
+	CHECK(h == 1080);
+	w = 1920;
+	h = 1080;
+	AptView3DPixelBudget(w, h, 1920 * 1080);
+	CHECK(w == 1920);
+	CHECK(h == 1080);
+	w = 1280;
+	h = 720;
+	AptView3DPixelBudget(w, h, 1920 * 1080);
+	CHECK(w == 1280);
+	CHECK(h == 720);
+	// a clip wider than 16:9 keeps its own aspect
+	w = 5120;
+	h = 1440;
+	AptView3DPixelBudget(w, h, 1920 * 1080);
+	CHECK(w == 2715);
+	CHECK(h == 763);
 	// Sol r1: which clips are a menu screen's: their target path's level among the shell's screens'
 	CHECK(AptView3DOnMenuLevel("_level1.Frame.instance1.MenuLogin", { 1 }));
 	CHECK(AptView3DOnMenuLevel("_level12.Frame", { 1, 12 }));

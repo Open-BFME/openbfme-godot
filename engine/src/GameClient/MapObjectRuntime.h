@@ -44,7 +44,7 @@ struct MapPlacedModel
 	std::string modelName;           ///< the model of the state (case as the INI wrote it)
 	std::string textureName;         ///< W3DTreeDraw TextureName (not applied: S-111)
 	std::unique_ptr<W3DScriptedModelDraw> draw; ///< MODEL kind only
-	bool animated = false;           ///< the idle animation moves (more than one frame, not MANUAL): advance() every render frame
+	bool animated = false;           ///< W3DScriptedModelDraw::needsAdvance at build (S-090): advance() every render frame
 	bool hordeMember = false;
 	bool moduleHidden = false;       ///< a CurDrawableHideModule / ObjectHideModule request of a script hid this module (Drawable::showModule, RW 0x6789B4): not instanced
 	bool missingModel = false;       ///< the model is not registered in the mounted archives (a retail data defect, counted in dataDefects): not instanced

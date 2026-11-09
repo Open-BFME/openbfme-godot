@@ -315,3 +315,57 @@ TEST_CASE("hud5 fortress maps retail: the fortress' objects are exactly the star
 		}
 	}
 }
+
+// lane EDAINMAPS-2 (Edain's Moria, Eregion, Arena: map.ini StartingBuilding / StartingUnit0 = None; Der Einsame Berg: NoStartingBuilding): RW 0x62AC17 looks up any
+// non-empty StartingBuilding (RW 0x62AD14 / 0x62AD1E), placeObjectAtPosition returns no object for an unknown name without an error (RW 0x629DD9 -> 0x6D1305),
+// and with no structure made the starting units are skipped too (RW 0x62AD51 `jz 0x62B165`); an unknown StartingUnit is skipped alone (RW 0x62B140)
+TEST_CASE("starting base retail: an unknown StartingBuilding places nothing and no units; an unknown StartingUnit is skipped; neither is an error")
+{
+	OPENBFME_REQUIRE_START(s);
+	runGame(*s, fortressMessage(*s, "maps/map mp evendim/map mp evendim.map", { 0, 1 }), [&](LiveGame &game, const NewGameStart &start, const LiveGame::Report &report) {
+		CHECK(report.startErrors.empty());
+		Player *p = game.players().findPlayerWithName(report.startSlotPlayers[1]);
+		REQUIRE(p);
+		REQUIRE(p->getPlayerTemplate());
+		REQUIRE(p->getPlayerTemplate()->getName() == "FactionMordor");
+		const SkirmishGameSlot &slot = start.message.game.slots[1];
+		auto count = [&] {
+			int n = 0;
+			for (Object *o = game.logic().getFirstObject(); o; o = o->getNextObject()) ++n;
+			return n;
+		};
+
+		PlayerTemplate none = *p->getPlayerTemplate();
+		REQUIRE_FALSE(none.m_startingUnit[0].empty()); // MordorPorter: retail would place it after a real structure
+		for (const char *name : { "None", "NONE", "NoStartingBuilding" })
+		{
+			CAPTURE(name);
+			none.m_startingBuilding = name;
+			StartingBase::Result result;
+			const int before = count();
+			StartingBase::placeForPlayer(game.logic(), 1, slot, *p, none, result);
+			CHECK(result.errors.empty());
+			CHECK(result.placed.empty());
+			CHECK(count() == before);
+			REQUIRE(result.notes.size() == 2);
+			CHECK(result.notes[0] == std::string("placeObjectAtPosition: no template '") + name + "' (retail places nothing)");
+			CHECK(result.notes[1].find("so no starting units") != std::string::npos);
+		}
+
+		PlayerTemplate unit = *p->getPlayerTemplate();
+		unit.m_startingUnit[0] = "None";
+		StartingBase::Result result;
+		const int before = count();
+		StartingBase::placeForPlayer(game.logic(), 1, slot, *p, unit, result);
+		CHECK(result.errors.empty());
+		REQUIRE_FALSE(result.placed.empty());
+		CHECK(result.placed[0].structure);
+		CHECK(result.placed[0].templateName == unit.m_startingBuilding);
+		int units = 0;
+		for (const std::string &u : unit.m_startingUnit) units += u.empty() || u == "None" ? 0 : 1;
+		CHECK((int)result.placed.size() == 1 + units);
+		CHECK(count() == before + 1 + units);
+		REQUIRE(result.notes.size() == 1);
+		CHECK(result.notes[0] == "placeObjectAtPosition: no template 'None' (retail places nothing)");
+	});
+}

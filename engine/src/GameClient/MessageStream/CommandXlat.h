@@ -21,6 +21,11 @@
 // a selected horde) can possibly have a weapon (canPossiblyHaveAnyWeapon, RW 0x73C191), which stands for ZH's ActionManager::canAttackObject.
 // TARGET FACT: not when the object is UNATTACKABLE (KindOf 54 or status 0x3C): RotWK's WeaponSet::getAbleToAttackSpecificObject (RW 0x6C9147) refuses it for
 // every attacker (RW 0x6C91FA / 0x6C9207).
+// TARGET FACT (lane WALL-3): RotWK attacks an object only when the selection's best attack result (getCanSelectedObjectsAttack RW 0x69D1D4, RW 0x81F18E) is
+// POSSIBLE (3) or POSSIBLE_AFTER_MOVING (2); an INVALID_SHOT (1: no weapon damages the victim, RW 0x6C8652) on a WALK_ON_TOP_OF_WALL (60, template + 0x10F bit 4) object that
+// is no WALL_UPGRADE (150, template + 0x11A bit 6) skips the invalid hint (RW 0x81F618 .. 0x81F63A) and reaches the move to the clicked point: infantry, cavalry
+// and heroes walk onto an enemy's Helm's Deep wall (armour HelmsDeepWalls / InvulnerableArmor, DEFAULT 0 %), siege attacks it. The port applies the damage test to
+// those walls only; other targets keep the attack rule above (S-286). BFME2: the decomp's CommandXlat.cpp evaluateContextCommand (RVA 0x429E11, tier B).
 
 #pragma once
 
@@ -74,6 +79,10 @@ private:
 	bool selectionCanAttack();
 	bool selectionCanSetRallyPoint();
 	bool objectCanAttack(Object &obj);
+	// some selected object (or a member of a selected horde) has a weapon that damages the victim (WeaponSet::getAbleToUseWeaponAgainstTarget RW 0x6C8652's
+	// victim loop): false is RotWK's INVALID_SHOT
+	bool selectionCanDamage(Object &victim);
+	bool objectCanDamage(Object &obj, Object &victim);
 	int issueMove(Object *target, const Coord3D *pos, EvaluateType type);
 	// lane FACT-C: RW 0x81E147 (issueSpecialPowerCommand) and the GUI command branch of RW 0x81E60B (evaluateContextCommand) that calls it
 	int issueSpecialPower(const CommandButton &command, Object *target, const Coord3D *pos, EvaluateType type);

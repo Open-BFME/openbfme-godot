@@ -57,6 +57,11 @@ struct LobbyStart
 	int spectatorDelay = 0;
 	// lane CHAT-1: the slots the lobby's moderators muted (the START's "chatMuted", bit per slot): their in-game chat lines are dropped (Network)
 	std::uint32_t chatMutedMask = 0;
+	// lane ONLINE-3 (S-3900): an online game holds a dropped player for a rejoin (NetworkConfig::holdForRejoin); LAN hands it over at once (retail).
+	// WOTR2 S-4075: a War of the Ring holds no one, on its map or in one of its battles: RotWK 2.01 has no reconnect (a dropped player is gone for good,
+	// ConnectionManager::disconnectPlayer RW 0x8D57D8; no rejoin command in the NetCommandType list RW 0x989449; the war's live-human count RW 0x6B5E3E
+	// skips a gone player), and the strategic state cannot be caught up from a relay log, so an online war drop is retail's hand-over at once
+	bool holdsForRejoin() const { return online && !battleUsesWarSlots && !game.game.warOfTheRing(); }
 };
 
 namespace LANLobby

@@ -2,6 +2,7 @@
 // See GodotAptPlayer.h.
 
 #include "GodotDevice/GodotAptPlayer.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "Common/BuildVersion.h"
 #include "Common/PathIO.h"
 #include "Common/GameEdition.h"
@@ -1476,6 +1477,21 @@ void AptMenuPlayer::set_show_placeholders(bool show)
 void AptMenuPlayer::_ready()
 {
 	set_process(m_autoProcess && m_booted);
+	m->view3d.syncVisibility();
+}
+
+void AptMenuPlayer::_notification(int what)
+{
+	if (what == NOTIFICATION_VISIBILITY_CHANGED || what == NOTIFICATION_ENTER_TREE || what == NOTIFICATION_EXIT_TREE)
+	{
+		m->view3d.syncVisibility(what == NOTIFICATION_EXIT_TREE);
+		if (what != NOTIFICATION_EXIT_TREE && is_inside_tree() && is_visible_in_tree())
+		{
+			// Reveal can happen after this frame's player/instancer process callbacks. Populate the
+			// retained scene now so its first enabled viewport frame uses the current APT pose.
+			m->view3d.advance();
+		}
+	}
 }
 
 void AptMenuPlayer::_process(double delta)
@@ -2805,8 +2821,10 @@ Dictionary AptMenuPlayer::openbfme_page_state() const
 		rd["value"] = row.value;
 		rd["enabled"] = row.enabled;
 		rd["items"] = (int)row.items.size();
-		static const char *const kKinds[] = { "section", "choice", "check", "slider", "text", "entry" };
-		rd["kind"] = kKinds[(int)row.kind]; // lane OPTS-6
+		// lane OPTS-6: every OpenBFMEPageRow::Kind has its name (a page with a button row read past the table: an out-of-bounds read, a crash on Windows)
+		static const char *const kKinds[] = { "section", "choice", "check", "slider", "text", "entry", "button" };
+		static_assert(sizeof(kKinds) / sizeof(kKinds[0]) == (std::size_t)OpenBFMEPageRow::Kind::Button + 1, "a name for every row kind");
+		rd["kind"] = kKinds[(int)row.kind];
 		rd["min"] = row.minValue;
 		rd["max"] = row.maxValue;
 		// lane OPTS-5: the label's text and room, the help line and the value text (the checks measure the label, read the help)
@@ -4051,6 +4069,13 @@ Vector2 AptMenuPlayer::get_stage_size() const
 
 void AptMenuPlayer::clearCanvas()
 {
+	m->view3d.beginBuild();
+	m->view3d.endBuild(); // no retained View3D placeholder remains, including an empty movie stack
+	if (m->nativeHook)
+	{
+		m->nativeHook->beginCanvas();
+		m->nativeHook->endCanvas(); // no retained placeholder uses the hook's offscreen resources now
+	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!rs)
 	{
@@ -4134,6 +4159,7 @@ void AptMenuPlayer::freeItemPool()
 
 void AptMenuPlayer::render(bool force)
 {
+	m->view3d.syncVisibility(); // visibility can change without dirtying the retained canvas
 	if (!m_booted)
 	{
 		return;
@@ -4237,6 +4263,10 @@ void AptMenuPlayer::render(bool force)
 		plan = AptCanvasPlanRedraw(m->list, segments, m->drawnList, drawn);
 		sameShape = !plan.full;
 	}
+	if (m->nativeHook)
+	{
+		m->nativeHook->beginCanvas();
+	}
 	const bool unchanged = sameShape && segments.size() == m->segments.size() &&
 		std::all_of(plan.same.begin(), plan.same.end(), [](bool same) { return same; });
 	if (unchanged)
@@ -4273,6 +4303,10 @@ void AptMenuPlayer::render(bool force)
 		all.old.assign(m->segments.size(), -1);
 		all.same.assign(m->segments.size(), false);
 		countLevels(all);
+	}
+	if (m->nativeHook)
+	{
+		m->nativeHook->endCanvas();
 	}
 	std::uint64_t t3 = time->get_ticks_usec();
 	m->listUs += t1 - t0;
@@ -5078,7 +5112,7 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 							if (material.is_null())
 							{
 								Ref<Shader> shader; shader.instantiate();
-								shader->set_code(String(aptImageModeShader(mode).c_str()));
+								SetShaderCode(shader.ptr(), String(aptImageModeShader(mode).c_str()), String("apt image mode ") + String(modeText.c_str()));
 								material.instantiate(); material->set_shader(shader);
 							}
 							rs->canvas_item_set_material(item, material->get_rid());

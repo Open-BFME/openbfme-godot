@@ -23,6 +23,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -106,6 +107,7 @@ struct DrawBatch
 	std::vector<MeshVertex> vertices;
 	std::vector<std::uint32_t> indices;
 	bool ribbon = false;       ///< a Streak / Lightning strip (cull enabled; the others draw both faces)
+	bool culled = false;       ///< lane GPUPERF-3: not built, every particle outside the view (setVisibilityTest); kept in the order, drawn as nothing
 };
 
 class ParticleDrawBuilder
@@ -120,6 +122,14 @@ public:
 
 	// Draw-side acceptance-stop lines (S-194 smudge, S-195 drawable particles).
 	std::vector<std::string> unverified() const { return m_unverified; }
+
+	// lane GPUPERF-3 (presentation only): `test(lo, hi)` says whether a SAGE-space box can be seen (any camera that draws the batches). With a test
+	// set, a CPU-built system (DefaultDraw sprites, QuadDraw, ButterflyDraw, StreakDraw) whose visible particles' box, grown by three times the
+	// largest particle size (every corner its modules build lies within that), cannot be seen is not built: its batch comes back `culled` and empty,
+	// in its place in the order (a batch the device does not merge across). GpuDraw (the shader moves the particles) and LightningDraw (its re-rolls
+	// draw from the render stream) are always built. The test may be called from the client job pool's threads at once.
+	using VisibilityTest = std::function<bool(const float lo[3], const float hi[3])>;
+	void setVisibilityTest(VisibilityTest test) { m_visible = std::move(test); }
 
 	static std::uint8_t angleByte(float angle);
 
@@ -139,6 +149,7 @@ private:
 	void note(const char *code, const char *text);
 
 	W3DDrawRandom &m_render;
+	VisibilityTest m_visible; ///< lane GPUPERF-3
 	std::map<ParticleSystemID, LightningState> m_lightning;
 	std::vector<std::string> m_unverified;
 };

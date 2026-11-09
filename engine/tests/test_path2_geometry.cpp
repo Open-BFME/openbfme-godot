@@ -196,3 +196,36 @@ TEST_CASE("path2 geometry: the footprint size of a mobile unit reads the multi-s
 	unit.geometry.shapes.push_back(round(PATHFIND_GEOMETRY_SPHERE, 4.0f, 10.0f, 15.0f, 0.0f));
 	CHECK(pf.footprintSize(&unit) == 4);
 }
+
+TEST_CASE("path2 geometry: structure melee reach scans target obstacle rings from the requested position")
+{
+	SyntheticTerrain terrain(100, 100);
+	TestWorld world;
+	Pathfinder pf(testConfig(), &world);
+	pf.newMap(terrain);
+	TestObject unit, target, unrelated;
+	unit.id = 1;
+	unit.pos = Coord3D{300, 300, 0};
+	unit.diameter = 40;
+	target.id = 2;
+	target.structure = true;
+	target.pos = Coord3D{355, 300, 0};
+	target.geometry.type = PATHFIND_GEOMETRY_BOX;
+	target.geometry.majorRadius = 1;
+	target.geometry.minorRadius = 1;
+	unrelated = target;
+	unrelated.id = 3;
+	unrelated.pos.x = 335;
+	world.objects[target.id] = &target;
+	world.objects[unrelated.id] = &unrelated;
+	pf.addObjectToPathfindMap(target);
+	pf.addObjectToPathfindMap(unrelated);
+	REQUIRE(pf.cellAt(35, 30)->isObstaclePresent(target.id));
+	// Four-cell unit at cell 30: low 28, first ring right edge 32, next 33.
+	// The unrelated obstacle at 33 is reachable, the target at 35 is not.
+	CHECK(pf.meleeStructureReach(unit, unit.pos, unrelated, 1));
+	CHECK_FALSE(pf.meleeStructureReach(unit, unit.pos, target, 1));
+	CHECK(pf.meleeStructureReach(unit, Coord3D{320, 300, 0}, target, 1));
+	CHECK_FALSE(pf.meleeStructureReach(unit, Coord3D{320, 300, 0}, target, 0));
+	CHECK(pf.meleeStructureReach(unit, Coord3D{330, 300, 0}, target, 0));
+}

@@ -151,10 +151,26 @@ size_t HudInput::update()
 	// RW 0x7967A7, whose client half is InGameUI::deselectDrawable RW 0x6257E5; INFERENCE: the mirror follows the SOLD status set in the same call. Not
 	// UNSELECTABLE alone: an unpacked castle is UNSELECTABLE and RW deselects nothing there)
 	static const int sold = ObjectTemplateInfoBuilder::objectStatusIndex("SOLD");
+	static const int unselectable = ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
 	std::vector<ObjectID> gone;
 	for (ObjectID id : m_ui.selected())
 	{
 		Object *o = m_logic.findObjectByID(id);
+		// Both editions: entering a construction site first calls InGameUI::deselectDrawable (RW 0x88C51B;
+		// BFME2 0x489256, DozerAIUpdateCtor.cpp::Rva00489256Do), then hides the porter. Mirror that call here
+		// before translating more input. UNSELECTABLE alone must not remove an unpacked castle (see above).
+		if (o && !o->isInWorld() && o->isKindOfName("DOZER") && unselectable >= 0 && o->testStatus((unsigned)unselectable))
+		{
+			// The logic must lose the porter before commands derived from input already queued this client frame.
+			m_stream.prepend(MSG_REMOVE_FROM_SELECTED_GROUP).appendObjectID(id);
+			if (m_ui.placeBuildSource() == id)
+			{
+				m_ui.setGUICommand(nullptr);
+				m_ui.placeBuildAvailable(std::string(), INVALID_ID);
+			}
+			gone.push_back(id);
+			continue;
+		}
 		// An occupied plot hidden by Construction::constructOnPlot leaves the client selection, closing its command menu.
 		if (!o || o->isDestroyed() || (sold >= 0 && o->testStatus((unsigned)sold)) ||
 			(o->isDrawableHidden() &&
@@ -382,6 +398,7 @@ std::vector<std::string> HudInput::acceptanceStops()
 				  "not ported: the restricted-area code 8 (RW 0x707141), its shadow (SHADOW_VOLUME; translucent ghosts cast no shadow map, S-3304), RotWK's own "
 				  "tint lighting (the donor is ZH's), the bib quad's own buffer (ZH's W3DBibBuffer)");
 	out.push_back(FormationPlacement::stopLine());
+	out.push_back("[S-5902] crate context clicks move to the crate before the enemy attack test unless force-attack is held; this input adaptation is not verified against RotWK evaluateContextCommand RW 0x81E60B");
 	return out;
 }
 

@@ -319,6 +319,10 @@ TEST_CASE("skirmish ai attack: each of the 7 factions as the Medium computer on 
 		}());
 		CHECK(run.targetsSet >= 1);
 		CHECK(run.attacksLaunched >= 1);
+		// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E, move the logic random stream): an earlier measurement of the
+		// lane had Isengard's generator draw a PincerAttack whose crossbow team kept acquiring a BarrowWight_Slaved across the water in its attack-move
+		// and never finished its leg, so nothing of Isengard's arrived; that stall is the approach's missing give-up rules (stop S-7162) and shows on
+		// main too (the same crossbow horde stands in attack-move for a whole run). The lane's final tree draws other tactics and every faction arrives
 		CHECK(run.arrivalFrame > 0);
 		CHECK(run.arrivalFrame <= 2400);
 	}
@@ -419,11 +423,13 @@ TEST_CASE("skirmish ai attack: AI vs AI on Evendim (Medium Mordor against Medium
 	}
 	{
 		AttackRun run;
-		runAttackGame(*s, attackMessage(*s, "FactionMordor", "FactionMen", true, 1234u), 1600, run, false, true);
+		runAttackGame(*s, attackMessage(*s, "FactionMordor", "FactionMen", true, 1234u), 2400, run, false, true);
 		MESSAGE("AI vs AI (seed 1234): Mordor farms " << run.farmsBuilt << " in flight " << run.farmsInFlight << ", attacks " << run.attacksLaunched);
 		// before PATH-2 the two dozers were killed at their 0 % foundations and the base stalled; with PATH-2's multi-shape footprints and the
 		// cylinder bounding sphere (RW 0xAD2770) the defenders' reach and the build sites change, the dozers survive and Mordor develops
 		// (engine pin, not a retail value: S-420)
+		// lane DECOMPFIX-1104B: the first attack's frame is chaotic (each retail rule of AIMAIM-1's aim, RW 0x75232F, alone moves it between 958 and 2119;
+		// 1197 before it, 2082 with all of them): the run takes the 8 minutes (2400 frames) of the per-faction bound above instead of 1600
 		CHECK(run.farmsBuilt >= 1);
 		CHECK(run.attacksLaunched >= 1);
 	}

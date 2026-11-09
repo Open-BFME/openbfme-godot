@@ -42,7 +42,10 @@ AptSpellStore::AptSpellStore(WindowManager &windows, Shell &shell) : AptScreen(w
 	}
 	registerCommand("AptSpellStore::OnInitialized", [this](const std::string &) { // RW 0x82285B
 		m_initialized = true;
-		m_layout = -1;
+		// lane B2SPELL-1: RW 0x82288A writes 0 ("_campaignGood"), as the constructor does (RW 0x82379A: + 0x2A4 = 0): a good campaign player's store
+		// keeps the movie's own layout and is never sent SetLayout. The port's -1 sent SetLayout("_campaignGood"), after which the movie stood on the
+		// "_campaignEvil" frames with every Spell<n> clip stopped mid fade-in, buttonless: the owner's blank, unclickable powers (10-30)
+		m_layout = 0;
 		m_points = -1;
 		m_help = -1;
 		m_helpShown = false;

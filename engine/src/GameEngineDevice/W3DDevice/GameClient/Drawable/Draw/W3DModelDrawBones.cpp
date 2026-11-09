@@ -157,20 +157,18 @@ std::vector<int> W3DSubObjectsUnderSubObject(const RenderObjPrototype &proto, in
 		{
 			continue;
 		}
-		// the ZH loop: walk up from the sub object's bone to the root; a hit on boneIdx makes it a child
+		// RW 0x4B2964: walk up from the sub object's bone to the root; a hit on boneIdx makes it a child. Before every step the walk
+		// stops (not a child) when the bone is < 1 or not below the pivot count, so a sub object an HLOD puts on a bone outside its
+		// hierarchy (Edain's 'map edain isengard cursed') is never looked up in the pivot array
 		int parent = proto.SubObjects[(size_t)i].BoneIndex;
 		bool isChild = false;
 		int guard = 0;
-		while (parent != 0 && guard++ <= proto.Tree->Num_Pivots())
+		while (parent >= 1 && parent < proto.Tree->Num_Pivots() && guard++ <= proto.Tree->Num_Pivots())
 		{
 			parent = proto.Tree->Get_Pivot(parent).ParentIdx;
 			if (parent == boneIdx)
 			{
 				isChild = true;
-				break;
-			}
-			if (parent < 0)
-			{
 				break;
 			}
 		}

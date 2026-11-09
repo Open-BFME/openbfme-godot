@@ -433,14 +433,17 @@ TEST_CASE("skirmish setup: the map list is ordered by player count then display 
 	text.mapLabels["maps\\alpha\\map.str|Map:Descmaps/alpha/alpha.map"] = u"First line\nsecond line";
 	CHECK(setup.mapDescription(src.map[1]) == u"First line\nsecond line");
 	CHECK(setup.mapDescriptionFirstLine(src.map[1]) == u"First line");
-	// two maps that show the same name collapse to the last (std::set + filenameMap of populateMapListboxNoReset)
+	// lane EDAINMAPS-2: RotWK (RW 0x703C2E / 0x7017F4) lists maps that show the same name each (the ZH std::set collapse let Edain's non-multiplayer
+	// "map edain wor evendim" hide "map mp evendim"); a scenario map is not listed (filter bit 0x10)
 	FakeSetup dup;
 	dup.map.clear();
 	dup.map.push_back(FakeSetup::mapEntry("maps/one/one.map", "Same", 2, true, 1));
-	dup.map.push_back(FakeSetup::mapEntry("maps/two/two.map", "Same", 2, true, 2));
+	dup.map.push_back(FakeSetup::mapEntry("maps/two/two.map", "Same", 2, false, 2));
+	dup.map.push_back(FakeSetup::mapEntry("maps/three/three.map", "Same", 2, true, 3));
+	dup.map.push_back(FakeSetup::mapEntry("maps/four/four.map", "Same", 2, true, 4));
+	dup.map.back().isScenarioMP = true;
 	SkirmishGameSetup dupSetup(dup, &text);
-	REQUIRE(dupSetup.listedMaps().size() == 1);
-	CHECK(dupSetup.listedMaps()[0] == 1);
+	CHECK(dupSetup.listedMaps() == std::vector<int>{ 0, 2 });
 }
 
 TEST_CASE("skirmish profiles: the in-memory store compares names without case, the current profile moves on a delete")

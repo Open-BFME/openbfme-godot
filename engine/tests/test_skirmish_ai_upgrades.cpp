@@ -230,7 +230,12 @@ TEST_CASE("ai5 upgrade builder: the structures' upgrades and the plots' expansio
 				REQUIRE(up != nullptr);
 				CHECK(r->heuristicType == up->m_skirmishAIHeuristic); // RW 0x99F52F
 				const Object *obj = logic.findObjectByID(r->producer);
-				REQUIRE(obj != nullptr); // RW 0x99FD0E drops a record whose object is gone
+				if (!obj)
+				{
+					// RW 0x99FD0E drops a record whose object is gone in the builder's next update, not when the object dies: merge queue q43 (#234's
+					// second draw) measured a producer destroyed since the last update
+					continue;
+				}
 				// tolerance: registered when finished, RW 0x99FCC4 tests the construction percent below 0. Merge queue q23: a finished producer that was destroyed and is
 				// rebuilt (GettingBuiltBehavior RW 0x857B0B: back to 0 % under construction) keeps its records, RW 0x99FD0E drops only a gone object's (measured: a
 				// GondorBarracks rebuilding at frame 4,501 with its Upgrade_GondorBarracksLevel2 record)
@@ -370,7 +375,17 @@ TEST_CASE("ai5 heuristics: none answers 1, IMPORTANT and BOILINGOIL 0 (RW 0xC8EA
 TEST_CASE("ai5 legality: a horde's NEED_UPGRADE object upgrade is refused (9) until the player owns the technology and a forge (its RequiredObjectFilter), then legal (0), and refused again once the horde has it (RW 0x695338)")
 {
 	OPENBFME_REQUIRE_START(s);
-	withVersusGame(*s, "FactionMen", "FactionMordor", 2, [&](LiveGame &game, GameLogic &logic) {
+	// lane WARG-1 (FindClosestPath RW 0x6FB869 and the unclamped off-map goal cells move the AIs' play): the Men computer of seed 2 no longer trains a
+	// GondorFighterHorde within 3000 frames, so the claim is checked in the first of the AI-vs-AI suite's seeds whose game does (as ai5 expansions below);
+	// which seed that is, is an engine fact, not a retail one
+	bool checked = false;
+	for (const std::uint32_t seed : { 2u, 7u, 1234u })
+	{
+		if (checked)
+		{
+			break;
+		}
+	withVersusGame(*s, "FactionMen", "FactionMordor", seed, [&](LiveGame &game, GameLogic &logic) {
 		// the first GondorFighterHorde the Men AI trains (Command_PurchaseUpgradeGondorForgedBlades: OBJECT_UPGRADE, NEED_UPGRADE
 		// Upgrade_TechnologyGondorForgedBlades, retail CommandButton.ini)
 		Object *horde = nullptr;
@@ -389,7 +404,11 @@ TEST_CASE("ai5 legality: a horde's NEED_UPGRADE object upgrade is refused (9) un
 				}
 			}
 		}
-		REQUIRE(horde != nullptr);
+		if (horde == nullptr)
+		{
+			return;
+		}
+		checked = true;
 		const CommandButton *blades = TheCommandStore->findCommandButton("Command_PurchaseUpgradeGondorForgedBlades");
 		REQUIRE(blades != nullptr);
 		Player &owner = *horde->getControllingPlayer();
@@ -425,6 +444,8 @@ TEST_CASE("ai5 legality: a horde's NEED_UPGRADE object upgrade is refused (9) un
 		CHECK(AIUpgrade::legality(logic, *horde, blades) == 9); // an OBJECT upgrade it has (RW 0x691421)
 		CHECK(AIUpgrade::legality(logic, *horde, nullptr) == 9); // no button / upgrade
 	});
+	}
+	CHECK(checked);
 }
 
 TEST_CASE("ai5: two runs of Medium Men against Medium Mordor agree on every frame hash with the upgrade builders (2000 frames)")

@@ -3,7 +3,7 @@
 // GameSorter (lane MENUWORK-1): the sort order of a lobby's game list (LanLobby.apt's list headers).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; the decompile's files are byte-matched to RotWK, tier A):
-//   * the constructor RW 0x9888B7 (BFME2 0x980842; GameNetwork/GameSorterDestructor.cpp) registers GameSorter::OnSortStatus, OnSortName, OnSortMap,
+//   * the constructor RW 0x9888B7 (BFME2 0x980842; GameNetwork/GameSorter.cpp) registers GameSorter::OnSortStatus, OnSortName, OnSortMap,
 //     OnSortPlayers and OnSortPing and starts with the primary key 4 (players), the secondary key 8 (ping) and the status cycle 0; RotWK's
 //     AptLanLobby has one as a member (decompile AptLanLobbyDestructor.cpp), as the online custom match screen does;
 //   * the commands select Name 1, Map 2, Players 4, Ping 8, Status 16 through RW 0x9881DE (BFME2 0x980182, Rva00580172.cpp): the same key again

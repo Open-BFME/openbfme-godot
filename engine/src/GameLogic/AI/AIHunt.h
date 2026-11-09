@@ -83,6 +83,9 @@ private:
 // the stop line of S-1188
 const char *huntStopLine();
 
+// the hunt machine's idle state (RW 0x741812(machine, 1)): it does not look for targets; lane WARG-1: the attack-follow machine's state 0 too (RW 0x74E083)
+std::unique_ptr<AIState> makeHuntIdleState(AIStateMachine &m);
+
 // lane BFME2CAMP1: the attack-area state (TEAM_ATTACK_AREA / NAMED_ATTACK_AREA: AI command 0x23).
 // TARGET FACTS (RotWK game.dat, caveat S-001; DONOR ZH AIStates.cpp AIAttackAreaState):
 //   * privateAttackArea RW 0x66C24E: nothing (-1) for an object that is not mobile (RW 0x690E97) or a PROJECTILE (template + 0x10B bit 1); else AI + 0x6C = the

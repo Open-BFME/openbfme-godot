@@ -415,6 +415,8 @@ public:
 	virtual unsigned logicFrame() const = 0;                 // TheGameLogic+0x40
 	virtual bool containerAllowsBackingUp() const = 0;       // RW 0x5E6530-0x5E655A (HORDE_MEMBER inside a container whose template flag +0xD8 is set)
 	virtual float groundHeightAt(float x, float y) const = 0; // terrain height for NO_Z_MOTIVE_FORCE
+	// lane WALL-4: the object's layer is the ramp's (0x10) or a raised walkway's (2 .. 15; RW 0x5E2F24), for NO_Z_MOTIVE_FORCE's height hold (RW 0x5E77C2)
+	virtual bool isOnRampOrRaisedLayer() const { return false; }
 	virtual LocomotorPath *getPath() = 0;                    // RW 0x5E3884
 	// obj+0x94 ObjectStatus bits and obj+0x10C model condition bits (by index into the registries).
 	virtual bool testObjectStatus(int bit) const = 0;
@@ -495,7 +497,8 @@ enum LocomotorFlags
 	LOCOMOTOR_FLAG_BIT2 = 0x04,         // cleared by the dispatcher on entry (RW 0x5E8875); set by maintainCurrentPosition with the held position (RW 0x5E7D2A, lane EXIT-1)
 	LOCOMOTOR_FLAG_NO_BRAKE = 0x10,     // moveForward does not start braking while it is set (setter not located)
 	LOCOMOTOR_FLAG_OVER_WATER = 0x20,   // the HOVER mover's last water test (RW 0x5E745D, ZH OVER_WATER; lane SHIP-1)
-	LOCOMOTOR_FLAG_BACKING_UP = 0x80    // Legs / Wheels / HORDE movers
+	LOCOMOTOR_FLAG_BACKING_UP = 0x80,   // Legs / Wheels / HORDE movers
+	LOCOMOTOR_FLAG_CLOSE_ENOUGH_DIST_3D = 0x400 // ZH CLOSE_ENOUGH_DIST_3D: the constructor's RW 0x5E2CC1(10, template + 0xC8 CloseEnoughDist3D) (lane LOCODIST-1)
 };
 
 class Locomotor
@@ -509,6 +512,7 @@ public:
 	// ---- getters (per-frame units) ----
 	float getMaxSpeedForCondition(const LocomotorHost &host) const; // RW 0x5E3F49
 	float getMaxAcceleration(const LocomotorHost &host) const;      // RW 0x5E40AD
+	float getMaxAccelerationForSpeed(float maxSpeed) const;       // getMaxAcceleration with getMaxSpeedForCondition(host) given (a caller needing both)
 	float getBraking(const LocomotorHost &host) const;              // RW 0x5E40F2
 	float getMaxTurnRate(const LocomotorHost &host) const;          // RW 0x5E372D
 	bool isCharging(const LocomotorHost &host) const;               // RW 0x5E3EF7

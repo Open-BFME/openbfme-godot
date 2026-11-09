@@ -91,7 +91,8 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 		"(a second press reverses) is OpenBFME's (RotWK's sorter RW 0x988BB5 not read)",
 		"[S-4074] online staging room: the states between the retail facts (the update's moves, the GameSpy NAT negotiation, the countdown) are OpenBFME's: "
 		"the host's Play Game asks the lobby for the START (no relay: refused, told to the player); loading a saved skirmish is not available",
-		"[S-4075] online War of the Ring: strategic play, relay battles and saved-war resume work; rejoining a dropped strategic map and playing its phase replay are not ported",
+		"[S-4075] online War of the Ring: strategic play, relay battles and saved-war resume work; a dropped player is out of the war as in RotWK (no rejoin); "
+		"its phase replays are not played back and its spectators are refused",
 		"[S-4870] Quick Match (the TOURNAMENT page): the platform's matchmaker (same mode and size, oldest first): Ladder = the size, Army, Color; "
 		"ConnectionSpeed disabled, Widen Search says the search is as wide as it gets",
 		"[S-4871] Quick Match room: the match's host makes a private lobby room by the match's room code on an official map for that many players "
@@ -1440,19 +1441,22 @@ void AptOnlineShell::fillGamesList()
 	// lane ONLINE-4 (S-4077): the player's own running games first (REJOIN), then the lobby's games: open ones (Join Game) and running ones of others
 	// (WATCH: a spectator START)
 	// lane ONLINEUX-1: a game the player left is neither theirs to rejoin nor to watch (the lobby refuses a player of a game as its spectator): not listed
+	// WOTR2 S-4075: the player's own running war is neither (RotWK has no reconnect: the lobby refuses its rejoin, and a player of it never watches it)
 	std::vector<OnlineLobbyClient::Listing> games;
 	for (const OnlineLobbyClient::Listing &g : m_client->mine())
 	{
-		if (!gameLeft(g.id) && g.gameMode == (m_currentName == "OnlineStrategic" ? 1 : 0))
+		if (!gameLeft(g.id) && g.gameMode == 0 && m_currentName != "OnlineStrategic")
 		{
 			games.push_back(g);
 			games.back().state = "rejoin";
 		}
 	}
+	const auto isMine = [&](const std::string &id) {
+		return std::any_of(m_client->mine().begin(), m_client->mine().end(), [&](const OnlineLobbyClient::Listing &m) { return m.id == id; });
+	};
 	for (const OnlineLobbyClient::Listing &g : m_client->games())
 	{
-		if (!gameLeft(g.id) && g.gameMode == (m_currentName == "OnlineStrategic" ? 1 : 0)
-			&& std::none_of(games.begin(), games.end(), [&](const OnlineLobbyClient::Listing &m) { return m.id == g.id; }))
+		if (!gameLeft(g.id) && !isMine(g.id) && g.gameMode == (m_currentName == "OnlineStrategic" ? 1 : 0))
 		{
 			games.push_back(g);
 			games.back().state = g.state == "started" ? "watch" : "join";
@@ -1791,7 +1795,8 @@ void AptOnlineShell::offerRejoin()
 	}
 	// lane ONLINEUX-1: a game this player left (finished, forfeited, quit) is not theirs to rejoin, even where the lobby still lists it (a lobby
 	// before ONLINEUX-1 keeps a started game's slot after its player left)
-	const auto mine = std::find_if(m_client->mine().begin(), m_client->mine().end(), [&](const OnlineLobbyClient::Listing &l) { return !gameLeft(l.id); });
+	// WOTR2 S-4075: a running War of the Ring is never offered (RotWK has no reconnect; the lobby refuses its rejoin)
+	const auto mine = std::find_if(m_client->mine().begin(), m_client->mine().end(), [&](const OnlineLobbyClient::Listing &l) { return !gameLeft(l.id) && l.gameMode == 0; });
 	if (mine == m_client->mine().end())
 	{
 		return;

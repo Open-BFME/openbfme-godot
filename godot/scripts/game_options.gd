@@ -95,7 +95,7 @@ func _ready() -> void:
 	_gamma_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_gamma_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	var shader := Shader.new()
-	shader.code = """shader_type canvas_item;
+	var code := """shader_type canvas_item;
 uniform sampler2D screen_tex : hint_screen_texture, filter_nearest;
 uniform float inv_gamma = 1.0;
 void fragment() {
@@ -104,6 +104,8 @@ void fragment() {
 	COLOR = vec4(pow(i / 256.0, vec3(inv_gamma)), 1.0);
 }
 """
+	ShaderBudget.check(code, "game_options gamma")
+	shader.code = code
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 	_gamma_rect.material = mat

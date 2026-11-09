@@ -126,6 +126,7 @@ std::string W3DShaderKey::Id() const
 	if (Fog) id += "_fog" + std::to_string(Fog); // lane RENDER-4
 	if (AlphaOverride) id += "_ao"; // lane BUILD-5 r3
 	if (OcclusionPass) id += "_occl" + std::to_string(OcclusionPass); // lane OCCLUDE-1
+	if (SelectionDecals) id += "_sel"; // lane SELWALL-1
 	return id;
 }
 
@@ -173,6 +174,8 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	// without applying Godot's lighting a second time. Other surfaces keep the unshaded path.
 	// Port of PR #136 onto OCCLUDE-1: the occlusion passes stay unshaded (they draw only a mark or a flat colour and return early).
 	const bool shadowReceiver = !k.OcclusionPass && k.Blend == W3D_GODOT_BLEND_OPAQUE && !alphaOverride;
+	// lane SELWALL-1: only an opaque surface of its own (an occlusion pass or a translucent drawable's surface draws no decal)
+	const bool selectionDecals = k.SelectionDecals && shadowReceiver;
 	if (k.OcclusionPass)
 	{
 		// lane OCCLUDE-1: drawn in the transparent pass after the opaque scene; writes no depth
@@ -204,6 +207,8 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	}
 	if (shadowReceiver) line("#include \"res://shaders/object_shadow.gdshaderinc\"");
 	if (shadowReceiver) line("instance uniform bool w3d_receive_shadows : instance_index(1) = false;");
+	if (selectionDecals) line("#include \"res://shaders/selection_decals.gdshaderinc\""); // lane SELWALL-1
+	if (selectionDecals && shadowReceiver) line("varying vec3 v_shadow_over;"); // lane HERORING-1: the alpha decals over the shadowed surface (light())
 
 	// ---- uniforms ----
 	line("uniform sampler2D w3d_palette : filter_nearest, repeat_disable;");
@@ -228,6 +233,18 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("global uniform mat3 w3d_lcol_inf;");
 	line("global uniform mat3 w3d_ldir_inf;");
 	line("global uniform float w3d_fogged_frac;"); // lane VISUAL-2: RW 0x46DFD0 FogAlpha / ClearAlpha
+	// lane FEAT-BLDFX-1: the dynamic light pool's contribution to the object lighting (TARGET RW 0x5DFAA3; DONOR BFME2 0x4423C / 0x6DE3D; the retail dynamic lights light
+	// objects, not terrain). xyz = the light's position in VIEW space (the device passes it there), w = its current far attenuation end (0 = off);
+	// the second vec4 is its current colour (the On_Frame_Update scale already applied). Four lights: the retail pool grows, but no retail FXList
+	// keeps more than a few pulses alive at once (the rest are reported, stop S-687).
+	line("global uniform vec4 w3d_pulse0;");
+	line("global uniform vec4 w3d_pulse0_col;");
+	line("global uniform vec4 w3d_pulse1;");
+	line("global uniform vec4 w3d_pulse1_col;");
+	line("global uniform vec4 w3d_pulse2;");
+	line("global uniform vec4 w3d_pulse2_col;");
+	line("global uniform vec4 w3d_pulse3;");
+	line("global uniform vec4 w3d_pulse3_col;");
 	if (k.OcclusionPass == W3D_OCCLUSION_PASS_COLOR)
 	{
 		// lane OCCLUDE-1: the players' occluded colours by slot (0xAARRGGBB as RGBA8 texels, RTS3DSceneOcclusion::occludedColor) and the switch
@@ -266,9 +283,13 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	}
 	// Varyings each take a location; Intel Arc (Mesa ANV) offers Forward+ 29 for normal-mapped buildings, Metal 31. The two UV sets
 	// share one vec4 (the same interpolation), and the world position stays a vertex() local: only the vertex lighting reads it.
+	// The smooth varyings are packed into vec4s (every varying takes one location whatever its width, as on the terrain): v_fade
+	// rides in w of the view position, and the six tangent-space Fx light vectors share five vec4s. The macros keep every read and
+	// write of the maths identical; the interpolation is smooth throughout, so the interpolated values are the same.
 	line("varying vec4 v_uv;"); // xy UV, zw UV2
-	line("varying float v_fade;");
-	line("varying vec3 v_vpos;");
+	line("varying vec4 v_pack_pos; // xyz: the view-space position (v_vpos), w: the instance fade (v_fade)");
+	line("#define v_vpos v_pack_pos.xyz");
+	line("#define v_fade v_pack_pos.w");
 	line("varying vec3 v_vnrm;");
 	line("varying vec3 v_wnrm;");
 	line("varying vec3 v_wview;");
@@ -277,12 +298,20 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	if (k.Fx)
 	{
 		// normalmapped.fxo vs_2_0 (blob 22) oT1..oT3 / oT4..oT6: per light the tangent-space light vector and the normalized
-		// tangent-space half vector, interpolated and used by the pixel shader WITHOUT renormalization
-		for (int i = 0; i < 3; ++i)
-		{
-			line("varying vec3 v_lt" + std::to_string(i) + ";");
-			line("varying vec3 v_ht" + std::to_string(i) + ";");
-		}
+		// tangent-space half vector, interpolated and used by the pixel shader WITHOUT renormalization. The six vec3s would take
+		// six locations; packed into five: xyz v_lt0, w v_lt1.x | xy v_lt1.yz, zw v_ht0.xy | x v_ht0.z, yzw v_lt2 |
+		// xyz v_ht1 | xyz v_ht2. The two names a swizzle cannot spell write their components directly in vertex().
+		line("varying vec4 v_light0; // xyz: v_lt0, w: v_lt1.x");
+		line("varying vec4 v_light1; // xy: v_lt1.yz, zw: v_ht0.xy");
+		line("varying vec4 v_light2; // x: v_ht0.z, yzw: v_lt2");
+		line("varying vec4 v_light3; // xyz: v_ht1");
+		line("varying vec4 v_light4; // xyz: v_ht2");
+		line("#define v_lt0 v_light0.xyz");
+		line("#define v_lt1 vec3(v_light0.w, v_light1.xy)");
+		line("#define v_lt2 v_light2.yzw");
+		line("#define v_ht0 vec3(v_light1.zw, v_light2.x)");
+		line("#define v_ht1 v_light3.xyz");
+		line("#define v_ht2 v_light4.xyz");
 	}
 	else
 	{
@@ -305,6 +334,16 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("}");
 	line("vec3 w3d_to_godot(vec3 v) { return vec3(v.x, v.z, -v.y); }");
 	line("vec3 w3d_to_linear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }");
+	// lane FEAT-BLDFX-1: one dynamic light, in view space: the retail W3DDynamicLight with FarAttenStart 1 and FarAttenEnd w (DONOR BFME2 0x4423C /
+	// 0x6DE3D). Linear far attenuation (INFERENCE, S-687) and a Lambert term against the surface normal; the caller adds it to its light sum.
+	line("vec3 w3d_dynamic_light(vec4 pulse, vec4 col, vec3 vpos, vec3 vnrm) {");
+	line("\tif (pulse.w <= 0.0) return vec3(0.0);");
+	line("\tvec3 d = pulse.xyz - vpos;");
+	line("\tfloat dl = length(d);");
+	line("\tfloat att = max(1.0 - dl / pulse.w, 0.0);");
+	line("\tif (att <= 0.0) return vec3(0.0);");
+	line("\treturn col.rgb * (att * max(dot(vnrm, d / max(dl, 1e-4)), 0.0));");
+	line("}");
 	if (k.Fog != W3DHardwareFog::FOG_DISABLE)
 	{
 		// lane RENDER-4 (S-1651): the map's hardware fog (globals w3d_fog / w3d_fog_color, W3DHardwareFog.h)
@@ -440,8 +479,25 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		for (int i = 0; i < 3; ++i)
 		{
 			const std::string si = std::to_string(i);
-			line("\t\tv_lt" + si + " = vec3(dot(ld[" + si + "], fx), dot(ld[" + si + "], fy), dot(ld[" + si + "], wn));");
-			line("\t\tv_ht" + si + " = normalize(vec3(dot(vv + ld[" + si + "], fx), dot(vv + ld[" + si + "], fy), dot(vv + ld[" + si + "], wn)));");
+			if (i == 1)
+			{
+				// v_lt1 is not contiguous in its two packs: write the components (same values as the vec3 assignment)
+				line("\t\tv_light0.w = dot(ld[1], fx); v_light1.xy = vec2(dot(ld[1], fy), dot(ld[1], wn));");
+			}
+			else
+			{
+				line("\t\tv_lt" + si + " = vec3(dot(ld[" + si + "], fx), dot(ld[" + si + "], fy), dot(ld[" + si + "], wn));");
+			}
+			if (i == 0)
+			{
+				// v_ht0 is not contiguous either (v_light1.zw + v_light2.x)
+				line("\t\tvec3 ht = normalize(vec3(dot(vv + ld[0], fx), dot(vv + ld[0], fy), dot(vv + ld[0], wn)));");
+				line("\t\tv_light1.zw = ht.xy; v_light2.x = ht.z;");
+			}
+			else
+			{
+				line("\t\tv_ht" + si + " = normalize(vec3(dot(vv + ld[" + si + "], fx), dot(vv + ld[" + si + "], fy), dot(vv + ld[" + si + "], wn)));");
+			}
 		}
 		line("\t}");
 	}
@@ -469,6 +525,11 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		// D3D9 lit clamps the power to [-127.9961, 127.9961]
 		line("\t\t\tssum += lc[i] * ((ndl > 0.0 && ndh > 0.0) ? pow(ndh, clamp(w3d_shininess, " + fmt(-W3D_LIT_POWER_LIMIT) + ", " + fmt(W3D_LIT_POWER_LIMIT) + ")) : 0.0);");
 		line("\t\t}");
+		// lane FEAT-BLDFX-1: the dynamic light pool's contribution (DONOR BFME2 0x4423C), added to the directional sum like a retail scene light
+		line("\t\tdsum += w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm);");
+		line("\t\tdsum += w3d_dynamic_light(w3d_pulse1, w3d_pulse1_col, v_vpos, v_vnrm);");
+		line("\t\tdsum += w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm);");
+		line("\t\tdsum += w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm);");
 		line(k.HasDCG ? "\t\tvec4 vc = COLOR;" : "\t\tvec4 vc = vec4(1.0);");
 		line("\t\tv_lit0 = clamp(vec4((dsum * w3d_diffuse.rgb + amb * w3d_ambient_mat + w3d_emissive) * vc.rgb * 0.5, vc.a * w3d_diffuse.a), 0.0, 1.0);");
 		line("\t\tv_lit1 = clamp(ssum * w3d_spec_color * 0.5, 0.0, 1.0);");
@@ -596,6 +657,10 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t\tfloat sp = (ndh > 0.0 && ndl > 0.0) ? pow(ndh, w3d_shininess) : 0.0;");
 		line("\t\tcol += lc[i] * (base * ndl * on + w3d_spec_color * sp);");
 		line("\t}");
+		// lane FEAT-BLDFX-1: the dynamic light pool's contribution on the normal-mapped path (DONOR BFME2 0x4423C), diffuse like the
+		// directional lights above: times the surface colour, so a black texel stays black
+		line("\tcol += base * (w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm) + w3d_dynamic_light(w3d_pulse1, w3d_pulse1_col, v_vpos, v_vnrm)");
+		line("\t\t+ w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm) + w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm));");
 		line("\tcur = vec4(col, t0.a);");
 	}
 	else if (k.SimpleFx)
@@ -736,6 +801,26 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	{
 		line("\tALBEDO = clamp(cur.rgb, 0.0, 1.0);");
 	}
+	if (selectionDecals)
+	{
+		// lane SELWALL-1 (an opaque surface only): the merge decals at the pixel's SAGE point (Godot (x, y, z) = SAGE (x, z, -y)), over the surface's
+		// colour as on the terrain (terrain.gdshader): the decal's colour decoded the same way, the surface's own colour kept for the shadow split below
+		line("\tvec3 sel_world = (INV_VIEW_MATRIX * vec4(v_vpos, 1.0)).xyz;");
+		// only where the surface faces up (SEL_WALL_MIN_UP: the walkable top, a ramp, a stair's tread; not the wall's side faces)
+		line("\tbool sel_up = normalize(v_wnrm).y >= SEL_WALL_MIN_UP;");
+		line("\tvec3 sel_at = vec3(sel_world.x, -sel_world.z, sel_world.y);");
+		line("\tvec4 sela = sel_up ? sel_alpha_at(sel_at, true) : vec4(0.0);");
+		line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
+		line("\tvec3 sel_ground = ALBEDO;");
+		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader);
+		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows.
+		// Lane ECOCIRCLE-2: an additive decal has a == 0 and only rgb, so either share draws the pair
+		line("\tvec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);");
+		line("\tvec3 sel_over = vec3(0.0);");
+		line("\tif (sela.a > 0.0 || any(greaterThan(sela.rgb, vec3(0.0)))) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
+		line("\tALBEDO = mix(ALBEDO, w3d_to_linear(clamp(sel.rgb, 0.0, 1.0)), sel.a);");
+		line("\tfloat sel_keep = 1.0 - sel.a;");
+	}
 	switch ((W3DGodotBlend)k.Blend)
 	{
 	case W3D_GODOT_BLEND_OPAQUE:
@@ -753,16 +838,41 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	}
 	if (shadowReceiver)
 	{
-		line("\tv_shadow_color = clamp(cur.rgb, 0.0, 1.0);");
+		if (selectionDecals)
+		{
+			line("\tv_shadow_color = sel_shadow;");
+			line("\tv_shadow_over = sel_over;");
+		}
+		else
+		{
+			line("\tv_shadow_color = clamp(cur.rgb, 0.0, 1.0);");
+		}
 		line("\tfloat shadow_enabled = w3d_receive_shadows ? w3d_shadow.w : 0.0;");
-		line("\tEMISSION = ALBEDO * (1.0 - shadow_enabled);");
-		line("\tALBEDO = vec3(shadow_enabled);");
+		if (selectionDecals)
+		{
+			// lane SELWALL-1: the decal stays above the object shadows, as terrain.gdshader keeps it (only the surface's own share is shadowed)
+			line("\tEMISSION = ALBEDO - sel_ground * sel_keep * shadow_enabled;");
+			line("\tALBEDO = vec3(sel_keep * shadow_enabled);");
+		}
+		else
+		{
+			line("\tEMISSION = ALBEDO * (1.0 - shadow_enabled);");
+			line("\tALBEDO = vec3(shadow_enabled);");
+		}
 	}
 	line("}");
 	if (shadowReceiver)
 	{
 		line("void light() {");
-		line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += object_shadow_light(ATTENUATION);");
+		if (selectionDecals)
+		{
+			// lane HERORING-1: object_shadow_light with the alpha decals over the shadowed surface (as terrain.gdshader)
+			line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += shadow_to_linear(v_shadow_color * mix(w3d_shadow.rgb, vec3(1.0), ATTENUATION) + v_shadow_over);");
+		}
+		else
+		{
+			line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += object_shadow_light(ATTENUATION);");
+		}
 		line("}");
 	}
 	return c;

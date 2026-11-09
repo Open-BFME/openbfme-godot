@@ -340,6 +340,8 @@ public:
 	// the same for the pathfinder's form: `templateGeometry` (the template's, AIWorld::movementInfo) itself while no flag changed, else its copy with the
 	// object's flags and their radii (RW 0xAD3520 ends with RW 0xAD2860: GeometryInfo + 0x10 / + 0x14 recomputed over the active shapes)
 	const PathfindGeometry &ownPathfindGeometry(const PathfindGeometry &templateGeometry) const;
+	// whether ownPathfindGeometry answers with the object's own copy (its own shape flags, or another template's GeometryInfo) rather than the template's
+	bool keepsOwnGeometry() const { return !m_geometryActive.empty() || m_geometrySource != nullptr; }
 	// RW 0x68B244 (the object's geometry changed): its shroud record marked dirty, forced (Object + 0x4E4 -> RW 0xB4E2A0); its collision manager entry
 	// (+ 0x4EC -> RW 0xB6C700: no collision manager here, S-363 / S-780); its partition entry marked dirty (+ 0x4E8 -> RW 0xA39570); its drawable's draw
 	// modules (+ 0x84 -> RW 0x6713E6, vslot 0x9C: client); with `pathfind`, out of and into the pathfinder's map (RW 0x6E85FB, 0x6E85E9); then, with

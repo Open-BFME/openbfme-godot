@@ -87,6 +87,7 @@ class ModuleFactory;
 class ThingFactory;
 class ThingTemplate;
 class UpdateModule;
+class ObjectWeapons; // lane PERF-WS
 class TerrainLogic;
 class UpgradeTypeTable;
 class AIWorld;
@@ -483,6 +484,9 @@ public:
 	// lane WALL-2: the height of the layer a point at (x, y, z) stands on (TheTerrainLogic vslot 0x1C with RW 0x680A75's layer): a wall top's, a ramp's or a
 	// walkway's, the terrain elsewhere
 	float getLayerHeightForDestination(float x, float y, float z) const;
+	// lane WALL-3: TerrainLogic::alignOnTerrain's height with stickToGround (RW 0x6819D9 / BFME2 0x2811DD, vslot 0x48): the height of the layer RW 0x680A75
+	// names at (x, y, z), 2.5 (RW 0xBE5AE8) above it on any layer but the ground; the terrain without an AI world. The move hint stands there (RW 0x48EDED)
+	float getAlignOnTerrainHeight(float x, float y, float z) const;
 	float getHighestLayerHeight(float x, float y) const;
 	// problems nothing explains; each distinct text is kept once and reaches report().errors
 	void reportError(const std::string &text);
@@ -490,6 +494,15 @@ public:
 	// (a view: the hot callers pass literals, and a noted text is found without building a std::string)
 	void noteStop(std::string_view text)
 	{
+		// performance (diagnostics only): hot callers note the same literal every frame (eight times per stepping amoeba member); a text seen before is
+		// found by its address and its content confirmed, instead of two ordered-tree walks over keys of ~250 characters. The ordered maps are never
+		// cleared, so the kept iterator stays valid
+		const auto fast = m_notedStopFast.find(text.data());
+		if (fast != m_notedStopFast.end() && fast->second->first.size() == text.size() && fast->second->first == text)
+		{
+			++fast->second->second;
+			return;
+		}
 		if (m_notedStops.find(text) == m_notedStops.end())
 		{
 			m_notedStops.emplace(text);
@@ -504,6 +517,11 @@ public:
 		{
 			m_notedStopHits.emplace(std::string(text), 1u);
 		}
+		if (m_notedStopFast.size() >= kNotedStopFastMax)
+		{
+			m_notedStopFast.clear(); // a caller that notes a temporary string brings a new address each time
+		}
+		m_notedStopFast[text.data()] = m_notedStopHits.find(text);
 	}
 	const std::map<std::string, unsigned, std::less<>> &notedStopHits() const { return m_notedStopHits; }
 
@@ -918,6 +936,8 @@ public:
 		std::map<std::string, size_t> helperShells;               ///< live helper shells by name (stop S-141)
 		unsigned long long unportedUpdateCalls = 0;
 		unsigned long long creationsWithoutDispatch = 0;
+		unsigned long long weaponStatusSerialFrames = 0;      ///< lane PERF-WS: frames whose final list held an awake module that is no WeaponStatusHelper (the pass ran serially)
+		unsigned long long weaponStatusPooledFrames = 0;      ///< lane PERF-WS: frames whose pre-pass filled at least one entry on the pool for the pass to apply
 		std::vector<std::string> errors;                      ///< problems nothing explains (a bad KindOf line, ...), never dropped
 		std::vector<std::string> stops;                       ///< the stop lines that apply to this run
 	};
@@ -945,6 +965,7 @@ private:
 		}
 	}
 	void runModules(int phase);
+	void prepareWeaponStatusWork(const std::vector<UpdateModule *> &vec); // lane PERF-WS: the final list's conditions on the logic job pool
 	void migrateForeverModules(int vectorIndex);
 	void endOfFrameObjectChecks();
 	void buildPhaseWorkTable();
@@ -975,6 +996,8 @@ private:
 	CastleTemplateStore m_castleTemplates;
 	std::set<std::string, std::less<>> m_notedStops;
 	std::map<std::string, unsigned, std::less<>> m_notedStopHits;
+	std::unordered_map<const char *, std::map<std::string, unsigned, std::less<>>::iterator> m_notedStopFast; // noteStop's fast path (by text address)
+	static constexpr size_t kNotedStopFastMax = 4096;                                                         // the fast path's size bound
 	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
 	std::vector<BeaconNotice> m_beaconNotices; ///< lane CHAT-1: oldest first, at most kBeaconNotices
 	std::uint32_t m_beaconSeq = 0;
@@ -1068,6 +1091,18 @@ private:
 	std::vector<Object *> m_objectsById; ///< index = id; null for a free or destroyed id
 
 	std::vector<UpdateModule *> m_updates[PHASE_COUNT];
+	// lane PERF-WS: the final list's weapon status conditions, computed on the logic job pool before the pass (runModules): one entry per module
+	// index of the list at the pass's start (module null: the pass runs update), the module, its weapons and their conditions (6 =
+	// WEAPONSLOT_COUNT). Rewritten every frame (the capacity is kept), cleared with the game (reset)
+	struct WeaponStatusWork
+	{
+		UpdateModule *module = nullptr;
+		ObjectWeapons *weapons = nullptr;
+		std::array<int, 6> cond{};
+	};
+	std::vector<WeaponStatusWork> m_weaponStatusWork;
+	unsigned long long m_weaponStatusSerialFrames = 0; ///< lane PERF-WS: frames the pre-pass was discarded (Report::weaponStatusSerialFrames)
+	unsigned long long m_weaponStatusPooledFrames = 0; ///< lane PERF-WS: frames the pre-pass filled at least one entry (Report::weaponStatusPooledFrames)
 	std::vector<UpdateModule *> m_sleeping;
 	UpdateModule *m_current = nullptr;
 

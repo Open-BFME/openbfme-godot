@@ -4,7 +4,7 @@
 // Lane ATTACKPATH-1: the pathfinder helpers of a horde's melee approach goal (AIAttackMeleeHordeApproachTargetState::computePath RW 0x74A594, stop S-590),
 // ported from the RotWK disassembly with the BFME2 decomp's byte-matched sources as names and cross-checks:
 //   * RW 0x6F2FFF Pathfinder::IsHordeMeleeLinePassable (tier A, decomp AI/PathfinderCoordLineWalk.cpp; its record RW 0x6EE496 and cell callback RW 0x6EE524,
-//     decomp Pathfinder/PathfinderRva002ED15ACellCallback.cpp Rva002ED15AInfo);
+//     decomp AI/AIPathfind.cpp Rva002ED15AInfo);
 //   * RW 0x746783 (tier B same-shape, decomp AI/AIStatesBfmeOnExit.cpp AIAttackMeleeHordeApproachTargetState::rva00344D60): the goal walked back toward the horde;
 //   * RW 0x6FB67A Pathfinder::AdjustHordeMeleeDestination (tier A, decomp Pathfinder/pathfinder.cpp) with its ring RW 0x6FA733 (decomp rva002F92BC,
 //     "IterateCircular1"), the functor RW 0x6EEAF5 / 0x6F8540 (Pathfinder_IsCheckForMeleeHordeAdjust), its cell test RW 0x6F6C18 and footprint test RW 0x6EB2EF.
@@ -36,7 +36,7 @@
 //     cliff -> false; an obstacle cell must be the AI's ignored obstacle (else false; nothing else is checked there); type 6 -> false; the goal list
 //     (info + 0x14): every unit that is not the unit, not its ignored obstacle and not contained by it: an ally adds 1, a non-ally standing at its goal
 //     (RW 0x68B47F) -> false; the position list (info + 0x20): every unit that is not the unit and not contained by it adds 3 for an ally, else 1.
-// INFERENCE / NOT PORTED (stop S-590): the layer for a destination is the ground (S-161); the quick path test RW 0x6F5BB0 is the port's clientSafeQuickDoesPathExist (as in canApproachToTarget).
+// INFERENCE / NOT PORTED (stop S-590): the layer for a destination is the ground (S-161); the quick path test RW 0x6F5BB0 (RW 0x6F6D08 / 0x6F6D19 / 0x6F6D2E, the unit and the caller's set) is quickDoesPathExist (lane QPATH-1).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindLine.h"
@@ -114,7 +114,7 @@ bool Pathfinder::hordeMeleeStepBack(PathfindObject &obj, const PathfindLocomotor
 	return false;
 }
 
-bool Pathfinder::hordeMeleeFootprint(const PathfindObject &obj, int x, int y, PathfindLayerEnum layer, int radius, bool centred, int *count)
+bool Pathfinder::hordeMeleeFootprint(const PathfindObject &obj, int x, int y, PathfindLayerEnum layer, int radius, bool centred, int *count, FootprintMemo *memo)
 {
 	// TARGET RW 0x6EB2EF (see the file comment)
 	int r = radius;
@@ -150,56 +150,76 @@ bool Pathfinder::hordeMeleeFootprint(const PathfindObject &obj, int x, int y, Pa
 	{
 		for (int j = y - r; j < y + n; ++j)
 		{
-			const PathfindCell *cell = getCell(layer, i, j);
-			if (cell == nullptr || cell->getType() == PathfindCell::CELL_BRIDGE_IMPASSABLE || (cell->getImpassableToPlayers() && isHuman))
+			int *known = memo ? memo->slot(i, j) : nullptr;
+			int part;
+			if (known && *known != FootprintMemo::kUnknown)
+			{
+				part = *known;
+			}
+			else
+			{
+				part = hordeMeleeCellPart(obj, getCell(layer, i, j), ignoreId, selfId, isHuman);
+				if (known)
+				{
+					*known = part;
+				}
+			}
+			if (part < 0)
 			{
 				return false;
 			}
-			const PathfindCell::CellType t = cell->getType();
-			if (t == PathfindCell::CELL_CLIFF)
-			{
-				return false;
-			}
-			if (t == PathfindCell::CELL_OBSTACLE)
-			{
-				if (!cell->isObstaclePresent(ignoreId))
-				{
-					return false;
-				}
-				continue;
-			}
-			if (t == PathfindCell::CELL_IMPASSABLE)
-			{
-				return false;
-			}
-			for (const PathfindOccupant *node = cell->occupants(OCC_GROUND_GOAL); node; node = node->next)
-			{
-				const PathfindObject *o = m_world ? m_world->findObjectByID(node->owner) : nullptr;
-				if (o == nullptr || o->getID() == selfId || o->getID() == ignoreId || o->getContainer() == &obj)
-				{
-					continue;
-				}
-				if (obj.getRelationship(*o) == PATHFIND_ALLIES)
-				{
-					*count += 1;
-				}
-				else if (o->isParked())
-				{
-					return false;
-				}
-			}
-			for (const PathfindOccupant *node = cell->occupants(OCC_POSITION); node; node = node->next)
-			{
-				const PathfindObject *o = m_world ? m_world->findObjectByID(node->owner) : nullptr;
-				if (o == nullptr || o->getID() == selfId || o->getContainer() == &obj)
-				{
-					continue;
-				}
-				*count += obj.getRelationship(*o) == PATHFIND_ALLIES ? 3 : 1;
-			}
+			*count += part;
 		}
 	}
 	return true;
+}
+
+int Pathfinder::hordeMeleeCellPart(const PathfindObject &obj, const PathfindCell *cell, PathfindObjectID ignoreId, PathfindObjectID selfId, bool isHuman)
+{
+	if (cell == nullptr || cell->getType() == PathfindCell::CELL_BRIDGE_IMPASSABLE || (cell->getImpassableToPlayers() && isHuman))
+	{
+		return -1;
+	}
+	const PathfindCell::CellType t = cell->getType();
+	if (t == PathfindCell::CELL_CLIFF)
+	{
+		return -1;
+	}
+	if (t == PathfindCell::CELL_OBSTACLE)
+	{
+		return cell->isObstaclePresent(ignoreId) ? 0 : -1; // nothing else is checked there
+	}
+	if (t == PathfindCell::CELL_IMPASSABLE)
+	{
+		return -1;
+	}
+	int count = 0;
+	for (const PathfindOccupant *node = cell->occupants(OCC_GROUND_GOAL); node; node = node->next)
+	{
+		const PathfindObject *o = m_world ? m_world->findObjectByID(node->owner) : nullptr;
+		if (o == nullptr || o->getID() == selfId || o->getID() == ignoreId || o->getContainer() == &obj)
+		{
+			continue;
+		}
+		if (obj.getRelationship(*o) == PATHFIND_ALLIES)
+		{
+			count += 1;
+		}
+		else if (o->isParked())
+		{
+			return -1;
+		}
+	}
+	for (const PathfindOccupant *node = cell->occupants(OCC_POSITION); node; node = node->next)
+	{
+		const PathfindObject *o = m_world ? m_world->findObjectByID(node->owner) : nullptr;
+		if (o == nullptr || o->getID() == selfId || o->getContainer() == &obj)
+		{
+			continue;
+		}
+		count += obj.getRelationship(*o) == PATHFIND_ALLIES ? 3 : 1;
+	}
+	return count;
 }
 
 bool Pathfinder::adjustHordeMeleeDestination(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *dest)
@@ -220,6 +240,27 @@ bool Pathfinder::adjustHordeMeleeDestination(PathfindObject &obj, const Pathfind
 	Coord3D goal = *dest; // the functor's goal (+ 0x28), replaced by every accepted cell
 	int fallbackCount = 0;
 	ICoord2D fallback{ 0, 0 };
+	// the footprint cells' parts, over the cells the rings can reach: the widest ring's offset plus a footprint
+	FootprintMemo memo;
+	{
+		int reach = 0;
+		for (int b = m_config.adjustHordeMeleeLimit, extent = 1; b > 0; extent += 2)
+		{
+			b -= 2 + 4 * extent;
+			reach = (extent + 1) / 2 + 1;
+		}
+		const int half = reach + (radius > 1 ? radius : 1) + 1;
+		if (half <= 64)
+		{
+			memo.side = 2 * half + 1;
+			memo.x0 = centre.x - half;
+			memo.y0 = centre.y - half;
+			memo.parts.assign((size_t)memo.side * (size_t)memo.side, FootprintMemo::kUnknown);
+		}
+	}
+	// the unit's quick path to the functor's goal: asked again only after an accepted cell replaced the goal
+	bool goalReachable = false;
+	bool goalReachableKnown = false;
 	// RW 0x6F8540 -> RW 0x6F6C18
 	auto test = [&](int x, int y) -> bool {
 		const PathfindCell *cell = getCell(layer, x, y);
@@ -232,7 +273,7 @@ bool Pathfinder::adjustHordeMeleeDestination(PathfindObject &obj, const Pathfind
 			return false;
 		}
 		int count = 0;
-		if (!hordeMeleeFootprint(obj, x, y, layer, radius, centred, &count))
+		if (!hordeMeleeFootprint(obj, x, y, layer, radius, centred, &count, memo.side > 0 ? &memo : nullptr))
 		{
 			return false;
 		}
@@ -245,8 +286,13 @@ bool Pathfinder::adjustHordeMeleeDestination(PathfindObject &obj, const Pathfind
 		}
 		else if (height <= 0.0f || SimMath::absD((double)SimMath::subf32(at.z, height)) <= 50.0)
 		{
-			bool ok = clientSafeQuickDoesPathExist(loco, &unitPos, &at);
-			if (!clientSafeQuickDoesPathExist(loco, &unitPos, &goal) && clientSafeQuickDoesPathExist(loco, &goal, &at))
+			bool ok = quickDoesPathExist(obj, &unitPos, &at, &loco);
+			if (!goalReachableKnown)
+			{
+				goalReachable = quickDoesPathExist(obj, &unitPos, &goal, &loco);
+				goalReachableKnown = true;
+			}
+			if (!goalReachable && quickDoesPathExist(obj, &goal, &at, &loco))
 			{
 				ok = true;
 			}
@@ -257,6 +303,7 @@ bool Pathfinder::adjustHordeMeleeDestination(PathfindObject &obj, const Pathfind
 			return false;
 		}
 		goal = at;
+		goalReachableKnown = false;
 		if (count == 0)
 		{
 			return true;

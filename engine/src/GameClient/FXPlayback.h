@@ -12,6 +12,7 @@
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/INI.h"
+#include "GameClient/ClientEffects.h"
 #include "GameClient/FXList.h"
 #include "GameClient/FXParticleSystem.h"
 #include "GameClient/ParticleSys.h"
@@ -79,7 +80,8 @@ public:
 class FXPlayback
 {
 public:
-	// One engine call a nugget made that this lane does not implement (audio, camera, lights, decals ...).
+	// One engine call a nugget made that this lane does not present (audio, tint, attached models, lasers ...). TerrainScorch,
+	// DynamicDecal, LightPulse and CameraShakerVolume have real state since lane FEAT-BLDFX-1 (ClientEffects.h) and do not add events.
 	struct Event
 	{
 		std::string kind;   ///< "sound", "eva", "viewShake", "cameraShaker", "lightPulse", "scorch", "decal", "tint", "buff", "rayEffect", ...
@@ -112,6 +114,7 @@ public:
 
 	// SAGE world space (x east, y north, z up). The flat test world is the plane z = groundZ.
 	void setGroundHeight(float z) { m_groundZ = z; }
+	float groundHeight(float x, float y) const { return m_world ? m_world->groundHeight(x, y) : m_groundZ; }
 	// lane FX-2: the live world (null: the flat test world). Not owned; must outlive its use.
 	void setWorld(FXPlaybackWorld *world) { m_world = world; }
 	FXPlaybackWorld *world() const { return m_world; }
@@ -130,6 +133,23 @@ public:
 	ParticleEmitterInstance *playW3DEmitter(const std::string &stem, const Coord3D &pos, std::string *error);
 	W3DEmitterWorld &emitters() { return m_emitterWorld; }
 	const W3DEmitterWorld &emitters() const { return m_emitterWorld; }
+
+	// ---- lane FEAT-BLDFX-1: the client effect state the nugget sinks leave behind (ClientEffects.h) ----
+	const ScorchBuffer &scorches() const { return m_scorches; }
+	const std::vector<DecalFx> &decals() const { return m_decals; }
+	const LightPulsePool &lightPulses() const { return m_lightPulses; }
+	// the CameraShakerVolume calls since the last take, for the view (the HUD forwards them to TacticalCamera and steps them there)
+	std::vector<CameraShakerFx> takeCameraShakers()
+	{
+		std::vector<CameraShakerFx> out;
+		out.swap(m_pendingShakers);
+		return out;
+	}
+	// DynamicDecal's decals (the sink adds them at the client frame it is called on)
+	std::uint32_t addDecal(const FXDecalDesc &desc);
+	// the map's Scorch objects (S-117) enter the same 500-entry buffer at map load
+	void addMapScorch(const Coord3D &pos, float radius, int type) { m_scorches.add(pos, radius, type); }
+	void clearClientEffects();
 
 	// One client step: the frame advances, then the manager updates (RW 0x632431 / 0x449d48). The W3D emitter clock advances by
 	// 33 ms per step (WW3D::Sync, notes fx-w3d-emitters.md section 3) and the emitters emit.
@@ -158,6 +178,10 @@ private:
 	FXPlaybackWorld *m_world = nullptr;
 	std::vector<Event> m_events;
 	W3DEmitterWorld m_emitterWorld;
+	ScorchBuffer m_scorches;             // lane FEAT-BLDFX-1 (TARGET RW 0x5E0045 / DONOR BFME2 0x67EA3)
+	std::vector<DecalFx> m_decals;      // lane FEAT-BLDFX-1 (TARGET RW 0x5E05AB / DONOR BFME2 0x330A37 / 0x10C785)
+	LightPulsePool m_lightPulses;       // lane FEAT-BLDFX-1 (TARGET RW 0x5DFAA3 / DONOR BFME2 0x4423C / 0x6DE3D)
+	std::vector<CameraShakerFx> m_pendingShakers; // lane FEAT-BLDFX-1 (TARGET RW 0x5DFE90 / DONOR BFME2 0x65DAD), taken by the view
 	std::map<std::string, std::shared_ptr<W3DFileContents>> m_emitterFiles;
 	std::unique_ptr<Environment> m_env;
 	std::unique_ptr<Services> m_services;

@@ -11,6 +11,60 @@ python -m pytest -q -rs tools/test_gdscript.py
 
 ## Scheduling policy
 
+The manual native HUD grayscale fixture is separate from the GDScript runner:
+
+```sh
+python godot/tests/hud_grayscale_test.py --bindings-build engine/build --scratch workspace/gray-check --godot "$GODOT"
+```
+
+On macOS with a configured native bindings build, it compiles a scratch extension
+and executes the production `grayTextureFor` body using real Godot CPU Images.
+A recording texture boundary checks that grayscale requests cause one grayscale
+upload and no color upload/readback; exact luminance/alpha, source immutability,
+cache identity, both request orders, mipmaps and missing/empty images are checked.
+Synthetic BC3/DXT5 mip blocks also pin exact decompressed grayscale/alpha bytes
+and verify that the cached compressed image's format and bytes stay unchanged.
+`--source-ref <old-ref>` runs the same assertions against a prior revision (the
+pre-fix code fails the upload/readback checks). No retail files or GPU are used;
+this is neither a rendered HUD test nor a GPU timing benchmark. It reuses only
+the bindings archive and never replaces the game extension. Logs and results
+remain under the requested new scratch directory.
+
+The manual packed-texture CPU oracle is also separate from the GDScript runner:
+
+```sh
+python godot/tests/packed_texture_merge_test.py --build-dir engine/build --scratch workspace/packed-merge-check --godot "$GODOT"
+```
+
+On macOS, Linux and Windows it reuses the configured godot-cpp archive and builds a scratch extension
+containing the actual packed loader. Use a native build for the same host/architecture
+and a matching Godot executable; compile flags come from `compile_commands.json`.
+GNU-style compilers and MSVC/clang-cl are supported. `--bindings-library <archive>`
+selects a specific matching archive when `build/bin` contains several configurations.
+No normal build or post-build commands run, and outputs stay in the new scratch
+directory. All 65,536 channel pairs are compared with
+Godot's previous C++ `get_pixel`/`set_pixel` Color operations, including PNG alpha
+replacement. Full JPEG/PNG loads at 256, 512 and 1024 pixels compare exact output
+bytes, RGB-only masks and nearest resizing. Direct short/oversized mask checks
+require a named error and unchanged image/mask bytes at the internal RGBA8 boundary. Read counters require supplied JPEG
+bytes to avoid rereading the file; invalid supplied bytes must fail even when a
+valid file exists. Valid/corrupt DDS precedence, missing JPEGs and corrupt or
+unreadable companions are checked. Rounded RGB and multiplied-alpha alternatives
+must differ from the original oracle. `--baseline-ref <pre-change-ref>` loads the
+exact earlier loader, adding only an ignored fourth argument for the probe; the
+default counterfactual restores its per-pixel loop and JPEG reread. An optional
+`--bindings-source <godot-cpp-dir>` repairs moved bindings include paths.
+
+This manual fixture needs no retail files, window or GPU. It isolates HOME/XDG
+and game user directories, records commands/results under a new scratch folder,
+and never replaces the game's extension. Expected corrupt-image decoder errors
+are allowed explicitly; other engine/script errors fail. Diagnostic timings cover
+synthetic CPU decode/merge work only, with no performance threshold or gameplay
+frame-time claim. Both editions use this presentation path; the existing S-1482
+retail-merge inference remains unchanged. `packed_model_texture_test.gd` remains
+manual with private assets and covers model-builder/material-factory integration,
+corrupt JPEG/PNG retry and the S-1482 report.
+
 The launcher coverage gap is closed by the existing release pytest runners,
 including the resource-limited write-failure regression and the argument-aware
 social/OAuth fixtures. Every launcher entry point is listed below.
@@ -110,10 +164,12 @@ runner is claimed. All paths below are relative to the repository root.
 | Script | Runner/consumer | Scheduling decision |
 | --- | --- | --- |
 | `godot/tests/app_icon_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: bundled application icon resources; headless, 20 s timeout. |
+| `godot/tests/apt_view3d_visibility_test.gd` | Manual only; no generic pytest runner | Both editions: native paired View3D viewport visibility, retained cached/partial/empty canvas, tree exit/reentry, hidden pose uploads with unchanged instancer clocks, child-first teardown; private RotWK/BFME2 data, headless supported. |
 | `godot/tests/apt_canvas_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/audio_stress_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/audio_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/backlog3_focus_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/building_damage_fx_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/bfme1_castle_path_test.gd` | Manual only; no generic pytest runner | Denied here: needs a private BFME1 installation. |
 | `godot/tests/bfme1_hud_test.gd` | Manual only; no generic pytest runner | Denied here: needs a private BFME1 installation. |
 | `godot/tests/bfme1_launch_args_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: command-line parsing only; no game is started; headless, 20 s timeout. |
@@ -155,6 +211,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/glow_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/hero_radius_cursor_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/hud_image_mode_pixel_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/hud_globe_visibility_test.gd` | Manual only; no generic pytest runner | Both editions: native Palantir viewport movie/player/HUD hide/reveal, cached canvas, empty canvas, visible teardown, shared-shell attach/detach and continued rendering, unchanged simulation; private RotWK/BFME2 data, headless supported. |
 | `godot/tests/hudredraw_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/install_paths_test.gd` | `tools/release/test_install_paths.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/language_warning_test.gd` | `tools/release/test_language_warning.py` | The unchecked-language warning box (#77): text, Copy details, the per-install dismissal and hostile `%` sequences; headless. |
@@ -191,6 +248,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/online_war_walk.gd` | `godot/scripts/game.gd` | Two-peer relay war fixture; `tools/net/online_war_test.sh` supplies the local lobby, relay and game data. Not a generic pytest game test. |
 | `godot/tests/http_timed_test.gd` | `tools/net/test_http_timed.py` | Argument-aware fixture runner (a fake server that answers late or never); needs Godot. |
 | `godot/tests/opts1_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. Checks both RotWK and BFME2 presentation sources in menus and a live game. |
+| `godot/tests/options_open_test.gd` | Manual only; no generic pytest runner | Denied here: needs the built GDExtension and private BFME1 and/or RotWK/BFME2 installations; boots audio and checks settings entry, tabs, hidden controls, footer actions and persistence. Headless runs are supported; optional `OPTIONS_OPEN_SHOTS` captures need a window/GPU. |
 | `godot/tests/opts2_test.gd` | Existing CI Godot gate | Denied here: already scheduled by CI; use its existing asset/window setup. |
 | `godot/tests/opts4_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/opts5_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
@@ -201,6 +259,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/packed_model_texture_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/pathperf1_render_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/perf3_cull_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
+| `godot/tests/perfclient_views_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup; `godot --headless --path godot --script res://tests/perfclient_views_test.gd` (the parallel and the serial view refresh leave identical instancers). |
 | `godot/tests/pose_buffer_cull_query_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pose_buffer_query_trigger_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
 | `godot/tests/pose_buffer_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and an extension build; run by `godot/tests/pose_buffer_regression.py`. |
@@ -240,6 +299,8 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/tangent_convention_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/terrain_lighting_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/timeline_markers_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: score timeline markers against a stub shell; headless, 20 s timeout. |
+| `godot/tests/wotr_preview_visibility_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: hidden War of the Ring preview rendering and reveal; synthetic shell, no retail assets or readback; headless, 20 s timeout. |
+| `godot/tests/save_failure_menu_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: late save refusals resume the shell and replace the loading canvas; synthetic world and shell; headless, 20 s timeout. |
 | `godot/tests/uberjoin1_lan_test.gd` | `godot/tests/start_test.gd` | CI gate's helper/child; not scheduled separately by pytest. |
 | `godot/tests/uberjoin1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/ui4_resize_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
@@ -247,9 +308,12 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/weatherfx_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: the Enhanced weather's effects against a stub GameWorld and synthetic images (lane WEATHERFX-2: no weather outside a live game, the menus' Original / Enhanced check; lane INGAMEBG-1: the in-game panels' backdrop check); headless, 20 s timeout. |
 | `godot/tests/windows_crash_test.gd` | Manual only; no generic pytest runner | Denied here: destructive Windows debug crash/minidump probe; explicit opt-in required. |
 | `godot/tests/water_normal_test.gd` | Manual only; no generic pytest runner | GPU rendering; synthetic textures, no retail assets. |
+| `godot/tests/w3d_shader_reuse_test.gd` | `godot/tests/w3d_shader_reuse_test.py` | Dedicated scratch native extension; real material factories, resource identity, sampler/permutation isolation, independent uniforms and owner lifetimes. Headless; no retail assets or GPU required. |
+| `godot/tests/draw_cull_test.gd` | Manual only; no generic pytest runner | GPU rendering and a frame_pre_draw; retail soldier models. |
 | `godot/tests/standing_water_test.gd` | Manual only; no generic pytest runner | Private retail assets and GPU water rendering. |
 | `godot/tests/ini_error_in_extension_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod object INI over a retail map. |
 | `godot/tests/map_water_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `water.ini` over a retail map. |
+| `godot/tests/macos_trackpad_test.gd` | Manual retail | Pan, pinch, rotation adapter, HUD/input guards and simulation hash; windowed macOS also checks native monitor installation. See `docs/MACOS_TRACKPAD.md`. |
 | `godot/tests/map_weather_ini_error_test.gd` | Manual only; no generic pytest runner | Private retail assets; a synthetic mod `weather.ini` over a retail map. |
 
 | `godot/tests/fortress_exit_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
@@ -257,8 +321,32 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/bfme1_battle_school_test.gd` | Manual only; no generic pytest runner | Private BFME1 installation, rebuilt extension and original movie playback. |
 | `godot/tests/shell_movie_audio_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: narration switching, reserved handles and menu-music restoration against stubs; headless, 20 s timeout. |
 
+| `godot/tests/harlindon_creep_combat_test.gd` | Manual only; no generic pytest runner | Private retail assets and a live skirmish. |
+
 ## OAuth readiness regression
 
 Friend seeding can trigger `SocialClient`'s inbox-driven friends refresh. Creating a recovery code while that action owns the client emits `action_done("recovery", false)` and does not emit `recovery_ready`. The old integration ignored the rejection and waited for a code until timeout; no OAuth callback had run yet.
 
 The test now waits for a signed-in, populated, idle social client, connects both terminal signals before issuing the request, and checks successful completion and a nonempty code. A controlled busy-client probe holds readiness until explicitly released, proves no request was sent while busy, and then proves exactly one successful request. There is no fixed sleep or larger timeout. The real Node/SQLite integration still exercises both Discord rounds and all callback, restore, unlink and offline-provider assertions.
+
+## W3D shader resource ownership regression
+
+After building the current native source, set `GODOT` and `NINJA` to the executable
+paths and `BASELINE_COMMIT` to a commit before shader sharing, then run the isolated
+factory test (macOS/Linux). Each scratch directory must
+be new. The runner compiles one test translation unit and relinks into scratch;
+it does not rebuild or replace the installed game extension.
+
+```sh
+python3 godot/tests/w3d_shader_reuse_test.py --build-dir engine/build --scratch workspace/shader-reuse-fixed --godot "$GODOT" --ninja "$NINJA"
+python3 godot/tests/w3d_shader_reuse_test.py --build-dir engine/build --scratch workspace/shader-reuse-baseline --godot "$GODOT" --ninja "$NINJA" --baseline-ref "$BASELINE_COMMIT"
+```
+
+The baseline invocation must fail the cross-factory resource-sharing assertion;
+that expected negative control makes the runner succeed. The probe checks 128
+permutation/sampler combinations for sharing, complete generated text and release,
+as well as independent material parameters and shaders retained beyond a factory.
+Neither invocation needs retail files, a window or GPU rendering. `--window`
+creates a real rendering device for the same resource checks; it does not draw
+or compare pixels. Resource sharing alone is not a claim that live first-use
+frame stalls have been eliminated.
