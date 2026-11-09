@@ -325,9 +325,9 @@ func apply_brightness() -> void:
 	set_gamma(st.get("display_gamma", 1.0))
 
 
+var _preset_detail_logged := "" # the last Low preset line printed (apply_detail runs per edit)
 ## lane OPTS-5: true while the Options menu is up: its brightness slider's pending gamma stays through every other edit (apply_global runs per edit);
 ## ACCEPT / CANCEL set the saved one (the shell's Save / Cancel) after the menu clears it
-var _preset_detail_logged := ""
 var hold_gamma := false
 ## lane OPTS-5: TheDisplay's gamma now (the brightness slider moving, the Options screen's Reset / Cancel; the saved one through apply_brightness)
 var gamma_in_effect := 1.0
@@ -337,7 +337,8 @@ func set_gamma(gamma: float) -> void:
 	(_gamma_rect.material as ShaderMaterial).set_shader_parameter("inv_gamma", 1.0 / clampf(gamma, 0.6, 6.0)) # DX8Wrapper::Set_Gamma's bound
 
 
-## the static detail level's effects that need no game (the texture reduction for what loads next) and, in a game, the FX player's particle limits
+## The Low graphics preset (scripts/display_settings.gd) lowers the detail toward GameLOD.ini's StaticGameLOD = Low only while Options.ini names
+## no StaticGameLOD (the port's stand-in for retail's hardware detection, S-2481); a level the player chose wins.
 func _preset_detail_overrides() -> bool:
 	if game == null or not ("_display" in game) or game._display == null or not game._display.has_method("tier"):
 		return false
@@ -372,6 +373,7 @@ func _apply_terrain_shader() -> void:
 			return
 
 
+## the static detail level's effects that need no game (the texture reduction for what loads next) and, in a game, the FX player's particle limits
 func apply_detail() -> Dictionary:
 	if shell == null:
 		return {}

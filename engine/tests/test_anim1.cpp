@@ -491,3 +491,53 @@ TEST_CASE("anim1 retail G8: the Rohirrim's bow mode shows the bow: WEAPONSET_TOG
 	m->getWeapons()->setWeaponSetFlag(bit, false);
 	CHECK_FALSE(has(*m, "WEAPONSET_TOGGLE_1"));
 }
+
+TEST_CASE("anim1 retail: Sharku leaves his MANUAL attack pose (IUShrkMnt_ATKA): the blend into the next state is advanced and he runs on (S-090)")
+{
+	if (!hudtest::haveWorld("anim1 retail"))
+	{
+		return;
+	}
+	DrawArena w("FactionIsengard", "FactionMen");
+	Object *sharku = w.a.place("IsengardSharku", 0, 500.0f, 500.0f);
+	Object *target = w.a.place("GondorFighter", 1, 700.0f, 500.0f);
+	REQUIRE(sharku);
+	REQUIRE(target);
+	w.frame();
+	w.frame();
+	target->getAIUpdateInterface()->aiIdle(CMD_FROM_AI);
+	REQUIRE(sharku->getAIUpdateInterface()->aiAttackObject(target, CMD_FROM_PLAYER));
+	const Drawable *dr = w.drawableOf(*sharku);
+	const W3DScriptedModelDraw *d = modelDrawOf(dr);
+	REQUIRE(d != nullptr);
+	// the fight: the MANUAL ATTACKING clip takes track 0 (sharku.ini: AnimationState = ATTACKING, IUShrkMnt_ATKA, AnimationMode = MANUAL); every blend
+	// that follows it ends within a few logic frames (main: the blend into the run stayed on track 1 for the rest of the game, ATKA frame 0 drawn)
+	bool held = false;
+	int blendFrames = 0, longestBlend = 0;
+	for (int f = 0; f < 40; ++f)
+	{
+		w.frame();
+		held = held || (d->trackCount() == 1 && d->track(0).mode == W3D_ANIM_MODE_MANUAL && d->track(0).clipName.find("ATKA") != std::string::npos);
+		blendFrames = d->trackCount() >= 2 ? blendFrames + 1 : 0;
+		longestBlend = blendFrames > longestBlend ? blendFrames : longestBlend;
+	}
+	REQUIRE(held);
+	CHECK(longestBlend == 2); // the longest run of logic frames with two tracks (main: 35, the rest of the run)
+	// ordered away: he runs, his track 0 steps
+	const Coord3D far{ sharku->getPosition()->x - 900.0f, sharku->getPosition()->y, 0.0f };
+	sharku->getAIUpdateInterface()->aiMoveToPosition(far, CMD_FROM_PLAYER);
+	for (int f = 0; f < 6; ++f)
+	{
+		w.frame();
+	}
+	INFO("track 0 " << d->track(0).clipName << " frame " << d->track(0).frame << " mode " << d->track(0).mode << ", " << d->trackCount() << " tracks");
+	CHECK(d->trackCount() == 1);
+	CHECK(d->track(0).clipName == "iushrkmnt_skl.IUShrkMnt_ACCL"); // the run-up (ONCE), at its last frame
+	CHECK(d->track(0).mode == W3D_ANIM_MODE_ONCE);
+	CHECK(d->track(0).frame == doctest::Approx(24.0f).epsilon(0.001)); // tolerance: frames stepped in float arithmetic (24.000002 measured)
+	w.frame();
+	CHECK(d->trackCount() == 1);
+	CHECK(d->track(0).clipName == "iushrkmnt_skl.IUShrkMnt_RUNA"); // then the run
+	CHECK(d->track(0).mode == W3D_ANIM_MODE_LOOP);
+	CHECK(d->track(0).frame == doctest::Approx(6.0f).epsilon(0.001)); // tolerance: as above
+}

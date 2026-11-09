@@ -1932,8 +1932,11 @@ void ScriptEngine::updateTeamState(Team &t)
 			handTeamToDefault(t);
 		}
 	}
-	// NOT PORTED (S-1365): the attacker records' expiry (RW 0x7A1FB1 / 0x7A2004: + 0x140 after 900 frames, + 0x13C after 3000) and the team's vslot 0x14
-	// (RW 0x7A59CB, a threat record)
+	// RW 0x7A1FB1 expires the + 0x140 registry: its record payload's + 8 / + 0xC are 0, so RW 0x79F99B answers false and nothing goes (lane RAI-POW).
+	// RW 0x7A2004 expires the + 0x13C workload (an order older than 3000 frames), then vslot 0x14 (RW 0x7A59CB) writes the team's threat order: the
+	// record ATTACK_HEAL_AOE (RW 0x9E691D) consumes (lane RAI-POW-4)
+	t.expireOrders(m_logic.getFrame());
+	t.updateThreatOrder(m_logic);
 }
 
 // RW 0x7A09E4: a team flagged + 0x112 (built by an AIPlayer, not ported: never set here) waits until no member is mid-creation (RW 0x44DDEC(2)) and every

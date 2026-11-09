@@ -2,6 +2,9 @@
 
 #include "GameClient/FXPlayback.h"
 
+#include "Common/Audio/AudioEntryPoints.h"
+
+#include <algorithm>
 #include <cstdio>
 
 class FXPlayback::Environment : public FXParticleSystem::ParticleEnvironment
@@ -44,7 +47,14 @@ public:
 			note("sound", name, pos);
 		}
 	}
-	void playEva(const std::string &name) override { note("eva", name, nullptr); }
+	void playEva(const std::string &name) override
+	{
+		// lane FEAT-BLDFX-1: FXList EvaEvent -> TheEva (RW 0x5DD9EE reportEva by name, AUDIO-2's installed Eva); without audio the call is noted
+		if (!AudioApi::reportEva(name, nullptr))
+		{
+			note("eva", name, nullptr);
+		}
+	}
 	void viewShake(const Coord3D &pos, int type) override
 	{
 		// lane FX-4, RW 0x486D86: W3DView::shake draws GameClientRandomValueReal(0, 2 pi = 6.2831855f, RW 0xBDD38C) first, whatever it does next
@@ -56,10 +66,28 @@ public:
 	}
 	void cameraShaker(const Coord3D &pos, float radius, float seconds, float amplitude) override
 	{
-		note("cameraShaker", "r=" + std::to_string(radius) + " s=" + std::to_string(seconds) + " a=" + std::to_string(amplitude), &pos);
+		// lane FEAT-BLDFX-1: RW 0x5DFE90 / 0x5DFECE -> TheTacticalView vslot 0xA8 (Add_Camera_Shake, DONOR BFME2 0x65DAD), taken by the view (TacticalCamera) with the client frame
+		CameraShakerFx s;
+		s.position = pos;
+		s.radius = radius;
+		s.durationSeconds = seconds;
+		s.amplitudeRadians = amplitude * 3.14159265358979323846f / 180.0f; // TARGET RW 0x5DFE90: the nugget's degrees -> radians
+		if (m_owner.m_pendingShakers.size() >= CameraShakerQueue::kMaxShakers)
+		{
+			m_owner.m_pendingShakers.erase(m_owner.m_pendingShakers.begin());
+		}
+		m_owner.m_pendingShakers.push_back(s);
 	}
-	void lightPulse(const Coord3D &pos, const RGBColor &, float radius, std::uint32_t, std::uint32_t) override { note("lightPulse", "r=" + std::to_string(radius), &pos); }
-	void addScorch(const Coord3D &pos, float radius, int type) override { note("scorch", "type=" + std::to_string(type) + " r=" + std::to_string(radius), &pos); }
+	void lightPulse(const Coord3D &pos, const RGBColor &color, float radius, std::uint32_t increaseFrames, std::uint32_t decreaseFrames) override
+	{
+		// lane FEAT-BLDFX-1: RW 0x5DFAA3 -> display vslot 0xBC (createLightPulse, DONOR BFME2 0x4423C) into the dynamic light pool
+		m_owner.m_lightPulses.add(pos, color, radius, increaseFrames, decreaseFrames);
+	}
+	void addScorch(const Coord3D &pos, float radius, int type) override
+	{
+		// lane FEAT-BLDFX-1: RW 0x5E0045 -> TheGameClient vslot 0x58 (addScorch, DONOR BFME2 0x67EA3)
+		m_owner.m_scorches.add(pos, radius, type);
+	}
 	float groundHeight(float x, float y, const Coord3D &) override { return m_owner.m_world ? m_owner.m_world->groundHeight(x, y) : m_owner.m_groundZ; }
 	bool isWater(float x, float y) override { return m_owner.m_world && m_owner.m_world->isWater(x, y); }
 	bool particleSystemTemplateExists(const std::string &name) override { return m_owner.m_templates.findTemplate(name) != nullptr; }
@@ -95,7 +123,7 @@ public:
 			note("removeBuff", std::to_string(type), nullptr);
 		}
 	}
-	void createDecal(const FXDecalDesc &d) override { note("decal", d.name, &d.position); }
+	void createDecal(const FXDecalDesc &d) override { m_owner.addDecal(d); }
 	void createRayEffect(const Coord3D &a, const Coord3D &, const std::string &t) override { note("rayEffect", t, &a); }
 	void cursorParticles(const std::string &name, unsigned, const GameClientRandomVariable &, const GameClientRandomVariable &, const GameClientRandomVariable &,
 		const GameClientRandomVariable &) override { note("cursorParticles", name, nullptr); }
@@ -259,9 +287,31 @@ bool FXPlayback::playFXList(const std::string &name, const Coord3D &pos, bool as
 void FXPlayback::step()
 {
 	++m_frame;
+	// lane FEAT-BLDFX-1: the dynamic lights' On_Frame_Update (DONOR BFME2 0x6DE3D) and the expired decals (DONOR BFME2 0x10C785's release loop)
+	m_lightPulses.step();
+	m_decals.erase(std::remove_if(m_decals.begin(), m_decals.end(), [this](const DecalFx &d) { return d.expired(m_frame); }), m_decals.end());
 	m_manager->update(true, 0);
 	m_emitterWorld.sync(W3DEmitterWorld::kFrameLengthMs * m_frame); // WW3D::Sync (RW 0x516e20): 33 ms per client frame
 	m_emitterWorld.update();
+}
+
+std::uint32_t FXPlayback::addDecal(const FXDecalDesc &desc)
+{
+	// lane FEAT-BLDFX-1: DynamicDecal's projected decal (RW 0x5E05AB -> TheProjectedShadowManager::addDecal, DONOR BFME2 0x1E0E43); the opacity envelope's
+	// frames are relative to the client frame it starts on (DONOR BFME2 0x330A37)
+	DecalFx d;
+	d.desc = desc;
+	d.startFrame = m_frame;
+	m_decals.push_back(d);
+	return m_frame;
+}
+
+void FXPlayback::clearClientEffects()
+{
+	m_scorches.clear();
+	m_decals.clear();
+	m_lightPulses.clear();
+	m_pendingShakers.clear();
 }
 
 ParticleEmitterInstance *FXPlayback::playW3DEmitter(const std::string &stem, const Coord3D &pos, std::string *error)

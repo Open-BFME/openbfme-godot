@@ -166,7 +166,8 @@ const char *meleeReachStopLine()
 {
 	return "[S-3806] melee reach (RW 0x6ED843, lane PLAY-4): the footprint test of a unit target is ported; a SIEGE_TOWER target outside the boxes takes RW's top branch "
 		   "(RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: a deployed tower's portal top attack point within 20 in height and the radii in x and y; the portal is WALL-2's, "
-		   "S-4940; INFERENCE: the attacker's Object + 0xB8 is its bounding circle radius); structure obstacle rings are ported, but wall-top / bridge-layer exceptions are not";
+		   "S-4940; INFERENCE: the attacker's Object + 0xB8 is its bounding circle radius); structure obstacle rings are ported, but RW 0x6ED843's WALK_ON_TOP_OF_WALL / bridge-layer tail is not (RW 0x6CC07C's "
+		   "layer rule after it is, lane WALLMELEE-1)";
 }
 
 class ObjectWeapons::RangeHost : public WeaponRangeHost
@@ -257,9 +258,25 @@ public:
 	}
 	// lane AIDATA-1: RW 0x6CC07C reads [TheAI + 0x18] + 0xD0, AIData ChaseFromBehindLimit (retail aidata.ini 50.0; the constructor's 50.0 RW 0xBD88C4)
 	float meleeRunDownLimit() override { return m_w.owner().logic().settings().chaseFromBehindLimit; }
-	bool victimFlag11A_40() override { return false; }
-	int layerOf(bool) override { return 0; }
-	bool victimLayerException() override { return false; }
+	// lane WALLMELEE-1, RW 0x6CC07C's layer rule (RW 0x6CC137 .. 0x6CC17E): a WALL_UPGRADE victim (template + 0x11A & 0x40) keeps the reach test's answer; else a source
+	// on the ground cannot hit a victim on a wall top (>= 0x11), and a source on a wall top a victim on the ground only through the victim's created
+	// DynamicPortalBehaviour (RW 0x863983, + 0x3C)
+	bool victimFlag11A_40(const RangeSubject &victim) override
+	{
+		static const int wallUpgrade = CombatNames::kindOf("WALL_UPGRADE");
+		return victim.object && victim.object->isKindOf((unsigned)wallUpgrade);
+	}
+	int layerOf(const RangeSubject &subject, bool victim) override // RW 0x68BBE0
+	{
+		const Object *o = subject.object ? subject.object : (victim ? nullptr : &m_w.owner());
+		return o ? (int)AIWorld::objectLayer(*o) : (int)LAYER_GROUND;
+	}
+	bool victimLayerException(const RangeSubject &victim) override
+	{
+		// RW 0x863983 through the siege modules' integration point (findSiegePortal: the tests' portal stands in for the module there)
+		SiegePortalInterface *portal = victim.object ? findSiegePortal(*const_cast<Object *>(victim.object)) : nullptr;
+		return portal && portal->portalCreated();
+	}
 	float m_meleeReach = 0.0f;
 };
 

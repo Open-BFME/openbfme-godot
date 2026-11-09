@@ -30,7 +30,8 @@ const SCALE_MIN := 0.5
 const SCALE_MAX := 1.0
 ## Graphics preset. auto measures the first match; high is the full picture; low is the toaster tier (70% 3D scale, bilinear, retail Low's
 ## terrain without a normal map, and Low's detail unless Options.ini names a StaticGameLOD). Upstream has no adapter class, so every first
-## start is measured. A median GPU time above PROBE_SLOW_GPU_MS records low. A file from before this key is never measured.
+## start is measured. A median GPU time above PROBE_SLOW_GPU_MS records low. A file that holds no probe but a render scale or a scaler (one from
+## before this key) is never measured; a render scale or scaler the player chose meanwhile stays (record_probe).
 const PRESETS := ["auto", "high", "low"]
 const PROBE_RESULTS := ["", "pending", "low", "high"]
 const PROBE_SLOW_GPU_MS := 25.0
@@ -216,7 +217,9 @@ static func probe_verdict(samples_ms: Array) -> String:
 func record_probe(verdict: String) -> Array:
 	probe = verdict
 	var keys := ["probe"]
-	if verdict == "low":
+	# the probe never overrides a choice: only the defaults (100%, bilinear) step down; a scale or scaler set on the options screen before the
+	# first match stays
+	if verdict == "low" and is_equal_approx(render_scale, 1.0) and scaler == "bilinear":
 		var rows := preset_values("low")
 		render_scale = rows.render_scale
 		scaler = rows.scaler
