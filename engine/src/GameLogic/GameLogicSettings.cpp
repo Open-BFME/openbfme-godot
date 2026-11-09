@@ -344,6 +344,16 @@ const FieldParse kAIDataFields[] = {
 	{ "MeleeApproachDist", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.meleeApproachDist) },
 	{ "CastleSiegeStandBackDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.castleSiegeStandBackDistance) },
 	{ "HordesWaitForHordes", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.hordesWaitForHordes) },
+	// lane PORT-38 (issue #123): the AI player's team build tempo (rows RW 0xC1CB30 TeamSeconds parseReal RW 0x42ED00 + 0x8, RW 0xC1CB40 Wealthy
+	// parseInt RW 0x42EC5E + 0xC, RW 0xC1CB50 Poor parseInt + 0x10, RW 0xC1CB80 TeamsWealthyRate parseReal + 0x1C, RW 0xC1CBA0 TeamsPoorRate
+	// parseReal + 0x24, RW 0xC1CBB0 TeamResourcesToStart parseReal + 0x28; optional, the constructor RW 0x6FFBEF stores 0 to each). The rules they
+	// feed: GameLogic/SkirmishAI/AITeamTempo.h
+	{ "TeamSeconds", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.teamSeconds) },
+	{ "Wealthy", parseNoting<INI::parseInt>, 0, (int)offsetof(BlockState, values.wealthyThreshold) },
+	{ "Poor", parseNoting<INI::parseInt>, 0, (int)offsetof(BlockState, values.poorThreshold) },
+	{ "TeamsWealthyRate", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.teamsWealthyRate) },
+	{ "TeamsPoorRate", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.teamsPoorRate) },
+	{ "TeamResourcesToStart", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.teamResourcesToStart) },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kMultiplayerFields[] = {

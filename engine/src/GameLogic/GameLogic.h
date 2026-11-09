@@ -225,6 +225,23 @@ struct GameLogicSettings
 	float meleeApproachDist = 60.0f;
 	float castleSiegeStandBackDistance = 100.0f;
 	bool hordesWaitForHordes = true;
+	// lane PORT-38 (issue #123): the AI player's team build tempo — six AIData rows of the table that starts at RW 0xC1CB20, and the constructor
+	// RW 0x6FFBEF stores 0.0f / 0 to all of them (so a data set that leaves them out divides by a zero rate, exactly as the image does; the rules
+	// and their callers are GameLogic/SkirmishAI/AITeamTempo.h, stop S-5620 for the team build that would consume them):
+	//   TeamSeconds + 0x8 (row RW 0xC1CB30, parseReal RW 0x42ED00): (int) seconds between two AI teams (RW 0x8F7FFC), retail aidata.ini 0.8;
+	//   Poor + 0x10 (row RW 0xC1CB50, parseInt RW 0x42EC5E): money below it makes the AI "poor" (RW 0x8F823C), retail 1200;
+	//   Wealthy + 0xC (row RW 0xC1CB40, parseInt RW 0x42EC5E): money above it makes it "wealthy" (RW 0x8F824C), retail 4000;
+	//   TeamsPoorRate + 0x24 (row RW 0xC1CBA0, parseReal): the poor band's divisor of that delay (RW 0x8F8245), retail 1.1;
+	//   TeamsWealthyRate + 0x1C (row RW 0xC1CB80, parseReal): the wealthy band's divisor (RW 0x8F8255), retail 2.5;
+	//   TeamResourcesToStart + 0x28 (row RW 0xC1CBB0, parseReal): money per unit before a team starts (RW 0x8F55CA), retail 0.1.
+	// The retail values are default/aidata.ini's, the file Ennorath keeps. Not in crc() yet: nothing reads them (no caller), so they cannot make two
+	// games' simulations differ; the commit that ports the team build hashes them.
+	float teamSeconds = 0.0f;
+	int poorThreshold = 0;
+	int wealthyThreshold = 0;
+	float teamsPoorRate = 0.0f;
+	float teamsWealthyRate = 0.0f;
+	float teamResourcesToStart = 0.0f;
 	// RW 0x70153B: an `AttackPriority <name>` block of AIData (def 0x14 bytes, ctor RW 0x701323: Default 1). A repeated name re-parses the same def (its
 	// targets cleared, Default kept unless the block sets it); a new one is pushed at the list head. `Target = <template> <int>` (RW 0x7013C2) lines in
 	// file order (RW inserts each at the front of its list: TARGET 0x7004B4; the store applies them back to front)
