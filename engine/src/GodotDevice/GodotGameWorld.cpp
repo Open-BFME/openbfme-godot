@@ -364,6 +364,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("reset_logic_wait_sites"), &GameWorld::reset_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("set_render_interpolation", "enabled"), &GameWorld::set_render_interpolation);
 	ClassDB::bind_method(D_METHOD("set_perf3_client", "enabled"), &GameWorld::set_perf3_client); // lane PERF-3
+	ClassDB::bind_method(D_METHOD("set_draw_culling", "enabled"), &GameWorld::set_draw_culling); // lane GPUPERF-2
+	ClassDB::bind_method(D_METHOD("get_draw_culling"), &GameWorld::get_draw_culling);
 	ClassDB::bind_method(D_METHOD("get_perf3_client"), &GameWorld::get_perf3_client);
 	ClassDB::bind_method(D_METHOD("set_logic_thread", "enabled"), &GameWorld::set_logic_thread);
 	ClassDB::bind_method(D_METHOD("get_logic_thread"), &GameWorld::get_logic_thread);
@@ -865,6 +867,7 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 	}
 	staticInst->set_house_colors_enabled(false); // client-only trees and props have no owner
 	staticInst->set_auto_update(false);
+	staticInst->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the trees and props off screen leave the draw
 	m_clientRuntime.reset(new MapObjectRuntime(*m_assets));
 	m_clientRuntime->build(m_game->clientOnly(), false);
 	m_treeTopple.reset(new TreeTopple()); // lane SPELL-3
@@ -1380,6 +1383,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	dyn->set_house_colors_enabled(m_houseColors);
 	dyn->set_playing(false); // time only enters through set_instance_pose
 	dyn->set_pose_culling(m_perf3Client); // PiP supplies an additional frustum when a second camera sees the live objects.
+	dyn->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the same frusta decide what is drawn
 	timings["static_layer_ms"] = timing::elapsedMs(t0);
 
 	t0 = nowMs();
@@ -4282,6 +4286,18 @@ void GameWorld::set_perf3_client(bool enabled)
 	}
 }
 
+void GameWorld::set_draw_culling(bool enabled)
+{
+	m_drawCulling = enabled;
+	for (uint64_t id : { m_dynamicId, m_staticId })
+	{
+		if (W3DInstancer *d = instancerOf(id))
+		{
+			d->set_draw_culling(enabled);
+		}
+	}
+}
+
 void GameWorld::set_logic_thread(bool enabled)
 {
 	m_logicThreadDefault = enabled;
@@ -6943,7 +6959,7 @@ Dictionary GameWorld::get_fx_report() const
 		decals["count"] = (int64_t)playback.decals().size();
 		d["decals"] = decals;
 		Dictionary lights;
-		lights["active"] = (int64_t)playback.lightPulses().lights().size();
+		lights["active"] = (int64_t)playback.lightPulses().enabledCount();
 		lights["additions"] = (int64_t)playback.lightPulses().additions();
 		lights["refused_range"] = (int64_t)playback.lightPulses().refusedRange();
 		lights["overflow"] = (int64_t)playback.lightPulses().overflow();

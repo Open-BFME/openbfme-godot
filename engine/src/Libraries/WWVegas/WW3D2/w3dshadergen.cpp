@@ -657,11 +657,10 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t\tfloat sp = (ndh > 0.0 && ndl > 0.0) ? pow(ndh, w3d_shininess) : 0.0;");
 		line("\t\tcol += lc[i] * (base * ndl * on + w3d_spec_color * sp);");
 		line("\t}");
-		// lane FEAT-BLDFX-1: the dynamic light pool's contribution on the normal-mapped path (DONOR BFME2 0x4423C)
-		line("\tcol += w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm);");
-		line("\tcol += w3d_dynamic_light(w3d_pulse1, w3d_pulse1_col, v_vpos, v_vnrm);");
-		line("\tcol += w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm);");
-		line("\tcol += w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm);");
+		// lane FEAT-BLDFX-1: the dynamic light pool's contribution on the normal-mapped path (DONOR BFME2 0x4423C), diffuse like the
+		// directional lights above: times the surface colour, so a black texel stays black
+		line("\tcol += base * (w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm) + w3d_dynamic_light(w3d_pulse1, w3d_pulse1_col, v_vpos, v_vnrm)");
+		line("\t\t+ w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm) + w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm));");
 		line("\tcur = vec4(col, t0.a);");
 	}
 	else if (k.SimpleFx)
@@ -814,10 +813,11 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
 		line("\tvec3 sel_ground = ALBEDO;");
 		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader);
-		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows
+		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows.
+		// Lane ECOCIRCLE-2: an additive decal has a == 0 and only rgb, so either share draws the pair
 		line("\tvec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);");
 		line("\tvec3 sel_over = vec3(0.0);");
-		line("\tif (sela.a > 0.0) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
+		line("\tif (sela.a > 0.0 || any(greaterThan(sela.rgb, vec3(0.0)))) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
 		line("\tALBEDO = mix(ALBEDO, w3d_to_linear(clamp(sel.rgb, 0.0, 1.0)), sel.a);");
 		line("\tfloat sel_keep = 1.0 - sel.a;");
 	}

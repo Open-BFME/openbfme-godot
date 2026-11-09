@@ -23,9 +23,13 @@
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/plane.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <string>
@@ -70,12 +74,17 @@ public:
 	void advance(double delta);
 	void step_once();
 	void rebuild();
+	// lane GPUPERF-3: an additional presentation camera's six world-space planes (the caster PiP; empty removes it): what it sees is built too
+	bool set_extra_pose_frustum(const TypedArray<Plane> &planes);
+	// lane GPUPERF-3: the culling of systems out of view before they are built (default on; off: every system is built, as before)
+	void set_frustum_culling(bool enabled) { m_frustumCulling = enabled; m_buildDirty = true; }
+	bool get_frustum_culling() const { return m_frustumCulling; }
 	// lane FEAT-BLDFX-1: rebuilds the terrain decal meshes (scorches, RW 0x5E0045 / DONOR BFME2 0x67EA3; DynamicDecal, RW 0x5E05AB / DONOR BFME2 0x10C785) from the playback's client
 	// effect state. Called by step_once; a viewer that plays a list without stepping calls it itself.
 	void updateClientEffects();
 	void updateLightPulseUniforms(); // lane FEAT-BLDFX-1: the active pulses as the object shaders' four dynamic lights
 	const ScorchBuffer &scorches() const;
-	size_t decalCount() const;
+	int64_t decalCount() const; // int64_t: godot-cpp has no size_t binding on macOS (unsigned long)
 	int64_t scorchCount() const { return (int64_t)scorches().entries().size(); }
 	void set_paused(bool paused) { m_paused = paused; }
 	// lane FX-3 round 2: soft particles (fade by the depth distance to the opaque scene; presentation beyond retail). false: retail's exact look
@@ -126,6 +135,11 @@ private:
 		Ref<Texture2D> lastTexture;
 		bool haveOrder = false;
 		FXParticleSystem::BatchOrder lastOrder{ 0, 0.0f };
+		// lane GPUPERF-3: a mesh batch's last geometry (its ArrayMesh is kept while the next build gives the same) and the node box last set
+		std::vector<FXParticleSystem::MeshVertex> lastVertices;
+		std::vector<std::uint32_t> lastIndices;
+		bool haveAabb = false;
+		AABB lastAabb;
 	};
 	Ref<Texture2D> loadTexture(const std::string &name);
 	// lane PERF-1 r2: a particle texture read and decoded (the 1x1 white for a name that does not resolve, `missing` = the report line), not cached
@@ -167,7 +181,7 @@ private:
 	Ref<ShaderMaterial> m_scorchMaterial;
 	std::uint64_t m_scorchVersion = 0;
 	std::map<DecalKey, MeshInstance3D *> m_decalNodes;
-	Ref<Shader> m_decalShaders[3];
+	Ref<Shader> m_decalShaders[2]; // alpha, additive
 	bool m_hadDecals = false;
 	std::map<std::string, Ref<Texture2D>> m_textures;
 	std::map<std::string, Ref<Shader>> m_shaders;
@@ -180,6 +194,21 @@ private:
 	double m_accumulator = 0.0;
 	bool m_paused = false;
 	double m_stepUs = 0.0, m_buildUs = 0.0, m_uploadUs = 0.0;
+	// lane GPUPERF-3: the view the batches were built for (the cameras' planes) and the playback's state then: advance() rebuilds only when either
+	// changed or a particle step ran; set by anything that changes what is drawn outside a step (play, clear, the soft particles, the textures)
+	std::vector<Plane> cullPlanes() const;
+	uint64_t playbackSignature() const;
+	static void setNodeAabb(Batch &b, GeometryInstance3D *node, const AABB &box);
+	std::vector<Plane> m_extraFrustum;
+	std::vector<Plane> m_builtPlanes;
+	Transform3D m_builtCamera;
+	uint64_t m_builtSignature = 0;
+	std::atomic<uint64_t> m_playGen{ 0 }; // lane GPUPERF-3: a play call between steps changed the systems (the logic thread may add them)
+	bool m_built = false;
+	bool m_buildDirty = true;
+	bool m_frustumCulling = true;
+	int64_t m_rebuildsSkipped = 0;
+	size_t m_culledBatches = 0;
 	size_t m_sprites = 0, m_gpu = 0, m_vertices = 0, m_batchCount = 0;
 };
 

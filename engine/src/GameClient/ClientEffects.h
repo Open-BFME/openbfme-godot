@@ -8,7 +8,7 @@
 // not RotWK's): the target's nugget call sites are the RW addresses in FXList.cpp; the bodies below are the BFME2 donor's.
 //   * TerrainScorch -> TARGET RW 0x5E0045 (TerrainScorchFXNugget::doFXPos) -> TheGameClient vslot 0x58 (addScorch) -> W3DGameClient::addScorch
 //     -> BaseHeightMapRenderObjClass::addScorch, DONOR BFME2 0x67EA3 (BaseHeightMapAddScorch.cpp): a duplicate (each |delta| < radius * 0.25, the
-//     same radius and the same type) is retired, not stacked; the buffer holds 500 entries and the oldest is replaced (the donor's ring);
+//     same radius and the same type) keeps the entry already there and adds none; the buffer holds 500 entries and the oldest is replaced (the donor's ring);
 //     the donor's updateScorches 0x678BB fills a terrain-conforming quad grid one unit above the ground, a 3 x 3 atlas cell per Scorches
 //     value (SCORCH_MARKS_IN_TEXTURE 9, SCORCH_PER_ROW 3) and the vertex colour terrain ambient + 0.5 * diffuse * the terrain light
 //     scale (TARGET RW 0x4670E1, TerrainLightScale.h; the donor body is BaseHeightMapRenderObjClass_updateScorches.cpp).
@@ -54,7 +54,7 @@ class ScorchBuffer
 {
 public:
 	static constexpr int kMaxScorches = 500; // DONOR BFME2 0x67EA3: 500 entries
-	// DONOR BFME2 0x67EA3: a duplicate retires the entry already there; the 500th add replaces the oldest
+	// DONOR BFME2 0x67EA3: a duplicate keeps the entry already there and adds none; the 501st add replaces the oldest
 	void add(const Coord3D &pos, float radius, int type);
 	const std::vector<ScorchFx> &entries() const { return m_entries; }
 	std::uint64_t version() const { return m_version; }
@@ -111,6 +111,7 @@ public:
 	unsigned long long additions() const { return m_additions; }
 	unsigned long long refusedRange() const { return m_refusedRange; }
 	unsigned long long overflow() const { return m_overflow; }
+	size_t enabledCount() const; // the lights still lit (expired ones stay in the pool as reusable slots)
 	void clear();
 
 private:

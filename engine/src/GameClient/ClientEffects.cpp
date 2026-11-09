@@ -9,17 +9,16 @@
 
 void ScorchBuffer::add(const Coord3D &pos, float radius, int type)
 {
-	// DONOR BFME2 0x67EA3: estimate = radius * 0.25; an entry within that box on every axis, with the same radius and type, is retired and the
-	// call returns without adding a new one (BFME2 decomp BaseHeightMapAddScorch.cpp).
+	// DONOR BFME2 0x67EA3: estimate = radius * 0.25; for an entry within that box on every axis, with the same radius and type, the call clears
+	// that entry's flag (+0x18) and returns: the entry stays drawn and no new one is added (BFME2 decomp BaseHeightMapAddScorch.cpp; BFME1
+	// BaseHeightMap.cpp addScorch's `duplicate:` label). The flag is the overlap mark of RVA 0x69C5F, which this buffer does not keep.
 	const float estimate = radius * 0.25f;
 	for (auto it = m_entries.begin(); it != m_entries.end(); ++it)
 	{
 		if (std::fabs(pos.x - it->position.x) < estimate && std::fabs(pos.y - it->position.y) < estimate && std::fabs(radius - it->radius) < estimate
 			&& it->type == type)
 		{
-			m_entries.erase(it);
 			++m_duplicates;
-			++m_version;
 			return;
 		}
 	}
@@ -177,6 +176,11 @@ void LightPulsePool::step()
 	{
 		l.step();
 	}
+}
+
+size_t LightPulsePool::enabledCount() const
+{
+	return (size_t)std::count_if(m_lights.begin(), m_lights.end(), [](const LightPulseFx &l) { return l.enabled; });
 }
 
 void LightPulsePool::clear()

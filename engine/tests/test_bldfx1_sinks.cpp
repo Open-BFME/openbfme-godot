@@ -125,15 +125,17 @@ TEST_CASE("bldfx1 scorches: addScorch retires a duplicate within radius/4 and th
 	b.add(Coord3D{ 400.0f, 200.0f, 0.0f }, 24.0f, 2);
 	CHECK(b.entries().size() == 2);
 	CHECK(b.additions() == 2);
-	// |dx| = 3 < 24 * 0.25 = 6, the same radius and type: the entry already there is retired, nothing is added
+	// |dx| = 3 < 24 * 0.25 = 6, the same radius and type: the entry already there stays (its flag is cleared), nothing is added
+	const std::uint64_t version = b.version();
 	b.add(Coord3D{ 103.0f, 200.0f, 0.0f }, 24.0f, 2);
-	CHECK(b.entries().size() == 1);
+	CHECK(b.entries().size() == 2);
 	CHECK(b.duplicates() == 1);
 	CHECK(b.additions() == 2);
-	CHECK(b.entries()[0].position.x == 400.0f);
+	CHECK(b.entries()[0].position.x == 100.0f);
+	CHECK(b.version() == version); // nothing to redraw
 	// the same point with another type is not a duplicate (DONOR BFME2 0x67EA3 compares the kind too)
 	b.add(Coord3D{ 103.0f, 200.0f, 0.0f }, 24.0f, 3);
-	CHECK(b.entries().size() == 2);
+	CHECK(b.entries().size() == 3);
 	// the buffer holds 500: the 501st replaces the oldest
 	ScorchBuffer ring;
 	for (int i = 0; i < ScorchBuffer::kMaxScorches; ++i)
@@ -206,7 +208,8 @@ TEST_CASE("bldfx1 lights: createLightPulse's range floor, FrameFade ramp and dec
 	CHECK(pool.lights()[0].scale() == 0.2f);
 	pool.step(); // the decay counter reaches 0: the light goes out (DONOR BFME2 0x6DE3D)
 	CHECK_FALSE(pool.lights()[0].enabled);
-	CHECK_FALSE(pool.lights()[0].enabled);
+	CHECK(pool.lights().size() == 1); // the expired light stays as a reusable slot ...
+	CHECK(pool.enabledCount() == 0);  // ... and is not counted as lit
 }
 
 TEST_CASE("bldfx1 camera shaker: Compute_Rotations' distance falloff, determinism and expiry (RW 0x5DFE90 / DONOR BFME2 0x65B09)")

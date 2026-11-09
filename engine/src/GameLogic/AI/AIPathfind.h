@@ -1097,6 +1097,14 @@ public:
 	// both editions. `overrideSet` is the caller's locomotor set (retail's fourth argument); null: the object's AI's (none -> false). The retail callers
 	// all use this one; clientSafeQuickDoesPathExist stays for the debug view and the zone-only tests
 	bool quickDoesPathExist(const PathfindObject &obj, const Coord3D *from, const Coord3D *to, const PathfindLocomotorInfo *overrideSet);
+	// RW 0x6F5F65 (its line walk RW 0x6F5EF3): the path test to an object, the one the skirmish AI's common tactic check RW 0x9EF9AF asks for every
+	// army unit (and the horde garrison's entry fallback asks). The target's cell (RW 0x6EA076) an obstacle (its own footprint): walk at once. Any other
+	// cell: retry at the position plus the first shape's offset (RW 0xAD1AE0(0), + 0x10); not an obstacle there either, the quick path test RW 0x6F5BB0
+	// to that point; an obstacle, the walk from that cell. The walk: d = 2 - (int)(bounding circle radius x -0.1) cells from the centred cell in the four
+	// axis directions (RW 0x6F5EF3): the first cell of another obstacle whose zone (RW 0x938D89, the strict table) is the unit's, or which a portal chain
+	// joins (RW 0x6F5547), answers yes. A unit without an AI or without a locomotor set
+	// answers no (RW 0x6F5F6F .. 0x6F5F9A).
+	bool pathToObject(const PathfindObject &unit, const PathfindLocomotorInfo &loco, const Coord3D &from, const PathfindObject &target);
 	// findPath's goal test: quickDoesPathExist with the unit and the set; an object-less search (the debug view, zone tests: no retail caller) takes the
 	// client-safe zone test
 	bool quickPathForSearch(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to)
