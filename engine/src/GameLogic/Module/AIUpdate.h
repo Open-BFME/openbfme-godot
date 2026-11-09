@@ -150,6 +150,8 @@ public:
 	bool isAttacking() const;
 	// ZH AIAttackMoveToState (stop S-328): the unit marches to `goal` and attacks what it meets, then resumes; any other order ends it
 	// lane MODULES-3 r2: the attack-move order passes aiDoCommand's gate (RW 0x667174) before anything changes: a refused order arms nothing (false)
+	// RW 0x696266: direct command 0xF, with the unlimited shot count used by targetless tactics.
+	bool aiAttackMoveToPosition(const Coord3D &goal, CommandSourceType source);
 	bool armAttackMove(const Coord3D &goal, CommandSourceType source = CMD_FROM_PLAYER);
 	bool attackMoveActive() const { return m_attackMoveActive; }
 	Object *attackMoveTarget();

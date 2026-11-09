@@ -212,6 +212,11 @@ public:
 	// ---- objects ----
 	ObjectPathfindAdapter &adapterFor(Object &obj);
 	ObjectPathfindAdapter *findAdapter(PathfindObjectID id) const;
+	// RW 0x68BBE0 (BFME2 0x68B511), Object's layer: the ground when + 0x4AC (BFME2 + 0x48C) is set, else + 0x428 (lane WALLMELEE-1): the object's
+	// pathfinder layer (its adapter's), the ground for an object without one. INFERENCE (S-4840): + 0x4AC (set for a horde and its members by HordeContain's
+	// transform reaction RW 0x871536 -> 0x68C02E, cleared 13 frames later by RW 0x68C05A) is not ported, and + 0x428 is set by the mover and, for an object with an AI,
+	// at its map placement (RW 0x62E14C) only, not for every object at load (RW 0x62DCE4) or at an OCL's creation (RW 0x5F1439 / 0x5F2349)
+	static PathfindLayerEnum objectLayer(const Object &obj);
 	Object *findObject(PathfindObjectID id) const;
 	// parsed once per template (the final override), errors kept in movementErrors()
 	const ObjectMovementInfo &movementInfo(const ThingTemplate &tt);

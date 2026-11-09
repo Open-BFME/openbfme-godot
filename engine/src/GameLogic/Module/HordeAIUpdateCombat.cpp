@@ -514,29 +514,34 @@ struct HordeMeleeApproachState : AIState
 		const PathfindLocomotorInfo info = h.locomotorInfo();
 		const Coord3D selfPos = *self.getPosition();
 		m_goal = now;
-		float dx = SimMath::subf32(now.x, selfPos.x), dy = SimMath::subf32(now.y, selfPos.y), dz = SimMath::subf32(now.z, selfPos.z);
-		const float len = SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, dz)));
-		if (len != 0.0f)
+		// lane WALLMELEE-1, RW 0x74A80D / 0x74A815: the pull-back, its line test and the STRUCTURE step-back only for a goal object on the ground layer
+		// (RW 0x68BBE0(goal) == 1; the goal after the HORDE_MEMBER -> horde substitution)
+		if (AIWorld::objectLayer(goal) == LAYER_GROUND)
 		{
-			const float inv = SimMath::divf32(1.0f, len);
-			dx = SimMath::mulf32(dx, inv);
-			dy = SimMath::mulf32(dy, inv);
-			dz = SimMath::mulf32(dz, inv);
-		}
-		const float k = SimMath::mulf32(CombatQueries::boundingCircleRadius(self), 0.7f);
-		dx = SimMath::mulf32(k, dx);
-		dy = SimMath::mulf32(dy, k);
-		dz = SimMath::mulf32(dz, k);
-		const Coord3D p{ SimMath::subf32(m_goal.x, dx), SimMath::subf32(m_goal.y, dy), SimMath::subf32(m_goal.z, dz) };
-		// lane ATTACKPATH-1, TARGET RW 0x74A7A4 .. 0x74A7D0: Pathfinder::IsLineBlocked (RW 0x6F2F8F, the port's isLineBlocked) from the goal to p, with the AI's
-		// surfaces (+ 0x1DC) on the ground layer; p replaces the goal when the line is NOT blocked (the port before took p when the reverse line was not passable)
-		if (!pf.isLineBlocked(&obj, info.validSurfaces, LAYER_GROUND, m_goal, p))
-		{
-			m_goal = p;
-		}
-		if (goal.isKindOf((unsigned)CombatNames::kinds().structure))
-		{
-			pf.hordeMeleeStepBack(obj, info, &m_goal); // RW 0x746783 (lane ATTACKPATH-1)
+			float dx = SimMath::subf32(now.x, selfPos.x), dy = SimMath::subf32(now.y, selfPos.y), dz = SimMath::subf32(now.z, selfPos.z);
+			const float len = SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, dz)));
+			if (len != 0.0f)
+			{
+				const float inv = SimMath::divf32(1.0f, len);
+				dx = SimMath::mulf32(dx, inv);
+				dy = SimMath::mulf32(dy, inv);
+				dz = SimMath::mulf32(dz, inv);
+			}
+			const float k = SimMath::mulf32(CombatQueries::boundingCircleRadius(self), 0.7f);
+			dx = SimMath::mulf32(k, dx);
+			dy = SimMath::mulf32(dy, k);
+			dz = SimMath::mulf32(dz, k);
+			const Coord3D p{ SimMath::subf32(m_goal.x, dx), SimMath::subf32(m_goal.y, dy), SimMath::subf32(m_goal.z, dz) };
+			// lane ATTACKPATH-1, TARGET RW 0x74A7A4 .. 0x74A7D0: Pathfinder::IsLineBlocked (RW 0x6F2F8F, the port's isLineBlocked) from the goal to p, with the AI's
+			// surfaces (+ 0x1DC) on the ground layer; p replaces the goal when the line is NOT blocked (the port before took p when the reverse line was not passable)
+			if (!pf.isLineBlocked(&obj, info.validSurfaces, LAYER_GROUND, m_goal, p))
+			{
+				m_goal = p;
+			}
+			if (goal.isKindOf((unsigned)CombatNames::kinds().structure))
+			{
+				pf.hordeMeleeStepBack(obj, info, &m_goal); // RW 0x746783 (lane ATTACKPATH-1)
+			}
 		}
 		// RW 0x7463E8 (Pathfinder::meleeBackOff, round 6): the open-area test, the 20-unit back-off toward the horde and RW 0x6F3C87
 		{
@@ -567,7 +572,9 @@ struct HordeMeleeApproachState : AIState
 		}
 		if (m_firstApproach)
 		{
-			pf.updateGoal(obj, &m_goal, LAYER_GROUND); // RW 0x74A9CB .. 0x74A9D5: the reservation RW 0x68B3AB before the request (lane ATTACKPATH-1)
+			// RW 0x74A9CB .. 0x74A9D5: the reservation RW 0x68B3AB before the request (lane ATTACKPATH-1); RW 0x8E28AC reserves on the goal's layer for the horde
+			// (RW 0x680A75), lane WALLMELEE-1
+			pf.updateGoal(obj, &m_goal, pf.getLayerAt(obj, m_goal));
 		}
 		return Chain::IssueRequest;
 	}

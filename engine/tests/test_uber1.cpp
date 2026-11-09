@@ -145,6 +145,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // and ATKRESET-1 (attack orders end the FiringDuration lock) moves it again.
 // pin: merge queue q44 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (AIRBORNE_TARGET
 // from the locomotor height, RW 0x66A472) moves it from frame 0.
+// pin: merge queue q46 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: #270 (the team threat orders,
+// Team + 0x13C) moves it from frame 12, and the review fix (the threat walk newest first, RW 0x66362D; a horde soldier counts nothing, RW 0x693A1A) from frame 13.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

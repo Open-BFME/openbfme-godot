@@ -14,6 +14,7 @@
 #include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/Weapon.h"
 
 #include "Common/GameCommon.h"
 #include "Common/StateHash.h"
@@ -817,6 +818,41 @@ void AIUpdateInterface::aiMoveToPositionEvenIfSleeping(const Coord3D &pos, Comma
 	}
 	privateMoveToPosition(pos, source);
 	wakeUpNow();
+}
+
+// RW 0x696266 dispatches only command 0xF, never AIGroup's move/stealth path.
+// RW 0x66C0B9..0x66C145 clears the old machine and installs the goal/source/shot limit.
+// Execution still uses the existing march representation (S-328), but must replace a busy unit's march.
+bool AIUpdateInterface::aiAttackMoveToPosition(const Coord3D &pos, CommandSourceType source)
+{
+	if (!acceptCommand(source, 0xF)) return false;
+	RoutedCommand command;
+	command.type = 0xF;
+	command.position = pos;
+	command.source = source;
+	command.maxShots = 0x7fffffff;
+	if (routeCommand(command)) return true;
+	Object *obj = getObject();
+	static const int rampage = CombatNames::weaponSetBit("RAMPAGE");
+	if (m_mover->isAiDead() || !GarrisonRules::isMobile(*obj) || BitFlagsTest(obj->getWeaponSetFlags(), (size_t)rampage)) return false;
+	Coord3D goal;
+	goalPositionClipped(pos, source, goal);
+	m_machine->clear();
+	m_machine->setGoalPosition(goal);
+	m_machine->setGoalObject(INVALID_ID);
+	setLastCommandSource(source);
+	m_attackMoveActive = true;
+	m_attackMoveGoal = goal;
+	m_machine->setState(AI_MOVE_TO);
+	if (ObjectWeapons *weapons = obj->getWeapons())
+		if (Weapon *weapon = weapons->currentWeapon())
+		{
+			weapon->clearWhenFiringEnds(); // RW 0x66C121
+			weapon->setMaxShotCount(0x7fffffff);
+		}
+	resetNextMoodCheckTime();
+	wakeUpNow();
+	return true;
 }
 
 bool AIUpdateInterface::aiMoveToPositionFromAttackMove(const Coord3D &goal)

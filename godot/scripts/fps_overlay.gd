@@ -23,6 +23,8 @@ var _label: Label
 var _frames := 0
 var _since_us := 0
 var _text := ""
+var _probe_since_us := 0
+var _probe_samples: Array = []
 
 
 func _ready() -> void:
@@ -56,6 +58,7 @@ func counter_text() -> String:
 
 
 func _process(_delta: float) -> void:
+	_probe_tick()
 	if not _label.visible:
 		_frames = 0
 		_since_us = Time.get_ticks_usec()
@@ -120,6 +123,52 @@ func toggle_fullscreen() -> void:
 	var r: Dictionary = settings.apply(root, before)
 	_save(["window_mode"])
 	print("GAME DISPLAY Alt+Enter: %s %s" % [", ".join(r.applied), "" if r.problems.is_empty() else str(r.problems)])
+
+
+## First match of a first start: sample the 3D view's GPU time after a warm-up. The median decides the preset.
+## In-game is the game node's own state. Upstream release.gd has set_in_game but no is_in_game(), so the probe does not call Release.
+## The options screen being up suspends it (the screen holds copies of the settings its ACCEPT / CANCEL write back); leaving the match or a preset
+## chosen meanwhile stops the measuring.
+func _probe_tick() -> void:
+	if settings == null or not settings.needs_probe():
+		_probe_stop()
+		return
+	var game = get_tree().current_scene
+	if game == null or not game.has_method("is_playing") or not game.is_playing() or (screen != null and screen.is_open()):
+		_probe_stop()
+		return
+	var rid := get_viewport().get_viewport_rid()
+	var now := Time.get_ticks_usec()
+	if _probe_since_us == 0:
+		_probe_since_us = now
+		RenderingServer.viewport_set_measure_render_time(rid, true)
+		return
+	if now - _probe_since_us < DisplaySettings.PROBE_WARMUP_US:
+		return
+	_probe_samples.append(RenderingServer.viewport_get_measured_render_time_gpu(rid))
+	if _probe_samples.size() < DisplaySettings.PROBE_FRAMES:
+		return
+	var samples := _probe_samples.duplicate()
+	_probe_stop()
+	var verdict := DisplaySettings.probe_verdict(samples)
+	samples.sort()
+	var before = settings.copy()
+	var keys: Array = settings.record_probe(verdict)
+	if verdict == "low":
+		settings.apply(get_tree().root, before)
+		# the rest of Low (terrain shader, particles, shadows) for the match being played, not only from the next one on
+		var options = game.get("_game_options")
+		if options != null and options.has_method("apply_detail"):
+			options.apply_detail()
+	_save(keys)
+	print("GAME DISPLAY graphics probe: median GPU %.1f ms over %d frames -> %s" % [float(samples[samples.size() / 2]), samples.size(), verdict])
+
+
+func _probe_stop() -> void:
+	if _probe_since_us != 0:
+		RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), false)
+	_probe_since_us = 0
+	_probe_samples.clear()
 
 
 func _save(keys: Array) -> void:
