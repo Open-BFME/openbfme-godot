@@ -9,7 +9,8 @@ set(OPENBFME_SKIRMISH_AI_SOURCES
     src/GameLogic/SkirmishAI/AIThreatFinder.cpp
     src/GameLogic/SkirmishAI/AIStatCollector.cpp
     src/GameLogic/SkirmishAI/AIPositionSampler.cpp
-    src/GameLogic/SkirmishAI/AIUpgrade.cpp)
+    src/GameLogic/SkirmishAI/AIUpgrade.cpp
+    src/GameLogic/SkirmishAI/AITeamTempo.cpp) # lane PORT-38: the AI player's team build tempo rules (issue #123)
 
 set(OPENBFME_SKIRMISH_AI_TESTS
     tests/test_skirmish_ai_data.cpp

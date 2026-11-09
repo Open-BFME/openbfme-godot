@@ -88,7 +88,7 @@ TEST_CASE("logic settings: fields no row reads and nested blocks are consumed an
 	std::string err;
 	const std::string text =
 		"AIData\n"
-		"  Wealthy = 7000 ; a comment with = in it\n"
+		"  StructureSeconds = 30.0 ; a comment with = in it\n"
 		"  EnableRepulsors = No\n"
 		"  SideInfo Rohan\n"
 		"    ResourceGatherersEasy = 0\n"
@@ -105,7 +105,8 @@ TEST_CASE("logic settings: fields no row reads and nested blocks are consumed an
 		"End\n";
 	REQUIRE_MESSAGE(L::scanAIData(text, g, &err), err);
 	CHECK_FALSE(g.enableRepulsors);
-	CHECK(g.unappliedFields.count("AIData.Wealthy") == 1);
+	CHECK(g.unappliedFields.count("AIData.StructureSeconds") == 1); // lane PORT-38: Wealthy is a read row now (RW 0xC1CB40, AITeamTempo.h),
+	                                                                   // StructureSeconds (+ 0x4) is not (triage batch-12 row 24: no read in the image)
 	CHECK(g.unappliedFields.count("AIData.SideInfo") == 1);
 	CHECK(g.unappliedFields.count("AIData.SkirmishBuildList") == 1);
 	// lane TARGET-1: the AttackPriority block has its own row (RW 0x70153B): read, not recorded
