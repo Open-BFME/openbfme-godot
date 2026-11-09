@@ -122,6 +122,7 @@ bool BuildAssistantSell::onSellMessage(const GameMessage &m)
 			// lane CHAT-1: RW 0x77B33C .. 0x77B3D5: the sender's own beacon is destroyed (GameLogic::destroyObject RW 0x62BBAB; the control bar's dirty flag
 			// is client state). Another player's beacon only hides it on the sender's screen in retail (unreachable: the group holds the sender's objects)
 			++m_stats.beacons;
+			m_logic.noteStop(acceptanceStops()[0]); // S-1980: retail asks the LOCAL player's PlayerTemplate for BeaconName (RW 0x6D1305 on ThePlayerList's local player)
 			if (obj->getControllingPlayer() == player) // RW 0x68B678
 			{
 				m_logic.destroyObject(obj);
@@ -175,8 +176,9 @@ void BuildAssistantSell::sellObject(Object *obj)
 	}
 	if (ContainModuleInterface *c = obj->getContain())
 	{
-		c->orderAllPassengersToExit((int)CMD_FROM_AI); // RW 0x796806: contain vslot 0x64 (S-1980)
-		m_logic.noteStop(acceptanceStops()[0]);
+		// RW 0x796804 .. 0x796806: the contain's vslot 0x64 with no argument (the contain at object + 0x258). RW 0x86561F, the body of that slot in every
+		// contain table of 2.01: the kill-on-death byte is cleared, then every rider is ordered out with CMD_FROM_AI (contain vslot 0x80)
+		c->onSelling();
 	}
 	++m_stats.sold;
 }
@@ -265,9 +267,9 @@ std::vector<std::string> BuildAssistantSell::acceptanceStops()
 {
 	return {
 		"[S-1980] sell (FACT-A, RW 0x77B2C8 / 0x7966BB / 0x79468B): MSG_SELL sells the group's structures, the refund (RefundValue or paid * SellPercentage, times the health "
-		"fraction) is paid in the next phase 5 and the structure dies (UNRESISTABLE, death type 8), a selected own beacon is destroyed (lane CHAT-1); not ported: the local "
-		"player's BeaconName (the issuing player's is read: every retail faction names MultiplayerBeacon), the contain's onSelling (contain vslot 0x64: the riders are "
-		"ordered out with CMD_FROM_AI as BFME2's OpenContain does; GarrisonContain's removeAllContained first is not ported), the client's animation loop and cash text",
+		"fraction) is paid in the next phase 5 and the structure dies (UNRESISTABLE, death type 8), a selected own beacon is destroyed (lane CHAT-1), the contain's slot 0x64 "
+		"onSelling empties it (RW 0x86561F: the kill-on-death byte cleared, then the riders ordered out with CMD_FROM_AI); not ported: the local player's BeaconName (the "
+		"issuing player's is read: every retail faction names MultiplayerBeacon), the client's animation loop and cash text",
 		"[S-1981] sell: GameData SellPercentage (row RW 0xC00690, parsePercentToReal RW 0x42EEFA, GlobalData + 0xB94) must be loaded; without it a structure that has no "
 		"RefundValue is sold for nothing and the stop is noted",
 	};
