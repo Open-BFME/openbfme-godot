@@ -50,11 +50,20 @@
 //     (c x - s y), y' = pos.y + (c y + s x), CRT sin / cos), corners (hx, hy), (hx, -hy), (-hx, -hy), (-hx, hy); its callback (RW 0x8B4AF4) counts the objects
 //     entering / leaving it by the gate's relationship to them: allies (+0x28), enemies (+0x2C). Each update with a settled gate: an open gate with no ally
 //     inside closes (RotWK dropped BFME2's "and an enemy inside"), a closed gate with an ally inside opens.
+//   * the skirmish AI's gate list (TheSkirmishAIManager + 0xA74, RW 0x8ED6DC / 0x8ED726): the gate module registers itself in the manager's vector at
+//     construction (RW 0x89C04B -> 0x8EDA39, a duplicate is not appended) and removes itself at destruction (RW 0x8ED772) and when its update's dead path
+//     runs (RW 0x89CD4D .. 0x89CD59). Each AI group update, before its AIs run, walks the list (RW 0x8ED6DC): a gate whose OPEN (passable) geometry is the
+//     one in the pathfinder's map (RW 0x89C12F: opening above PercentOpenForPathing, open always, closing until above 100 - PercentOpenForPathing, closed
+//     never) and whose owner is the AI player's ENEMY (RW 0x89C18E -> Player::getRelationship, 0) gets the CLOSED geometry (RW 0x89C9FA(0)); after the AIs
+//     (and the group's tasks) it walks it again (RW 0x8ED726) and gives those gates the OPEN geometry (RW 0x89CA84(1, 0), forced: it re-runs even when the
+//     geometry is already open). Both walks change the geometry only through setGeometry, so they take lane WALLFOOT-1's keeping removal (RW 0x6E861E).
+//     Both walks end with the pathfinder's portal refresh RW 0x6E85B0.
 // INFERENCE / NOT PORTED (stops S-1940 .. S-1942): the repel (RW 0x89C6F5) runs only when the collision pass hands the gate a contact; the port's pass pairs AI
 // units only (S-581), so a gate meets no contact there; the layer of RW 0x68BBE0 is the pathfinder adapter's (ground without one, as EmotionModules); GateProxyBehavior and the Proxy link (onObjectCreated RW 0x89CB19), the gate sounds (no logic sound path: counted, not played), the
-// object interface call RW 0x68C3E6 -> vslot 2 at the start of the update, the AI notification RW 0x68BE59(9) and the skirmish AI's gate list
-// (TheSkirmishAIManager + 0xA74) (FakePathfindPortalBehaviour: lane WALL-2, PortalModules.h). Lane WALLFOOT-1: the pathfinder's "keeping gate flags" removal
-// (RW 0x6E861E) runs at each geometry change: the previous geometry's box cells keep bit 17 (CanPathThroughGates) until a plain removal.
+// object interface call RW 0x68C3E6 -> vslot 2 at the start of the update and the AI notification RW 0x68BE59(9) are not ported (FakePathfindPortalBehaviour: lane
+// WALL-2, PortalModules.h). Lane WALLFOOT-1: the pathfinder's "keeping gate flags" removal (RW 0x6E861E) runs at each geometry change: the previous geometry's box
+// cells keep bit 17 (CanPathThroughGates) until a plain removal. RW 0x6E85B0 (the AI gate walk's pathfinder portal refresh) has nothing to do here because
+// add / removeObjectFromPathfindMap apply at once.
 
 #pragma once
 
@@ -70,6 +79,7 @@ class GameLogicDispatch;
 class ModuleFactory;
 class MultiIniFieldParse;
 class Object;
+class Player;
 
 class GateOpenAndCloseBehaviorModuleData : public ModuleData
 {
@@ -105,6 +115,7 @@ public:
 		GEOMETRY_OPEN = 2
 	};
 	GateOpenAndCloseBehavior(Thing *thing, const GateOpenAndCloseBehaviorModuleData *data);
+	~GateOpenAndCloseBehavior() override;
 	UpdateSleepTime update() override;
 	void crc(StateHasher &hasher) const override;
 
@@ -114,6 +125,13 @@ public:
 	void close();                                    // slot 8
 	void toggle();                                   // slot 9
 	void changeWantOpenCount(int delta);             // RW 0x89BFE0
+	// RW 0x89C12F: true while the gate's OPEN (passable) geometry is the one in the pathfinder's map (the AI gate list's test)
+	bool openGeometryInPathfindMap() const;
+	// RW 0x89C18E: the relationship of `player` to the gate's owner (NEUTRAL without one)
+	Relationship relationshipTo(const Player &player) const;
+	// RW 0x89C9FA (closed) / RW 0x89CA84 (open); `force` is RW 0x89CA84's first argument: an already-open gate runs the change again (the AI gate
+	// walk passes it; every other caller leaves it false, as the port's update's redundant open call must not re-run the push-out scan every frame)
+	void setGeometry(bool openGeometry, bool scan, bool force = false);
 
 	// the collide interface (vtable RW 0xC668E0 slots 0 / 1)
 	CollideModuleInterface *getCollide() override { return this; }
@@ -136,7 +154,6 @@ public:
 private:
 	void setOpenCloseState(int state); // RW 0x89C261
 	void playFinishedSound();          // RW 0x89C1A4
-	void setGeometry(bool openGeometry, bool scan); // RW 0x89CA84 / 0x89C9FA
 	float elapsedPercent() const;
 	bool moveAway(Object &unit);       // RW 0x89C5A2: true when the unit was asked
 

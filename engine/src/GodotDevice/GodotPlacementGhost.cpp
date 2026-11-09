@@ -363,7 +363,7 @@ void PlacementGhostRenderer::updateShadowDecal(PlacementIcons::Icon &icon, IconV
 	// retail data gives the well's / statue's BUILD_PLACEMENT_CURSOR state its area of effect (decal_hero_good, GONDOR_WELL_AOE_RADIUS_DECAL = 440).
 	// Lane PLACEDECAL-1: a drawable's decal shadow is on renderShadows' list + 4, drawn before the addDecal list (+ 8: the selection's and the resource
 	// claims' decals; RW 0x50D92C), with flushDecals' shaders (RW 0x509A1F); it turns with the drawable and is not terrain only (+ 0x64 stays 0). The HUD
-	// draws it in the selection decals' grid (appendShadowDecals; an additive type or RotWK's 0x10000 is refused there with its error), white at ShadowOpacityPeak whatever
+	// draws it in the selection decals' grid (appendShadowDecals; lane ECOCIRCLE-2: an additive type is added to the surface, RotWK's 0x10000 is refused there with its error), white at ShadowOpacityPeak whatever
 	// the drawable's 0.45 opacity (DecalShadowColor). INFERENCE (stop S-5032): the _DYNAMIC types' fade is not run; addShadow's gate (RW 0x50BF7B:
 	// UseShadowDecals or ShadowOverrideLODVisibility) is not applied; only the placement ghost draws them (every other drawable's shadow is S-3304)
 	const ModelShadowInfo *sh = nullptr;

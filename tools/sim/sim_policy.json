@@ -373,6 +373,14 @@
    "reason": "FX-1 client-side effects (FXList playback, particle systems, emitters): visual only, driven by the CLIENT random generator (GameClientRandom), never read back by the logic"
   },
   {
+   "glob": "src/GameClient/ClientEffects.cpp",
+   "reason": "lane FEAT-BLDFX-1: the client state the FXList nugget sinks leave (terrain scorches, dynamic decals, light pulses): presentation only, never read by the logic, not in the state hash"
+  },
+  {
+   "glob": "src/GameClient/CameraShaker.cpp",
+   "reason": "lane FEAT-BLDFX-1: CameraShakerVolume's camera rotations (the view's own fixed-seed generator, not the logic stream): presentation only, never read by the logic"
+  },
+  {
    "glob": "src/GameClient/ParticleSys.cpp",
    "reason": "FX-1 client-side effects (FXList playback, particle systems, emitters): visual only, driven by the CLIENT random generator (GameClientRandom), never read back by the logic"
   },

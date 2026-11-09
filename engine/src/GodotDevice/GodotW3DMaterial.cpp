@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 
 namespace godot
 {
@@ -196,6 +197,12 @@ void W3D_Ensure_Light_Globals()
 	rs->global_shader_parameter_add(StringName("w3d_fog_shift"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
 	// lane VISUAL-2: the fogged light fraction (RW 0x46DFD0: GameData FogAlpha / ClearAlpha), set by the map's game
 	rs->global_shader_parameter_add(StringName("w3d_fogged_frac"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 1.0f);
+	// lane FEAT-BLDFX-1: the dynamic light pulses (TARGET RW 0x5DFAA3 / DONOR BFME2 0x4423C / 0x6DE3D), view-space position and range in w, colour in the _col vec4; all off
+	for (int i = 0; i < 4; ++i)
+	{
+		rs->global_shader_parameter_add(StringName(String("w3d_pulse") + String::num_int64(i)), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4());
+		rs->global_shader_parameter_add(StringName(String("w3d_pulse") + String::num_int64(i) + "_col"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4());
+	}
 	// lane OCCLUDE-1: the behind-building colours and their switch (W3D_Set_Occlusion), off until a game sets them
 	rs->global_shader_parameter_add(StringName("w3d_occl_on"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
 	rs->global_shader_parameter_add(StringName("w3d_occl_colors"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
@@ -304,6 +311,40 @@ void W3D_Apply_Viewer_Lighting()
 	setSet("inf", v);
 }
 
+namespace
+{
+// Both editions' presentation: separate instancers use the same generated shader
+// for the same permutation, while materials, textures and palette uniforms remain
+// factory-local. Weak entries avoid retaining shaders from destroyed previews or
+// keeping Godot resources alive after RenderingServer shutdown. The shared_ptr
+// acquisition also keeps the resource alive without a raw ObjectID/refcount race.
+std::shared_ptr<const Ref<Shader>> sharedShader(const std::string &id, const W3DShaderKey &key, W3DSamplerPolicy samplers)
+{
+	static std::mutex mutex;
+	static std::map<std::string, std::weak_ptr<const Ref<Shader>>> entries;
+	std::lock_guard<std::mutex> lock(mutex);
+	const auto found = entries.find(id);
+	if (found != entries.end())
+	{
+		if (auto shader = found->second.lock()) return shader;
+	}
+	// A cache miss is already a shader-creation path. Remove dead metadata here,
+	// rather than letting one-off model permutations accumulate for the session.
+	for (auto it = entries.begin(); it != entries.end();)
+	{
+		if (it->second.expired()) it = entries.erase(it);
+		else ++it;
+	}
+	W3D_Ensure_Light_Globals(); // globals must exist before the first shader compiles
+	Ref<Shader> shader;
+	shader.instantiate();
+	SetShaderCode(shader.ptr(), toGodot(Generate_W3D_Shader_Code(key, samplers)), String("W3D material ") + String(id.c_str()));
+	auto owner = std::make_shared<const Ref<Shader>>(shader);
+	entries[id] = owner;
+	return owner;
+}
+} // namespace
+
 Ref<Shader> W3DMaterialFactory::Get_Shader(const W3DShaderKey &key)
 {
 	const W3DSamplerPolicy samplers = samplerPolicy();
@@ -313,12 +354,10 @@ Ref<Shader> W3DMaterialFactory::Get_Shader(const W3DShaderKey &key)
 	{
 		return it->second;
 	}
-	W3D_Ensure_Light_Globals(); // the shader names the light globals: they must exist before it compiles
-	Ref<Shader> shader;
-	shader.instantiate();
-	SetShaderCode(shader.ptr(), toGodot(Generate_W3D_Shader_Code(key, samplers)), String("W3D material ") + String(id.c_str()));
-	Shaders[id] = shader;
-	return shader;
+	const auto owner = sharedShader(id, key, samplers);
+	ShaderOwners.push_back(owner);
+	Shaders[id] = *owner;
+	return *owner;
 }
 
 Ref<Texture2D> W3DMaterialFactory::Placeholder_Texture(bool flatNormal)

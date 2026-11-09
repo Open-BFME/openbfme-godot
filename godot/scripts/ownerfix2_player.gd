@@ -6,7 +6,8 @@
 ##   cp        (with --lobby-cp=<percent>) the local player's command point cap is the 2-player MP pair's cap times percent / 100 and the HUD's
 ##             command point text shows usage / limit with that cap once the bonus passes the old ceiling
 ##   handicap  (with --lobby-handicap=0:<h>) the local player's handicap is h and a unit made now carries HandicapPercent<-h>; the AI (slot 1, 0) none
-##   farms     a resource building placed through the real build ghost: the placement text shows the claimable percentage; overlapping farms earn less
+##   farms     a resource building placed through the real build ghost: the placement text shows the claimable percentage, the claim circles of the own /
+##             allied Visible claimants are drawn as arcs (lane ECOCIRCLE-2); overlapping farms earn less
 extends "res://scripts/spell3_player.gd"
 
 
@@ -261,7 +262,15 @@ func _scenario_farms() -> String:
 	await game._step(6)
 	rf = hud.get_spellbook_state().get("resource_feedback", {})
 	print("OWNERFIX2 farms: beside the first farm: %s" % JSON.stringify(rf).left(400))
-	await shot_with_cursor("farms-place-overlap", over)
+	# lane ECOCIRCLE-2: the placement's claim circles (RW 0x6A2CC8's collector, RW 0x8E9744's segments): the first farm is an own Visible claimant
+	var circle_count: int = (rf.get("claim_circles", []) as Array).size()
+	var arc_count := int(rf.get("claim_arcs_drawn", 0))
+	print("OWNERFIX2 farms: claim circles collected %d, claim arcs drawn %d" % [circle_count, arc_count])
+	await shot_with_cursor("farms-place-arcs", over)
+	if circle_count < 1:
+		return "the placement collected no claim circles beside the first farm"
+	if arc_count < 1:
+		return "the placement drew no claim arcs beside the first farm"
 	var over_percent := int(rf.get("percent", -1))
 	if not (over_percent < free_percent and over_percent > 0):
 		return "the claimable share beside our own farm (%d%%) is not between 0 and free ground's (%d%%)" % [over_percent, free_percent]
