@@ -36,7 +36,7 @@
 //   * update (RW 0x8B3A35): state 3 (auto respawn, not reachable from retail data: no AutoSpawn:Yes rule exists; its writer is not located, S-851) moves the
 //     object to its respawn point, RespawnAnim / RespawnFX, DISABLED_PARALYZED until the animation ends, state 4, health; state 4: RespawnAnim and
 //     InitialSpawnAnim cleared, UNSELECTABLE and DISABLED_PARALYZED cleared, state 0, and when the object's producer exists, the object's AI is idle
-//     (AI vslot 0x1B8 or RW 0x660AC1 == 16, S-854) and the producer has an exit interface, the producer's exit sends it out (slot 8, exitObjectViaDoor(obj, 0));
+//     (AI vslot 0x1B8 isIdle, or RW 0x660AC1 == 16 AI_GUARD) and the producer has an exit interface, the producer's exit sends it out (slot 8, exitObjectViaDoor(obj, 0));
 //     sleep forever.
 //   * UnpauseSpecialPowerUpgrade (create RW 0x64FF28 / 0x64FEF0, data 0x140 bytes: the upgrade base then table RW 0xC6EB5C: SpecialPowerTemplate (+0x138,
 //     RW 0x73B22F: the store's template by name, null when unknown) and ObeyRechageOnTrigger (sic, +0x13C, bool); vtables RW 0xC6EA98 / mux RW 0xC6EA50):

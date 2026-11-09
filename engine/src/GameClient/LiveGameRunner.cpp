@@ -545,6 +545,7 @@ void LiveGame::setLogicThread(bool enabled)
 			m_stop = false;
 			m_work.clear();
 			m_running = false;
+			m_clientPoolPolicy.reset(); // lane PERF-CLIENT: the counts from the worker's start
 		}
 		m_threaded = true;
 		m_worker = std::thread([this] { workerLoop(); });
@@ -559,6 +560,8 @@ void LiveGame::stopWorker()
 	if (!m_worker.joinable())
 	{
 		m_threaded = false;
+		std::lock_guard<std::mutex> lock(m_pubMutex);
+		m_clientPoolPolicy.reset(); // lane PERF-CLIENT: no worker, so the logic is not behind one
 		return;
 	}
 	{
@@ -571,6 +574,10 @@ void LiveGame::stopWorker()
 	m_worker.join();
 	m_workerId.store(std::thread::id());
 	m_threaded = false;
+	{
+		std::lock_guard<std::mutex> lock(m_pubMutex);
+		m_clientPoolPolicy.reset(); // lane PERF-CLIENT: the worker is gone (the #194 review: its last streak must not outlive it); a restart counts afresh
+	}
 	// r2: single-threaded from here: the command list is the next frame's again (the pending input first, it is the older)
 	for (const GameMessage &m : m_commands.messages())
 	{
@@ -686,6 +693,7 @@ void LiveGame::workerLoop()
 			std::lock_guard<std::mutex> lock(m_pubMutex);
 			m_running = false;
 			m_lastWorkerFrameMs = secondsSince(t0) * 1000.0;
+			m_clientPoolPolicy.frame(m_lastWorkerFrameMs); // lane PERF-CLIENT: every completed worker frame counts, whatever the render rate
 		}
 		m_pubCv.notify_all();
 	}

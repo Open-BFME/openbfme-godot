@@ -309,7 +309,7 @@ void DeployStyleAIUpdate::dispatch(const RoutedCommand &c)
 		aiAttackObject(c.target, c.source, c.maxShots);
 		return;
 	case 0xC:
-		aiForceAttackObject(c.target, c.source);
+		aiForceAttackObject(c.target, c.source, c.maxShots);
 		return;
 	case 0xE:
 		aiAttackPosition(c.position, c.maxShots, c.source);

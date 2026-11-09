@@ -9,6 +9,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "GodotDevice/GodotGameWorld.h"
+#include "GodotDevice/GodotShaderBudget.h"
 #include "Common/MD5.h"
 #include "GameClient/ObjectShadow.h"
 #include "GameClient/InGameChat.h"
@@ -321,6 +322,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_placement_ghost", "template_name"), &GameWorld::get_placement_ghost);
 	ClassDB::bind_method(D_METHOD("create_object", "template_name", "player", "x", "y", "angle"), &GameWorld::create_object, DEFVAL(0.0));
 	ClassDB::bind_method(D_METHOD("get_ground_height", "x", "y"), &GameWorld::get_ground_height);
+	ClassDB::bind_method(D_METHOD("get_align_on_terrain_height", "x", "y", "z"), &GameWorld::get_align_on_terrain_height);
 	ClassDB::bind_method(D_METHOD("queue_unit", "player", "producer", "template_name", "secondary"), &GameWorld::queue_unit, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("cancel_unit", "player", "producer", "template_name", "all"), &GameWorld::cancel_unit, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("set_rally_point", "player", "producer", "x", "y"), &GameWorld::set_rally_point);
@@ -362,6 +364,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("reset_logic_wait_sites"), &GameWorld::reset_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("set_render_interpolation", "enabled"), &GameWorld::set_render_interpolation);
 	ClassDB::bind_method(D_METHOD("set_perf3_client", "enabled"), &GameWorld::set_perf3_client); // lane PERF-3
+	ClassDB::bind_method(D_METHOD("set_draw_culling", "enabled"), &GameWorld::set_draw_culling); // lane GPUPERF-2
+	ClassDB::bind_method(D_METHOD("get_draw_culling"), &GameWorld::get_draw_culling);
 	ClassDB::bind_method(D_METHOD("get_perf3_client"), &GameWorld::get_perf3_client);
 	ClassDB::bind_method(D_METHOD("set_logic_thread", "enabled"), &GameWorld::set_logic_thread);
 	ClassDB::bind_method(D_METHOD("get_logic_thread"), &GameWorld::get_logic_thread);
@@ -554,6 +558,7 @@ GameWorld::~GameWorld()
 	m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 	m_spellBar.reset();
 	m_cahCameraOffsetValid = false;
+	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset();
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -664,6 +669,7 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 		m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 		m_spellBar.reset();
 		m_cahCameraOffsetValid = false;
+		restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 		m_game.reset();
 		m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -780,6 +786,7 @@ void GameWorld::clear_scene()
 	m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 	m_spellBar.reset();
 	m_cahCameraOffsetValid = false;
+	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset(); // the objects (and through them the drawables) first
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
@@ -807,6 +814,15 @@ void GameWorld::clear_scene()
 }
 
 // lane GLOW-1 (S-5231): a model draw module's GlowEnabled / GlowEmissive (module data + 0x128 / + 0x129, RW 0x4C518B): 0 none, 1 glows, 2 glows emissive only
+// lane SELWALL-1: a drawable whose models receive the selection decals: KINDOF_WALK_ON_TOP_OF_WALL, the casters RotWK's decal projection collects
+// (W3DProjectedShadowManager RW 0x50C876 .. 0x50C8B1: iterateObjectsInRange with that bit; the retail maps' bridges are such objects, S-161). INFERENCE
+// (S-2522): every such model receives the decals over it, not RotWK's at most 16 objects within sqrt(sx^2 + sy^2) + 50 of the decal
+static bool selectionDecalReceiver(const Drawable *d)
+{
+	static const int bit = ObjectTemplateInfoBuilder::kindOfIndex("WALK_ON_TOP_OF_WALL");
+	return d && d->isKindOfIndex(bit);
+}
+
 static int staticGlowOf(const ModuleData *data)
 {
 	const W3DModelDrawModuleData *md = dynamic_cast<const W3DModelDrawModuleData *>(data);
@@ -851,6 +867,7 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 	}
 	staticInst->set_house_colors_enabled(false); // client-only trees and props have no owner
 	staticInst->set_auto_update(false);
+	staticInst->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the trees and props off screen leave the draw
 	m_clientRuntime.reset(new MapObjectRuntime(*m_assets));
 	m_clientRuntime->build(m_game->clientOnly(), false);
 	m_treeTopple.reset(new TreeTopple()); // lane SPELL-3
@@ -1262,6 +1279,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 		m_spellBar.reset();
 		m_cahCameraOffsetValid = false;
+		restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 		m_game.reset();
 		return fail(error);
 	}
@@ -1275,6 +1293,11 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	if (m_fxPlayer && m_fxPlayer->playback())
 	{
 		m_liveFX.reset(new LiveFX(*m_game, *m_fxPlayer->playback())); // lane FX-2: from here on the logic's effect calls play
+		// lane FEAT-BLDFX-1 (S-117): the map's Scorch objects enter the terrain scorch buffer (BFME2 W3DTerrainVisualLoad.cpp:526)
+		for (const MapScorch &s : m_game->classified().report.scorches)
+		{
+			m_fxPlayer->playback()->addMapScorch(s.position, s.radius, s.type);
+		}
 		// lane PERF-1 r2: every particle texture decoded during the load (280 retail textures, about 30-70 ms), not at its first use in a battle
 		const double tp = nowMs();
 		m_fxPlayer->preload_textures(0.0);
@@ -1360,6 +1383,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	dyn->set_house_colors_enabled(m_houseColors);
 	dyn->set_playing(false); // time only enters through set_instance_pose
 	dyn->set_pose_culling(m_perf3Client); // PiP supplies an additional frustum when a second camera sees the live objects.
+	dyn->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the same frusta decide what is drawn
 	timings["static_layer_ms"] = timing::elapsedMs(t0);
 
 	t0 = nowMs();
@@ -1913,7 +1937,13 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			{
 				glowModel = plainModel + (f.glow == 2 ? "|glow-emissive" : "|glow");
 			}
-			const std::string &model = glowModel.empty() ? plainModel : glowModel;
+			// lane SELWALL-1: a wall top or bridge (KINDOF_WALK_ON_TOP_OF_WALL) gets a model of its own whose surfaces draw the selection decals
+			std::string selModel;
+			if (shown && selectionDecalReceiver(d))
+			{
+				selModel = (glowModel.empty() ? plainModel : glowModel) + "|sel";
+			}
+			const std::string &model = !selModel.empty() ? selModel : glowModel.empty() ? plainModel : glowModel;
 			if (model != ev.model)
 			{
 				if (ev.instance >= 0)
@@ -1936,6 +1966,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 						if (!swappedModel.empty())
 						{
 							dyn->Set_Build_Texture_Swaps(*f.textureSwaps); // taken by the add below (and add_model_colored's)
+						}
+						if (!selModel.empty())
+						{
+							dyn->Set_Build_Selection_Decals(true); // lane SELWALL-1: taken by the add below
 						}
 						if (!coloredModel.empty())
 						{
@@ -2079,6 +2113,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				{
 					ev.staticKey += ev.staticGlow == 2 ? "|glow-emissive" : "|glow";
 				}
+				if (selectionDecalReceiver(d))
+				{
+					ev.staticKey += "|sel"; // lane SELWALL-1: as on the animated path
+				}
 				if (ev.staticKeyColored)
 				{
 					const HouseColorParams &pp = ev.staticKeyPalette;
@@ -2108,6 +2146,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				{
 					const double tm = nowMs();
 					dyn->Set_Build_Texture_Swaps(swaps);
+					dyn->Set_Build_Selection_Decals(selectionDecalReceiver(d)); // lane SELWALL-1
 					if(colored) {
 					 PackedInt64Array colors;for(auto color:palette.colors) colors.push_back((int64_t)color);
 					 mid=dyn->add_model_colored(toGodot(e.staticModel),palette.kind,colors);
@@ -2352,6 +2391,10 @@ void GameWorld::advance(double delta)
 	if (m_paused)
 	{
 		// the simulation and the animations stand still; the streak ribbons still face the camera of this frame (the camera moves while paused)
+		if (m_clientPool)
+		{
+			m_clientPool->restore(); // lane PERF-CLIENT: no logic frame runs while paused, so the paused view has every thread
+		}
 		if (m_netSession)
 		{
 			// SMOOTH-1 (review r4): a network game keeps its transport and protocol pumped while paused (a presentation-only advance: no batch runs)
@@ -2435,6 +2478,7 @@ void GameWorld::advance(double delta)
 	// Single-threaded, the frames run inside advance and this work follows them, as before.
 	const bool threaded = m_game->logicThread();
 	m_fxPendingDt = timing::sumMs(m_fxPendingDt, dt); // seconds: a plain sum through the timing facade (the audited file's float rule)
+	adaptClientPool(threaded); // lane PERF-CLIENT: between dispatches (the main thread's)
 	if (threaded)
 	{
 		heldClientWork();
@@ -3105,13 +3149,14 @@ void GameWorld::refresh_streaks(bool record)
 			if (m_streakShader[add].is_null())
 			{
 				m_streakShader[add].instantiate();
-				m_streakShader[add]->set_code(String("shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled, ")
+				const String streakCode = String("shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled, ")
 					+ (add ? "blend_add" : "blend_mix")
 					+ ";\nuniform sampler2D tex : hint_default_white, filter_linear_mipmap, repeat_disable;\n"
 					  "void fragment() {\n\tvec4 t = texture(tex, UV) * COLOR;\n"
 					  "\tALBEDO = clamp(t.rgb, 0.0, 1.0);\n" // RENDER-3 (S-831): the gamma-space transparent pass takes the gamma value
 					+ String(add ? "\tALPHA = 1.0;\n}\n" // PROJ-2: DAT 0xD9B2E4 is SRCBLEND ONE / DSTBLEND ONE: the texture's alpha does not weigh the sum
-								 : "\tALPHA = t.a;\n}\n")); // DAT 0xD9B2F0: SRC_ALPHA / INV_SRC_ALPHA
+								 : "\tALPHA = t.a;\n}\n"); // DAT 0xD9B2F0: SRC_ALPHA / INV_SRC_ALPHA
+				SetShaderCode(m_streakShader[add].ptr(), streakCode, add ? "W3D streak additive" : "W3D streak alpha");
 			}
 			mat.instantiate();
 			mat->set_shader(m_streakShader[add]);
@@ -3589,6 +3634,11 @@ int64_t GameWorld::create_object(const String &template_name, int64_t player, do
 double GameWorld::get_ground_height(double x, double y) const
 {
 	return m_game ? (double)m_game->logic().getGroundHeight((float)x, (float)y) : 0.0;
+}
+
+double GameWorld::get_align_on_terrain_height(double x, double y, double z) const
+{
+	return m_game ? (double)m_game->logic().getAlignOnTerrainHeight((float)x, (float)y, (float)z) : 0.0;
 }
 
 void GameWorld::queue_unit(int64_t player, int64_t producer, const String &template_name, bool secondary)
@@ -4116,7 +4166,8 @@ Dictionary GameWorld::get_frame_timings() const
 	t["views_ms"] = m_lastViewsMs;
 	t["views_local"] = (int64_t)m_lastViewsLocal;   // lane PERF-CLIENT: the drawables the last refresh_views refreshed on the client job pool
 	t["views_serial"] = (int64_t)m_lastViewsSerial; // and on the main thread
-	t["client_threads"] = (int64_t)JobSystem::client().threadCount(); // the client job pool's threads, the caller included (1: everything inline)
+	t["client_threads"] = (int64_t)JobSystem::client().threadCount(); // the client job pool's threads now (lane PERF-CLIENT may have shrunk it), the
+	                                                                  // caller included (1: everything inline)
 	t["fx_ms"] = m_lastFxMs;
 	t["new_models"] = (int64_t)m_lastNewModels;
 	t["new_model_ms"] = m_lastNewModelMs;
@@ -4128,6 +4179,9 @@ Dictionary GameWorld::get_frame_timings() const
 	{
 		t["presented_alpha"] = m_game->presentedAlpha();       // SMOOTH-1: after the presentation delay and the late-frame hold
 		t["worker_frame_ms"] = m_game->lastWorkerFrameMs();     // the logic worker's last frame
+		// lane PERF-CLIENT: the logic worker is behind its clock (the pool is shrunk for it unless its shrunk size is the full one, or another world's
+		// sizer restored it)
+		t["client_pool_behind"] = m_game->workerBehind();
 		t["held_presentations"] = (int64_t)m_game->heldPresentations();
 		t["logic_waits"] = (int64_t)m_game->blockingWaits();     // lane PATHPERF-1: render-side waits that blocked on the worker (cumulative)
 		const std::shared_ptr<const LogicSnapshot> shown = m_game->presentedSnapshot();
@@ -4192,12 +4246,55 @@ bool GameWorld::get_render_interpolation() const
 	return m_renderInterpolation;
 }
 
+// lane PERF-CLIENT: while the logic worker is behind its clock (its frames over the logic frame's budget, counted by the worker itself), the client job pool keeps a
+// quarter of the hardware threads (at least 2) so the worker's single-threaded passes are not competing with the client's slices for the
+// cores; it grows back once the worker is well under its clock again, and while the game is paused (ClientPoolPolicy.h has the rule and
+// the numbers). The full size is the hardware's:
+// the rule is off whenever OPENBFME_CLIENT_THREADS names another. The pool is resized between dispatches, on this thread, which owns every
+// client dispatch. Nothing of the simulation changes: the pool's size only decides which thread runs a slice
+void GameWorld::adaptClientPool(bool threaded)
+{
+	if (!m_clientPoolAdapt)
+	{
+		return;
+	}
+	if (!m_clientPool)
+	{
+		const int full = JobSystem::defaultThreadCount();
+		m_clientPool = std::make_unique<ClientPoolSizer>(JobSystem::client(), full, ClientPoolPolicy::behindThreadsFor(full));
+	}
+	if (!threaded)
+	{
+		m_clientPool->restore(); // the frames run inside advance: no worker to make room for
+		return;
+	}
+	m_clientPool->apply(m_game->workerBehind());
+}
+
+// the game is gone (or about to be): the pool has its full size for the menu and the next load, whose parallel loaders run on it
+void GameWorld::restoreClientPool()
+{
+	m_clientPool.reset();
+}
+
 void GameWorld::set_perf3_client(bool enabled)
 {
 	m_perf3Client = enabled;
 	if (W3DInstancer *d = instancerOf(m_dynamicId))
 	{
 		d->set_pose_culling(enabled);
+	}
+}
+
+void GameWorld::set_draw_culling(bool enabled)
+{
+	m_drawCulling = enabled;
+	for (uint64_t id : { m_dynamicId, m_staticId })
+	{
+		if (W3DInstancer *d = instancerOf(id))
+		{
+			d->set_draw_culling(enabled);
+		}
 	}
 }
 
@@ -6847,9 +6944,26 @@ Dictionary GameWorld::get_fx_report() const
 		}
 	}
 	d["stops"] = stops;
-	if (m_fxPlayer)
+	if (m_fxPlayer && m_fxPlayer->playback())
 	{
 		d["particles"] = m_fxPlayer->get_stats();
+		// lane FEAT-BLDFX-1: the client effect state (scorches RW 0x5E0045, dynamic decals RW 0x5E05AB, light pulses RW 0x5DFAA3, camera shakers RW 0x5DFE90; the bodies are DONOR BFME2 0x67EA3 / 0x10C785 / 0x6DE3D / 0x65DAD)
+		const FXPlayback &playback = *m_fxPlayer->playback();
+		Dictionary scorches;
+		scorches["count"] = (int64_t)playback.scorches().entries().size();
+		scorches["additions"] = (int64_t)playback.scorches().additions();
+		scorches["duplicates"] = (int64_t)playback.scorches().duplicates();
+		scorches["evictions"] = (int64_t)playback.scorches().evictions();
+		d["scorches"] = scorches;
+		Dictionary decals;
+		decals["count"] = (int64_t)playback.decals().size();
+		d["decals"] = decals;
+		Dictionary lights;
+		lights["active"] = (int64_t)playback.lightPulses().enabledCount();
+		lights["additions"] = (int64_t)playback.lightPulses().additions();
+		lights["refused_range"] = (int64_t)playback.lightPulses().refusedRange();
+		lights["overflow"] = (int64_t)playback.lightPulses().overflow();
+		d["light_pulses"] = lights;
 	}
 	return d;
 }

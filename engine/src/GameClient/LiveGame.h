@@ -22,6 +22,7 @@
 #include "Common/SimulationProfile.h"
 #include "Common/Team.h"
 #include "GameClient/ClientEvents.h"
+#include "GameClient/ClientPoolPolicy.h"
 #include "GameClient/DrawableLaunchBones.h"
 #include "GameClient/DrawableWallMeshes.h"
 #include "GameClient/LogicSnapshot.h"
@@ -362,6 +363,13 @@ public:
 		const std::unique_lock<std::mutex> lock = lockPublication("lastWorkerFrameMs"); // the worker writes it under the same mutex (review r2)
 		return m_lastWorkerFrameMs;
 	}
+	// lane PERF-CLIENT: whether the logic worker is behind its clock (ClientPoolPolicy, fed by the worker with every frame it completes); the client
+	// pool's size follows it. False while the logic runs on the calling thread
+	bool workerBehind() const
+	{
+		const std::unique_lock<std::mutex> lock = lockPublication("workerBehind");
+		return m_clientPoolPolicy.behind();
+	}
 	unsigned long long droppedFrames() const { return m_droppedFrames; }
 
 	// lane SCRIPT-1: the script engine's client requests (camera, UI, audio ...) published with the frames, in execution order (render side; taken once)
@@ -524,6 +532,7 @@ private:
 	std::function<void(const std::string &)> m_logicFailureHandler; ///< guarded
 	std::string m_workerFrameFailure;     ///< guarded: setWorkerFrameFailure
 	double m_lastWorkerFrameMs = 0.0;     ///< guarded
+	ClientPoolPolicy m_clientPoolPolicy;  ///< guarded: lane PERF-CLIENT, the worker's frames against the logic clock (reset when the worker starts)
 	std::thread m_worker;
 	std::atomic<std::thread::id> m_workerId{};
 	bool m_threaded = false;

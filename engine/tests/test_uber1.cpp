@@ -139,6 +139,12 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // draw, RW 0x899F1F, and its countdown in the object hash), from frame 0.
 // Lane WARG-1 re-measured the pin vector once on the lane's tree after the archive merge (OPENBFME_UBER1_REGEN=1, a CI host): FindClosestPath (RW
 // 0x6FB869) at computePath's fallback and the attack and melee approach paths, and the unclamped cells of RW 0x6E8CE6.
+// Lane PATH-REBUILD re-measured the pin vector (OPENBFME_UBER1_REGEN=1 on its tree): every found path is rebuilt from its optimised nodes (RW 0x767B0E)
+// and the mover hash covers the path's node chain, from frame 0.
+// Merge queue q37 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: #187 on top of WARG-1 and #182 moves it,
+// and ATKRESET-1 (attack orders end the FiringDuration lock) moves it again.
+// pin: merge queue q44 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (AIRBORNE_TARGET
+// from the locomotor height, RW 0x66A472) moves it from frame 0.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {
@@ -171,10 +177,15 @@ TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1
 		if (threads > 1)
 		{
 			CHECK(run.hashWorkerChunks > 0); // the hash itself ran on several threads
+			// lane PERF-WS: every measured frame's final list (the WeaponStatusHelpers) was computed on the pool and applied in list order, none
+			// fell back to the serial pass; the pin above proves the applied conditions are the serial pass's
+			CHECK(run.weaponStatusPooledFrames == (std::uint64_t)frames);
+			CHECK(run.weaponStatusSerialFrames == 0);
 		}
 		else
 		{
 			CHECK(run.hashWorkerChunks == 0);
+			CHECK(run.weaponStatusPooledFrames == 0); // lane PERF-WS: with one logic thread the pass computes in update
 		}
 		if (reference.empty())
 		{

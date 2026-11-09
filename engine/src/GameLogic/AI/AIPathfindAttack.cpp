@@ -34,7 +34,7 @@
 // INFERENCE / NOT PORTED (stop S-784): RW 0x68C9AC's transformed point of a WALL_UPGRADE victim is its position (the goal only seeds the corridor); the
 // occupancy count is the port's checkDestination count (allied goals block, S-164); a retail path keeps the goal cell's record when it was never opened or
 // closed (RW releases it only on the null branch), the port gives it back (no observable difference: an occupant-free record carries nothing); the
-// path is built and optimised by the port's buildActualPath (RW's last argument 1 is not identified).
+// path is built and optimised by the port's buildActualPath (RW's last argument 1 is faceDirection: the rebuild from the unit's facing, lane PATH-REBUILD).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindStops.h"
@@ -281,7 +281,7 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 					if (crowd <= 1)
 					{
 						markClosed(c);
-						result = buildActualPath(obj, loco.validSurfaces, &pos, c, center, false);
+						result = buildActualPath(obj, loco, &pos, c, center, false, true); // RW 0x6FC93E: faceDirection 1
 						done = true;
 						break;
 					}
@@ -315,7 +315,7 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 	{
 		if (acceptable)
 		{
-			result = buildActualPath(obj, loco.validSurfaces, &pos, acceptable, center, false);
+			result = buildActualPath(obj, loco, &pos, acceptable, center, false, true); // RW 0x6FC99D: faceDirection 1
 		}
 		else if (closest)
 		{
@@ -323,7 +323,7 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 			{
 				*fallback = true;
 			}
-			result = buildActualPath(obj, loco.validSurfaces, &pos, closest, center, false);
+			result = buildActualPath(obj, loco, &pos, closest, center, false, true); // RW 0x6FC0C7 / 0x6FC13F: faceDirection 1
 		}
 	}
 	m_isTunneling = false;

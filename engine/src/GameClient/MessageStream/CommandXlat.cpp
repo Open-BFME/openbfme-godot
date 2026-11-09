@@ -9,6 +9,7 @@
 #include "GameLogic/AI/AIGarrisonStates.h"
 #include "GameLogic/ActionManager.h"
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 
 #include "Common/BuildAssistant.h"
@@ -140,6 +141,67 @@ bool CommandTranslator::objectCanAttack(Object &obj)
 				{
 					return true;
 				}
+			}
+		}
+	}
+	return false;
+}
+
+bool CommandTranslator::objectCanDamage(Object &obj, Object &victim)
+{
+	// RW 0x6C8652 WeaponSet::getAbleToUseWeaponAgainstTarget, its victim loop (RW 0x6C891B .. 0x6C8993): the locked slot only (+ 0x24, + 0x20), else slots 5 .. 0;
+	// a weapon that canDamage the victim (RW 0x6CDBF3, its damage estimate after the victim's armour) and whose slot's OnlyAgainst (+ 0xEC, RW 0x6C824C) is empty
+	// or names a KindOf of the victim (RW 0x70C548) makes the attack possible. INFERENCE (S-286): ObjectWeapons::canAttackObject stands for the eligibility
+	// tests before the loop, and the members of a horde are asked as objectCanAttack asks them
+	if (ObjectWeapons *weapons = obj.getWeapons(); weapons && weapons->canAttackObject(victim, CMD_FROM_PLAYER, false))
+	{
+		const int first = weapons->isCurWeaponLocked() ? weapons->curSlot() : WEAPONSLOT_COUNT - 1;
+		const int last = weapons->isCurWeaponLocked() ? weapons->curSlot() : PRIMARY_WEAPON;
+		const WeaponTemplateSet *set = weapons->templateSet();
+		for (int slot = first; slot >= last; --slot)
+		{
+			const Weapon *weapon = weapons->weaponInSlot(slot);
+			if (!weapon || !weapons->canDamage(*weapon, victim))
+			{
+				continue;
+			}
+			bool onlyAgainst = false, matches = false;
+			for (size_t word = 0; set && word < set->m_onlyAgainst[slot].size(); ++word)
+			{
+				onlyAgainst = onlyAgainst || set->m_onlyAgainst[slot][word] != 0;
+				matches = matches || (set->m_onlyAgainst[slot][word] & victim.getKindOf()[word]) != 0;
+			}
+			if (!onlyAgainst || matches)
+			{
+				return true;
+			}
+		}
+	}
+	if (ContainModuleInterface *contain = obj.getContain())
+	{
+		if (const ContainModuleInterface::ContainedItemsList *items = contain->getContainedItemsList())
+		{
+			for (Object *member : *items)
+			{
+				if (member && member != &obj && objectCanDamage(*member, victim))
+				{
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+bool CommandTranslator::selectionCanDamage(Object &victim)
+{
+	for (ObjectID id : m_ctx.ui.selected())
+	{
+		if (Object *o = m_ctx.logic.findObjectByID(id))
+		{
+			if (objectCanDamage(*o, victim))
+			{
+				return true;
 			}
 		}
 	}
@@ -420,8 +482,20 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 			return msgType;
 		}
 	}
-	// an UNATTACKABLE enemy fails the attack test and reaches the capture test below: a capture flag an enemy took is recaptured, not attacked
-	if (obj && !m_ctx.ui.isInForceAttackMode() && HudObjects::relationshipToLocal(m_ctx, *obj) == ENEMIES && !isUnattackableTarget(*obj) && selectionCanAttack())
+	// OpenBFME input adaptation: retail CRATE objects are pickup destinations.
+	// Contact-command priority is not verified against RotWK (see CRATE_PICKUPS.md).
+	if (obj && obj->isKindOf((unsigned)CombatNames::kindOf("CRATE")) && !m_ctx.ui.isInForceAttackMode())
+	{
+		const Coord3D destination = *obj->getPosition();
+		if (type == EvaluateType::DoHint) hint(MouseCursorName::Move);
+		else return issueMove(nullptr, &destination, type);
+		return m_teamExists ? MSG_DO_MOVETO : 0;
+	}
+	// an UNATTACKABLE enemy fails the attack test and reaches the capture test below: a capture flag an enemy took is recaptured, not attacked.
+	// lane WALL-3 (CommandXlat.h): an enemy's walkable wall that no selected weapon damages is no attack (RW 0x81F618 .. 0x81F63A): the click falls through to the move
+	const bool walkableWall = obj && obj->isKindOfName("WALK_ON_TOP_OF_WALL") && !obj->isKindOfName("WALL_UPGRADE");
+	if (obj && !m_ctx.ui.isInForceAttackMode() && HudObjects::relationshipToLocal(m_ctx, *obj) == ENEMIES && !isUnattackableTarget(*obj) && selectionCanAttack() &&
+		(!walkableWall || selectionCanDamage(*obj)))
 	{
 		msgType = MSG_DO_ATTACK_OBJECT;
 		if (type == EvaluateType::DoCommand)
@@ -1248,7 +1322,7 @@ int CommandTranslator::evaluateCapture(Object *obj, const Coord3D *pos, Evaluate
 // a SIEGE_TOWER (+ 0x113 bit 5) without status DEPLOYED (0x3B, RW 0x44DDEC), able to use the button (RW 0x692A75: its power's module, the button in its
 // command set) and the button ready for it (RW 0x75CC3E: the power's module fully ready); then an object without an AI answers yes, and so does one whose
 // target has a SiegeDockingBehavior that gives it no approach point (dock interface slot 1, RW 0x85CA8A) or an approach point its AI reaches by a quick path
-// (RW 0x66403D -> RW 0x6F5BB0 clientSafeQuickDoesPathExist from the object's position with its locomotor set). evaluateContextCommand (RW 0x81E60B, after the
+// (RW 0x66403D -> RW 0x6F5BB0 quickDoesPathExist from the object's position with its locomotor set). evaluateContextCommand (RW 0x81E60B, after the
 // GUI command and the force-move tests, before the enter and attack tests): a hint is the attack hint (0xB1, the AttackObj cursor); a command is
 // MSG_DO_SPECIAL_POWER_AT_OBJECT (0x412) with Command_SpecialAbilitySiegeDeploy's power { the template id, the target, the button's options, no source, the
 // target's position } (the unit voice of the button, RW 0x8DD5FF, is the client's audio: not played).
@@ -1307,7 +1381,7 @@ bool CommandTranslator::canSiegeDeploy(const Object &target)
 			if (world && world->mapReady())
 			{
 				const PathfindLocomotorInfo loco = ai->locomotorInfo();
-				if (world->pathfinder().clientSafeQuickDoesPathExist(loco, o->getPosition(), &approach)) // RW 0x66403D -> RW 0x6F5BB0
+				if (world->pathfinder().quickDoesPathExist(ai->adapter(), o->getPosition(), &approach, &loco)) // RW 0x66403D -> RW 0x6F5BB0 (lane QPATH-1)
 				{
 					return true;
 				}

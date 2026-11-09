@@ -233,10 +233,11 @@ TEST_CASE("warg1 retail: Rohirrim trained at a level 2 stable and sent with a pl
 	OPENBFME_REQUIRE_START(s);
 	const Trained t = trainAndCharge(s, "FactionMen", "GondorStable", "Upgrade_GondorStableLevel2", "RohanRohirrimHorde", "FactionMordor", "MordorFighterHorde");
 	REQUIRE(t.produced);
-	// engine pins (measured on the lane's tree; 0 crushes before lane WARG-1)
+	// engine pins (measured on the lane's tree; 0 crushes before lane WARG-1); merge queue q37 (#187's rebuilt paths, measured once on the merged tree):
+	// crushes 14 -> 17, shots 28 -> 34, knockbacks 14 -> 17
 	CHECK(t.victimsStart == 20);
-	CHECK(t.crushes == 14);
-	CHECK(t.shots == 28);
-	CHECK(t.knockbacks == 14);
+	CHECK(t.crushes == 17);
+	CHECK(t.shots == 34);
+	CHECK(t.knockbacks == 17);
 	CHECK(t.victimsEnd == 0);
 }

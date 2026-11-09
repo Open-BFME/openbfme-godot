@@ -181,9 +181,9 @@ Coord3D seededContactPoint(Object &victim, int line)
 }
 
 // the victim's contact point of the swoop / attack states: the AI's labelled point (RW 0x667C76), else the seeded one (RW 0x690BD2 at `line`)
-// INFERENCE (S-4040): RW 0x667C76 with `preferred` false runs GeometryInfo::getBestContactPoint's overlap test (RW 0xAD2CE0: the target's shapes against the static
-// point geometry RW 0xDF1EA8 at the label's point), which is not ported (S-1281): the port's call refuses it with a logic error. The bird then takes the seeded
-// contact point, as RW does for a target without the label, and the world's report carries S-1281
+// RW 0x667C76 with `preferred` false runs GeometryInfo::getBestContactPoint's overlap test (RW 0xAD2CE0: the target's shapes against the static point geometry
+// RW 0xDF1EA8 at the label's point; ported by lane AIMAIM-1). A logic error left (another mode, S-1281) makes the bird take the seeded contact point, as RW
+// does for a target without the label, and the world's report carries S-1281
 Coord3D contactPointOn(AIUpdateInterface &ai, Object &victim, int line)
 {
 	Coord3D pos;
@@ -194,8 +194,8 @@ Coord3D contactPointOn(AIUpdateInterface &ai, Object &victim, int line)
 	}
 	catch (const std::logic_error &)
 	{
-		static const std::string stop = "[S-1281] GiantBirdAIUpdate: the labelled contact point (SpecialContactPoints, RW 0x667C76 without `preferred`) needs the "
-		                                "overlap test RW 0xAD2CE0, not ported: the seeded contact point is used";
+		static const std::string stop = "[S-1281] GiantBirdAIUpdate: the labelled contact point (SpecialContactPoints, RW 0x667C76) asked a getBestContactPoint "
+		                                "mode that is not ported: the seeded contact point is used";
 		ai.world().noteStop(stop.c_str());
 		found = false;
 	}
@@ -279,6 +279,7 @@ public:
 	unsigned logicFrame() const override { return base().logicFrame(); }
 	bool containerAllowsBackingUp() const override { return base().containerAllowsBackingUp(); }
 	float groundHeightAt(float x, float y) const override { return base().groundHeightAt(x, y); }
+	bool isOnRampOrRaisedLayer() const override { return base().isOnRampOrRaisedLayer(); }
 	LocomotorPath *getPath() override { return base().getPath(); }
 	bool testObjectStatus(int bit) const override { return base().testObjectStatus(bit); }
 	bool testModelCondition(int bit) const override { return base().testModelCondition(bit); }

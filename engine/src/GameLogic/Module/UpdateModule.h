@@ -16,6 +16,7 @@
 #include "GameLogic/ObjectTypes.h"
 
 class GameLogic;
+class ObjectWeapons;
 
 class UpdateModuleInterface
 {
@@ -39,6 +40,11 @@ public:
 
 	// ZH UpdateModule::getUpdatePhase: "you should really never specify anything other than PHASE_NORMAL"
 	virtual SleepyUpdatePhase getUpdatePhase() const { return PHASE_NORMAL; }
+	// lane PERF-WS: the weapons whose status conditions this module's update computes from its own object alone (WeaponStatusHelper), else null:
+	// the scheduler computes those on the logic job pool before the final list's pass and applies them in the pass, in list order. The pass
+	// relies on it: a PHASE_FINAL module must not write what ObjectWeapons::computeWeaponStatusConditions reads (its object's statuses, its
+	// weapons' timers and ammo); the scheduler keeps the serial order whenever an awake module of the final list is not such a helper
+	virtual ObjectWeapons *weaponStatusWeapons() const { return nullptr; }
 
 	// ---- the scheduler's fields (friend_ functions: for GameLogic only) --------------------------------------------------
 	UnsignedInt friend_getNextCallFrame() const { return m_nextCallFrame; }

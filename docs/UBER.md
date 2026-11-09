@@ -309,6 +309,39 @@ runs at its own rate (here the 10k soldiers' CPU work bounds it) while the
 logic frames take 200-370 ms. Making the logic finish inside its tick is
 Uber's other half.
 
+**PERF-SNAP: the snapshot's records on the logic job pool.** The worker
+builds the client's snapshot between frames (`LiveGame::publish`,
+`LogicSnapshot::build`), a record per object; at 30,000 troops that was
+31-34 ms per logic frame of serial reads, in no tick's count. The records
+(and the lastMovedFrame pass) are filled on the logic job pool, 256 objects a
+job, after the caches a first read fills are warmed on the worker (every
+template's info; the bounding radii of the radar's wall and command centre
+shapes): 9.9-10.2 ms per logic frame with 16 logic threads. Nothing in the
+snapshot is hashed; `test_perf2_snapshot.cpp` pins every field of every
+record against the single-threaded build.
+
+**PERF-CLIENT: the client pool while the logic is behind.** Both job pools
+default to every hardware thread, so a late worker's single-threaded passes
+compete with the client's slices for the cores. After 3 worker frames in a
+row over the logic frame's budget (200 ms), counted by the worker itself as
+it completes them, the client pool keeps a quarter
+of the hardware threads (at least 2); after 5 worker frames in a row under
+150 ms it has every thread again, and it has every thread again while the
+game is paused and whenever it ends, for the menu and the next load
+(`GameClient/ClientPoolPolicy.h`,
+`GameWorld::adaptClientPool`; `get_frame_timings` `client_pool_behind`).
+Measured on an 8-core / 16-thread PC, 30,000 troops, Uber, 1600x900, vsync
+off, 30 s, twice each: with the rule 2.53 and 2.50 logic frames a second
+against 2.17 and 2.20 with the pool fixed at 16 (+14 to +17 %), for 31-34
+render frames a second against 39-41; a client pool fixed at 4 gave 2.47
+and 2.46 against 2.03 and 2.03 in an earlier pair of runs; the logic pool's
+size (8, 12 or 16) makes no difference; the shrunk size on 8 or 4 hardware
+threads (2) is the rule's, not measured. At 10,000 troops the logic keeps its
+clock, the pool stays full and both runs are the same (5.0 logic frames a
+second, 121-123 fps). `OPENBFME_CLIENT_THREADS` (an explicit size)
+or `OPENBFME_CLIENT_POOL_FIXED` turns the rule off. Nothing of the simulation
+changes.
+
 ## The budget at 40,000 units
 
 **Logic.** On the reference PC the logic tick must finish in its 200 ms (5 fps
@@ -600,6 +633,30 @@ left the rule out (stop S-164, `ObjectPathfindAdapter::ignoresAsTarget`).
   budget is 100 times larger, a frame took 322 ms instead of 221 ms (2.7 times
   the cells a search, fewer searches); from frame 25 on, 148 ms instead of
   140 ms. Retail runs the same rule.
+### PERF-WS: the final list's weapon status conditions on the pool (done)
+
+The final update list (phase 6) is one WeaponStatusHelper per weapon-capable
+object (the troops, the horde controllers, the buildings), each a serial call
+that reads its own object alone and writes its own weapons' slot conditions
+and model conditions, so nothing a module of the pass writes changes what a
+later one computes.
+
+- Both profiles, no rule change: the conditions of every module the pass
+  will update are computed on the logic job pool before the pass, against
+  the list at its start and with the pass's own tests, and applied in list
+  order where update would have computed them (the same writes, the same
+  client events, the same hash: `GameLogic::prepareWeaponStatusWork`). With
+  one logic thread the pass computes in update as before. An awake module of
+  the list that is no such helper makes the frame serial again (counted in
+  `GameLogic::Report::weaponStatusSerialFrames`).
+- Result (the uber bench's battle, map mp fall back 8p, 30,000 troops, 16
+  logic threads, Windows MSVC; the mean of frames 1-175 of one run each, read
+  with a temporary per-phase wall-clock probe of the lane): phase 6 is 6.0 ms
+  a frame instead of 10.1 (Uber) and 10.3 instead of 14.3 (Faithful); the hash
+  chains are unchanged. With one logic thread phase 6 is the serial pass's.
+- It is the first delivered piece of U4's parallel module phases: the
+  compute-then-apply shape, pure reads on the pool and a serial commit in
+  list order, is the one the other phases will take.
 
 ### U2: parallel queries and paths, GPU animation (next)
 
@@ -654,7 +711,7 @@ left the rule out (stop S-164, `ObjectPathfindAdapter::ignoresAsTarget`).
   Its commands are merged in player order into the next frame's command list.
 - Module phases split by spatial tiles with a halo: a tile's modules run in
   parallel when their reads and writes stay inside the tile, and the cross-tile
-  work commits serially in object order.
+  work commits serially in object order (the final list is done: PERF-WS).
 - Shroud and visibility: per player in parallel for the logic, a compute
   shader for the client texture.
 - **Target (unvalidated):** 40k at 144 fps sustained on the reference PC.
