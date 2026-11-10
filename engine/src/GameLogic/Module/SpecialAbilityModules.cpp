@@ -783,8 +783,7 @@ bool SpecialAbilityUpdate::withinStartAbilityRange()
 			m_targetID = INVALID_ID; // RW 0x852175
 			return false;
 		}
-		// RW 0x852127: ContactPointOverride (RW 0x690BD2, the bone position: S-860) falls back to the edge distance; a source HORDE with
-		// ApproachUntilMembersInRange uses its formation radius (S-860).
+		// RW 0x852127: ContactPointOverride (RW 0x690BD2, the bone position: S-860) falls back to the edge distance below.
 		// lane STARTRANGE-1: RW 0x85212D tests the TARGET's template + 0x118 bit 4, KindOf CHUNK_VENDOR (132; not a structure test): that target answers
 		// with its box distance to the source (RW 0x852137 -> RW 0x8513FD -> RW 0x68F430, thiscall on the target). BFME2 1.06: the same (m_kindof[4] bit 4,
 		// retail 0x44F28E)
@@ -792,6 +791,19 @@ bool SpecialAbilityUpdate::withinStartAbilityRange()
 		if (kChunkVendor >= 0 && t->isKindOf((unsigned)kChunkVendor))
 		{
 			dist2 = CombatQueries::boxDistanceSquared2D(*t, *obj);
+		}
+		else if (isHorde(*obj) && m_data->m_approachUntilMembersInRange)
+		{
+			// PORT-58: RW 0x85213E .. 0x852171 (tier A to BFME2 1.06 SpecialAbilityUpdateIsWithinStartAbilityRange.cpp, retail 0x44F28E):
+			// a HORDE caster (+ 0x115 bit 5) with ApproachUntilMembersInRange (+ 0xC5) takes its 2D center distance squared to the target (RW 0x66137C,
+			// x87 PC24 in register) plus its own bounding circle radius (Object + 0xB8 = GeometryInfo::m_boundingCircleRadius, un-squared, RW 0x852168 fadd
+			// -> RW 0x85216E fstp dword), NOT edge distance and NOT subtracting target radius.
+			const Coord3D &tp = *t->getPosition();
+			const Coord3D &op = *obj->getPosition();
+			const double dx = SimMath::pc24SubW((double)tp.x, (double)op.x);
+			const double dy = SimMath::pc24SubW((double)tp.y, (double)op.y);
+			const double sumSq = SimMath::pc24AddW(SimMath::pc24MulW(dy, dy), SimMath::pc24MulW(dx, dx));
+			dist2 = SimMath::fstpDword(SimMath::pc24AddW(sumSq, (double)CombatQueries::boundingCircleRadius(*obj)));
 		}
 		else
 		{
@@ -2752,7 +2764,7 @@ std::vector<std::string> SpecialAbilityModules::stopLines()
 		"disguise cancels 0x84 / 0x85: lane HERO-2; the grab enums SPECIAL_GRAB_PASSENGER / SPECIAL_GRAB_CHUNK 0x27 / 0x28 run since lane MODCOMPAT-MOD1: the "
 		"object grab, its hold, release and eat), the grab of a tree (RW 0x68449B makes it an object) and of a ROCK_VENDOR / CHUNK_VENDOR (its GrabObject, RW "
 		"0x85415C), the 0x28 unpack model condition (RW 0x85384C), the special objects (SpecialObject: no retail use), ContactPointOverride: counted (the "
-		"unit cost + 0x80 is paid since lane NECRODIE-1, RW 0x85521F)",
+		"unit cost + 0x80 is paid since lane NECRODIE-1, RW 0x85521F; ApproachUntilMembersInRange + 0xC5 runs since PORT-58, RW 0x85213E .. 0x852171)",
 		"[S-861] ToggleMountedSpecialAbilityUpdate: the toggle, CancelDisguiseWhenDismounting and MountedTemplate (the replacement RW 0x8B140D: Construction::"
 		"buildObjectNow, name, experience, health, team, SynchronizeTimerOnSpecialPower; the old object destroyed after its packing, RW 0x8B1E9A) run (lane "
 		"HERO-2); lane SUMMON-1: the initiate RW 0x8B1FDA (a current locomotor of speed 0 refuses, else IGNORE_AI_COMMAND) and SummonReplacementSpecialAbilityUpdate "
