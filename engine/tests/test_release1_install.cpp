@@ -9,6 +9,7 @@
 #include "PeImage.h"
 #include "RetailTestMount.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -469,6 +470,15 @@ TEST_CASE("release1: the registry names match retail (gi.dat and the binary)")
 	CHECK(wideAt(*pe, 0xBE835C) == registryQueries(kBfme2)[0].value); // L"Path"
 	CHECK(pe->cstring(0xC850F4) == registryQueries(kRotwk)[0].value); // "InstallPath", RW 0x9787FE
 	CHECK(pe->u32At(0x638D4F) == 0x80000002u);                         // HKEY_LOCAL_MACHINE
+}
+
+TEST_CASE("release1: the RotWK policy excludes the community HD Edition archives")
+{
+	RetailArchivePolicy policy;
+	std::string error;
+	REQUIRE_MESSAGE(RetailArchivePolicy::loadBuiltin("rotwk-201", policy, &error), error);
+	CHECK(std::find(policy.excluded.begin(), policy.excluded.end(), "___rotwkhdpack.big") != policy.excluded.end());
+	CHECK(std::find(policy.excluded.begin(), policy.excluded.end(), "___hdrotwk.v.0.9.big") != policy.excluded.end());
 }
 
 TEST_CASE("release1: the real installs pass the check, swapped they are named")
