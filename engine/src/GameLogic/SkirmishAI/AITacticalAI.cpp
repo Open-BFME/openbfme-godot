@@ -3256,7 +3256,7 @@ void updateOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 }
 
 // RW 0x774F2B (lane AI-3), a tactic team's AIGroup update from RW 0x8F144C: when not every member with an AI is idle or dead (RW 0x76FCBF: AI slot 0x1B8, + 0x458
-// bit 0), RW 0x77005F(1) (the group's speed matching: NOT ported, stop S-1301) and RW 0x7728E8: the goal object (RW 0x668303) of the first member not held by a
+// bit 0), RW 0x77005F(1) (the group's speed matching, AIGroup::cohereMoveSpeed: stop S-1301) and RW 0x7728E8: the goal object (RW 0x668303) of the first member not held by a
 // horde (+ 0x27C) whose AI has one; then every member not held by a horde that can attack (Object::isAbleToAttack RW 0x691269, lane DECOMP-3), whose AI
 // has no goal object and is idle (slot 0x1B8), attack-moves to that object's position with INT_MAX shots from the AI (RW 0x696266(pos, 0x7FFFFFFF, 2):
 // AI command 0xF, the attack-move to a position)
@@ -3277,6 +3277,7 @@ void updateTeamGroup(GameLogic &logic, const AITacticTeam &team)
 	{
 		return;
 	}
+	AIGroup(logic, team.members).cohereMoveSpeed(true); // RW 0x774F37 .. 0x774F3B
 	const Object *goal = nullptr;
 	for (ObjectID id : team.members)
 	{

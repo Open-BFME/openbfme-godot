@@ -63,6 +63,12 @@ public:
 	bool isPassengerAllowedToFire() const override;                                    // RW 0x865A7E (lane DECOMP-3)
 	bool isPassengerShotBlocked(const Object *rider, const Object *victim) const override; // RW 0x865B33 (lane DECOMP-3)
 	void orderAllPassengersToExit(int source) override; // RW 0x867D6A
+	// contain slot 0x64, the sale's call (RW 0x796806): RW 0x86561F clears the kill-on-death byte (module + 0xE1) and then orders every rider out with
+	// CMD_FROM_AI through vslot 0x80 (GarrisonContain / HordeGarrisonContain answer that slot with RW 0x991027 instead of RW 0x867D6A)
+	void onSelling() override;
+	// RW 0x86588C `cmp byte [ecx + 0xE1], 0` then `mov ecx, [ecx + 4]` (the module data) `cmp byte [ecx + 0x83], 0` (KillPassengersOnDeath): the byte above
+	// AND the data's row. Read by GarrisonContain::onRemoving (RW 0x87C0B6), HordeGarrisonContain::onDie (RW 0x87CF7D) and TransportContain's die (RW 0x87AE29)
+	bool getKillPassengersOnDeath() const;
 	void onObjectWantsToEnterOrExit(Object *obj, int wants) override;
 	unsigned getStealthUnitsContained() const override { return m_stealthUnitsContained; }
 	bool allowAlliesInside() const override;
@@ -189,7 +195,7 @@ protected:
 	std::map<ObjectID, int> m_wanters;        // RW OpenContain + 0x50 (ZH m_objectEnterExitInfo: 0 enter, 1 exit)
 	bool m_enabled = true;                    // RW interface + 0xBE (from the data's Enabled)
 	bool m_dying = false;                     // RW interface + 0xB8 (onDie)
-	bool m_killingRiders = true;              // RW + 0xE1 (1 at construction, RW 0x867FD8; read with KillPassengersOnDeath, RW 0x86588C; cleared by RW 0x86561F)
+	bool m_killingRiders = true;              // RW + 0xE1 (1 at construction, RW 0x86806C; read with KillPassengersOnDeath, RW 0x86588C; cleared by the sale's onSelling, RW 0x865623)
 	std::map<ObjectID, int> m_riderBoneIndex;          // RW + 0xD0 (the rider's bone index, RW 0x7871FC)
 	std::map<ObjectID, std::string> m_riderBoneName;   // RW + 0x3C (RW 0x8689EC)
 	std::array<std::uint32_t, 19> m_watchedConditions{}; // RW + 0x84 (19 words, zero at construction: RW 0x867FF3 memset)

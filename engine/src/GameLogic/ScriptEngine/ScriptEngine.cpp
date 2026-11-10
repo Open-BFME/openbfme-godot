@@ -25,6 +25,8 @@
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/System/ShroudManager.h"
+#include "GameLogic/Map/TerrainLogic.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -123,6 +125,7 @@ void ScriptEngine::reset()
 	m_counters.clear();
 	m_flags.clear();
 	m_namedObjects.clear();
+	m_namedMapReveals.clear();
 	m_references.clear();
 	m_objectLists.clear();
 	m_triggers = nullptr;
@@ -2233,6 +2236,15 @@ void ScriptEngine::crc(StateHasher &h) const
 			h.addU32(t.endFrame);
 		}
 	}
+	if (!m_namedMapReveals.empty())
+	{
+		h.addU32(0x5E6102u);
+		h.addU32((std::uint32_t)m_namedMapReveals.size());
+		for (const NamedMapReveal &r : m_namedMapReveals)
+		{
+			h.addU32(r.nameCrc); h.addString(r.target); h.addString(r.player); h.addFloat(r.radius); h.addBool(r.trigger);
+		}
+	}
 	for (size_t i = 0; i < m_triggeredSpecialPowers.size(); ++i) // lane BACKLOG4: hashed once a player has an entry
 	{
 		const std::vector<TriggeredSpecialPower> &l = m_triggeredSpecialPowers[i];
@@ -2260,6 +2272,71 @@ void ScriptEngine::crc(StateHasher &h) const
 				h.addU32(e.source);
 			}
 		}
+	}
+}
+
+// RW 0x7BC3A0 (MAP_REVEAL_AT_WAYPOINT) / 0x7C0BCF (MAP_REVEAL_IN_TRIGGER): look, then unlook at once. RW 0x7BD4C1 / 0x7BD4F3 (the permanent
+// ones): createNamedMapReveal RW 0x75A344 (CRC_String of the name, RW 0x7ED86B; a name already in the list RW ScriptEngine + 0x1A59C keeps its
+// record), then doNamedMapReveal RW 0x7592E1 (the first record with that CRC: type 0 a waypoint, 1 a trigger). RW 0x7BD524 (the undos):
+// undoNamedMapReveal RW 0x7593A4, then the record goes (RW 0x75985D). BFME2 donor ScriptEngineNamedMapReveal.cpp (0x3577DA / 0x35789D), the same shape.
+// DATA FACT: the tutorial's Map Setup uses these actions for its opening reveal. The trigger's per-cell test remains S-6102.
+void ScriptEngine::executeMapReveal(const ScriptActionRec &action)
+{
+	ShroudManager *shroud = m_logic.shroud();
+	if (!shroud) { note("[S-1180] regional map reveal: the game has no shroud manager"); return; }
+	const auto &p = action.params;
+	const ScriptTemplate *type = ScriptTemplates::action(action.resolved);
+	if (!type) return;
+	const std::string &name = type->name;
+	const bool undo = name == "MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT" || name == "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER";
+	const bool permanent = name == "MAP_REVEAL_PERMANENTLY_AT_WAYPOINT" || name == "MAP_REVEAL_PERMANENTLY_IN_TRIGGER";
+	const bool trigger = name == "MAP_REVEAL_IN_TRIGGER" || name == "MAP_REVEAL_PERMANENTLY_IN_TRIGGER";
+	const size_t expected = undo ? 1 : trigger ? (permanent ? 3 : 2) : (permanent ? 4 : 3);
+	if (p.size() != expected) { note("[S-1180] regional map reveal: invalid parameter count"); return; }
+	NamedMapReveal definition;
+	auto named = m_namedMapReveals.end();
+	if (undo || permanent)
+	{
+		const std::uint32_t crc = specialPowerNameCrc(p[undo ? 0 : expected - 1].stringValue);
+		named = std::find_if(m_namedMapReveals.begin(), m_namedMapReveals.end(), [crc](const NamedMapReveal &r) { return r.nameCrc == crc; });
+		if (undo && named == m_namedMapReveals.end()) return;
+		if (named != m_namedMapReveals.end()) definition = *named;
+		else definition.nameCrc = crc;
+	}
+	if (named == m_namedMapReveals.end())
+	{
+		definition.target = p[0].stringValue;
+		definition.trigger = trigger;
+		definition.radius = trigger ? 0.0f : p[1].realValue;
+		definition.player = p[trigger ? 1 : 2].stringValue;
+		if (permanent) m_namedMapReveals.push_back(definition);
+	}
+	std::uint32_t mask = 0;
+	for (Player *player : ScriptConditions::players(*this, definition.player)) mask |= 1u << player->getPlayerIndex();
+	if (definition.trigger) note("[S-6102] trigger reveals: the per-cell polygon test is taken as pointInTrigger (unverified)");
+	auto apply = [&](bool add) {
+		if (definition.trigger)
+		{
+			const TriggerArea *area = findTrigger(definition.target);
+			if (area) shroud->revealTrigger(*area, mask, add);
+			else note("regional map reveal: trigger not found: " + definition.target);
+		}
+		else
+		{
+			const Waypoint *waypoint = m_logic.terrain() ? m_logic.terrain()->findWaypointByName(definition.target) : nullptr;
+			if (waypoint) shroud->revealCircle(waypoint->location.x, waypoint->location.y, definition.radius, mask, add);
+			else note("regional map reveal: waypoint not found: " + definition.target);
+		}
+	};
+	if (undo)
+	{
+		apply(false);
+		m_namedMapReveals.erase(named);
+	}
+	else
+	{
+		apply(true);
+		if (!permanent) apply(false); // reveal once leaves explored fog; permanent reveals retain a looker
 	}
 }
 
