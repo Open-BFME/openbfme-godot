@@ -945,6 +945,7 @@ public:
 		unsigned long long weaponStatusPooledFrames = 0;      ///< lane PERF-WS: frames whose pre-pass filled at least one entry on the pool for the pass to apply
 		std::vector<std::string> errors;                      ///< problems nothing explains (a bad KindOf line, ...), never dropped
 		std::vector<std::string> stops;                       ///< the stop lines that apply to this run
+		std::map<std::string, unsigned, std::less<>> stopHits; ///< per-stop runtime counts (diagnostics, not simulation state)
 	};
 	Report report() const;
 

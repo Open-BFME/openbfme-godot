@@ -1,5 +1,20 @@
 # Acceptance stops
 
+## PORT-5: a deferred giant-bird ability target (issue #57)
+
+`GiantBirdAIUpdate` now routes AI command `0x48` and keeps its object ID across
+the deferral (RW `0x852DC5` -> `0x76D995`, re-entered at `0x76CE7D`, executed at
+`0x76DAEE .. 0x76DB1A`). Retail dereferences the target through that ID without
+a null test; when a deferred command's target has already been removed the port
+cancels the command instead of crashing and records one `[PORT-5]` stop hit,
+counted per occurrence in `GameLogic::Report::stopHits`.
+
+**INFERENCE: reachability of the destroyed-target branch is not proved** in
+RotWK 2.01 or in any Ennorath scenario. The cancellation therefore does not
+claim retail's timing or callbacks; it only keeps a data-driven crash out of the
+port. A live target follows retail: the machine is cleared, the goal is the
+target's position and `GiantBirdNormalFlightState` `0x400` starts.
+
 ## SOCIAL-1 launcher integration gate
 
 S-D's stand-in lobby and launch tests do not prove end-to-end room entry. A
