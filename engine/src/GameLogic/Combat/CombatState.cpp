@@ -287,7 +287,8 @@ std::vector<std::string> CombatState::stops()
 		"and its retaliation branch, the firing tracker's take-once target (Object + 0x248 + 0x38), the contained structure's apparent player, the attack-moving "
 		"skirmish AI filter (state 0x21, S-328), the script attack priority actions and the team prototype's priority override (S-1180); the melee re-acquire (state 0xE5) still uses the port's TargetFinder",
 		"[S-327] horde combat: the horde object runs the melee approach and wait states (B1 ids 0xC8..0xCC) and its members attack through their own attack machine; HordeMeleeAmoeba's cell search is "
-		"approximated by every member attacking the nearest enemy member in reach or walking toward it; the readiness rule, RanksToReleaseWhenAttacking, back-up and the banner carrier are not ported (the crush is lane HORDE-2's: S-580, S-583)",
+		"approximated by every member attacking the nearest enemy member in reach or walking toward it; the readiness rule, RanksToReleaseWhenAttacking, back-up and the banner carrier are not ported (the crush is lane HORDE-2's: S-580, S-583); the melee wait state's gates are RotWK's "
+		"(lane FLEECHASE-1: a fleeing or stealthed victim fails, the 40 / 60 siege tower reach, setMeleeTargetID at onEnter / onExit, RW 0x74697A / 0x74ACAD / 0x746C2A)",
 		"[S-328] attack commands: MSG_DO_ATTACK_OBJECT, MSG_DO_FORCE_ATTACK_OBJECT and MSG_DO_ATTACKMOVETO (as attack-move: the group attacks what it meets, then continues) reach the group of the "
 		"selection; attack ground, guard, hunt and the weapon fire commands are not executed",
 	};

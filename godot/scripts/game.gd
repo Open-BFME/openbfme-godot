@@ -2376,10 +2376,14 @@ func _begin_game(message: Dictionary) -> void:
 			print("GAME   slot %d: state %d faction %d colour %d start %d team %d (was faction %d colour %d start %d)" % [i, s.state, s.player_template, s.color, s.start_pos, s.team, -1, -1, -1])
 	_state = State.LOADING
 	_shell_leave_for_game()
-	var cards: Dictionary = _shell.set_load_screen_from_game(resolved)
+	var load_screen_game := resolved.duplicate()
+	load_screen_game["online_game"] = _last_game_online # lane RANKICON-1: an online game (_hub_begin above) reads no local profile stats for its rank icons
+	var cards: Dictionary = _shell.set_load_screen_from_game(load_screen_game)
 	if cards.has("error"):
 		_fail("load screen: " + cards.error)
 		return
+	if cards.has("rank_stats_error"):
+		print("LOADSCREEN rank icons: the profile stats file could not be read, the players' rank icons show 0 points: " + str(cards.rank_stats_error)) # lane RANKICON-1
 	_show_rules_summary(str(cards.get("rules_summary", "")))
 	var local_card: int = cards.get("local_card", -1)
 	if local_card >= 0 and local_card < cards.cards.size():

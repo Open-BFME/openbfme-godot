@@ -288,6 +288,7 @@ private:
 	friend class AIMoveToState;
 	friend class AIMoveWorld;
 	friend struct AIMoverTestAccess; // lane HORDE-2 regression (test_horde2_crush.cpp): forces a stale fallback path
+	friend struct ReqThrottle1Access; // lane REQTHROTTLE-1 (test_reqthrottle1.cpp): isFinalGoal (+ 0x3B3) and the blocked frames (+ 0x16C)
 	bool needToRotate();
 	bool stepEndsInGoalCell(const Coord3D &now); // RW 0x6EF865 (lane HORDE-2)
 	bool goalCellOnGridAndNotStart(const Coord3D &from); // RW 0x6F74D0's early outs (lane INTEG-1)
@@ -322,7 +323,7 @@ private:
 	bool m_doFinalPosition = false;
 	bool m_waitingForPath = false;
 	bool m_attackRequest = false;                         // lane PHYS-1: RW AI +0x3B2
-	bool m_meleeApproachRequest = false;                  // lane PHYS-1: RW AI +0x3B3 / +0x3B4 (the melee approach request)
+	bool m_meleeApproachRequest = false;                  // lane PHYS-1: RW AI +0x3B4 (the melee approach request; + 0x3B3 is isFinalGoal, lane REQTHROTTLE-1)
 	bool m_safeRequest = false;                           // lane MODULES-3: RW AI + 0x3B5
 	PathfindObjectID m_repulsors[2] = { PATHFIND_INVALID_ID, PATHFIND_INVALID_ID }; // RW AI + 0x18C / + 0x190
 	PathfindObjectID m_attackVictim = PATHFIND_INVALID_ID; // RW AI +0x144

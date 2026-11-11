@@ -14,6 +14,7 @@
 #include "Common/SpecialPower.h"
 #include "Common/Team.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIMove.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -319,6 +320,15 @@ TEST_CASE("mechd: a footman ordered onto a Helm's Deep wall top goes up a deploy
 	// the defender on the wall, and the fight there
 	Object *defender = r.make("MordorFighter", onWall.x - 2.0f, onWall.y - 12.0f, r.game->players().findPlayerWithName("Player_2"));
 	r.frame(1);
+	// lane DECOMPFIX-1109 (FLEECHASE-1): the defender stands. Made beside the wall, its first frame gives it a move (and its locomotor that move's speed); kept,
+	// it walks on against the wall's foot with the speed held, faces away from the footman and is a FLEEING target (RW 0x7468D5: facing away and the locomotor's
+	// speed + 0x40 above a quarter of its maximum, RW 0x5E4CA7), so the melee approach hands over to the engage state at once (RW 0x746F51 .. 0x747010) and the
+	// case no longer tested a fight with a standing defender
+	if (AIUpdateInterface *dai = defender->getAIUpdateInterface())
+	{
+		dai->aiIdle(CMD_FROM_AI);
+		dai->mover().destroyPath();
+	}
 	const Coord3D dp{ onWall.x - 2.0f, onWall.y - 12.0f, pf.getLayerHeight(onWall.x - 2.0f, onWall.y - 12.0f, wallLayer) };
 	defender->setPosition(&dp);
 	if (AIUpdateInterface *dai = defender->getAIUpdateInterface())

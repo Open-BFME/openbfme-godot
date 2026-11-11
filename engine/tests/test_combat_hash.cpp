@@ -175,7 +175,7 @@ TEST_CASE("combat hash: the horde - the melee engagement, the cache of the readi
 {
 	MUTATE("the melee flag of the horde contain", w.hordeOf(w.hordeA)->setMeleeEngaged(true));
 	MUTATE("an engaged target", dynamic_cast<HordeAIUpdate *>(w.hordeA->getAIUpdateInterface())->beginMelee(*w.hordeB));
-	MUTATE("the readiness cache", dynamic_cast<HordeAIUpdate *>(w.hordeA->getAIUpdateInterface())->isMeleeTargetReady(*w.hordeB));
+	MUTATE("the readiness cache", dynamic_cast<HordeAIUpdate *>(w.hordeA->getAIUpdateInterface())->setMeleeTargetId(w.hordeB->getID())); // lane FLEECHASE-1: slot 0x168 writes it, the ready test does not
 	{
 		HashWorld a, b;
 		dynamic_cast<HordeAIUpdate *>(a.hordeA->getAIUpdateInterface())->beginMelee(*a.hordeB);

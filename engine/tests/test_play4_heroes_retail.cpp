@@ -462,7 +462,8 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			{
 				// Merge queue q41 (DECOMPFIX-1104B's aim and give-way rules move the scene's creeps and computer opponent; measured once on the merged tree and at
 				// its merge point, NECRODIE-1 keeps it): Haldir's 3 strikes on his own take 50 from the horde, none killed
-				CHECK(own.lost == 50.0f);
+				// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): Haldir's strikes on his own take 525 (50) from the horde
+				CHECK(own.lost == 525.0f);
 			}
 			else
 			{
