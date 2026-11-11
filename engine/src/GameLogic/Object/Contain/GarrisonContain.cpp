@@ -30,6 +30,10 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/FXEvents.h"
+#include "GameLogic/Economy.h"
+#include "GameLogic/ExperienceLevels.h"
+#include "GameLogic/Object/ExperienceTracker.h"
+#include "GameLogic/ScriptEngine/LuaScriptEvents.h"
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/SimMath.h"
@@ -149,6 +153,12 @@ GarrisonContain::~GarrisonContain() = default;
 
 void GarrisonContain::registerClasses(ModuleFactory &modules)
 {
+	modules.bindTypedData<SlaughterHordeContainBehaviorData>("SlaughterHordeContain", MODULETYPE_BEHAVIOR);
+	modules.bindModuleProc("SlaughterHordeContain", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
+		const auto *typed = dynamic_cast<const SlaughterHordeContainBehaviorData *>(data);
+		if (!typed) throw std::logic_error("SlaughterHordeContain: module data is not typed");
+		return std::make_unique<SlaughterHordeContain>(thing, typed);
+	});
 	modules.bindTypedData<CitadelSlaughterHordeContainBehaviorData>("CitadelSlaughterHordeContain", MODULETYPE_BEHAVIOR);
 	modules.bindModuleProc("CitadelSlaughterHordeContain", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
 		const auto *typed = dynamic_cast<const CitadelSlaughterHordeContainBehaviorData *>(data);
@@ -1421,14 +1431,214 @@ void GarrisonContain::xfer(Xfer &x)
 	}
 }
 
+// RW 0x8835AB: the shared base of the two slaughter containers.
+SlaughterHordeContain::SlaughterHordeContain(Thing *thing, const SlaughterHordeContainBehaviorData *data)
+	: GarrisonContain(thing, data, data->horde.m_garrison, data->m_dieMux, &data->horde), m_slaughter(data)
+{
+}
+
+bool SlaughterHordeContain::isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const
+{
+	// RW 0x8838C3..0x883932: CanAlwaysEnter bypasses the ordinary capacity,
+	// passenger and path tests. The required status belongs to the CONTAINER.
+	bool anyRequired = false, overlap = false;
+	for (size_t i = 0; i < m_slaughter->statusRequired.size(); ++i)
+	{
+		anyRequired |= m_slaughter->statusRequired[i] != 0;
+		overlap |= (m_slaughter->statusRequired[i] & getObject()->getStatusBits()[i]) != 0;
+	}
+	if (m_slaughter->canAlwaysEnter.flag && (!anyRequired || overlap) &&
+		ObjectFilterMatch::allows(getObject()->logic(), m_slaughter->canAlwaysEnter, obj, getObject()->getControllingPlayer()))
+		return true;
+	return GarrisonContain::isValidContainerFor(obj, checkCapacity, checkPath);
+}
+
+void SlaughterHordeContain::payFor(Object &obj, Player &player)
+{
+	GameLogic &logic = getObject()->logic();
+	Economy &econ = logic.economy();
+	// RW 0x883B95 -> 0x68DDF1: BountyValue, NOT BuildCost or BuildCostPaid.
+	int value = (int)Economy::templateInt(*obj.getTemplate(), "BountyValue");
+	if (obj.isKindOfName("HERO"))
+	{
+		const ExperienceTracker *tracker = obj.getExperienceTracker();
+		if (tracker && TheExperienceLevelSystem)
+			if (const ExperienceLevelTemplate *last = TheExperienceLevelSystem->lastLevel(tracker->levelTargetName(), tracker->levelsForMultiplayer()))
+			{
+				const double fraction = NumericState::pc24DivW((double)tracker->getRank(), (double)last->m_rank);
+				value = (int)NumericState::ftol2Low32(NumericState::pc24AddW(NumericState::pc24MulW(fraction, (double)value), (double)value));
+			}
+	}
+	if (value <= 0 || !(m_slaughter->cashBackPercent > 0.0f))
+		return; // RW 0x883BA7 / 0x883BC2; zero cost or nonpositive/unordered percentage
+	const auto ceilInt = [](double v) {
+		return NumericState::fistp32((double)NumericState::fstpDword(NumericState::ceilD(v)));
+	};
+	// RW 0x883BC8..0x883BF4: PC24 product -> ceil -> float -> int -> SSE float.
+	float amount = SimMath::sseFromInt32(ceilInt(NumericState::pc24MulW((double)value, (double)m_slaughter->cashBackPercent)));
+	if (econ.isMultiplayerGame()) // RW 0x883C02..0x883C32
+		amount = NumericState::fstpDword(NumericState::pc24MulW((double)econ.multiPlayMoneyMult(econ.livePlayableCount(false)), (double)amount));
+	// RW 0x883C44..0x883C92: PRODUCTION of the container; slaughter=true
+	// cost modifier also tests the CONTAINER template, not the victim template.
+	amount = SimMath::mulf32(amount, econ.attributeModifierProduct(*getObject(), Economy::ATTRIBUTE_MODIFIER_PRODUCTION));
+	const float costChange = player.getProductionCostChangeBasedOnKindOf(*getObject()->getTemplate(), true);
+	const int scaled = player.applyHandicapMoney(ceilInt(NumericState::pc24MulW((double)costChange, (double)amount)));
+	amount = SimMath::sseFromInt32(scaled);
+	player.depositMoney(NumericState::ftol2Low32((double)amount), true); // RW 0x883CB7, the entering object's player
+	econ.noteIncome(obj, player, ceilInt((double)amount)); // RW 0x883CDB..0x883DB1; presentation uses the existing income channel
+	if (ExperienceTracker *tracker = getObject()->getExperienceTracker(); tracker && tracker->isAcceptingExperiencePoints())
+		tracker->addExperiencePoints(SimMath::sseFromInt32(ceilInt((double)amount)), true, true, true, false); // RW 0x883DB7..0x883DFA
+}
+
+bool SlaughterHordeContain::addToContain(Object *obj)
+{
+	// RW 0x8836D9: only an existing container suppresses an entry here.
+	// Admission belongs to the command/AI caller (slot +0x98); this wrapper
+	// must not recheck capacity or filters after that caller admitted a unit.
+	if (!obj || obj->getContainedBy())
+		return false;
+	if (hordeOf(*obj))
+	{
+		recordTransferLosses(*obj); // RW 0x8837E6: slot +0x74
+		return GarrisonContain::addToContain(obj); // no payment for the parent
+	}
+	addHordeMember(*obj); // RW 0x88372F: shared main slot +0x78
+	return true;
+}
+
+void SlaughterHordeContain::addHordeMember(Object &obj)
+{
+	Player *player = obj.getControllingPlayer();
+	if (!player)
+		return; // RW 0x883B75
+	GameLogic &logic = obj.logic();
+	const bool consume = shouldSlaughter(obj); // RW 0x883B84, citadel override 0x883A29
+	if (consume)
+		payFor(obj, *player);
+	if (consume)
+		obj.setDrawableHidden(true); // RW 0x883E19..0x883E23
+
+	// The zero-percent capture tail also changes the container's team/upgrades.
+	// RW 0x883E2B..0x883EB7 (the percentage is compared for equality with zero).
+	if (m_slaughter->cashBackPercent == 0.0f)
+	{
+		recordTransferLosses(obj); // RW 0x883E4B, before changing the team's owner
+		Object &container = *getObject();
+		bool changed = false;
+		if (container.getTeam() != obj.getTeam())
+		{
+			container.resetUpgrades();
+			container.setTeam(obj.getTeam());
+			changed = true;
+		}
+		const UpgradeMaskType before = container.getUpgradeMask();
+		container.friend_orUpgradeMask(obj.getUpgradeMask());
+		if (changed || !(container.getUpgradeMask() == before))
+			container.updateUpgradeModules();
+	}
+
+	if (obj.testStatus((unsigned)CombatNames::statuses().hordeMember))
+	{
+		GarrisonContain::addToContain(&obj); // RW 0x883EC9..0x883ECC: rejoin, not kill each member
+		if (consume)
+			player->getScoreKeeper().addObjectLost(logic, obj); // RW 0x883EE5
+	}
+	else if (consume)
+	{
+		LuaEventArgs args;
+		args.arg[0] = LuaEventArg::makeObject((int)getObject()->getID());
+		logic.dispatchScriptEvent(LUAEVENT_OnSlaughtered, obj, args); // RW 0x883F2A: exactly one event, container as arg 0
+		obj.kill(DAMAGE_UNRESISTABLE, DEATH_SLAUGHTERED); // RW 0x883F35: no killer credit
+		logic.destroyObject(&obj); // RW 0x883F41
+		player->getScoreKeeper().addObjectLost(logic, obj); // RW 0x883F50
+	}
+	else
+	{
+		GarrisonContain::addToContain(&obj);
+		onNonSlaughtered(obj); // RW 0x883F73: citadel ring callback, no payout
+	}
+
+	if (m_slaughter->cashBackPercent == 0.0f) // RW 0x883F79..0x883FBE
+	{
+		if (auto *ai = getObject()->getAIUpdateInterface())
+			ai->aiIdle(CMD_FROM_AI);
+		if (Object *builder = logic.findObjectByID(getObject()->getBuilderID()); builder && builder != getObject())
+		{
+			builder->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+			getObject()->setBuilder(nullptr);
+		}
+	}
+
+	// RW 0x883FC3..0x88403F: finish only on an actual entry, never in update.
+	Object *parent = obj.getContainedBy();
+	if (parent && parent != getObject())
+		if (auto *horde = hordeOf(*parent); horde && horde->allMembersEntered())
+		{
+			if (m_slaughter->cashBackPercent == 0.0f)
+			{
+				m_transferredCount = parent->getContain()->getContainCount(); // RW 0x883FF0
+				m_transferredTemplate = obj.getTemplate()->getName(); // RW 0x884009
+			}
+			if (consume)
+			{
+				player->getScoreKeeper().addObjectLost(logic, *parent);
+				logic.destroyObject(parent);
+			}
+			else
+				onNonSlaughtered(*parent);
+		}
+	// The other branches use GarrisonContain's wrapper, which already does
+	// this redeploy. A consumed ordinary object never calls that wrapper.
+	if (consume && !obj.testStatus((unsigned)CombatNames::statuses().hordeMember))
+		OpenContain::containReactToTransformChange(); // RW 0x883732..0x883736: dispatch virtual redeploy (+0x48), not Garrison's transform no-op
+}
+
+void SlaughterHordeContain::onRemoving(Object *obj)
+{
+	GarrisonContain::onRemoving(obj);
+	getObject()->setModelConditionState(CombatNames::modelCondition("GARRISONED"), true); // RW 0x883944..0x883956: Object+0x10C, bit 10
+}
+
+void SlaughterHordeContain::recordTransferLosses(Object &obj)
+{
+	// RW 0x88373F..0x8837DA: invoked by the normal add and the zero-percent
+	// capture. Clear even on a same-owner entry or a missing former template.
+	if (!shouldSlaughter(obj) || !m_transferredCount || m_transferredTemplate.empty()) return;
+	GameLogic &logic = getObject()->logic();
+	Player *ours = getObject()->getControllingPlayer();
+	Player *theirs = obj.getControllingPlayer();
+	if (ours != theirs && ours && theirs && logic.things().findTemplate(m_transferredTemplate))
+	{
+		ours->getScoreKeeper().addSlaughterTransferLost(m_transferredTemplate, m_transferredCount);
+		theirs->getScoreKeeper().addSlaughterTransferDestroyed(m_transferredTemplate, *ours, m_transferredCount);
+	}
+	m_transferredCount = 0;
+	m_transferredTemplate.clear();
+}
+
+void SlaughterHordeContain::crc(StateHasher &h) const
+{
+	GarrisonContain::crc(h);
+	h.addU32(m_transferredCount);
+	h.addString(m_transferredTemplate);
+}
+
+void SlaughterHordeContain::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	GarrisonContain::xfer(x);
+	x.xferUnsignedInt(&m_transferredCount);
+	x.xferAsciiString(&m_transferredTemplate); // RW 0x883525..0x88353E
+}
+
 const char *CitadelSlaughterHordeContain::stopLine()
 {
-	return "[S-6010] CitadelSlaughterHordeContain: ring delivery uses the BFME2 donor entry/upgrade/exit path with RotWK's INI fields; ordinary troop slaughter and CanAlwaysEnter "
-		   "are not ported; RotWK binary equivalence is not established";
+	return "[S-6010] CitadelSlaughterHordeContain: ordinary entry, slaughter, cashback and CanAlwaysEnter follow the shared RotWK SlaughterHordeContain path (RW 0x883B4A); "
+		   "ring delivery is retained; the inherited contain presentation stops (S-1100) and the cash text's random offset, colour and scale (S-283) remain";
 }
 
 CitadelSlaughterHordeContain::CitadelSlaughterHordeContain(Thing *thing, const CitadelSlaughterHordeContainBehaviorData *data)
-	: GarrisonContain(thing, data, data->horde.m_garrison, data->m_dieMux, &data->horde), m_citadel(data)
+	: SlaughterHordeContain(thing, data), m_citadel(data)
 {
 	getObject()->logic().noteStop(stopLine());
 }
@@ -1442,8 +1652,10 @@ bool CitadelSlaughterHordeContain::hasRingStatus(const Object &obj) const
 	return false;
 }
 
-bool CitadelSlaughterHordeContain::isValidContainerFor(const Object &obj, bool, bool checkPath) const
+bool CitadelSlaughterHordeContain::isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const
 {
+	if (SlaughterHordeContain::isValidContainerFor(obj, checkCapacity, checkPath))
+		return true; // RW 0x88399E..0x8839A5: inherited entry before the special ring branch
 	if (obj.getControllingPlayer() != getObject()->getControllingPlayer())
 		return false;
 	bool ring = hasRingStatus(obj);
@@ -1467,26 +1679,13 @@ bool CitadelSlaughterHordeContain::isValidContainerFor(const Object &obj, bool, 
 	return true;
 }
 
-bool CitadelSlaughterHordeContain::addToContain(Object *obj)
+bool CitadelSlaughterHordeContain::shouldSlaughter(const Object &obj) const
 {
-	if (!obj || !isValidContainerFor(*obj, true, false))
-		return false;
-	if (!GarrisonContain::addToContain(obj))
-		return false;
-	if (hordeOf(*obj))
-		return true; // the horde enters first; its members must actually reach the entry
-	Object *parent = obj->getContainedBy();
-	if (parent && parent != getObject())
-	{
-		// BFME2 SlaughterHordeContain::AddHordeMember: a HORDE_MEMBER rejoins;
-		// only the final member invokes the citadel callback on its parent.
-		// RotWK checks the delivery only here, when an object enters (RW 0x883FC3..0x88403F in RW 0x883B4A: the horde's slot 0xF4, no member
-		// on the way); nothing else calls the callback RW 0x8840FC, so a last approaching member that dies leaves the delivery undone, as in retail.
-		if (auto *horde = hordeOf(*parent); horde && horde->allMembersEntered())
-			deliverRing(*parent);
-	}
-	else
-		deliverRing(*obj);
+	// RW 0x883A29..0x883A80: no payment for the ring carrier or its members.
+	if (hasRingStatus(obj)) return false;
+	if (obj.testStatus((unsigned)CombatNames::statuses().hordeMember))
+		if (const Object *producer = obj.logic().findObjectByID(obj.getProducerID()))
+			return !hasRingStatus(*producer);
 	return true;
 }
 
@@ -1537,13 +1736,16 @@ UpdateSleepTime CitadelSlaughterHordeContain::update()
 
 void CitadelSlaughterHordeContain::crc(StateHasher &h) const
 {
-	GarrisonContain::crc(h);
+	SlaughterHordeContain::crc(h);
 	h.addU32(m_ringExit);
 }
 
 void CitadelSlaughterHordeContain::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
-	GarrisonContain::xfer(x);
+	XferVersion version{1, 2};
+	x.xferVersion(version);
+	if (version.current < 1 || version.current > 2) throw XferException("CitadelSlaughterHordeContain: unsupported version");
+	if (version.current == 1) GarrisonContain::xfer(x); // old ring-only snapshot, no shared transfer state
+	else SlaughterHordeContain::xfer(x);
 	x.xferObjectID(&m_ringExit);
 }

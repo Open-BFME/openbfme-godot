@@ -804,7 +804,7 @@ TEST_CASE("ring delivery retail: fortress refuses ordinary troops and another pl
 	enemy->setStatus((unsigned)CombatNames::status("HOLDING_THE_RING"), true);
 	auto *contain = dynamic_cast<CitadelSlaughterHordeContain *>(fortress->getContain());
 	REQUIRE(contain != nullptr);
-	CHECK(std::string(CitadelSlaughterHordeContain::stopLine()) == "[S-6010] CitadelSlaughterHordeContain: ring delivery uses the BFME2 donor entry/upgrade/exit path with RotWK's INI fields; ordinary troop slaughter and CanAlwaysEnter are not ported; RotWK binary equivalence is not established");
+	CHECK(std::string(CitadelSlaughterHordeContain::stopLine()) == "[S-6010] CitadelSlaughterHordeContain: ordinary entry, slaughter, cashback and CanAlwaysEnter follow the shared RotWK SlaughterHordeContain path (RW 0x883B4A); ring delivery is retained; the inherited contain presentation stops (S-1100) and the cash text's random offset, colour and scale (S-283) remain");
 	CHECK_FALSE(contain->isValidContainerFor(*ordinary, true, true));
 	CHECK_FALSE(contain->isValidContainerFor(*enemy, true, true));
 	CHECK_FALSE(contain->addToContain(ordinary));
