@@ -474,6 +474,7 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 		info.m_output.m_actualDamageDealt = amount;
 		info.m_output.m_actualDamageClipped = SimMath::subf32(m_previousHealth, m_currentHealth);
 		// (16)
+		scheduleRecovery(); // PORT-2, RW 0x8C425D .. 0x8C4276: the RecoveryTime deadline, handed to the image's empty callee
 		m_lastDamageFrame = logic.getFrame();
 		m_lastDamager = info.m_input.m_sourceID;
 		m_lastDamagerPlayerMask = info.m_input.m_sourcePlayerMask; // lane CAMP-1
@@ -660,6 +661,26 @@ bool healableWhenDead(const Object &obj)
 	return false;
 }
 } // namespace
+
+// PORT-2, RW 0x8C425D .. 0x8C4276: the body's RecoveryTime, read after the health change and before the record. `mov eax,[module data]; mov
+// eax,[eax+0x24]` (the row RW 0xC71DA8, +0x24) -> `test eax,eax; jbe` skips a zero value -> `TheGameLogic + 0x40` is the current frame (RW 0x8C426D,
+// the same counter the record below stores at RW 0x8C4294 .. 0x8C4309) -> the deadline `frame + RecoveryTime` in one 32-bit `add` -> `call 0x9F3A3C`,
+// which is `ret 4`, the image's shared empty function. Retail computes the deadline on every damaging hit that reached the health change (not on a
+// healing hit, not on a hit a branch above refused) and the callee throws it away; nothing stores it, so nothing here does either. The count the
+// hook keeps is a test observer only and is not hashed or saved (there is no state).
+void ActiveBody::scheduleRecovery()
+{
+	const UnsignedInt recoveryTime = m_data->m_recoveryTime; // RW 0x8C4260: module data + 0x24
+	if (recoveryTime == 0)                                   // RW 0x8C4263 test / jbe
+	{
+		return;
+	}
+	const UnsignedInt deadline = getObject()->logic().getFrame() + recoveryTime; // RW 0x8C4267 .. 0x8C4270: [TheGameLogic + 0x40] + RecoveryTime
+	// RW 0x8C4273 .. 0x8C4276 hands `deadline` to the object and returns; RW 0x9F3A3C reads nothing. The two statics are the test observer of that
+	// arithmetic (like bodyMaxHealthCallsIgnored): they are never hashed and never saved, because retail has no state here
+	lastRecoveryDeadline() = deadline;
+	++recoverySchedules();
+}
 
 // RW 0x8C2FC1 attemptHealing (BFME2 0x4BEE21, decomp ActiveBody.cpp, tier B same-shape). RotWK order: validateArmorAndDamageFX (the armour
 // validation is S-322's); a body whose module data +0x51 (BurningDeathBehavior) is set while the object is in the model condition
