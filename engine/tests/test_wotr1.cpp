@@ -26,6 +26,8 @@
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/VictoryConditions.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "Common/INIException.h"
 #include "GameLogic/LivingWorld/BattleResultCapture.h"
@@ -1619,6 +1621,9 @@ struct BattleRun
 	bool tagRoundTrip = false, tagDriftCaught = false;
 	float attackerHeroExperience = -1.0f, attackerSkillPoints = -1.0f;
 	int heroRank = -1;
+	// community #271: the region owner's (a Medium AI) StartWoTRBattleTactic key after the 60 frames (RW 0x9B8451 / 0x9B8556), -1 without an AI, and its
+	// placed CAN_ATTACK / HERO units still on the run's attack-move
+	int ownerWotrStartRun = -1, ownerAttackMoving = 0;
 	// WOTR2 milestone 8 (step 3): the battle ends by destruction: every object of the region owner dies; the frames VictoryConditions records the owner's
 	// defeat and the attacker's alliance victory (rule 2, the normal end-game path a network battle takes too), -1 never
 	bool destroyOwner = false;
@@ -1784,6 +1789,19 @@ void runBattleStart(starttest::Shared &s, BattleRun &out)
 			if (f == 5)
 			{
 				out.humanStateEarly = r->state;
+			}
+		}
+	}
+	if (const AISkirmishPlayer *ai = game.logic().skirmishAI().findAI(ownerPlayer->getPlayerIndex()))
+	{
+		auto it = ai->brain.namedCounters.find("StartWoTRBattleTacticHasRun");
+		out.ownerWotrStartRun = it == ai->brain.namedCounters.end() ? 0 : it->second;
+		for (const StartingBase::Placed &p : out.placed)
+		{
+			const Object *o = game.logic().findObjectByID(p.id);
+			if (o && o->getControllingPlayer() == ownerPlayer && o->getAIUpdateInterface() && o->getAIUpdateInterface()->attackMoveActive())
+			{
+				++out.ownerAttackMoving;
 			}
 		}
 	}
@@ -2045,6 +2063,9 @@ TEST_CASE("wotr1 retail: a War of the Ring battle starts without starting bases;
 	REQUIRE(a.hashes.size() == 60);
 	CHECK(a.aliveAfter == (int)a.placed.size()); // nothing the start placed dies on its own
 	CHECK(a.defeated == 0);                       // nobody is eliminated for lacking a base (S-1329)
+	// community #271: in a War of the Ring battle (GameLogic + 0x114 != 3) the owner's AI runs AIStartWoTRBattleTactic once after frame 5
+	CHECK(a.ownerWotrStartRun == 1);
+	MESSAGE("owner units on the WotR start attack-move after 60 frames: " << a.ownerAttackMoving);
 }
 
 // lane WOTR-2 (review r3): a battle with an ally on a two-position map (the region's owner, its ally and the attacker) loads: the ally shares the owner's

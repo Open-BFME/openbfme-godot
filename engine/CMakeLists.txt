@@ -180,6 +180,13 @@ include(cmake/Experience.cmake) # OPENBFME_XP_SOURCES / OPENBFME_XP_TESTS (lane 
 include(cmake/FactB.cmake)      # OPENBFME_FACTB_TESTS (lane FACT-B: Isengard and Mordor)
 include(cmake/Port4.cmake) # OPENBFME_PORT4_TESTS
 include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
+include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
+include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
+include(cmake/Port15.cmake) # PORT-15: LockWeaponCreate/Object::setWeaponLock (OPENBFME_PORT15_TESTS)
+include(cmake/Port18.cmake) # PORT-18: hold fire
+include(cmake/Port20.cmake) # PORT-20: GarrisonContain/onSelling (OPENBFME_PORT20_TESTS)
+include(cmake/Port24.cmake) # PORT-24: Object/ForceLuaRegistration (OPENBFME_PORT24_TESTS)
+include(cmake/Port6.cmake) # PORT-6: StealthDetectorUpdate/CanDetectWhileGarrisoned (OPENBFME_PORT6_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
 include(cmake/Fx2.cmake)        # FX-2: effects in the live game (appends to OPENBFME_SIM_SOURCES; OPENBFME_FX2_SOURCES / OPENBFME_FX2_TESTS)
@@ -303,6 +310,7 @@ include(cmake/Campui1.cmake)    # CAMPUI-1: the campaign presentation, the missi
 include(cmake/Camanim1.cmake)   # CAMANIM-1: MOVE_CAMERA_BY_ANIMATION, the map's camera animations (OPENBFME_CAMANIM1_SOURCES / _TESTS)
 include(cmake/Offmap1.cmake)    # OFFMAP-1: off-map map objects and horde members (OPENBFME_OFFMAP1_TESTS)
 include(cmake/Wall1.cmake)      # WALL-1: walkable wall tops and ramps (appends to OPENBFME_SIM_SOURCES; OPENBFME_WALL1_TESTS)
+include(cmake/MechD.cmake)      # MECH-D: wall climbing (OPENBFME_MECHD_TESTS)
 include(cmake/Wall2.cmake)      # WALL-2: portals, portal modules, raised walkways (appends to OPENBFME_SIM_SOURCES; OPENBFME_WALL2_TESTS)
 include(cmake/Bridge1.cmake)    # BRIDGE-1: retail bridges crossed and destroyed (OPENBFME_BRIDGE1_TESTS)
 include(cmake/Siege1.cmake)     # SIEGE-1: the siege units (appends to OPENBFME_SIM_SOURCES; OPENBFME_SIEGE1_TESTS)
@@ -721,6 +729,13 @@ add_executable(openbfme_tests
     ${OPENBFME_FACTB_TESTS}
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_PORT4_TESTS}
+    ${OPENBFME_PORT8_TESTS}
+    ${OPENBFME_PORT11_TESTS}
+    ${OPENBFME_PORT15_TESTS}
+    ${OPENBFME_PORT18_TESTS}
+    ${OPENBFME_PORT20_TESTS}
+    ${OPENBFME_PORT24_TESTS}
+    ${OPENBFME_PORT6_TESTS}
     ${OPENBFME_PLAY4_TESTS}
     ${OPENBFME_MAPRESET1_TESTS}
     ${OPENBFME_APT_TESTS}
@@ -851,6 +866,7 @@ add_executable(openbfme_tests
     ${OPENBFME_HUDREDRAW1_TESTS}
     ${OPENBFME_CHAT1_TESTS}
     ${OPENBFME_WALL1_TESTS}
+    ${OPENBFME_MECHD_TESTS}
     ${OPENBFME_WALL2_TESTS}
     ${OPENBFME_BRIDGE1_TESTS}
     ${OPENBFME_SIEGE1_TESTS}
@@ -894,6 +910,7 @@ add_executable(openbfme_tests
     tests/test_mod5_user_maps.cpp
     tests/RetailTestMount.cpp
     tests/test_md5_json.cpp
+    tests/test_md5_kernel.cpp
     tests/test_textfile.cpp
     tests/test_ini_core.cpp
     tests/test_ini_scanners.cpp
@@ -1039,6 +1056,14 @@ if(OPENBFME_BUILD_FUZZERS)
     target_compile_definitions(openbfme_reader_corpus PRIVATE OPENBFME_READER_CORPUS)
     target_link_libraries(openbfme_reader_corpus PRIVATE openbfme_core)
     target_compile_options(openbfme_reader_corpus PRIVATE -fsanitize=address,undefined)
+endif()
+
+# Instruction-level MD5 kernel bench. Header only: it does not link openbfme_core. Its timer is POSIX (clock_gettime), so not on Windows.
+# Not in the default build (`cmake --build <dir> --target md5_kernel_bench`). It compiles Common/MD5Kernel.h, so it takes the simulation flags (sim_audit).
+if(NOT WIN32)
+    add_executable(md5_kernel_bench EXCLUDE_FROM_ALL tests/md5_kernel_bench.cpp)
+    target_include_directories(md5_kernel_bench PRIVATE src)
+    openbfme_sim_register_target(md5_kernel_bench)
 endif()
 
 # the contract holds for every target that carries simulation code or links it: nothing added to a target after its registration may override it

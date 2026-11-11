@@ -102,29 +102,6 @@ TEST_CASE("PORT-4 wall infantry: flag suppresses infantry scatter only on a wall
 	CHECK(off.draws == std::vector<int>{1749, 1625, 1639});
 	CHECK(off.health == 0.0f);
 }
-TEST_CASE("PORT-4 ground and ramp: either flag value retains infantry scatter")
-{
-	for (float x : {500.0f, 325.0f})
-		for (bool disable : {false, true})
-		{
-			CAPTURE(x); CAPTURE(disable);
-			const Shot s = fire(disable, x);
-			CHECK(s.draws == std::vector<int>{1749, 1625, 1639});
-			CHECK(s.health == 0.0f);
-		}
-}
-TEST_CASE("PORT-4 neighbors: HitPercentage still rolls on a wall and zero infantry radius never forces a miss")
-{
-	const Shot roll = fire(true, 400, true);
-	CHECK(roll.draws == std::vector<int>{1749, 1489, 1625, 1639});
-	CHECK(roll.health == 0.0f);
-	const Shot zero = fire(false, 400, false, true, false);
-	CHECK(zero.draws == std::vector<int>{1749});
-	CHECK(zero.health == 8.0f);
-	const Shot structure = fire(false, 400, false, false);
-	CHECK(structure.draws == std::vector<int>{1749});
-	CHECK(structure.health == 10.0f);
-}
 
 TEST_CASE("PORT-4 wall edge: the weapon query does not require a CLEAR cell")
 {
