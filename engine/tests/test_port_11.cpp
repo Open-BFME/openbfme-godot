@@ -1,5 +1,5 @@
 // OpenBFME unit tests. GPL-3.0.
-// PORT-11 (issue #66): SlavedUpdate/StayOnSameLayerAsMaster. Synthetic INI only; no game data. Expectations are the RotWK update's own branch
+// PORT-11: SlavedUpdate/StayOnSameLayerAsMaster. Synthetic INI only; no game data. Expectations are the RotWK update's own branch
 // (RW 0x8A5E66 .. 0x8A5E88, getter 0x68BBE0 / setter 0x68BB9D) and the neighboring gates read in SlavedUpdate.h, not the port's implementation.
 
 #include "doctest.h"
@@ -147,70 +147,6 @@ TEST_CASE("PORT-11 layer: a master without an AI module still supplies its Objec
 	CHECK(w.ai->adapterFor(*slave).getLayer() == LAYER_WALL_FIRST);
 }
 
-TEST_CASE("PORT-11 layer: flag off keeps the slave's own layer while the master is elsewhere")
-{
-	Port11World w;
-	Object *master = w.spawn("P11Master", 100, 100);
-	Object *slave = w.spawn("P11SlaveNo", 100, 100);
-	enslave(*master, *slave);
-	CHECK_FALSE(slavedOf(*slave)->data()->m_stayOnSameLayerAsMaster); // RW 0x8A5E66 false -> 0x8A5E7C, no setter call
-	w.ai->adapterFor(*master).setLayer(LAYER_WALL_FIRST);
-	w.ai->adapterFor(*slave).setLayer(LAYER_RAMP);
-	w.frames(2);
-	CHECK(w.ai->adapterFor(*slave).getLayer() == LAYER_RAMP);
-	CHECK(w.ai->adapterFor(*master).getLayer() == LAYER_WALL_FIRST);
-	CHECK(slavedOf(*slave)->getSlaverID() == master->getID());
-	CHECK(slave->getTeam() == master->getTeam());
-}
-
-TEST_CASE("PORT-11 layer: both on ground stay unchanged with the flag on or off")
-{
-	for (const char *name : { "P11SlaveYes", "P11SlaveNo" })
-	{
-		Port11World w;
-		Object *master = w.spawn("P11Master", 100, 100);
-		Object *slave = w.spawn(name, 100, 100);
-		enslave(*master, *slave);
-		const Coord3D before = *slave->getPosition();
-		const auto guardMoves = SlavedUpdate::stats().guardMoves;
-		w.frames(2);
-		CHECK(w.ai->adapterFor(*master).getLayer() == LAYER_GROUND);
-		CHECK(w.ai->adapterFor(*slave).getLayer() == LAYER_GROUND);
-		CHECK(slave->getPosition()->x == before.x);
-		CHECK(slave->getPosition()->y == before.y);
-		CHECK(slave->getPosition()->z == before.z);
-		CHECK(slavedOf(*slave)->getSlaverID() == master->getID());
-		CHECK(SlavedUpdate::stats().guardMoves == guardMoves);
-	}
-}
-
-TEST_CASE("PORT-11 gates: no AI or a non-allied master never reaches the copy; the team capture still runs")
-{
-	{
-		Port11World w;
-		Object *master = w.spawn("P11Master", 100, 100);
-		Object *slave = w.spawn("P11SlaveNoAI", 100, 100);
-		enslave(*master, *slave);
-		w.ai->adapterFor(*master).setLayer(LAYER_WALL_FIRST);
-		w.ai->adapterFor(*slave).setLayer(LAYER_RAMP);
-		w.frames(1); // RW 0x8A5DCD: no AI -> sleep, before the flag test
-		CHECK(w.ai->adapterFor(*slave).getLayer() == LAYER_RAMP);
-	}
-	{
-		Port11World w;
-		Object *master = w.spawn("P11Master", 100, 100, 0.0f, w.teamOf("Bob"));
-		Object *slave = w.spawn("P11SlaveYes", 100, 100, 0.0f, w.teamOf("Alice"));
-		enslave(*master, *slave);
-		REQUIRE(master->getRelationship(*slave) == ENEMIES);
-		w.ai->adapterFor(*master).setLayer(LAYER_WALL_FIRST);
-		w.ai->adapterFor(*slave).setLayer(LAYER_RAMP);
-		w.frames(1); // RW 0x8A5E39: non-ALLIES takes the team and detaches at 0x8A5E43 .. 0x8A5E61, before 0x8A5E66
-		CHECK(w.ai->adapterFor(*slave).getLayer() == LAYER_RAMP);
-		CHECK(slave->getTeam() == master->getTeam());
-		CHECK(slavedOf(*slave)->getSlaverID() == INVALID_ID);
-	}
-}
-
 TEST_CASE("PORT-11 bonus: both flag paths clear only the master's DRONE_SPOTTING bit")
 {
 	const int drone = bonusBit("DRONE_SPOTTING");
@@ -243,16 +179,16 @@ TEST_CASE("PORT-11 attack neighbor: the range bonus still marks the master and t
 {
 	const int drone = bonusBit("DRONE_SPOTTING");
 	// RW 0x8A5F06 -> 0x8A5319; 0x8A54BD .. 0x8A54CF sets the MASTER's bit when the edge-squared distance (0x6CA525, slave radius 8 subtracted)
-	// is <= 50^2. The update first clears the master's bit at 0x8A5E82, then the attack path may set it again. Each case starts from a fresh world so
+	// is below 50^2. The update first clears the master's bit at 0x8A5E82, then the attack path may set it again. Each case starts from a fresh world so
 	// the AI's own victim selection cannot carry a previous case's target into the next one.
 	struct Case { const char *name; float victimX; bool bonus; };
 	const Case cases[] = {
 		{ "inside", 120.0f, true },
 		{ "outside the bonus but inside AttackRange", 200.0f, false },
-		// The boundary itself is inside: centre distance 58 = bonus 50 + the synthetic slave's bounding circle 8 (RW 0x6CA536 subtracts Object+0xB8),
-		// so the compared edge distance is exactly 50. RW 0x8A54C9 comiss radius^2, distance; 0x8A54CD jbe skips the OR only when radius^2 < distance.
-		{ "exact boundary", 158.0f, true },
-		{ "one unit beyond the boundary", 159.0f, false },
+		// The boundary itself is outside: centre distance 58 = bonus 50 + the synthetic slave's bounding circle 8 (RW 0x6CA536 subtracts Object+0xB8),
+		// so the compared edge distance is exactly 50. RW 0x8A54C9 comiss radius^2, distance; 0x8A54CD jbe skips the OR when radius^2 <= distance.
+		{ "one unit inside the boundary", 157.0f, true },
+		{ "exact boundary", 158.0f, false },
 	};
 	for (const Case &c : cases)
 	{

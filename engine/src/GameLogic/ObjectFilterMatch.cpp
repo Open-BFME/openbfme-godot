@@ -54,9 +54,49 @@ bool subsetOf(const KindOfMaskType &super, const KindOfMaskType &sub)
 	}
 	return true;
 }
-const std::vector<std::string> *listField(const ThingTemplate &tt, const char *name)
+// lane PERF-SIM-1: the two list rows ObjectFilterMatch::isEquivalentTo asks for on every object of every filter
+// test. The slot of each row is resolved once per factory field table (as ShroudManager's template slots are) and
+// checked by name at every use; the value is always the template's current one.
+enum ListField
 {
-	const FieldValue *v = tt.findField(name);
+	kEquivalentTo,
+	kBuildVariations,
+	kListFieldCount
+};
+const std::vector<std::string> *listField(const ThingTemplate &tt, ListField which)
+{
+	static const char *const names[kListFieldCount] = { "EquivalentTo", "BuildVariations" };
+	struct Slots
+	{
+		const std::vector<std::string> *table = nullptr;
+		size_t index[kListFieldCount];
+	};
+	thread_local Slots slots;
+	const std::vector<std::string> *table = tt.fieldNameTable();
+	bool valid = table && slots.table == table;
+	for (int k = 0; valid && k < kListFieldCount; ++k)
+	{
+		// a row the table lacks is looked for again on every use: a cached absence could outlive its table (another factory's table at the same
+		// address); the supported tables have both rows
+		valid = slots.index[k] < table->size() && (*table)[slots.index[k]] == names[k];
+	}
+	if (!valid)
+	{
+		slots.table = table;
+		for (int k = 0; k < kListFieldCount; ++k)
+		{
+			slots.index[k] = (size_t)-1;
+			for (size_t i = 0; table && i < table->size(); ++i)
+			{
+				if ((*table)[i] == names[k])
+				{
+					slots.index[k] = i;
+					break;
+				}
+			}
+		}
+	}
+	const FieldValue *v = slots.index[which] == (size_t)-1 ? nullptr : tt.fieldAt(slots.index[which]);
 	return v ? std::get_if<std::vector<std::string>>(v) : nullptr;
 }
 bool listHas(const std::vector<std::string> *list, const std::string &name)
@@ -176,8 +216,8 @@ bool ObjectFilterMatch::isEquivalentTo(const ThingTemplate *a, const ThingTempla
 	{
 		return true;
 	}
-	const std::vector<std::string> *aEq = listField(*a, "EquivalentTo");
-	const std::vector<std::string> *bEq = listField(*b, "EquivalentTo");
+	const std::vector<std::string> *aEq = listField(*a, kEquivalentTo);
+	const std::vector<std::string> *bEq = listField(*b, kEquivalentTo);
 	if (listHas(aEq, b->getName()))
 	{
 		return true;
@@ -192,11 +232,11 @@ bool ObjectFilterMatch::isEquivalentTo(const ThingTemplate *a, const ThingTempla
 			}
 		}
 	}
-	if (listHas(listField(*a, "BuildVariations"), b->getName()))
+	if (listHas(listField(*a, kBuildVariations), b->getName()))
 	{
 		return true;
 	}
-	return listHas(listField(*b, "BuildVariations"), a->getName());
+	return listHas(listField(*b, kBuildVariations), a->getName());
 }
 
 bool ObjectFilterMatch::allows(GameLogic &logic, const ObjectFilter &f, const ThingTemplate *tmpl, const Player *a, const Player *b)

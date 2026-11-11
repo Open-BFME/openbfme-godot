@@ -18,7 +18,7 @@
 //   * onEnslave (RW 0x8A510B): the slaver kept; the offset = (cos a, sin a) * GuardMaxRange with a = GameLogicRandomValueReal(0, 2 pi) "SlavedUpdate.cpp"
 //     line 0x35E (fcos / fsin RW 0x42F4E0 / 0x42F4D0, fimul, fadd, fstp); MarkUnselectable: UNSELECTABLE (status 3); the drawable's slaver link (client).
 //   * onSlaverDie (RW 0x8A51B9): unless DieOnMastersDeath, the slaver and the offset clear, UNSELECTABLE and DISABLED_HELD (3) clear.
-//   * update (RW 0x8A5D00 .. 0x8A6272, read linearly with tools/mod/rw.py dis), every SLAVED_UPDATE_RATE = LOGICFRAMES_PER_SECOND / 4 = 1 frame
+//   * update (RW 0x8A5D00 .. 0x8A6272, read linearly), every SLAVED_UPDATE_RATE = LOGICFRAMES_PER_SECOND / 4 = 1 frame
 //     (RW 0xDE95FC, set by RW 0xBC6E11) while not repairing. The class chain is registration RW 0x659A30 (name pointer 0xC0B2B8, create 0x64E865) ->
 //     constructor 0x8A4F67 -> update-interface vtable 0xC68844 installed at instance + 0x10 (0x8A4F93) -> slot 0 = 0x8A5D00, called by the scheduler at
 //     0x62EA97 .. 0x62EA9C. Data field StayOnSameLayerAsMaster: table 0xC08420 row 0xC08550, bool parser 0x42E558, data + 0x54 (zeroed at 0x6550CB).

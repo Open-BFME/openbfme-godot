@@ -389,7 +389,7 @@ bool AIAttackMeleeEngageState::reserveOwnPosition()
 	// RW 0x68B3BD(own position, layer); the AI + 0x180 / + 0x3B0 writes of RW 0x68B411 are not ported (S-787)
 	AIUpdateInterface &a = ai();
 	Coord3D p = *owner().getPosition();
-	a.world().pathfinder().updateGoal(a.adapter(), &p, LAYER_GROUND);
+	a.world().pathfinder().updateGoal(a.adapter(), &p, a.adapter().getLayer()); // RW 0x74F6BE / 0x74F7FC: the owner's layer (RW 0x68BBE0), lane WALLMELEE-1
 	setMeleeFlag(owner(), true);
 	return true;
 }
@@ -453,7 +453,7 @@ bool AIAttackMeleeEngageState::computePath()
 	m_noDest = !(target && pf.findMeleeEngagementLocation(obj, info, *target, range, &m_dest));
 	if (!m_noDest)
 	{
-		pf.updateGoal(obj, &m_dest, LAYER_GROUND); // RW 0x68B3AB
+		pf.updateGoal(obj, &m_dest, pf.getLayerAt(obj, m_dest)); // RW 0x68B3AB -> 0x8E28AC: the goal's layer for the unit (RW 0x680A75), lane WALLMELEE-1
 		mv.requestPath(m_dest, true);
 		m_pending = mv.isWaitingForPath();
 		return true;

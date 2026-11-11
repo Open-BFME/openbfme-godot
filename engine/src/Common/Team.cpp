@@ -8,9 +8,15 @@
 #include "Common/Player.h"
 #include "Common/SpecialPower.h"
 #include "Common/StateHash.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "Common/Xfer.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/SimMath.h"
+#include "GameLogic/SnapshotXfer.h"
 
 #include <stdexcept>
 
@@ -153,6 +159,227 @@ void Team::addSpecialPowerRecord(int powerType, std::uint32_t frame, ObjectID ca
 	m_specialPowers.push_back(SpecialPowerRecord{ powerType, frame, caster });
 }
 
+// ---- lane RAI-POW-4: the team's threat-order list (Team + 0x13C, see Team.h) ----------------------------------------------------------------
+
+namespace
+{
+// RW 0x8C1D91 (body slot 0x18): the body's health minus its max health, a negative number (a body without one counts 0, as RW 0x7A0237's null test)
+float healthDeficit(const Object &o)
+{
+	const BodyModuleInterface *body = o.getBodyModule();
+	return body ? SimMath::subf32(body->getHealth(), body->getMaxHealth()) : 0.0f;
+}
+
+// RW 0x87127D (horde interface slot 0x22C): the average position of the horde's contained members (retail also adds the members on their way into
+// a garrison, the ids at interface + 0x54; the port's contain list does not hold them: INFERENCE for that one frame)
+Coord3D hordeCenter(const ContainModuleInterface &contain)
+{
+	Coord3D center{};
+	const ContainModuleInterface::ContainedItemsList *list = contain.getContainedItemsList();
+	if (!list || list->empty())
+	{
+		return center;
+	}
+	float n = 0.0f;
+	for (const Object *member : *list)
+	{
+		if (!member)
+		{
+			continue;
+		}
+		const Coord3D &p = *member->getPosition();
+		center.x = SimMath::addf32(center.x, p.x);
+		center.y = SimMath::addf32(center.y, p.y);
+		center.z = SimMath::addf32(center.z, p.z);
+		n = SimMath::addf32(n, 1.0f);
+	}
+	if (n == 0.0f)
+	{
+		return Coord3D{};
+	}
+	const float inv = SimMath::divf32(1.0f, n);
+	return Coord3D{ SimMath::mulf32(center.x, inv), SimMath::mulf32(center.y, inv), SimMath::mulf32(center.z, inv) };
+}
+
+// RW 0x7A0141: the team's most damaged member (or horde): a member that is not dead (RW 0x7A0183's + 0x458 bit 0) or destroyed (+ 0x94 bit 0), has an
+// AI (+ 0x260) and a current victim (RW 0x668303) is measured by its body's health minus max health (slot 0x18). A HORDE member (RW 0x693A1A(0)) is
+// measured by its horde interface's summed member deficits (slot 0x268) and its centre (slot 0x22C), a soldier inside a horde not at all; a horde with a free slot (slot 0x17C's capacity above
+// slot 0x180(0)'s count) counts up `outCount`. The most negative deficit wins (strictly; the first member on a tie); its id and position are the
+// order's target. RW 0x7A01E8 / 0x7A0249 accumulate a separate total, returned at RW 0x7A0291 (zero with no eligible members).
+float teamThreatTarget(Team &team, GameLogic &logic, Coord3D &outPos, ObjectID &outTarget, int &outCount)
+{
+	outCount = 0;
+	outTarget = INVALID_ID;
+	outPos = Coord3D{};
+	float total = 0.0f;
+	float best = -0.00024402147391811013f; // RW 0xC31518
+	// RW 0x66362D / 0x6632C9: retail's member list is newest first (RW 0x68AD89 links at the head), the port's is its reverse
+	for (Object *m = team.getLastMember(); m; m = m->friend_teamPrev())
+	{
+		if (m->isEffectivelyDead() || m->isDestroyed())
+		{
+			continue;
+		}
+		AIUpdateInterface *ai = m->getAIUpdateInterface();
+		if (!ai || !ai->currentVictim())
+		{
+			continue;
+		}
+		float value = 0.0f;
+		Coord3D position{};
+		// RW 0x693A1A(0): the HORDE itself or a member inside one. RW 0x68C866 then asks the member's own contain, so a soldier in the team (no contain)
+		// adds nothing to the total and never wins (RW 0x7A01CE jumps to the compare with a value that cannot be below the best)
+		if (m->getHordeObject(false))
+		{
+			ContainModuleInterface *contain = m->getContain();
+			HordeContainInterface *horde = contain ? contain->getHordeContainInterface() : nullptr;
+			if (horde)
+			{
+				value = 0.0f;
+				if (contain->getContainedItemsList())
+				{
+					for (const Object *member : *contain->getContainedItemsList())
+					{
+						if (member)
+						{
+							value = SimMath::addf32(value, healthDeficit(*member)); // RW 0x86EAD0: the members' deficits, fadd each
+						}
+					}
+				}
+				// RW 0x86EB1D..0x86EB56: contained list first, then entering IDs in tree order.
+				for (ObjectID id : horde->membersEntering())
+				{
+					if (const Object *member = logic.findObjectByID(id))
+					{
+						value = SimMath::addf32(value, healthDeficit(*member));
+					}
+				}
+				if (horde->getSlotCapacity() > (int)horde->countWithEntering()) // RW 0x86C8DE > RW 0x8706DF
+				{
+					++outCount;
+				}
+				position = hordeCenter(*contain);
+			}
+			else
+			{
+				continue; // RW 0x7A01CE: no horde interface reads the initialized 0 and never wins
+			}
+		}
+		else
+		{
+			value = healthDeficit(*m);
+			position = *m->getPosition();
+		}
+		total = SimMath::addf32(total, value); // RW 0x7A01E8 / 0x7A0249: PC24 add and float store per member
+		if (best > value)
+		{
+			best = value;
+			outTarget = m->getID();
+			outPos = position;
+		}
+	}
+	return total;
+}
+} // namespace
+
+// RW 0x7A1C5E: the list node at `index` goes (the registry is not touched)
+void Team::eraseOrder(std::size_t index)
+{
+	if (index < m_orders.size())
+	{
+		m_orders.erase(m_orders.begin() + (long)index);
+	}
+}
+
+// RW 0x7A2004: node + 0x14 (the timestamp) + 0xBB8 (3000 frames) below the frame => erased
+void Team::expireOrders(std::uint32_t frame)
+{
+	for (size_t i = m_orders.size(); i-- > 0;)
+	{
+		if (m_orders[i].timestamp + 0xBB8u < frame)
+		{
+			m_orders.erase(m_orders.begin() + (long)i);
+		}
+	}
+}
+
+// RW 0x7A59CB (the team's vslot 0x14, called at the end of Team::updateState RW 0x7A208C): the threat record. The 0x11 orders are the ones RW
+// 0x9E691D (ATTACK_HEAL_AOE) consumes; 0x1A is the lighter / larger-team order. A matching order already in the list (same type near the position within
+// 300.0, RW 0x7A14EE; or same type and target id, RW 0x7A159B) is not added again.
+void Team::updateThreatOrder(GameLogic &logic)
+{
+	Coord3D position{};
+	ObjectID target = INVALID_ID;
+	int count = 0;
+	const float value = teamThreatTarget(*this, logic, position, target, count);
+	Order order; // RW 0x7A0060: + 4 type 0, + 8 0xFF, + 0xA 0x2004, the rest 0
+	order.flags = 0xFF;
+	if (!(value >= -2500.0f)) // RW 0x7A5A16's ja: -2500 > value, i.e. a deficit above 2500
+	{
+		order.command = 0x1A;
+		order.flags = 0;
+	}
+	else if (count > 6)
+	{
+		order.command = 0x1A;
+		order.flags = 0;
+	}
+	else if (!(value >= -1500.0f)) // RW 0x7A5A2A: -1500 > value
+	{
+		order.command = 0x1A;
+		order.flags = 0x0F;
+	}
+	else if (count > 3)
+	{
+		order.command = 0x1A;
+		order.flags = 0x0F;
+	}
+	else if (!(value >= -50.0f)) // RW 0x7A5A3E's jbe: -50 <= value answers no
+	{
+		order.command = 0x11;
+		order.flags = 0xFF;
+	}
+	else
+	{
+		return;
+	}
+	order.flagsWord = 0x2004; // RW 0x7A0060, then RW 0x7A5A62's | 0x10
+	order.flagsWord |= 0x10;
+	if (target != INVALID_ID)
+	{
+		for (const Order &o : m_orders) // RW 0x7A159B: the same type against the same target id
+		{
+			if (o.command == order.command && o.hasTarget() && o.target == target)
+			{
+				return;
+			}
+		}
+		order.flagsWord = (order.flagsWord & 0x1FFF) | 0x4000; // RW 0x7A5AE6: replace the payload kind
+		order.target = target;
+	}
+	else
+	{
+		const float radius = 300.0f; // RW 0xBD9E90
+		for (const Order &o : m_orders) // RW 0x7A14EE: the same type near the position
+		{
+			if (o.command != order.command || !o.hasPosition())
+			{
+				continue;
+			}
+			const float dx = SimMath::subf32(o.position.x, position.x), dy = SimMath::subf32(o.position.y, position.y),
+				dz = SimMath::subf32(o.position.z, position.z);
+			const float d2 = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
+			if (SimMath::mulf32(radius, radius) > d2)
+			{
+				return;
+			}
+		}
+		order.flagsWord = (order.flagsWord & 0x1FFF) | 0x8000; // RW 0x7A5AA3: replace the payload kind
+		order.position = position;
+	}
+	m_orders.push_back(order); // RW 0x7A5568
+}
+
 void Team::crc(StateHasher &h) const
 {
 	h.addU32(m_id);
@@ -222,6 +449,22 @@ void Team::crc(StateHasher &h) const
 			h.addI32(r.powerType);
 			h.addU32(r.frame);
 			h.addU32(r.caster);
+		}
+	}
+	if (!m_orders.empty()) // lane RAI-POW-4: + 0x13C, hashed once an order exists (a game whose teams never fought keeps its hash)
+	{
+		h.addU32(0x13Cu);
+		h.addU32((std::uint32_t)m_orders.size());
+		for (const Order &o : m_orders)
+		{
+			h.addI32(o.command);
+			h.addU32(o.flags);
+			h.addU32(o.flagsWord);
+			h.addU32(o.timestamp);
+			h.addFloat(o.position.x);
+			h.addFloat(o.position.y);
+			h.addFloat(o.position.z);
+			h.addU32(o.target);
 		}
 	}
 }
@@ -422,8 +665,9 @@ void TeamFactory::crc(StateHasher &h) const
 // relation maps are retail's sub-records (xferRelationMaps). Members are ids (ZH Team::xfer saves the member ids and Team::loadPostProcess finds them).
 void Team::xfer(Xfer &x)
 {
-	// version 2 (lane RAI-POW): the special-power registry (+ 0x140), written only when a power registered (every other snapshot is version 1's)
-	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || !m_specialPowers.empty() ? 2 : 1) };
+	// version 2 (lane RAI-POW): the special-power registry (+ 0x140); version 3 (lane RAI-POW-4): the threat-order list (+ 0x13C). Each is
+	// written only once it has an entry, so a game whose teams never cast / fought keeps version 1's (or 2's) block
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() ? 3 : (!m_orders.empty() ? 3 : (!m_specialPowers.empty() ? 2 : 1))) };
 	x.xferVersion(v);
 	xferRelationMaps(x, m_teamRelations, m_playerRelations);
 	x.xferAsciiString(&m_state);
@@ -507,6 +751,42 @@ void Team::xfer(Xfer &x)
 				m_specialPowers.push_back(r);
 			}
 		}
+	}
+	if (v.current < 3)
+	{
+		if (x.isLoading())
+		{
+			m_orders.clear(); // a version 1 / 2 snapshot has no order list
+		}
+		return;
+	}
+	std::uint32_t orders = (std::uint32_t)m_orders.size();
+	x.xferCount(&orders, 4u + 4u + 4u + 4u + 12u + 4u, sizeof(Order));
+	std::vector<Order> loaded;
+	for (std::uint32_t i = 0; i < orders; ++i)
+	{
+		Order o = x.isLoading() ? Order{} : m_orders[i];
+		std::uint32_t flags = o.flags, flagsWord = o.flagsWord;
+		x.xferInt(&o.command);
+		x.xferUnsignedInt(&flags);
+		x.xferUnsignedInt(&flagsWord);
+		x.xferUnsignedInt(&o.timestamp);
+		x.xferReal(&o.position.x);
+		x.xferReal(&o.position.y);
+		x.xferReal(&o.position.z);
+		x.xferObjectID(&o.target);
+		if (x.isLoading())
+		{
+			SnapshotXfer::checkRange(flags, 0, 0xFF, "a team threat order's flag byte");      // node + 0x10, a byte
+			SnapshotXfer::checkRange(flagsWord, 0, 0xFFFF, "a team threat order's flag word"); // node + 0x12, a word
+			o.flags = (std::uint8_t)flags;
+			o.flagsWord = (std::uint16_t)flagsWord;
+			loaded.push_back(o);
+		}
+	}
+	if (x.isLoading())
+	{
+		m_orders = std::move(loaded);
 	}
 }
 

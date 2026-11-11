@@ -314,8 +314,9 @@ void SlavedUpdate::doAttackLogic(Object &slaver, Object &target)
 	// RW 0x8A54BD .. 0x8A54CF: the same edge-squared distance from 0x6CA525 (the slave's bounding circle +0xB8 subtracted at 0x6CA536)
 	// within DistToTargetToGrantRangeBonus^2 -> set DRONE_SPOTTING on the MASTER (ebx = the master resolved from m_slaverID at 0x8A5336,
 	// loaded into ebx at 0x8A5379 / 0x8A5401). The update's clear at 0x8A5E82 is also on the master; the slave's mask is untouched.
+	// RW 0x8A54C9 comiss (float)(range * range), distance; 0x8A54CD jbe skips the or on equality too: strictly inside only
 	const int bonusRange = m_data->m_distToTargetToGrantRangeBonus;
-	if (dist <= (float)(bonusRange * bonusRange))
+	if (dist < (float)(bonusRange * bonusRange))
 	{
 		slaver.setWeaponBonusCondition(droneSpottingBit(), true);
 	}
