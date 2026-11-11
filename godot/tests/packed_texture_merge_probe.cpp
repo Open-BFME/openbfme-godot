@@ -75,6 +75,20 @@ public:
 	static Dictionary run()
 	{
 		Dictionary result, checks;
+		// The loader normally resizes companions first. Exercise the internal
+		// boundary directly so a future caller cannot read a short mask or
+		// silently ignore trailing mask bytes; neither input may be changed.
+		for (const int maskSize : {1, 4})
+		{
+			auto image = fixture(2, false);
+			auto wrongMask = fixture(maskSize, true);
+			const auto imageBefore = image->get_data(), maskBefore = wrongMask->get_data();
+			const bool merged = mergePackedRgba8(image, wrongMask);
+			checks[String("mismatched_mask_rejected_") + String::num_int64(maskSize)] = !merged;
+			checks[String("mismatched_inputs_unchanged_") + String::num_int64(maskSize)] =
+				image->get_data() == imageBefore && wrongMask->get_data() == maskBefore;
+		}
+
 		PackedByteArray a, b;
 		a.resize(256 * 256 * 4);
 		b.resize(a.size());

@@ -559,6 +559,7 @@ StateReturnType AIAttackApproachState::onEnter()
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
 	Object *victim = victimOf(machine());
+	m_waiting = false; // RW 0x74E6CE clears + 0x71 before its first return
 	if (m_att->isAttackingObject() && victimGone(victim))
 	{
 		return STATE_SUCCESS; // already killed the victim
@@ -580,18 +581,25 @@ StateReturnType AIAttackApproachState::onEnter()
 	}
 	const Coord3D goal = victim ? *victim->getPosition() : machine().goalPosition();
 	m_prevVictimPos = goal;
-	m_waiting = false;
 	if (!GarrisonRules::isMobile(source) || a.curLocomotorSpeed() < 0.1f)
 	{
-		// an owner that cannot move (Object::isMobile false, or its locomotor's max speed below 0.1: a speedless locomotor such as the fortress
-		// catapults' FloatingCatapultLocomotor) asks for no path: it waits two seconds and then fails unless the victim came into range (BFME2 decomp
-		// AIAttackApproachTargetStateOnEnter.cpp onEnter retail 0x0034CD3A, before the turret and computePath; updateInternal: m_waiting -> the wait frame
-		// passed = failure). The port made a move at speed 0 and held the victim, never firing
+		// an owner that cannot move (Object::isMobile RW 0x690E97 false, or its locomotor's max speed RW 0x5E3F49 below 0.1, RW 0xBD83D4: a speedless
+		// locomotor such as the fortress catapults' FloatingCatapultLocomotor) asks for no path: it waits two seconds and then fails unless the victim came
+		// into range (RW 0x74E6CE: + 0x71 = 1, + 0x68 = frame + 2 * LOGICFRAMES_PER_SECOND, before the turret and computePath; BFME2 decomp
+		// AIAttackApproachTargetStateOnEnter.cpp onEnter retail 0x0034CD3A; update: see AIAttackApproachState::update). The port made a move at speed 0
+		// and held the victim, never firing
 		m_waiting = true;
 		m_waitFrame = a.frame() + 2u * (unsigned)LOGICFRAMES_PER_SECOND;
 		return STATE_CONTINUE;
 	}
 	aimTurret(a, *m_att, victim, machine().goalPosition()); // lane GARRISON-2: RW 0x74E6CE before the path
+	return startMove(goal, victim);
+}
+
+StateReturnType AIAttackApproachState::startMove(const Coord3D &goal, Object *victim)
+{
+	AIUpdateInterface &a = ai();
+	Object &source = owner();
 	// lane PHYS-1: the approach's computePath RW 0x749A3E asks for an attack path (RW 0x663802 -> computeAttackPath 0x6668CA -> findAttackPath 0x6FC18E): a free cell in
 	// weapon reach, reserved, instead of a move to the victim's centre (the destination is not adjusted). A HORDE object attacks through its horde machine (the approach
 	// state 0xC9, computePath RW 0x74A594, S-590); a HORDE that reaches this generic approach keeps the move to the victim (RW 0x749A3E's branch distinctions and the
@@ -628,7 +636,26 @@ StateReturnType AIAttackApproachState::update()
 	}
 	if (m_waiting)
 	{
-		return a.frame() > m_waitFrame ? STATE_FAILURE : STATE_CONTINUE; // the decomp's updateInternal
+		// RW 0x749D46 reads the wait (+ 0x71 / + 0x68) only for an object target: the wait over -> failure
+		if (m_att->isAttackingObject())
+		{
+			return a.frame() > m_waitFrame ? STATE_FAILURE : STATE_CONTINUE;
+		}
+		// a position target (attack-ground) runs computePath RW 0x749A3E on every update instead: it fails at once for an owner that is not mobile
+		// (RW 0x749A7A); a mobile owner gets the path its onEnter skipped and holds the attack while the move runs (a speedless one: until the
+		// target comes into range or a new command)
+		if (!GarrisonRules::isMobile(owner()))
+		{
+			return STATE_FAILURE;
+		}
+		if (!m_move)
+		{
+			const StateReturnType entered = startMove(machine().goalPosition(), nullptr);
+			if (entered != STATE_CONTINUE)
+			{
+				return entered;
+			}
+		}
 	}
 	if (!m_move)
 	{

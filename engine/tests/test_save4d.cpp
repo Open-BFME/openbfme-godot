@@ -34,6 +34,8 @@
 #include "GameLogic/Module/LogicModules.h"
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/System/TerrainResourceManager.h"
+#include "GameLogic/System/ShroudManager.h"
+#include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/SpellStores.h"
 #include "GameLogic/VictoryConditions.h"
 
@@ -1043,4 +1045,132 @@ TEST_CASE("save4d script engine: a non-default acquired-science queue and generi
 	CHECK(b.g.engine().getUnitNamed("RefN2") == b.dummy); // lane CASTLE-UNPACK
 	CHECK(b.g.engine().references().size() == 1u);
 	CHECK(b.g.engine().sequentialScripts().size() == 1u);
+}
+
+TEST_CASE("save4d regional reveals: named polygon reveals survive snapshots and undo without revealing the bounding box")
+{
+	ScriptGame a, b;
+	TriggerArea area;
+	area.name = "Opening";
+	area.points = {{80,80}, {240,80}, {240,160}, {160,160}, {160,240}, {80,240}};
+	a.triggers.push_back(area); b.triggers.push_back(area);
+	a.start(); b.start();
+	ShroudManager sa(*a.lw.logic), sb(*b.lw.logic);
+	for (ShroudManager *shroud : {&sa, &sb})
+	{
+		shroud->init(40, 1); shroud->setExtent(0, 0, 400, 400); shroud->attach();
+	}
+	const int alice = a.lw.players.findPlayerWithName("Alice")->getPlayerIndex();
+	const int bob = a.lw.players.findPlayerWithName("Bob")->getPlayerIndex();
+	ScriptActions::execute(a.engine(), act("MAP_REVEAL_PERMANENTLY_IN_TRIGGER", {sp(9,"Opening"), sp(11,"Alice"), sp(49,"OpeningReveal")}));
+	CHECK(sa.getCellStatus(alice, 2, 2) == CELLSHROUD_CLEAR);
+	CHECK(sa.getCellStatus(alice, 5, 5) == CELLSHROUD_SHROUDED); // inside bounds but outside the concave polygon
+	CHECK(sa.getCellStatus(bob, 2, 2) == CELLSHROUD_SHROUDED);
+	CHECK(a.engine().stats().notes.at("[S-6102] trigger reveals: the per-cell polygon test is taken as pointInTrigger (unverified)") == 1u);
+	CHECK(a.engine().takeClientRequests().empty()); // authoritative shroud changes run in the logic
+	const std::vector<std::string> tokens = {"obfme:ScriptEngine", "obfme:Shroud"};
+	std::vector<std::uint8_t> saved, again;
+	a.lw.logic->gameState().saveBlocks(tokens, saved);
+	b.lw.logic->gameState().loadBlocks(tokens, saved);
+	b.lw.logic->gameState().saveBlocks(tokens, again);
+	CHECK(saved == again);
+	CHECK(section(*a.lw.logic, "script engine") == section(*b.lw.logic, "script engine"));
+	CHECK(sb.getCellStatus(alice, 2, 2) == CELLSHROUD_CLEAR);
+	for (ScriptGame *game : {&a, &b})
+		ScriptActions::execute(game->engine(), act("MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER", {sp(49,"OpeningReveal")}));
+	CHECK(sa.getCellStatus(alice, 2, 2) == CELLSHROUD_FOGGED);
+	CHECK(sb.getCellStatus(alice, 2, 2) == CELLSHROUD_FOGGED);
+	CHECK(sb.getCellStatus(alice, 5, 5) == CELLSHROUD_SHROUDED);
+	// A one-time reveal explores but does not keep a looker.
+	ScriptActions::execute(b.engine(), act("MAP_REVEAL_IN_TRIGGER", {sp(9,"Opening"), sp(11,"Bob")}));
+	CHECK(sb.getCellStatus(bob, 2, 2) == CELLSHROUD_FOGGED);
+}
+
+TEST_CASE("save4d regional reveals: a named reveal with empty strings (11 bytes, the last record of the block) loads again")
+{
+	ScriptGame a, b;
+	a.start(); b.start();
+	ShroudManager sa(*a.lw.logic), sb(*b.lw.logic);
+	for (ShroudManager *shroud : {&sa, &sb})
+	{
+		shroud->init(40, 1); shroud->setExtent(0, 0, 400, 400); shroud->attach();
+	}
+	ScriptActions::execute(a.engine(), act("MAP_REVEAL_PERMANENTLY_AT_WAYPOINT", {sp(7,""), rp(50.0f), sp(11,""), sp(49,"Empty")}));
+	CHECK(a.engine().stats().notes.at("regional map reveal: waypoint not found: ") == 1u);
+	const std::vector<std::string> tokens = {"obfme:ScriptEngine"};
+	std::vector<std::uint8_t> saved, again;
+	a.lw.logic->gameState().saveBlocks(tokens, saved);
+	b.lw.logic->gameState().loadBlocks(tokens, saved);
+	b.lw.logic->gameState().saveBlocks(tokens, again);
+	CHECK(saved == again);
+	CHECK(section(*a.lw.logic, "script engine") == section(*b.lw.logic, "script engine"));
+}
+
+TEST_CASE("save4d regional reveals: repeated names reapply the original record and undo removes only one look")
+{
+	// Clean BFME2 1.06: VA 0x758853 returns the existing CRC record;
+	// wrappers 0x7BC9E0/0x7BCA12 still call 0x7577DA. Undo 0x7BCA43
+	// calls 0x75789D once then removes the record through 0x757D52.
+	// RW counterparts: 0x75A344, 0x7BD4C1/0x7BD4F3, 0x7592E1,
+	// 0x7BD524, 0x7593A4, 0x75985D (S-001 provenance caveat).
+	ScriptGame g;
+	TriggerArea area;
+	area.name = "Opening";
+	area.points = {{80,80}, {240,80}, {240,240}, {80,240}};
+	g.triggers.push_back(area);
+	g.start();
+	ShroudManager shroud(*g.lw.logic);
+	shroud.init(40, 1); shroud.setExtent(0, 0, 400, 400); shroud.attach();
+	const int alice = g.lw.players.findPlayerWithName("Alice")->getPlayerIndex();
+	const auto reveal = act("MAP_REVEAL_PERMANENTLY_IN_TRIGGER", {sp(9,"Opening"), sp(11,"Alice"), sp(49,"Repeated")});
+	const auto undo = act("MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER", {sp(49,"Repeated")});
+	ScriptActions::execute(g.engine(), reveal);
+	CHECK(shroud.lookerCount(alice, 2, 2) == 1);
+	ScriptActions::execute(g.engine(), reveal);
+	CHECK(shroud.lookerCount(alice, 2, 2) == 2);
+	ScriptActions::execute(g.engine(), undo);
+	CHECK(shroud.lookerCount(alice, 2, 2) == 1);
+	CHECK(shroud.getCellStatus(alice, 2, 2) == CELLSHROUD_CLEAR);
+	ScriptActions::execute(g.engine(), undo); // the named record was removed, not retained as a reference count
+	CHECK(shroud.lookerCount(alice, 2, 2) == 1);
+}
+
+TEST_CASE("save4d regional reveals: undo resolves the stored selector against current alliances")
+{
+	// Clean BFME2 VAs 0x757817 and 0x7578DA both call selector resolver
+	// 0x757475 with the record's string at +0xC. No resolved mask is stored.
+	// RW 0x75931E/0x7593E1 call 0x758F7C (S-001 provenance caveat).
+	ScriptGame g;
+	TriggerArea area;
+	area.name = "Opening";
+	area.points = {{80,80}, {240,80}, {240,240}, {80,240}};
+	g.triggers.push_back(area);
+	g.start();
+	ShroudManager shroud(*g.lw.logic);
+	shroud.init(40, 1); shroud.setExtent(0, 0, 400, 400); shroud.attach();
+	Player *alice = g.lw.players.findPlayerWithName("Alice");
+	Player *bob = g.lw.players.findPlayerWithName("Bob");
+	SUBCASE("former ally keeps the original look")
+	{
+		alice->setPlayerRelationship(bob, ALLIES);
+		ScriptActions::execute(g.engine(), act("MAP_REVEAL_PERMANENTLY_IN_TRIGGER",
+			{sp(9,"Opening"), sp(11,"<Local Player's Allies incl Self>"), sp(49,"AllianceReveal")}));
+		CHECK(shroud.lookerCount(bob->getPlayerIndex(), 2, 2) == 1);
+		alice->setPlayerRelationship(bob, ENEMIES);
+		ScriptActions::execute(g.engine(), act("MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER", {sp(49,"AllianceReveal")}));
+		CHECK(shroud.lookerCount(alice->getPlayerIndex(), 2, 2) == 0);
+		CHECK(shroud.lookerCount(bob->getPlayerIndex(), 2, 2) == 1);
+	}
+	SUBCASE("new ally is included in undo rather than the original mask")
+	{
+		alice->setPlayerRelationship(bob, ENEMIES);
+		ScriptActions::execute(g.engine(), act("MAP_REVEAL_PERMANENTLY_IN_TRIGGER",
+			{sp(9,"Opening"), sp(11,"Bob"), sp(49,"IndependentBobReveal")}));
+		ScriptActions::execute(g.engine(), act("MAP_REVEAL_PERMANENTLY_IN_TRIGGER",
+			{sp(9,"Opening"), sp(11,"<Local Player's Allies incl Self>"), sp(49,"AllianceReveal")}));
+		alice->setPlayerRelationship(bob, ALLIES);
+		ScriptActions::execute(g.engine(), act("MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER", {sp(49,"AllianceReveal")}));
+		CHECK(shroud.lookerCount(alice->getPlayerIndex(), 2, 2) == 0);
+		CHECK(shroud.lookerCount(bob->getPlayerIndex(), 2, 2) == 0);
+	}
 }

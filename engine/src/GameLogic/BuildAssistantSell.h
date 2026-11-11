@@ -24,10 +24,10 @@
 //     is above DAMAGED (body vslot 0x24) and that was hurt within 4 seconds (RW 0x68C933) credits its last attacker with the kill (Object::scoreTheKill
 //     RW 0x6955BC, type 1), otherwise its owner's score keeper counts it lost (RW 0x79F486); then Object::kill(UNRESISTABLE, death type 8) (RW 0x698EC3) and the
 //     entry leaves the list. The object therefore dies in the first phase 5 after the sale (the frame of the MSG_SELL).
-// INFERENCE / not ported (stop S-1980): the beacon branch (no beacons in the port: a beacon is reported, not sold); the issuing player's PlayerTemplate stands in
-// for the local player's (every retail faction names the same beacon); the contain's slot 0x64 (BFME2 decomp, present but not byte-matched: OpenContain
-// orders its riders out with CMD_FROM_AI, GarrisonContain first removes all of them) is ported as orderAllPassengersToExit(CMD_FROM_AI); the client parts
-// (animation loop, cash text, deselectDrawable) are the client's.
+// INFERENCE / not ported (stop S-1980): the issuing player's PlayerTemplate stands in for the local player's BeaconName (every retail faction names the same
+// beacon); the client parts (animation loop, cash text, deselectDrawable) are the client's. The contain's slot 0x64 was read in RotWK (RW 0x796806 calls it with no
+// argument): every contain table of 2.01 answers RW 0x86561F, which clears the kill-on-death byte and then orders the riders out with CMD_FROM_AI through vslot
+// 0x80, so the sale calls ContainModuleInterface::onSelling — no contain class overrides it, and GarrisonContain's BFME2 removeAllContained is not in RotWK 2.01.
 
 #pragma once
 

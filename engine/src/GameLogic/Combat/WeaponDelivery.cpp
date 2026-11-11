@@ -1888,11 +1888,14 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 	bool miss = false;
 	if (victim && !scattered)
 	{
-		// (1) no roll. lane FLANK-1: DisableScatterForTargetsOnWall (+ 0x3D) only spares an infantry victim standing on a wall (RW 0x6CCC7F -> 0x6EA857
-		// Pathfinder::IsPointOnWall at the victim's position); the port has the ground layer only (S-362), so no victim stands on a wall and the miss applies
+		// PORT-4: RW 0x6CCC59 .. 0x6CCC9B: positive infantry scatter forces a miss, except when
+		// +0x3D is set and IsPointOnWall(victim position, 0) succeeds (call RW 0x6CCC92).
+		// RW 0x6EA86B .. 0x6EA87F: wall layer > 0x10; argument 0 ignores cell occupancy/type.
 		if (t.m_infantryInaccuracyDist > 0.0f && victim->isKindOf((unsigned)CombatNames::kinds().infantry))
 		{
-			miss = true;
+			const AIWorld *world = logic.aiWorld();
+			miss = !(t.m_disableScatterForTargetsOnWall && world &&
+				world->pathfinder().isPointOnWall(*victim->getPosition(), false));
 		}
 	}
 	// (2) RW 0x6CCCA7: HitPercentage rolls whatever the target is: with no victim (a position shot, or DamageDealtAtSelfPosition's cleared one) it still draws (lane COMBAT-4 r2)

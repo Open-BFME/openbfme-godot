@@ -133,7 +133,9 @@ private:
 
 	std::deque<std::unique_ptr<ThingTemplate>> m_arena; ///< every template ever made (masters and overrides)
 	std::vector<ThingTemplate *> m_list;                ///< the master list, creation order
-	std::map<std::string, ThingTemplate *> m_byName;    ///< case-sensitive (RW 0x4065AA)
+	// lane PERF-SIM-1: a hash map, not a tree: the per-frame filters and the AI look templates up by name, and the
+	// name map is never iterated (the master list `m_list` keeps creation order). case-sensitive (RW 0x4065AA)
+	std::unordered_map<std::string, ThingTemplate *> m_byName;
 	unsigned short m_nextTemplateID = 1;                ///< RW 0x6D1ACD
 
 	std::vector<std::string> m_slotNames;

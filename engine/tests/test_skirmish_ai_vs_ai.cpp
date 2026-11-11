@@ -930,7 +930,10 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// the Men's defeat at 6558, seed 7 with Mordor's defeat at 2800 and keeps seed 1234 open; #227 / #228 / #235 (the siege tactics and the farm raid
 	// targets) end seed 7 at 2671 and keep seed 2 open at 9000 with a new table from the first window on; the other items keep the games. Engine pins, not
 	// retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 2671 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Merge queue q47 (measured once on the merged tree; #263's group speed matching moves them, #253 and #261 keep them): seed 2 ends with Mordor's defeat
+	// (start position 0) at 5832 with a new table from the 2000 window on, seed 7 with Mordor's defeat at 2715 (2671 before); seed 1234 stays open at
+	// 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 5832 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 2715 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -983,17 +986,13 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// from the 5000 window on; the game stays open at 9000
 			// merge queue q43 (measured once on the merged tree and at each merge point; see above): a new table from the first window on; the game stays open
 			// at 9000
-			// the immobile give-up (RW 0x0034CD3A): seed 2's table moves from the 6000 window; the game stays open at 9000. Seeds 7 and 1234 keep their ends.
+			// merge queue q47 (measured once on the merged tree; see above): a new table from the 2000 window on; the game ends with Mordor's defeat at 5832
 			CHECK(run.progress ==
 		"frame 1000: [0 attacks 0 built 91u/6s destroyed 20u/1s] [1 attacks 1 built 76u/8s destroyed 35u/2s]\n"
-		"frame 2000: [0 attacks 2 built 235u/10s destroyed 173u/1s] [1 attacks 2 built 221u/10s destroyed 152u/5s]\n"
-		"frame 3000: [0 attacks 2 built 328u/13s destroyed 233u/2s] [1 attacks 3 built 333u/13s destroyed 220u/6s]\n"
-		"frame 4000: [0 attacks 3 built 446u/16s destroyed 316u/5s] [1 attacks 4 built 385u/16s destroyed 345u/9s]\n"
-		"frame 5000: [0 attacks 8 built 526u/20s destroyed 341u/9s] [1 attacks 7 built 417u/19s destroyed 474u/9s]\n"
-		"frame 6000: [0 attacks 9 built 646u/23s destroyed 361u/11s] [1 attacks 8 built 427u/19s destroyed 580u/9s]\n"
-		"frame 7000: [0 attacks 16 built 688u/28s destroyed 436u/12s] [1 attacks 9 built 471u/22s destroyed 619u/10s]\n"
-		"frame 8000: [0 attacks 20 built 714u/31s destroyed 483u/16s] [1 attacks 9 built 519u/22s destroyed 666u/10s]\n"
-		"frame 9000: [0 attacks 21 built 751u/31s destroyed 541u/20s] [1 attacks 11 built 580u/23s destroyed 688u/10s]\n");
+		"frame 2000: [0 attacks 1 built 235u/10s destroyed 155u/1s] [1 attacks 2 built 226u/10s destroyed 193u/3s]\n"
+		"frame 3000: [0 attacks 2 built 266u/13s destroyed 191u/2s] [1 attacks 3 built 292u/14s destroyed 248u/11s]\n"
+		"frame 4000: [0 attacks 2 built 321u/16s destroyed 253u/3s] [1 attacks 5 built 361u/18s destroyed 272u/11s]\n"
+		"frame 5000: [0 attacks 3 built 378u/17s destroyed 322u/3s] [1 attacks 5 built 383u/23s destroyed 366u/16s]\n");
 		}
 	}
 }
@@ -1114,7 +1113,7 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 			CHECK(started("FlagCaptureSquad") == 1);
 			CHECK(started("FarmKillSquad") == 0);
 			CHECK(counter("AIFlagCaptureSquad_IsRunning") == 1);
-			CHECK(ai->brain.targetlessUnported == 9); // the other 9 prototypes' applicability, once per pick frame (S-893)
+			CHECK(ai->brain.targetlessUnported == 6); // Ring, WoTR and roaming are all ported (S-893)
 		}
 		if (started("FarmKillSquad") > 0)
 		{
@@ -1132,7 +1131,7 @@ TEST_CASE("skirmish ai targetless: the generator's FarmKillSquad draw at creatio
 	CHECK(started("FlagCaptureSquad") == 1);
 	CHECK(started("FarmKillSquad") == 1);
 	CHECK(counter("FarmKillSquad::IsRunning") == 1);
-	CHECK(ai->brain.targetlessUnported == 18);
+	CHECK(ai->brain.targetlessUnported == 12); // two pick frames, six remaining prototypes
 	// RW 0x90C0EE constructs the prototype (its draw); each pick draws among the pool (AITacticsGenerator.cpp 0x1BC: 0 .. pool size - 1); a FlagCaptureSquad
 	// team draws its maximum (AIFlagCaptureSquad.cpp 0xEF, RW 0x9BC1A0) and its end its next run (0xD5, RW 0x9BBFDC); RW 0x9BB43D constructs the FarmKillSquad
 	// clone before copying its prototype flag, and RW 0x9BB479 sets it up (0x267)

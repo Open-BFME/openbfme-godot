@@ -54,10 +54,10 @@ void fragment() {
 	// lane HERORING-1: the alpha decals (a hero's ring) first, blended in retail's gamma space (the terrain's output decoded back, shadow_to_gamma is
 	// retail_output's inverse), then the merge decals over them (RotWK draws the merge list after the alpha list, RW 0x50DE6C after RW 0x50D9EB .. 0x50DA6A); the terrain's colour saturated first, as D3D9's
 	// frame buffer is before the decal blends. Lane ECOCIRCLE-2: an additive decal has a == 0 and only rgb (the surface keeps its colour), so either
-	// share draws the pair
-	vec4 sela = sel_alpha_at(vec3(v_sage_xy, 0.0), false);
+	// share draws the pair. The decal list itself saturates after every draw (see sel_alpha_at).
+	vec3 gamma = clamp(output_gamma == 1.0 ? ALBEDO : shadow_to_gamma(ALBEDO), 0.0, 1.0);
+	vec4 sela = sel_alpha_at(vec3(v_sage_xy, 0.0), false, gamma);
 	if (sela.a > 0.0 || any(greaterThan(sela.rgb, vec3(0.0)))) {
-		vec3 gamma = clamp(output_gamma == 1.0 ? ALBEDO : shadow_to_gamma(ALBEDO), 0.0, 1.0);
 		shadow_gamma = gamma * (1.0 - sela.a);
 		shadow_over = sela.rgb;
 		ALBEDO = retail_output(shadow_gamma + shadow_over);

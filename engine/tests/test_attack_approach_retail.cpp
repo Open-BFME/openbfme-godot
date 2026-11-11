@@ -289,3 +289,39 @@ TEST_CASE("attack approach: a guarding fortress catapult that picked a structure
 	CHECK(abandonedAt == 2 * LOGICFRAMES_PER_SECOND);
 	CHECK(lastShot(*catapult) > before); // tolerance: any shot after the near farm is placed proves the guard fired; its frame is reported
 }
+
+// RW 0x749D46 (the approach's update) reads the wait of RW 0x74E6CE only for an object target. An attack on a ground position runs computePath RW 0x749A3E on
+// every update instead: a speedless but mobile owner (Object::isMobile RW 0x690E97 true: FloatingCatapultLocomotor) gets its path and holds the attack while
+// the move runs at speed 0; it does not give up after the two seconds
+TEST_CASE("attack approach: a fortress catapult ordered to attack the ground beyond its range keeps the order (the wait is for object targets, RW 0x749D46)")
+{
+	OPENBFME_REQUIRE_START(s);
+	Match m;
+	startMatch(*s, m);
+	GameLogic &logic = m.game->logic();
+	const Coord3D spot = quietSpot(logic, *m.mordor, 1000.0f);
+	Object *catapult = placeAtPosition(logic, "MordorFortressCatapult", m.mordor, spot);
+	const ObjectID catapultId = catapult->getID();
+	advance(m, 10);
+	REQUIRE(logic.findObjectByID(catapultId) != nullptr);
+	AIUpdateInterface *ai = catapult->getAIUpdateInterface();
+	REQUIRE(ai != nullptr);
+	REQUIRE(ai->curLocomotorSpeed() == 0.0f);
+	const float gx = spot.x >= 1000.0f ? spot.x - 800.0f : spot.x + 800.0f; // beyond the 500 range
+	const Coord3D ground{ gx, spot.y, logic.getGroundHeight(gx, spot.y) };
+	REQUIRE(ai->aiAttackPosition(ground, 0x7FFFFFFF, CMD_FROM_AI));
+	advance(m, 2);
+	REQUIRE(ai->isAttacking());
+	const unsigned ordered = logic.getFrame();
+	int ended = -1;
+	for (int f = 0; f < 6 * LOGICFRAMES_PER_SECOND && ended < 0; ++f)
+	{
+		advance(m, 1);
+		if (!ai->isAttacking())
+		{
+			ended = (int)(logic.getFrame() - ordered);
+		}
+	}
+	MESSAGE("the ground attack ended after " << ended << " frames (-1: still attacking after six seconds; state " << ai->currentStateId() << ")");
+	CHECK(ended == -1);
+}
