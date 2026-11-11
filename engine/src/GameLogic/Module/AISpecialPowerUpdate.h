@@ -201,6 +201,7 @@ private:
 	bool decideEnshroudingMist(Object &obj);                    // RW 0x9E7869
 	bool decideCallTheHorde(Object &obj);                       // RW 0x9E71B0
 	bool decideBuffEconomy(Object &obj);                        // RW 0x9E7671
+	bool decideAttackHealAoe(Object &obj);                      // RW 0x9E691D (lane RAI-POW-4: consumes the team's threat order, Team + 0x13C)
 	bool decideCitadel(Object &obj);                            // RW 0x9E6CCB (lane RAI-POW-2, community #234)
 	bool decideSoulFreeze(Object &obj);                         // RW 0x9E9B37 (the team's power registry, RW 0x7A3EF5 / 0x7A5582)
 	// lane RAI-POW-3b (AISpecialPowerDecisions.cpp): the enemy record's structure clusters (RW 0x8E4591's position sampler, RW 0xA024DA)

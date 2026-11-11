@@ -349,6 +349,33 @@ TEST_CASE("nugget1 lua event: through LiveScripting the rain of fire's event is 
 	CHECK(a.logic.scriptEventsWithoutDispatch() == lost);
 }
 
+// PR 282 (ForceLuaRegistration, RW 0x73595C .. 0x735966): the spell book's Rain of Fire object has no AI and sets ForceLuaRegistration (system.ini), so it has a
+// Lua record; the receivers' BeUncontrollablyAfraid handler (InfantryFunctions) passes it to ObjectEnterUncontrollableCowerState as `other`, whose lookup
+// needs that record. Without the record the lookup fails and nobody cowers (the binding returns before RW 0x68F383)
+TEST_CASE("nugget1 lua event: a no-AI ForceLuaRegistration source (SpellBookRainOfFire) makes an enemy horde cower through the live script engine")
+{
+	if (!haveWorld())
+	{
+		return;
+	}
+	Arena a(shared(), "FactionMen", "FactionMordor");
+	a.startScripting(shared());
+	const WeaponTemplate &w = weapon("RainOfFirePhaseInitialWeapon");
+	Object *book = a.place("SpellBookRainOfFire", 0, 300.0f, 300.0f);
+	Object *horde = a.place("GondorFighterHorde", 1, 600.0f, 600.0f); // the members' requests reach the horde's EmotionTrackerUpdate (RW 0x68F383)
+	a.frames(2);
+	REQUIRE(book);
+	REQUIRE(book->getAIUpdateInterface() == nullptr);
+	EmotionTrackerUpdate *tracker = EmotionTrackerUpdate::of(*horde);
+	REQUIRE(tracker);
+	REQUIRE_FALSE(tracker->requested(5));
+	LuaObjectInfo info;
+	CHECK(a.scripting->findObject((int)book->getID(), &info)); // the record (a CHECK: without it the cower check below still runs)
+	const Coord3D at{ 600.0f, 600.0f, 0.0f };
+	DeliverNuggets(a.logic, book->getID(), w, WeaponBonus{}, nullptr, &at, false, nullptr);
+	CHECK(tracker->requested(5)); // EMOTION 5: uncontrollable cower (RW 0x736BA0)
+}
+
 // SpawnAndFadeNugget (RW 0x911C46): the Isengard mine's drop (IsengardExplosiveMineDroppingWeaponPosition: SpawnedObjectName IsengardDeployedExplosiveMine,
 // SpawnOffset X:8 Y:1) makes the deployed mine at the dropper's position + the offset turned by its angle (0: +8, +1; pi/2: -1, +8), facing as the dropper, and the
 // dropper dies FADED (RW 0x698EC3(8, 0x16)); the target point is not read

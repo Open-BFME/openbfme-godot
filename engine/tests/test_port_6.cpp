@@ -1,5 +1,5 @@
 // OpenBFME. GPL-3.0.
-// PORT-6 (issue #59): StealthDetectorUpdate's two container permissions, on synthetic INI only (no retail or Ennorath files).
+// PORT-6: StealthDetectorUpdate's two container permissions, on synthetic INI only (no retail or Ennorath files).
 //
 // RW 0x8A6477 .. RW 0x8A64AB: no container or contain module continues the scan. Otherwise contain vslot 0x10 (RW 0x8A6492) selects the byte:
 // garrisonable -> CanDetectWhileGarrisoned (+0x68, RW 0x8A6499), every other container -> CanDetectWhileContained (+0x69, RW 0x8A64A6). A set byte
