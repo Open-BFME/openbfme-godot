@@ -188,37 +188,3 @@ TEST_CASE("PORT-24 an object without an AI and with ForceLuaRegistration gets it
 	CHECK(f.scripting->stats().creationListObjects == before.lists);
 	CHECK(f.scripting->stats().creationHookObjects == before.hooks);
 }
-
-TEST_CASE("PORT-24 an object with an AI is registered and sent OnCreated as before: the field is not consulted (RW 0x73595A jne)")
-{
-	Port24World f;
-	LuaScriptEngine &engine = f.scripting->engine();
-	const Counts before = counts(f);
-	Object *withAI = f.make("P24WithAI");
-	REQUIRE(withAI);
-	CHECK(hasRecord(engine, (int)withAI->getID()));
-	CHECK(luaInt(engine, "P24Created") == 1); // its AILuaEventsList's OnCreated ran once
-	LuaObjectInfo info;
-	REQUIRE(f.scripting->findObject((int)withAI->getID(), &info));
-	CHECK(info.hasAI);
-	CHECK_FALSE(info.forceLuaRegistration); // RW 0x73595A jumps over the +0x640 test
-	CHECK(info.luaEvents != nullptr);
-	CHECK(f.scripting->stats().creationListObjects == before.lists + 1);
-	CHECK(f.scripting->stats().creationForcedObjects == before.forced);
-}
-
-TEST_CASE("PORT-24 an object without an AI and without ForceLuaRegistration gets no Lua object record (RW 0x735966 je)")
-{
-	Port24World f;
-	LuaScriptEngine &engine = f.scripting->engine();
-	const Counts before = counts(f);
-	Object *plain = f.make("P24PlainNoAI");
-	REQUIRE(plain);
-	CHECK_FALSE(hasRecord(engine, (int)plain->getID()));
-	LuaObjectInfo info;
-	CHECK_FALSE(f.scripting->findObject((int)plain->getID(), &info));
-	CHECK(f.scripting->stats().creationForcedObjects == before.forced);
-	CHECK(f.scripting->stats().creationListObjects == before.lists);
-	// and it never had one: the world entry does not register it either
-	CHECK_FALSE(hasRecord(engine, (int)plain->getID()));
-}

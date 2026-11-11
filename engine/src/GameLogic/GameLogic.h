@@ -566,6 +566,11 @@ public:
 	const std::vector<BeaconNotice> &beaconNotices() const { return m_beaconNotices; }
 	void noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex);
 	const std::vector<RadarEventNotice> &radarEventNotices() const { return m_radarEventNotices; }
+	// bumped when a logic-side radar input is written (an attack frame, a script or construction notice). The HUD reads those once per
+	// logic frame and again when this changes, so a write after that frame was already sampled is not dropped, and a render frame with no write does not
+	// walk every object.
+	void noteRadarLogicWrite() { ++m_radarLogicWrites; }
+	std::uint32_t radarLogicWrites() const { return m_radarLogicWrites; }
 
 	// lane CAMP-1H: TheGameLogic + 0xA4, the game's difficulty (0 easy, 1 normal, 2 hard, 3 brutal): reset to 1 (GameLogic::reset RW 0x62D3EB),
 	// prepareNewGame (RW 0x77948E) stores the new game message's difficulty here (the script engine's stays 1). Read by the difficulty bonus of a computer
@@ -1002,6 +1007,7 @@ private:
 	std::vector<BeaconNotice> m_beaconNotices; ///< lane CHAT-1: oldest first, at most kBeaconNotices
 	std::uint32_t m_beaconSeq = 0;
 	std::uint32_t m_radarEventSeq = 0;
+	std::uint32_t m_radarLogicWrites = 0; // see noteRadarLogicWrite
 	ObjectClientHooks *m_clientHooks = nullptr;
 	ObjectCreatedProc m_objectCreatedProc;
 	ScriptEventProc m_scriptEventProc;

@@ -978,13 +978,15 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 				}
 				for (int ch = 0; ch < 3; ++ch)
 				{
+					// review (Greptile P2 on #243): D3D9's frame buffer clips to [0, 1] after EVERY draw; carry the clipped value into the next decal, or
+					// an additive overbright decal survives a later alpha / multiply blend (white ground + half additive white + half black = 0.5, not 0.75)
 					if (additive)
 					{
-						c[ch] += s[ch] * d[4 + ch] * a; // ONE / ONE: the surface keeps its colour
+						c[ch] = std::max(0.0f, std::min(255.0f, c[ch] + s[ch] * d[4 + ch] * a)); // ONE / ONE: the surface keeps its colour
 					}
 					else
 					{
-						c[ch] = c[ch] * (1.0f - a) + s[ch] * d[4 + ch] * a;
+						c[ch] = std::max(0.0f, std::min(255.0f, c[ch] * (1.0f - a) + s[ch] * d[4 + ch] * a));
 					}
 				}
 				drawn = drawn || a > 0.0f;
