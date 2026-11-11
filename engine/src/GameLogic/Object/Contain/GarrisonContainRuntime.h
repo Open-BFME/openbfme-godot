@@ -201,7 +201,7 @@ public:
 	CitadelSlaughterHordeContain(Thing *thing, const CitadelSlaughterHordeContainBehaviorData *data);
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override;
 	bool addToContain(Object *obj) override;
-	bool isSlaughterContain() const override { return true; } // TOP20 #9: contain table RW 0xC5F2E8 + 0x30 = RW 0x8BD372
+	bool isSlaughterContain() const override { return true; } // PR 284: contain table RW 0xC5F2E8 + 0x30 = RW 0x8BD372
 	UpdateSleepTime update() override;
 	void crc(StateHasher &h) const override;
 	static const char *stopLine();

@@ -230,7 +230,7 @@ UnitVoiceResponse::Voice UnitVoiceResponse::unitSpecificVoice(const ThingTemplat
 
 int UnitVoiceResponse::voiceTargetArgument(int msgType)
 {
-	// TOP20 #9 (the owner's check, 2026-11-04: a horde entering a building said nothing): the target is the object RW 0x8DD74F takes from the pick info (+ 4,
+	// PR 284 (a horde entering a building said nothing): the target is the object RW 0x8DD74F takes from the pick info (+ 4,
 	// the drawable under the cursor), i.e. the message argument the logic case reads as the target. The layouts are the producers' (this port's message
 	// writers); guessing "the first object id" made MSG_ENTER's entering object its own target
 	switch (msgType)
@@ -823,7 +823,7 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 		candidates.emplace_back(obj, ordinal);
 	}
 
-	// TOP20 #9, RW 0x8DEE06 -> RW 0x8DD74F: for MSG_ENTER (0x42C) with a target object, the kind of enter the selection makes (RW [ebp-0x84] =
+	// PR 284, RW 0x8DEE06 -> RW 0x8DD74F: for MSG_ENTER (0x42C) with a target object, the kind of enter the selection makes (RW [ebp-0x84] =
 	// ActionManager::getEnterMessage RW 0x82CEFB over the selected drawables); -1 otherwise
 	int enterKind = -1;
 	const Object *enterTarget = msgType == MSG_ENTER && info && info->target != INVALID_ID ? m_logic.findObjectByID(info->target) : nullptr;
@@ -973,7 +973,7 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 					fillName(c, obj, "VoiceEnter");
 					break;
 				}
-				// TOP20 #9, RW 0x8DF50D .. 0x8DF716: by the enter kind (enterKind above)
+				// PR 284, RW 0x8DF50D .. 0x8DF716: by the enter kind (enterKind above)
 				static const int kHealPad = ObjectTemplateInfoBuilder::kindOfIndex("HEAL_PAD");   // template + 0x10C bit 0 (KindOf 32)
 				static const int kStructure = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE"); // template + 0x108 bit 7
 				switch (enterKind)

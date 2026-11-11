@@ -18,6 +18,7 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Economy.h"
 #include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/SkirmishAIEditionRules.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -1235,11 +1236,16 @@ constexpr bool kTargetlessAlways[] = { false, false, false, false, false, true, 
 constexpr int kTargetlessCount = 11;
 constexpr int TL_FLAG_CAPTURE = 0;
 constexpr int TL_FARM_KILL = 1;
+constexpr int TL_RETURN_THE_RING = 5; // ReturnTheRing (RW 0x90C0EE's 6th prototype)
+constexpr int TL_WOTR_BATTLE_START = 6; // AIStartWoTRBattleTactic (RW 0x90C0EE's 7th prototype)
+constexpr int TL_ROAMING_DEFENSE = 7; // AIRoamingDefenseTactic (RW 0x90C0EE's 8th prototype)
 const char *const kFlagCaptureFile = "AIFlagCaptureSquad.cpp";
 const char *const kFlagCaptureRunning = "AIFlagCaptureSquad_IsRunning";
 const char *const kFlagCaptureNextFrame = "AIFlagCaptureSquad_FrameNextRun";
 const char *const kTargetlessFile = "AITacticsGenerator.cpp";  // RW 0xC7AD48
 const char *const kFarmKillFile = "AIFarmKillSquad.cpp";        // RW 0xC8A218
+const char *const kReturnTheRingFile = "AIReturnTheRingTactic.cpp"; // the class name RW 0xC89EE0
+const char *const kRoamingFile = "AIRoamingDefenseTactic.cpp";  // RW 0xC89D98
 // the FarmKillSquad counters (RW keys DAT_00DEBEF8 / DAT_00DEBEFC, AsciiStrings whose text is set by an initialiser that is not read: the port's names)
 const char *const kFarmKillRunning = "FarmKillSquad::IsRunning";
 const char *const kFarmKillNextFrame = "FarmKillSquad::NextLogicFrame";
@@ -1260,6 +1266,123 @@ int namedCounter(AIBrainState &b, const char *name)
 int enemyOfGroup(const AISkirmishPlayer &ai)
 {
 	return AITacticalAI::enemyOfGroup(ai); // RW 0x6C7807
+}
+
+// RW 0x9B8160: choose where a unit roams. With an economy structure within 900 of the AI's base (RW 0xC89CF0: 810000 = 900^2,
+// squared 3D SSE) one is drawn (line 0xA4); a nonempty economy list with no nearby candidate gives no destination (RW 0x9B8251).
+// Only an empty economy list reaches the fortress branch (RW 0x9B818E): the first
+// DOZER_FACTORY of the player info record's structures is the centre and the destination is 400 (RW 0xC89CF4) from it at a drawn angle
+// 0 .. 6 radians (line 0xBA; sin/cos RW 0xA3CF90 / 0xA3CF84). No economy structure and no fortress: no destination.
+bool chooseRoamDestination(GameLogic &logic, AISkirmishPlayer &ai, Coord3D &out)
+{
+	const AIStatCollector &record = AITacticalAI::recordOf(logic, ai.playerIndex);
+	const std::vector<ObjectID> &economy = record.economy();
+	if (!economy.empty())
+	{
+		const Coord3D &base = ai.build.startPosition; // RW 0x8F0284
+		std::vector<Object *> near;
+		for (ObjectID id : economy)
+		{
+			Object *o = logic.findObjectByID(id);
+			if (!o)
+			{
+				continue;
+			}
+			const Coord3D *p = o->getPosition();
+			const float dx = SimMath::subf32(base.x, p->x), dy = SimMath::subf32(base.y, p->y), dz = SimMath::subf32(base.z, p->z);
+			// RW 0x9B8229 / 0x9B822D: (x*x + y*y) + z*z, each sum rounded.
+			const float d = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)), SimMath::mulf32(dz, dz));
+			if (d < 810000.0f) // RW 0xC89CF0
+			{
+				near.push_back(o);
+			}
+		}
+		if (!near.empty())
+		{
+			const int index = logic.random().getValue(0, (int)near.size() - 1, kRoamingFile, 0xA4);
+			out = *near[(size_t)index]->getPosition();
+			return true;
+		}
+		return false; // RW 0x9B8251 -> 0x9B828B: nonempty economy never falls through.
+	}
+	const Object *fortress = nullptr;
+	for (ObjectID id : record.structures())
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && o->isKindOfName("DOZER_FACTORY"))
+		{
+			fortress = o;
+			break;
+		}
+	}
+	if (!fortress)
+	{
+		return false;
+	}
+	const int angle = logic.random().getValue(0, 6, kRoamingFile, 0xBA);
+	const float a = (float)angle;
+	const float s = SimMath::fstpDword(SimMath::sind(a)); // RW 0x9B830E: sin before cos
+	const float c = SimMath::fstpDword(SimMath::cosd(a)); // RW 0x9B831C
+	const float rx = SimMath::subf32(c, SimMath::mulf32(s, 0.0f));
+	const float ry = SimMath::addf32(SimMath::mulf32(c, 0.0f), s);
+	const Coord3D *centre = fortress->getPosition();
+	out.x = SimMath::addf32(SimMath::mulf32(rx, 400.0f), centre->x); // RW 0xC89CF4
+	out.y = SimMath::addf32(centre->y, SimMath::mulf32(ry, 400.0f));
+	out.z = centre->z;
+	return true;
+}
+
+// RW 0x9B8160: the attack-move to that destination (aiAttackMoveToPosition RW 0x696266(pos, INT_MAX, CMD_FROM_PLAYER), AI command 0xF).
+void issueRoamOrder(GameLogic &logic, AISkirmishPlayer &ai, Object &unit)
+{
+	Coord3D destination{};
+	if (chooseRoamDestination(logic, ai, destination))
+	{
+		// RW 0x9B8286 / 0x9B8390: select before asking the unit to accept command 0xF.
+		if (auto *u = unit.getAIUpdateInterface()) u->aiAttackMoveToPosition(destination, CMD_FROM_PLAYER);
+	}
+}
+
+// RW 0x9B877C: the first live object of the AI's army list carrying HOLDING_THE_RING (status 0x5E); INVALID_ID when none.
+ObjectID findRingBearer(GameLogic &logic, AISkirmishPlayer &ai)
+{
+	static const int holding = CombatNames::status("HOLDING_THE_RING");
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && alive(o) && o->testStatus((unsigned)holding))
+		{
+			return id;
+		}
+	}
+	return INVALID_ID;
+}
+
+// RW 0x9B88D8: the nearest structure of the player info record that is a DOZER_FACTORY (KindOf 194) and not SUMMONED (179), by
+// squared 2D distance from `from` (no z), the first of equal ones. Null when none.
+Object *nearestNonSummonedFortress(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D &from)
+{
+	static const int fortress = KindOfTokens::indexOf("DOZER_FACTORY"), summoned = KindOfTokens::indexOf("SUMMONED");
+	Object *best = nullptr;
+	float bestD = 0.0f;
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		// RW 0x9B8930: death precedes removal from the structure record.
+		if (!alive(o) || !o->isKindOf((unsigned)fortress) || o->isKindOf((unsigned)summoned))
+		{
+			continue;
+		}
+		const Coord3D *p = o->getPosition();
+		const float dx = SimMath::subf32(p->x, from.x), dy = SimMath::subf32(p->y, from.y);
+		const float d = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx));
+		if (!best || d < bestD)
+		{
+			best = o;
+			bestD = d;
+		}
+	}
+	return best;
 }
 
 // vslot 1 (applies) of targetless prototype `index` (the prototype's + 0x24 player is the AI's: RW 0x90C623)
@@ -1297,8 +1420,36 @@ bool targetlessApplies(GameLogic &logic, AISkirmishPlayer &ai, int index)
 		const unsigned next = (unsigned)namedCounter(b, kFarmKillNextFrame);
 		return running == 0 && next <= logic.getFrame() && enemyOfGroup(ai) >= 0;
 	}
-	// the other 9 prototypes' vslot 1 (AIRingHeroTactic RW 0x9BAF6C, StructureCreep RW 0x9BA3C2, LumberMillBuild RW 0x9B9E06,
-	// ReturnTheRing RW 0x9B89CF, AIStartWoTRBattleTactic RW 0x9B8451, AIRoamingDefenseTactic RW 0x9B7F56, AIWoTRForfeitTactic RW 0x9B71B7, WallTactic RW 0x9B6F70,
+	if (index == TL_RETURN_THE_RING)
+	{
+		// RW 0x9B89CF: not running and a live HOLDING_THE_RING unit of the army; RW 0x9B877C stores its id in the prototype (+ 0x5C).
+		return namedCounter(b, "AIReturnTheRingTactic_IsRunning") == 0 && findRingBearer(logic, ai) != INVALID_ID;
+	}
+	if (index == TL_WOTR_BATTLE_START)
+	{
+		// RW 0x9B8451: the game is not a skirmish (GameLogic + 0x114 != 3), past frame 5 and the run has not happened.
+		return namedCounter(b, "StartWoTRBattleTacticHasRun") == 0 && logic.economy().context().gameKind != 3 && logic.getFrame() > 5;
+	}
+	if (index == TL_ROAMING_DEFENSE)
+	{
+		// RW 0x9B7F56: EASY only (RW 0x6AA61B == 0), not already running and its next frame due. The first check schedules the
+		// next attempt 5 s on and answers false; the second and later add nothing to it.
+		const Player *me = playerOf(logic, ai.playerIndex);
+		if (!me || me->getSkirmishDifficulty() != 0)
+		{
+			return false;
+		}
+		const int running = namedCounter(b, "AIRoamingDefenseTactic_IsRunning");
+		const int next = namedCounter(b, "AIRoamingDefenseTactic_NextLogicFrameRun");
+		if (next == 0)
+		{
+			b.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] = (int)(logic.getFrame() + (unsigned)(kLogicFramesPerSecond * 5));
+			return false;
+		}
+		return running == 0 && logic.getFrame() >= (unsigned)next;
+	}
+	// The other 6 prototypes' applicability remains unported (S-893): AIRingHeroTactic RW 0x9BAF6C, StructureCreep RW 0x9BA3C2,
+	// LumberMillBuild RW 0x9B9E06, AIWoTRForfeitTactic RW 0x9B71B7, WallTactic RW 0x9B6F70,
 	// FarmBuilder RW 0x9B53C6) are not ported: taken as "does not apply" and counted (S-893)
 	++b.targetlessUnported;
 	return false;
@@ -1321,6 +1472,20 @@ void targetlessCleanup(GameLogic &logic, AISkirmishPlayer &ai, const AITactic &t
 		ai.brain.namedCounters[kFarmKillRunning] = 0;
 		const int delay = logic.random().getValue(kLogicFramesPerSecond * kFarmKillDelayMinSeconds, kLogicFramesPerSecond * kFarmKillDelayMaxSeconds, kFarmKillFile, 0x244);
 		ai.brain.namedCounters[kFarmKillNextFrame] = (int)(logic.getFrame() + (unsigned)delay);
+	}
+	if (tac.kindIndex == kTargetlessBase + TL_RETURN_THE_RING)
+	{
+		// RW 0x9B8635: clear IsRunning only when the run created the team (+ 0x65); the port's step 1 / 2 is that flag.
+		if (tac.step != 0)
+		{
+			ai.brain.namedCounters["AIReturnTheRingTactic_IsRunning"] = 0;
+		}
+	}
+	if (tac.kindIndex == kTargetlessBase + TL_ROAMING_DEFENSE)
+	{
+		// RW 0x9B8047: clear both keys, no draw.
+		ai.brain.namedCounters["AIRoamingDefenseTactic_IsRunning"] = 0;
+		ai.brain.namedCounters["AIRoamingDefenseTactic_NextLogicFrameRun"] = 0;
 	}
 }
 
@@ -1418,8 +1583,12 @@ void updateIdleCounters(GameLogic &logic, const AISkirmishPlayer &ai, AITactic &
 }
 
 // RW 0x8F27AD: with teams (vslot 0x10 != 0) the tactic's position (+ 0x38) is the average of the team centres (x87 sums in team order, times 1 / n)
+int tacticTeamCount(const AITactic &tac);
+
 void updateTacticPosition(GameLogic &logic, AITactic &tac)
 {
+	if (tacticTeamCount(tac) == 0) return; // RW 0x8F27BF..0x8F27C4
+
 	std::vector<Coord3D> centres;
 	for (const AITacticTeam &team : tac.teams)
 	{
@@ -1708,6 +1877,8 @@ int tacticTeamCount(const AITactic &tac)
 {
 	if (tac.targetless)
 	{
+		// ReturnTheRing has a dynamic count: RW 0x5F2DC6 reads +0x58, set at RW 0x9B8878.
+		if (tac.kindIndex == kTargetlessBase + TL_RETURN_THE_RING) return (int)tac.teams.size();
 		return tac.kindIndex == kTargetlessBase + TL_FARM_KILL || tac.kindIndex == kTargetlessBase + TL_FLAG_CAPTURE ? 1 : 0;
 	}
 	return teamCountOf((OffensiveKind)tac.kindIndex);
@@ -2280,6 +2451,137 @@ void updateFlagCapture(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, 
 		}
 	}
 	endAnyTactic(logic, ai, b, tac, owner, true);
+}
+
+// ReturnTheRing's run RW 0x9B8A7B: build the one-member team (RW 0x9B87DA; retail also moves the holder to that team and marks it, the
+// port keeps only the member list, S-418), set IsRunning, head for the nearest non-summoned DOZER_FACTORY or the base (RW 0x9B8A06) and
+// mark the run created (+ 0x65 -> step 1). Without a team the tactic ends (0, 0). The update RW 0x9B8A47, once every team is done
+// (RW 0x8F175A), garrisons the nearest fortress (RW 0x9B8994 -> RW 0x8F18DE team 0) and marks it (+ 0x64 -> step 2), then ends.
+void startReturnTheRing(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (namedCounter(ai.brain, "AIReturnTheRingTactic_IsRunning") != 0)
+	{
+		// RW 0x9B8A7B: another clone already set the key; this one made no team and ends (0, 0) at + 0x65 == 0.
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	Object *holder = logic.findObjectByID(tac.squadTarget);
+	if (!holder || !alive(holder))
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	AITacticTeam team;
+	team.name = std::string("TARGETLESS_") + tac.kind + "_" + std::to_string(tac.id) + "_0";
+	team.type = kTargetlessType;
+	team.index = 0;
+	team.wantsMembers = false;
+	team.handedOver = true;
+	team.members.push_back(holder->getID());
+	tac.teams.push_back(team);
+	ai.brain.namedCounters["AIReturnTheRingTactic_IsRunning"] = 1;
+	const Coord3D *from = holder->getPosition();
+	Object *fortress = nearestNonSummonedFortress(logic, ai, *from);
+	Coord3D destination = fortress ? *fortress->getPosition() : ai.build.startPosition;
+	tac.step2 = fortress ? (int)fortress->getID() : -1;
+	if (const Player *player = playerOf(logic, ai.playerIndex))
+	{
+		for (int i = 0; i < (int)tac.teams.size(); ++i)
+		{
+			teamMoveFormation(logic, *player, tac, i, destination);
+		}
+	}
+	tac.step = 1;
+}
+
+void updateReturnTheRing(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (tac.step == 0 || tac.teams.empty())
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	if (!allTeamsDone(ai, tac))
+	{
+		return;
+	}
+	if (tac.step == 2)
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	Object *fortress = logic.findObjectByID((ObjectID)tac.step2);
+	if (!fortress || !alive(fortress))
+	{
+		Coord3D centre{};
+		teamCentre(logic, tac.teams[0], centre);
+		fortress = nearestNonSummonedFortress(logic, ai, centre);
+	}
+	if (fortress)
+	{
+		for (ObjectID id : tac.teams[0].members)
+		{
+			Object *o = logic.findObjectByID(id);
+			AIUpdateInterface *u = o && alive(o) ? o->getAIUpdateInterface() : nullptr;
+			if (u)
+			{
+				u->aiEnter(fortress, CMD_FROM_PLAYER); // RW 0x8F18DE -> RW 0x774EDF team 0, AI command 0x42
+			}
+		}
+		tac.teams[0].idleFrames = 0; // RW 0x8F192A: entry starts a fresh idle period.
+		tac.step2 = (int)fortress->getID();
+		tac.step = 2;
+	}
+}
+
+// AIStartWoTRBattleTactic's run RW 0x9B8556: once per AI, every live unit of the army that is CAN_ATTACK or HERO (the KindOf mask
+// RW 0x46E72F's bits 3 / 90 through RW 0x70C548) gets the same base position (RW 0x8F0284 called once at 0x9B85AD).
+// Then the tactic succeeds (1, 0) and the key stays set.
+void startWoTRBattle(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (namedCounter(ai.brain, "StartWoTRBattleTacticHasRun") != 0)
+	{
+		endAnyTactic(logic, ai, b, tac, owner, false);
+		return;
+	}
+	ai.brain.namedCounters["StartWoTRBattleTacticHasRun"] = 1;
+	const Coord3D destination = ai.build.startPosition; // RW 0x9B85AD: copied once before the army walk
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (!o || o->isEffectivelyDead() || !(o->isKindOfName("CAN_ATTACK") || o->isKindOfName("HERO")))
+		{
+			continue;
+		}
+		// RW 0x9B8608: command 0xF, INT_MAX shots, source 0; no destination selection or group dispatch.
+		if (auto *u = o->getAIUpdateInterface()) u->aiAttackMoveToPosition(destination, CMD_FROM_PLAYER);
+	}
+	endAnyTactic(logic, ai, b, tac, owner, true);
+}
+
+// AIRoamingDefenseTactic's run RW 0x9B7EBD: the tactic's running flag (+ 0x10) and "roaming" (+ 0x58); the IsRunning key stays 0 (its setter, the
+// team setup RW 0x9B80FA, is never called for this zero-team prototype). The update RW 0x9B83A6 sends the first idle, unbusy unit of the player's army (AI slot 0x1B8, status 0x5A clear, the
+// object's Team + 0x31C == the AI player's default Team + 0x30C) to RW 0x9B8160's destination and ends the tactic (0, 0).
+void updateRoamingDefense(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITactic &tac, AIBrainState &owner)
+{
+	if (tac.step == 0)
+	{
+		return;
+	}
+	const Player *me = playerOf(logic, ai.playerIndex);
+	static const int leavingFactory = CombatNames::status("IS_LEAVING_FACTORY");
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
+	{
+		Object *o = logic.findObjectByID(id);
+		AIUpdateInterface *u = o ? o->getAIUpdateInterface() : nullptr;
+		if (!u || !u->isIdle() || o->testStatus((unsigned)leavingFactory) || !me || o->getTeam() != me->getDefaultTeam() || inAnyTeamOf(b, id))
+		{
+			continue;
+		}
+		issueRoamOrder(logic, ai, *o);
+		break;
+	}
+	endAnyTactic(logic, ai, b, tac, owner, false);
 }
 
 // ---- lane RAI-TL: FarmKillSquad's farm and production target choice (RW 0x9BBA51 / 0x9BB5E4) ------------------------------------------------
@@ -2954,7 +3256,7 @@ void updateOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 }
 
 // RW 0x774F2B (lane AI-3), a tactic team's AIGroup update from RW 0x8F144C: when not every member with an AI is idle or dead (RW 0x76FCBF: AI slot 0x1B8, + 0x458
-// bit 0), RW 0x77005F(1) (the group's speed matching: NOT ported, stop S-1301) and RW 0x7728E8: the goal object (RW 0x668303) of the first member not held by a
+// bit 0), RW 0x77005F(1) (the group's speed matching, AIGroup::cohereMoveSpeed: stop S-1301) and RW 0x7728E8: the goal object (RW 0x668303) of the first member not held by a
 // horde (+ 0x27C) whose AI has one; then every member not held by a horde that can attack (Object::isAbleToAttack RW 0x691269, lane DECOMP-3), whose AI
 // has no goal object and is idle (slot 0x1B8), attack-moves to that object's position with INT_MAX shots from the AI (RW 0x696266(pos, 0x7FFFFFFF, 2):
 // AI command 0xF, the attack-move to a position)
@@ -2975,6 +3277,7 @@ void updateTeamGroup(GameLogic &logic, const AITacticTeam &team)
 	{
 		return;
 	}
+	AIGroup(logic, team.members).cohereMoveSpeed(true); // RW 0x774F37 .. 0x774F3B
 	const Object *goal = nullptr;
 	for (ObjectID id : team.members)
 	{
@@ -3089,7 +3392,8 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 		}
 	}
 	// RW 0x8F11DA
-	tac.ready = !tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; });
+	// RW 0x8F2348 -> 0x8F2424: zero declared teams sets ready; runtime Ring teams retain readiness through handover.
+	tac.ready = tacticTeamCount(tac) == 0 || (!tac.teams.empty() && std::all_of(tac.teams.begin(), tac.teams.end(), [](const AITacticTeam &team) { return team.handedOver; }));
 	if (!tac.ready || tac.ended)
 	{
 		return;
@@ -3099,7 +3403,9 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 		if (tac.targetless)
 		{
 			if (tac.kindIndex == kTargetlessBase + TL_FLAG_CAPTURE) { updateFlagCapture(logic, ai, b, tac, owner); }
-			else { updateFarmKill(logic, ai, b, tac, owner); }
+			else if (tac.kindIndex == kTargetlessBase + TL_FARM_KILL) { updateFarmKill(logic, ai, b, tac, owner); }
+			else if (tac.kindIndex == kTargetlessBase + TL_RETURN_THE_RING) { updateReturnTheRing(logic, ai, b, tac, owner); }
+			else if (tac.kindIndex == kTargetlessBase + TL_ROAMING_DEFENSE) { updateRoamingDefense(logic, ai, b, tac, owner); }
 			return;
 		}
 		updateOffensive(logic, ai, b, tac, owner, t); // vslot 0x1C (lane AI-2 r5: every offensive body)
@@ -3114,6 +3420,18 @@ void updateTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AITac
 	tac.started = true;
 	if (tac.targetless)
 	{
+		if (tac.kindIndex == kTargetlessBase + TL_RETURN_THE_RING)
+		{
+			startReturnTheRing(logic, ai, b, tac, owner);
+		}
+		else if (tac.kindIndex == kTargetlessBase + TL_WOTR_BATTLE_START)
+		{
+			startWoTRBattle(logic, ai, b, tac, owner);
+		}
+		else if (tac.kindIndex == kTargetlessBase + TL_ROAMING_DEFENSE)
+		{
+			tac.step = 1; // RW 0x9B7EBD: + 0x58 roaming, + 0x10 running
+		}
 		return; // FarmKillSquad / FlagCaptureSquad vslot 0x18 is RW 0x63F3BF (nothing)
 	}
 	launchOffensive(logic, ai, b, tac, owner, t); // vslot 0x18
@@ -3153,6 +3471,9 @@ void startTargetless(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
 		}
 		tac.teams.push_back(team);
 	}
+	// AIRoamingDefenseTactic's vslot 3 (RW 0x9B80FA: IsRunning = 1, then RW 0x8F121F) is a team setup: RW 0x8F232F calls it once per team only, and the
+	// prototype has none (RW 0x851E97), so retail never sets IsRunning. While a roaming tactic waits for its run, the next brain updates start more
+	// (each a pool pick) until the first one's cleanup RW 0x9B8047 clears the next run frame
 }
 
 // RW 0x90C5E2
@@ -3180,6 +3501,10 @@ void pickTargetless(GameLogic &logic, AISkirmishPlayer &ai)
 		tac.kind = kTargetlessNames[index];
 		tac.id = b.nextTacticId++;
 		tac.targetOwner = ai.playerIndex;
+		if (index == TL_RETURN_THE_RING)
+		{
+			tac.squadTarget = findRingBearer(logic, ai); // RW 0x9B877C stores the holder in the prototype; the clone copies + 0x5C
+		}
 		// RW 0x9BB43D clones through RW 0x9BB3CA, then overwrites the eligibility flag: the discarded constructor result still consumes a draw.
 		if (index == TL_FARM_KILL)
 		{
@@ -3336,6 +3661,12 @@ void AITacticalAI::pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const
 	pincerWaypoints(logic, tac, start, target);
 }
 
+bool AITacticalAI::roamDestinationForTest(GameLogic &logic, AISkirmishPlayer &ai, const Object &unit, Coord3D &out)
+{
+	(void)unit;
+	return chooseRoamDestination(logic, ai, out);
+}
+
 bool AITacticalAI::offensiveAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const char *kind, const AITarget &target)
 {
 	const Player *player = playerOf(logic, ai.playerIndex);
@@ -3440,7 +3771,7 @@ bool hasAnyLiveObject(GameLogic &logic, const Player &player)
 	return false;
 }
 
-// RW 0x7A1129 (Team::hasAnyObjectOfClass): a member whose template ThingClass (RW + 0x5F6) is not 0. INFERENCE: the port has no ThingClass parser, so
+// RW 0x7A1129 (Team::hasAnyObjectOfClass): a member whose template ThingClass (RW + 0x5F6) is not 0. The port does not parse ThingClass (stop S-4257), so
 // every object is taken as classified and any object of the player answers yes (a mod with classless objects differs)
 bool hasAnyClassified(GameLogic &logic, const Player &player)
 {
@@ -3483,6 +3814,10 @@ void baseBounds(GameLogic &logic, const Player &player, Coord3D &min, Coord3D &m
 	}
 }
 
+const char *const kStopClassified =
+	"[S-4257] skirmish ai enemy classification: RW 0x7A1129's ThingClass test (template + 0x5F6) is not parsed, so hasAnyClassified takes any object as "
+	"classified; a mod whose players have only classless objects is treated as reachable (retail: unreachable)";
+
 // RW 0x8F457D (AIPlayer::acquireEnemy): the enemy player is the nearest candidate base whose player is an ENEMY with live objects, is not PlyrCreeps,
 // has units and classified objects (else it counts as unreachable), adjusted by the other AIs' current enemies: +250000 for each AI that already targets it,
 // -625 for each AI that targets this AI's player (never below 0). Ties keep the earlier player index
@@ -3502,6 +3837,7 @@ void acquireEnemy(GameLogic &logic, AISkirmishPlayer &ai)
 	{
 		return; // RW 0x8F45A8 .. 0x8F45C0: the cached enemy is still valid (RW 0x6ABD44 -> 0x7A07D8, RW 0x6ABE2C -> 0x7A1129)
 	}
+	logic.noteStop(kStopClassified); // the ThingClass read RW 0x7A1129 makes is the unported one (once per acquire)
 	int best = -1;
 	float bestDistance = kInitial;
 	for (int i = 0; i < logic.players().getPlayerCount(); ++i)
@@ -3842,7 +4178,9 @@ void AITacticalAI::updateBrain(GameLogic &logic, AISkirmishPlayer &ai, AISkirmis
 	{
 		expansionTactic(logic, ai, b, owner->brain, best, owner->playerIndex, *player); // RW 0x90C50C (lane AIEXPAND-1)
 	}
-	// RW 0x90CCCB: not ported (S-417)
+	// RW 0x6C7506: the brain update tail-jumps to RW 0x90CCCB, the FlagCaptureSquad prototype refresh (RW 0x90CC23 adds one prototype per capture flag of the
+	// player's list, then each prototype's slot 0 RW 0x9BC5D6 runs). The port's FlagCaptureSquad is one prototype over the live capture registry (S-893), so
+	// there is no per-flag prototype list to refresh; S-417's old "generator teardown" reading of 0x90CCCB is corrected there.
 }
 
 void AITacticalAI::updateIdleArmy(GameLogic &logic, AISkirmishPlayer &ai)

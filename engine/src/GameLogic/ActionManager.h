@@ -75,7 +75,7 @@ bool canDoSpecialPower(Object &obj, const SpecialPowerTemplate *power);
 bool canDoSpecialPowerAtObject(Object &obj, Object *target, CommandSourceType source, const SpecialPowerTemplate *power, unsigned options,
                                bool checkSourceRequirements, bool *unported = nullptr);
 
-// TOP20 #9: RW 0x82CEFB getEnterMessage(target, selection) (BFME2 decomp ActionManager::getEnterMessage 0x0041C5F6, same shape): the kind of enter a
+// PR 284: RW 0x82CEFB getEnterMessage(target, selection) (BFME2 decomp ActionManager::getEnterMessage 0x0041C5F6, same shape): the kind of enter a
 // selection makes into `target`, the hint message types RotWK's unit voice switches on (RW 0x8DF50D). `selection`: the selected objects in selection order
 // (RW walks the drawable list; null entries are not passed).
 //   * no selection, or a target without a contain module (Object + 0x258): ENTER;

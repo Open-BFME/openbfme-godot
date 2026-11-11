@@ -474,10 +474,10 @@ TEST_CASE("unit voice review r1: no charge voice while the unit is ATTACKING (RW
 	CHECK(r.sink.sounds.back() == "SoldierCharge");
 }
 
-// TOP20 #9 (VoiceGarrison). RW 0x8DF50D .. 0x8DF716: after VoiceEnterUnit<target>, MSG_ENTER picks by the enter kind ActionManager::getEnterMessage
+// PR 284 (VoiceGarrison). RW 0x8DF50D .. 0x8DF716: after VoiceEnterUnit<target>, MSG_ENTER picks by the enter kind ActionManager::getEnterMessage
 // (RW 0x82CEFB) gives; a target without a contain module is ENTER (0xB9, RW 0x82CF22), and ENTER chooses by the target's KindOf: HEAL_PAD (template
 // + 0x10C bit 0) VoiceGetHealed, STRUCTURE (+ 0x108 bit 7) VoiceGarrison, else VoiceEnter. Without the port every target said VoiceEnter.
-TEST_CASE("TOP20-9 enter voice: VoiceGarrison into a structure, VoiceGetHealed onto a heal pad, VoiceEnter else; VoiceEnterUnit<target> first")
+TEST_CASE("unit voice: enter kinds: VoiceGarrison into a structure, VoiceGetHealed onto a heal pad, VoiceEnter else; VoiceEnterUnit<target> first")
 {
 	VoiceRig r;
 	const char kEnter[] =
@@ -523,7 +523,7 @@ TEST_CASE("TOP20-9 enter voice: VoiceGarrison into a structure, VoiceGetHealed o
 	CHECK(ActionManager::getEnterMessage(*r.f.logic->findObjectByID(r.make("Keep")), { r.f.logic->findObjectByID(porter) }) ==
 		  ActionManager::ENTER_MESSAGE_ENTER); // no contain module (RW 0x82CF22)
 	// the HUD's path: MSG_ENTER as CommandXlat writes it (argument 0 the entering object, argument 1 the container); the voice's target is the container
-	// (the owner's in-game check: the first id made the porter its own target and it said nothing for a building)
+	// (the first id made the porter its own target, and it said nothing for a building)
 	const ObjectID keep = r.make("Keep");
 	GameMessage m(MSG_ENTER, 0);
 	m.appendObjectIDArgument(porter);

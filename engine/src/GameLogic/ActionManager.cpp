@@ -961,7 +961,7 @@ std::vector<std::string> stopLines()
 	return { kStopUpgrade, kStopLayer, kStopRequirements, kStopTypeTest, kStopObjectTypeTest };
 }
 
-// TOP20 #9: RW 0x82CEFB (see ActionManager.h)
+// PR 284: RW 0x82CEFB (see ActionManager.h)
 EnterMessage getEnterMessage(const Object &target, const std::vector<const Object *> &selection)
 {
 	static const int kCanEnterAnything = ObjectTemplateInfoBuilder::objectStatusIndex("CAN_ENTER_ANYTHING"); // 0x5D

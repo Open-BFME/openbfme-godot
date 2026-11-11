@@ -551,11 +551,13 @@ void GarrisonContain::onRemoving(Object *obj)
 	// RW 0x87C094 .. 0x87C0A8 (lane OCCLUDE-1): the rider's safe occlusion frame (+ 0x444) = the frame + its template's OcclusionDelay (presentation only)
 	obj->setSafeOcclusionFrame(obj->logic().getFrame() + Object::occlusionDelayOf(*obj->getTemplate(), obj->logic()));
 	recalcApparentControllingPlayer(); // RW 0x87C06B: slot 0x50
-	// RW 0x87C073: the killing branch (KillPassengersOnDeath with the dying byte and no health left): the rider is flung and killed, an ENCLOSED one destroyed
-	if (m_killingRiders && openData().m_killPassengersOnDeath && container->getBodyModule() && !(container->getBodyModule()->getHealth() > 0.0f))
+	// RW 0x87C0B6 calls RW 0x86588C and enters the killing branch only when it answers true (the kill-on-death byte AND KillPassengersOnDeath), together with
+	// a body at 0 or below health (RW 0x87C0CE .. 0x87C0D7): there the rider is flung and killed, an ENCLOSED one destroyed (RW 0x87C0DD .. 0x87C209).
+	// The sale clears the byte first (RW 0x865623), so a sold garrison's riders leave the dead structure alive (S-1980 / S-1100: the fling itself is not ported)
+	if (getKillPassengersOnDeath() && container->getBodyModule() && !(container->getBodyModule()->getHealth() > 0.0f))
 	{
 		++m_openStats.ridersDestroyedOnDeath;
-		container->logic().reportError("GarrisonContain of " + container->getTemplate()->getName() + ": the KillPassengersOnDeath branch of RW 0x87BFA6 is not ported (S-1100)");
+		container->logic().reportError("GarrisonContain of " + container->getTemplate()->getName() + ": the KillPassengersOnDeath branch of RW 0x87C0DD is not ported (S-1100)");
 	}
 	// lane GARRISONWEAPON-1, RW 0x87C20E .. 0x87C267 (both branches end here, RW 0x87C0BD / 0x87C202): a rider with a CONTAINED weapon set loses the flag
 	// (RW 0x691106(20)), then its horde's members with one take it (RW 0x691059(20), as on the entry)
