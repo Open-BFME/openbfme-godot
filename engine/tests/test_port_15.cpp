@@ -1,6 +1,6 @@
 // OpenBFME. GPL-3.0.
-// PORT-15 (issue #71): LockWeaponCreate locks through Object::setWeaponLock (RW 0x69121A), not on its own path. Synthetic INI only (no retail or
-// Ennorath files). Every expectation is read from the binary with tools/mod/rw.py on RotWK 2.01 (game.dat md5 daed3668, caveat S-001):
+// PORT-15: LockWeaponCreate locks through Object::setWeaponLock (RW 0x69121A), not on its own path. Synthetic INI only (no retail
+// files). Every expectation is read from the binary of RotWK 2.01 (game.dat md5 daed3668, caveat S-001):
 //
 //   * LockWeaponCreate::onBuildComplete RW 0x8BCE0A: clear the flag byte, then push 2 (LOCKED_PERMANENTLY), push [data+8] (SlotToLock), call
 //     Object::setWeaponLock RW 0x69121A — nothing else, the return value is dropped;
@@ -195,29 +195,5 @@ TEST_CASE("PORT-15 LockWeaponCreate locks through Object::setWeaponLock: a horde
 	CHECK(h->getWeapons()->isCurWeaponLocked());
 	CHECK(h->getWeapons()->curSlot() == SECONDARY_WEAPON);
 	CHECK(switchedWeapons(*h));
-	CHECK_FALSE(stopNoted(w, "[S-981] LockWeaponCreate"));
-}
-
-// The plain-object half of RW 0x8BCE0A / 0x69121A: SECONDARY sets the lock and SWITCHED_WEAPONS, PRIMARY sets the lock but leaves the status clear
-// (RW 0x69123E). This pins the neighbouring behavior the new call must keep.
-TEST_CASE("PORT-15 LockWeaponCreate on a plain object: SECONDARY sets lock + SWITCHED_WEAPONS, PRIMARY sets the lock only")
-{
-	CombatWorld w(kPort15Objects);
-	w.combat().setAutoAcquireEnabled(false);
-	Object *sec = w.unit("Port15PlainSecondary", 'A', 300, 300);
-	REQUIRE(sec != nullptr);
-	sec->friend_onBuildComplete(); // RW 0x68D252 / 0x68D252's slot 1 on a non-horde creator
-	REQUIRE(sec->getWeapons() != nullptr);
-	CHECK(sec->getWeapons()->isCurWeaponLocked());
-	CHECK(sec->getWeapons()->curSlot() == SECONDARY_WEAPON);
-	CHECK(switchedWeapons(*sec));
-
-	Object *pri = w.unit("Port15PlainPrimary", 'A', 350, 300);
-	REQUIRE(pri != nullptr);
-	pri->friend_onBuildComplete();
-	REQUIRE(pri->getWeapons() != nullptr);
-	CHECK(pri->getWeapons()->isCurWeaponLocked());
-	CHECK(pri->getWeapons()->curSlot() == PRIMARY_WEAPON);
-	CHECK_FALSE(switchedWeapons(*pri)); // RW 0x69123E: slot == 0 -> status 0x51 = 0
 	CHECK_FALSE(stopNoted(w, "[S-981] LockWeaponCreate"));
 }

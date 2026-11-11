@@ -252,6 +252,9 @@ void addAttackedAtForTest(GameLogic &logic, AISkirmishPlayer &ai, const Coord3D 
 // test hook (lane AIEXPAND-1): the EXPANSION heuristic (RW 0x97D191, with its gate RW 0x97D035) for `ai` on the target `t`
 void expansionHeuristicForTest(GameLogic &logic, AISkirmishPlayer &ai, AITarget &t);
 void pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const Coord3D &start, const Coord3D &target);
+// test hook (lane RAI-TL-2): RW 0x9B8160's roam destination (the economy structure within 900 of the base, else a point 400 from the first
+// DOZER_FACTORY at the drawn angle); false when neither exists. Consumes the body's draws.
+bool roamDestinationForTest(GameLogic &logic, AISkirmishPlayer &ai, const Object &unit, Coord3D &out);
 // test hook (lane RAI-SIEGE): an offensive prototype's vslot 1 applicability by its name, RW 0x9EF9AF's common path-to-object check included
 bool offensiveAppliesForTest(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b, const char *kind, const AITarget &target);
 // test hooks (lane RAI-TL): FarmKillSquad's farm / production target choice (RW 0x9BBA51 / 0x9BB5E4), and the whole choice with its line-0x8B draw;

@@ -182,6 +182,7 @@ struct TestPortal : public SiegePortalInterface
 		return Coord3D{ b[0] * lx + b[1] * ly + b[2] * tz + p.x, b[3] * lx + b[4] * ly + b[5] * tz + p.y, b[6] * lx + b[7] * ly + b[8] * tz + p.z };
 	}
 	float topAttackRadius() const override { return obj->getTemplate()->getName() == "MordorSiegeTower" ? 25.0f : 30.0f; }
+	bool portalCreated() const override { return created > cleared; }
 };
 std::map<ObjectID, TestPortal> g_portals;
 SiegePortalInterface *testPortalOf(Object &obj)

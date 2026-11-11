@@ -774,8 +774,22 @@ bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
 // (RW 0x6D5AD9: the Apt player's scale)
 void InGameHud::updateRadarEvents()
 {
-	m_radar->noteAttacks(m_config.game.logic()); // the logic is idle here (update's gate)
-	m_radar->noteLogicEvents(m_config.game.logic()); // lane BACKLOG3 (S-2452): the scripts' and the dozer's events
+	// What a logic frame writes (an object's radar attack frame, the scripts' event notices) is read once per logic frame.
+	// noteAttacks walks every live object; that walk does not change while one logic frame stands. The client-frame ping work below stays every render frame.
+	// A write can land after this logic frame was already sampled (a hit or a script notice between the present and the next logic step, which is how
+	// the radar tests post them). GameLogic::radarLogicWrites() bumps on those writes, and the sample is read again.
+	const unsigned radarLogicFrame = m_config.game.logic().getFrame();
+	// noteAttacks keeps only the local player's attacks, so a change of local player (an observer's view, a scenario's set_local_player) reads again.
+	const std::uint32_t radarLogicWrites = m_config.game.logic().radarLogicWrites();
+	const Player *radarLocalPlayer = m_config.game.logic().players().getLocalPlayer();
+	if (radarLogicFrame != m_radarLogicFrame || radarLogicWrites != m_radarLogicWrites || radarLocalPlayer != m_radarLocalPlayer)
+	{
+		m_radarLogicFrame = radarLogicFrame;
+		m_radarLogicWrites = radarLogicWrites;
+		m_radarLocalPlayer = radarLocalPlayer;
+		m_radar->noteAttacks(m_config.game.logic()); // the logic is idle here (update's gate)
+		m_radar->noteLogicEvents(m_config.game.logic()); // lane BACKLOG3 (S-2452): the scripts' and the dozer's events
+	}
 	int pic[4];
 	if (!m_palantirRef || !m_radar->picture(pic))
 	{

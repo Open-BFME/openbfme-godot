@@ -61,6 +61,8 @@ public:
 	virtual std::string getPayloadMemberTemplateName() const = 0;
 	// slot 10 (RW 0x86C8AC): the TransportContain `Slots` capacity (module data + 0x98)
 	virtual int getSlotCapacity() const = 0;
+	// slot 0x180(0) (RW 0x8706DF): the contain count plus the members on their way in (interface + 0x58); lane RAI-POW-4 reads it against the slots
+	virtual unsigned countWithEntering() const = 0;
 	// slot 11 (RW 0x873F30): a member made by a factory joins without being placed on its slot; false when it already is a member
 	virtual bool acceptCreatedMember(Object *member) = 0;
 	// lane MODS-3: edain-unchained.horde-exit-absorption (its 0xEE1000): the slot table is built when it is not yet (H + 0x198 == 0: the slot 0x84 call),
@@ -157,6 +159,8 @@ public:
 	virtual void attackTargetNow(Object *victim, bool closestMemberOnly) = 0;
 	// slot 0 (RW 0x875550): the released ranks attack the ground at `pos`
 	virtual void attackPositionNow(const Coord3D &pos) = 0;
+	// slot 0x238 (RW 0x86BD54, lane MECH-D): the horde's current locomotor has ScalesWalls and it keeps a wall to scale
+	virtual bool isScalingWall() const = 0;
 };
 
 class HordeContain : public UpdateModule, public ContainModuleInterface, public CreateModuleInterface, public HordeContainInterface
@@ -264,7 +268,7 @@ public:
 	// `skipTagged`, the first not TAGGED), else the first member on its way into a garrison (likewise); null when none
 	Object *pickMemberNoPosition(bool skipTagged) const;
 	// lane TARGET-1: slot 0x180(0) (RW 0x8706DF, no filter): the contain count plus the members on their way in (interface + 0x58)
-	unsigned countWithEntering() const { return getContainCount() + (unsigned)m_garrisonEntering.size(); }
+	unsigned countWithEntering() const override { return getContainCount() + (unsigned)m_garrisonEntering.size(); }
 	// contain slot 0x110 (RW 0x87055D): the first member of the contain list, else the first member on its way into a garrison, else null
 	Object *firstMember() const;
 	// RW 0x870C29: the member (the contain list, then the members on the way) nearest to `victim` in the plane, within 1000 (1e6 squared, RW 0xBDCDC0)
@@ -359,8 +363,8 @@ public:
 	// contain slot 0x23C (RW 0x86BCF9): the wall the horde scales (0 ends it)
 	void setWallToScale(ObjectID wall);
 	ObjectID wallToScale() const { return m_wallToScale; }
-	// contain slot 0x238 (RW 0x86BD54)
-	bool isScalingWall() const;
+	// contain slot 0x238 (RW 0x86BD54); the interface's
+	bool isScalingWall() const override;
 	// the collide entry (RW 0x86C61E)
 	void collideWithWall(Object *other);
 	// RW 0x86D170, at the end of the member pass

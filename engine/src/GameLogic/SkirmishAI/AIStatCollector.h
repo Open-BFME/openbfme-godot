@@ -91,10 +91,11 @@ public:
 
 	void crc(StateHasher &h) const;
 	void xfer(class Xfer &x); ///< lane SAVE-4c (SkirmishAISnapshot.cpp)
-	// lane SAVE-4c: the seven lists and the pending sampler registrations (a load's references, checked before the manager takes them)
+	// lane SAVE-4c: the seven lists, the pending sampler registrations and the sampler's own registrations (a load's references, checked before
+	// the manager takes them; a damaged save can name a member its groups also hold without it being one of the seven lists)
 	std::vector<const std::vector<ObjectID> *> lists() const
 	{
-		return { &m_army, &m_dozers, &m_ships, &m_structures, &m_pads, &m_economy, &m_heroes, &m_pendingPositions };
+		return { &m_army, &m_dozers, &m_ships, &m_structures, &m_pads, &m_economy, &m_heroes, &m_pendingPositions, &m_positions.members() };
 	}
 
 private:
