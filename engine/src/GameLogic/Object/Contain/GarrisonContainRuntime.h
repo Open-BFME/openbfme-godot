@@ -150,6 +150,7 @@ protected:
 	void onContaining(Object *obj, bool wasSelected) override; // RW 0x87BEC8
 	void onRemoving(Object *obj) override;                     // RW 0x87BFA6
 	const GarrisonContainModuleData &garrison() const { return *m_garrison; }
+	bool hordeMemberInside(const Object &obj, Object **horde) const; // RW 0x990CB9
 
 private:
 	friend class GarrisonContainTestAccess;
@@ -164,7 +165,6 @@ private:
 	void putObjectAtGarrisonPoint(Object *obj, ObjectID target, int condition, int index);      // RW 0x87B042
 	void removeObjectFromGarrisonPoint(Object *obj, int index);                                 // RW 0x87B123
 	void exitOneObject(Object *obj, int door);                                                  // RW 0x87CA2B
-	bool hordeMemberInside(const Object &obj, Object **horde) const;                            // RW 0x990CB9
 	void transformPoint(const Coord3D &local, Coord3D &out) const;                              // RW 0x87CEB3
 	bool memberHordeOf(const Object &obj, Object **horde) const;
 	void createInitialRoster();                       // RW 0x87BA4C
