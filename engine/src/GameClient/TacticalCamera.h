@@ -32,6 +32,7 @@
 
 #include "Common/INIDataTypes.h"
 #include "GameClient/CameraSettings.h"
+#include "GameClient/CameraShaker.h"
 #include "GameClient/TacticalView.h"
 #include "GameLogic/ObjectTypes.h"
 
@@ -152,6 +153,14 @@ public:
 	float shakeOffsetX() const { return m_shakeOffsetX; }
 	float shakeOffsetY() const { return m_shakeOffsetY; }
 	unsigned long long shakesWithoutData() const { return m_shakesWithoutData; }
+	// ---- lane FEAT-BLDFX-1: CameraShakerVolume (TARGET RW 0x5DFE90 -> DONOR BFME2 0x65DAD Add_Camera_Shake -> CameraShakeSystemClass) ----
+	// The FXList nugget's shaker joins the queue; each client frame adds the rotations of every active shaker that covers the view
+	// (DONOR BFME2 0x65B09 Compute_Rotations). Presentation only: the simulation never reads it.
+	void addCameraShake(const CameraShakerFx &shaker) { m_cameraShakers.addRadians(shaker.position, shaker.radius, shaker.durationSeconds, shaker.amplitudeRadians); }
+	const CameraShakerQueue &cameraShakers() const { return m_cameraShakers; }
+	float cameraShakePitch() const { return m_shakerAngles[0]; }
+	float cameraShakeYaw() const { return m_shakerAngles[1]; }
+	float cameraShakeRoll() const { return m_shakerAngles[2]; }
 
 	// One client frame (RW updates the camera once per displayed frame; retail runs at FramesPerSecondLimit 30). `uiScrolling` is InGameUI::isScrolling.
 	void update(bool uiScrolling, bool gamePaused = false);
@@ -283,6 +292,9 @@ private:
 	// lane FX-4: W3DView + 0x118 / + 0x11C (the shake offset), + 0x120 / + 0x124 (cos / sin of the shake angle), + 0x128 (the intensity)
 	float m_shakeOffsetX = 0.0f, m_shakeOffsetY = 0.0f, m_shakeCos = 0.0f, m_shakeSin = 0.0f, m_shakeIntensity = 0.0f;
 	unsigned long long m_shakesWithoutData = 0;
+	// lane FEAT-BLDFX-1: the CameraShakerVolume rotations of the current client frame (DONOR BFME2 0x65B09) and their queue
+	CameraShakerQueue m_cameraShakers;
+	float m_shakerAngles[3] = { 0.0f, 0.0f, 0.0f };
 };
 
 // lane BUILD-5 r3 (moved here from GodotInGameHud.cpp so the tests project through it too): the view the HUD picks, projects and places the placement ghost

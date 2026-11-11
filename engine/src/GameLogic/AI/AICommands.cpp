@@ -108,6 +108,14 @@ bool AICommands::move(GameLogic &logic, const GameMessage &m)
 			// lane MOVE-3: RW 0x77BAAA (MSG_DO_MOVETO) and RW 0x77AA7A (MSG_DO_ATTACKMOVETO) hand the group to the group manager's move order (RW 0x75748C) while
 			// GameData + 0x11CA (PlanningModeEnabled) is set, which retail always is; MSG_DO_FORCEMOVETO (RW 0x77AAF8) takes the generic group command (RW 0x774897)
 			group.planningMoveToPosition(dest->location, type == MSG_DO_ATTACKMOVETO, CMD_FROM_PLAYER);
+			if (type == MSG_DO_ATTACKMOVETO)
+			{
+				group.cohereMoveSpeed(false); // RW 0x77AAEB .. 0x77AAEE, after either move order
+			}
+			else
+			{
+				group.clearTemporarySpeedCaps(); // MSG_DO_MOVETO: RW 0x77BB14 -> 0x77B00A -> 0x77A342 -> RW 0x76FD04
+			}
 			return true;
 		}
 		group.groupMoveToPosition(dest->location, false, CMD_FROM_PLAYER, false, 0.0f, type == MSG_DO_ATTACKMOVETO);
@@ -121,6 +129,13 @@ bool AICommands::move(GameLogic &logic, const GameMessage &m)
 					ai->armAttackMove(ai->stateMachine().goalPosition());
 				}
 			}
+			group.cohereMoveSpeed(false); // RW 0x77AAEE, the group's speed matching without a leader
+		}
+		else
+		{
+			// MSG_DO_MOVETO (RW 0x77BB53 -> 0x77AB5C) and MSG_DO_FORCEMOVETO (RW 0x77AAF8) end at RW 0x77AB65 -> 0x77B00A -> 0x77A342: the
+			// group's temporary speed caps go (RW 0x76FD04), so an attack-move's speed matching does not outlast the next move order
+			group.clearTemporarySpeedCaps();
 		}
 	}
 	return true;
@@ -163,10 +178,8 @@ bool AICommands::attackObject(GameLogic &logic, const GameMessage &m)
 		const bool ok = force ? ai->aiForceAttackObject(target, CMD_FROM_PLAYER) : ai->aiAttackObject(target, CMD_FROM_PLAYER);
 		m_stats.attackOrdersAccepted += ok ? 1u : 0u;
 	}
-	if (force)
-	{
-		group.clearTemporarySpeedCaps(); // RW 0x77AF8E -> 0x77A3BF -> 0x77B00A -> RW 0x76FD04 (lane PLAY-2)
-	}
+	// RW 0x76FD04 through RW 0x77B00A: the force attack (RW 0x77AF8E -> 0x77A3BF, lane PLAY-2) and the plain one (RW 0x77C254 / 0x77C260 -> 0x77A3BE)
+	group.clearTemporarySpeedCaps();
 	return true;
 }
 
@@ -250,6 +263,9 @@ bool AICommands::formationMove(GameLogic &logic, const GameMessage &m)
 		// move installed (RW 0x94E72B -> RW 0x770CA5), and only when that move was accepted; a refused member keeps its earlier intent
 		AIGroup group(logic,{slot.object});group.groupMoveToPosition(position,false,CMD_FROM_PLAYER,true,angle->real,attack->boolean);
 	}
+	// MSG_DO_MOVETO_FORMATION (RW 0x77BB58) jumps to RW 0x77AAEB after either move order: the whole selection's speed matching without a leader,
+	// RW 0x77005F(0) (the slots above are ordered one member at a time; the group here is the selection's)
+	AIGroup(logic,ids).cohereMoveSpeed(false);
 	++m_stats.formationMoves;
 	return true;
 }
