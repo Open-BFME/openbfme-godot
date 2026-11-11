@@ -1288,6 +1288,9 @@ func _display_setup() -> void:
 	if not _display.load_file(_display_path):
 		for e in _display.errors:
 			printerr("GAME DISPLAY settings: ", e)
+	if _display.probe == "pending" and not _display.save_keys(_display_path, ["probe"]):
+		printerr("GAME DISPLAY ", _display.errors[-1])
+	print("GAME DISPLAY ", _display.preset_line())
 	var r: Dictionary = _display.apply(get_tree().root, null)
 	print("GAME DISPLAY settings %s: %s%s" % [_display_path.get_file(), ", ".join(r.applied), "" if r.problems.is_empty() else " PROBLEMS " + str(r.problems)])
 	_display_overlay = load("res://scripts/fps_overlay.gd").new()
@@ -3081,9 +3084,16 @@ func _apply_lighting(rep: Dictionary) -> void:
 	add_child(_sun)
 
 
+func is_playing() -> bool:
+	return _state == State.PLAYING
+
+
 func set_shadow_lod(lod: int) -> void:
 	if _sun != null:
-		load("res://scripts/object_shadows.gd").configure(_sun, _shadow_lighting, lod)
+		var drawn := lod
+		if _display != null and _display.tier() == "low" and (_shell == null or not _shell.get_options().has("StaticGameLOD")):
+			drawn = mini(lod, 1)
+		load("res://scripts/object_shadows.gd").configure(_sun, _shadow_lighting, drawn)
 
 
 # ---- the scripted run (--auto) --------------------------------------------------------------------------------------------------------------

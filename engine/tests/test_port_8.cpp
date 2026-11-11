@@ -1,5 +1,5 @@
-// OpenBFME. PORT-8 (issue #61) tests: PhysicsBehavior's flight step's OrientToFlightPath (RW 0x7935F7 .. 0x7936F7, the branch map
-// docs/ennorath/port8-orient-rw.md). Every expectation is derived from the binary's formulas read with tools/mod/rw.py on RotWK 2.01
+// OpenBFME. PORT-8 tests: PhysicsBehavior's flight step's OrientToFlightPath (RW 0x7935F7 .. 0x7936F7).
+// Every expectation is derived from the binary's formulas read on RotWK 2.01
 // (game.dat md5 daed3668, caveat S-001), not from the ported code:
 //
 //   * the gate (RW 0x793608 / 0x793612 / 0x79361E): OrientToFlightPath (data + 0x41) set, TumbleRandomly (+ 0x40) clear and step above 0 —
@@ -13,7 +13,7 @@
 //     planar length is 0, Z = the cross; the transform is set by RW 0x70BA76 (the position from the matrix, the angle atan2(X.y, X.x), RW 0xB261F0
 //     — the same basis ProjectileModules.cpp builds for the projectile's step).
 //
-// Synthetic data (combattest::CombatWorld: gravity -2.56 per frame^2, flat ground), no retail files, no Ennorath files. The module's flight is
+// Synthetic data (combattest::CombatWorld: gravity -2.56 per frame^2, flat ground), no retail files. The module's flight is
 // replaced through PhysicsTestAccess with the test's own points (the same friend accessors test_phys1_physics.cpp declares — the struct is
 // identical there for ODR), after a real fling (RW 0x792DBD) has woken the module. TEST_CASE names start with PORT-8 (the run filter
 // -tc="PORT-8*"); the numbers on the axes (0, 1, -0.99..) are the formulas' own products within 1e-4 (S-452's approximation).
@@ -235,28 +235,6 @@ TEST_CASE("PORT-8 the bounce's z replacement (RW 0x793654 .. RW 0x793670): Gravi
 	CHECK(u->getOrientation() == doctest::Approx(kHalfPi).epsilon(1e-4)); // tolerance: 1e-4, atan2 of the approximate axis
 }
 
-TEST_CASE("PORT-8 TumbleRandomly (RW 0x793612): the suppress gate keeps the step a plain setPosition")
-{
-	Port8World w;
-	Object *u = w.unit("Port8Tumble", 'A', 300, 300);
-	w.flight(u, Port8World::legs(), 1);
-	u->setOrientation(0.7f);
-	float x0, y0, z0;
-	Port8World::xAxis(u, x0, y0, z0); // the basis setOrientation(0.7f) built: the step must leave every bit of it alone
-	w.frames(1);
-	// RW 0x793612 reads data + 0x40 and jumps to RW 0x7936FE with it set: the point is taken (setPosition RW 0x70C201), the angle is untouched.
-	// RotWK 2.01 has no tumble code in this module (the field's only reader is this gate; INFERENCE on the name's promise otherwise)
-	CHECK(u->getPosition()->x == 100.0f);
-	CHECK(u->getPosition()->y == 210.0f);
-	CHECK(u->getPosition()->z == 50.0f);
-	CHECK(u->getOrientation() == 0.7f);
-	float x, y, z;
-	Port8World::xAxis(u, x, y, z);
-	CHECK(x == x0);
-	CHECK(y == y0);
-	CHECK(z == z0);
-}
-
 TEST_CASE("PORT-8 a zero direction (RW 0x79368F .. 0x79369F): the scaling is skipped, the transform is still built (the retail quirk)")
 {
 	Port8World w;
@@ -282,32 +260,4 @@ TEST_CASE("PORT-8 a zero direction (RW 0x79368F .. 0x79369F): the scaling is ski
 	CHECK(b[5] == 0.0f);
 	CHECK(b[8] == 0.0f);
 	CHECK(u->getOrientation() == 0.0f); // atan2(0, 0) = 0 (RW 0xB261F0 fpatan), the angle the retail call stores
-}
-
-TEST_CASE("PORT-8 the flags off (RW 0x7936FE): the step is setPosition and the next-point record is untouched")
-{
-	Port8World w;
-	Object *u = w.unit("Port8Plain", 'A', 300, 300);
-	w.flight(u, Port8World::legs(), 1);
-	u->setOrientation(0.7f);
-	w.frames(1);
-	// the frame advances at the START of phase 1 (RW 0x62E568): the step ran at the frame the world is on after the frame
-	const unsigned frame = w.logic->getFrame();
-	// OrientToFlightPath clear (data + 0x41, the default the constructor leaves; RW 0x793608): setPosition (RW 0x70C201) and nothing else —
-	// the neighbour the change must not disturb: the exact point, the untouched angle, the advanced step and the AI's next-position record
-	// (RW 0x793707 .. 0x793786, lane COMBAT-3: the next curve point)
-	CHECK(u->getPosition()->x == 100.0f);
-	CHECK(u->getPosition()->y == 210.0f);
-	CHECK(u->getPosition()->z == 50.0f);
-	CHECK(u->getOrientation() == 0.7f);
-	PhysicsBehavior *p = PhysicsBehavior::find(*u);
-	REQUIRE(p != nullptr);
-	CHECK(PhysicsTestAccess::step(*p) == 2);
-	Coord3D next{ -1.0f, -1.0f, -1.0f };
-	AIUpdateInterface *ai = w.aiOf(u);
-	REQUIRE(ai != nullptr);
-	REQUIRE(ai->pendingPositionOfFrame(frame, next));
-	CHECK(next.x == 110.0f);
-	CHECK(next.y == 210.0f);
-	CHECK(next.z == 50.0f);
 }

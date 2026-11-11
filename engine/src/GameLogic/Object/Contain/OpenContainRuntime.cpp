@@ -824,6 +824,24 @@ void OpenContain::orderAllPassengersToExit(int source)
 	}
 }
 
+// RW 0x86561F (contain vslot 0x64, the sale's call at RW 0x796806; the same body in every contain table of 2.01, so no class overrides it):
+//   mov eax, [ecx]              ; the contain's vtable
+//   push 2                      ; CMD_FROM_AI
+//   mov byte ptr [ecx + 0xC1], 0 ; module + 0xE1, the kill-on-death byte (set to 1 by the constructor, RW 0x86806C; read by RW 0x86588C)
+//   call dword ptr [eax + 0x80] ; vslot 0x80 orderAllPassengersToExit
+void OpenContain::onSelling()
+{
+	m_killingRiders = false;             // RW 0x865623
+	orderAllPassengersToExit((int)CMD_FROM_AI); // RW 0x86562A: the virtual, so a horde garrison orders its riders out through RW 0x991027
+}
+
+// RW 0x86588C: `xor eax, eax; cmp byte [ecx + 0xE1], al; je` (the byte cleared by the sale, RW 0x865623), then `mov ecx, [ecx + 4]` (the module data)
+// `cmp byte [ecx + 0x83], al` (KillPassengersOnDeath, data + 0x83): 1 only when both are set
+bool OpenContain::getKillPassengersOnDeath() const
+{
+	return m_killingRiders && openData().m_killPassengersOnDeath;
+}
+
 void OpenContain::onObjectWantsToEnterOrExit(Object *obj, int wants)
 {
 	if (!obj)

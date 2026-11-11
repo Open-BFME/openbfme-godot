@@ -22,7 +22,7 @@
 //   * the curve RW 0x79261A (recount, apex): see PhysicsBehavior::buildCurve;
 //   * update RW 0x79350E: one point per frame (the object is put on point `step`, step + 1), the end of the flight RW 0x793372, the sleep RW 0x792A41 (1 while points
 //     remain, else asleep);
-//   * the step's orientation (lane PORT-8, issue #61; the branch map docs/ennorath/port8-orient-rw.md): with OrientToFlightPath (data + 0x41) set, TumbleRandomly
+//   * the step's orientation (lane PORT-8): with OrientToFlightPath (data + 0x41) set, TumbleRandomly
 //     (+ 0x40) clear and step above 0 (RW 0x793608 / 0x793612 / 0x79361E) the object is turned along its flight (RW 0x7935F7 .. 0x7936F7): the direction
 //     point[step] - point[step-1] (subss), whose z is REPLACED by GlobalData Gravity (+ 0xC4) * GravityMult (data + 0x4C) * 100.0 (DAT 0xBD88D8) while the bounce
 //     index (module + 0x54) is above 0 (RW 0x793656 .. 0x793670), scaled by WWMath::Inv_Sqrt (RW 0x441C56) with x87 products unless the squared length is 0

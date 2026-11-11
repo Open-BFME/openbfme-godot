@@ -401,7 +401,7 @@ UpdateSleepTime PhysicsBehavior::update()
 		endOfFlight();
 		return sleepTime();
 	}
-	// RW 0x7935F7 .. 0x7936F7 (stop S-782's look-at, issue #61; the branch map: docs/ennorath/port8-orient-rw.md): esi = &point[step] (12-byte points), then
+	// RW 0x7935F7 .. 0x7936F7 (stop S-782's look-at): esi = &point[step] (12-byte points), then
 	// OrientToFlightPath (data + 0x41, RW 0x793608) clear, TumbleRandomly (data + 0x40, RW 0x793612) set or step <= 0 (RW 0x79361E) all jump to RW 0x7936FE:
 	// a plain setPosition (RW 0x70C201) and the angle stays as it is. Otherwise the direction is point[step] - point[step - 1] (subss, RW 0x793628 ..
 	// RW 0x79364F); with the bounce index above 0 (this + 0x54, the dword cmp RW 0x793624 / jle RW 0x793654) its z is REPLACED by GlobalData Gravity
