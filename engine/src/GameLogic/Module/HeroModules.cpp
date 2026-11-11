@@ -28,6 +28,7 @@
 #include "GameLogic/ObjectFilterMatch.h"
 #include "Common/PlayerTemplate.h"
 #include "GameLogic/FXEvents.h"
+#include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/HeroSystem.h"
 #include "GameLogic/Module/ActiveBody.h"
@@ -457,6 +458,123 @@ int RespawnUpdate::ruleSeconds() const
 	return r->timeMs / 1000;
 }
 
+// RW 0x8B33E4 (BFME2 0x8AF2DE, primary vtable 0xC6C360 slot 14 / +0x38): the dead hero's button image name (stored in HeroRecord + 0x00 by RW 0x780F06).
+// With a non-empty m_buttonImage (+0x118) or in the fallback RW 0x73D0BA(template, obj): a CREATE_A_HERO (template + 0x11F & 0x40) uses its object's
+// Create-a-Hero subclass buttonImage (RW 0x619562 -> 0x61B379, else "BuildingNoArt" RW 0xC2F4C0); otherwise m_buttonImage (+0x118, RW 0x8B348F) when non-empty,
+// else ThingTemplate::getButtonImage (RW 0x73CFEF: ButtonImage, else SelectPortrait).
+std::string RespawnUpdate::deadImage() const
+{
+	const Object *obj = getObject();
+	static const int kCreateAHero = ObjectTemplateInfoBuilder::kindOfIndex("CREATE_A_HERO");
+	if (kCreateAHero >= 0 && obj->isKindOf((unsigned)kCreateAHero))
+	{
+		const CreateAHeroHero *hero = obj->logic().createAHeroes().heroOfObject(obj->getID());
+		const CreateAHeroSubClass *sub = hero && TheCreateAHeroSystem
+			? TheCreateAHeroSystem->subClass(hero->classIndex, hero->subClassIndex) : nullptr;
+		if (sub && !sub->buttonImage.empty())
+		{
+			return sub->buttonImage;
+		}
+		// RW 0x8B341D .. 0x8B3486: the subclass branch runs only with a non-empty ButtonImage; a found hero whose image is missing gives "BuildingNoArt"
+		// (RW 0x8B3457); no hero (RW 0x8B3436) or an empty ButtonImage goes to RW 0x73D0BA, which without a hero image returns the template's image (RW 0x73CFEF)
+		if (!m_data->m_buttonImage.empty() && hero)
+		{
+			return "BuildingNoArt";
+		}
+	}
+	if (!m_data->m_buttonImage.empty())
+	{
+		return m_data->m_buttonImage;
+	}
+	if (const ThingTemplate *tt = obj->getTemplate())
+	{
+		for (const char *field : { "ButtonImage", "SelectPortrait" })
+		{
+			if (const FieldValue *v = tt->getFinalOverride()->findField(field))
+			{
+				if (const std::string *s = std::get_if<std::string>(v))
+				{
+					if (!s->empty())
+					{
+						return *s;
+					}
+				}
+			}
+		}
+	}
+	return std::string();
+}
+
+// RW 0x8B307E (BFME2 0x8AEF78): PartitionFilterPlayer (vtable 0xC10E14, slot 1 RW 0x660AFE, slot 2 RW 0x660AF2) + PartitionFilterObjectFilter
+// (vtable 0xBE4CC8, slot 1 RW 0x66122D -> ObjectFilter::testObject RW 0x7640C1 -> 0x763543 on m_data->m_autoRespawnAtObjectFilter +0x08;
+// RespawnUpdateModuleData ctor RW 0x8B3C74 -> 0x76406F initializes +0x08 to the RULE_ALL default RW 0x762BDF when omitted in INI),
+// then ThePartitionManager->getClosestObject(*obj->getPosition(), 1000000.0f, FROM_CENTER_2D, filters); returns found ? found : obj (RW 0x8B30FD cmove).
+Object *RespawnUpdate::searchForSuitableSpawnAtObject() const
+{
+	Object *obj = const_cast<Object *>(getObject());
+	GameLogic &logic = obj->logic();
+	const Player *owner = obj->getControllingPlayer(); // RW 0x8B308E -> 0x693BD4
+	class PlayerFilter final : public PartitionFilter
+	{
+	public:
+		explicit PlayerFilter(const Player *p) : m_player(p) {}
+		bool allow(Object &candidate) override { return candidate.getControllingPlayer() == m_player; } // RW 0x660AFE
+		std::uint32_t playerLayerMask() const override // RW 0x660AF2
+		{
+			return (m_player && m_player->getPlayerIndex() >= 0 && m_player->getPlayerIndex() < 32)
+				? (1u << (unsigned)m_player->getPlayerIndex()) : 0u;
+		}
+	private:
+		const Player *m_player;
+	};
+	class AutoRespawnObjectFilter final : public PartitionFilter
+	{
+	public:
+		AutoRespawnObjectFilter(GameLogic &l, const Object *src, const ObjectFilter *f)
+			: m_logic(l), m_source(src), m_filter(f)
+		{
+		}
+		bool allow(Object &candidate) override // RW 0x66122D -> 0x7640C1 -> 0x763543
+		{
+			const Player *srcOwner = m_source ? m_source->getControllingPlayer() : nullptr;
+			if (!m_filter)
+			{
+				const ObjectFilter defaultAll = ObjectFilter::all({}); // RW 0x8B3C74 -> 0x76406F -> 0x762BDF (rule = RULE_ALL)
+				return ObjectFilterMatch::allows(m_logic, defaultAll, candidate, srcOwner);
+			}
+			return ObjectFilterMatch::allows(m_logic, *m_filter, candidate, srcOwner);
+		}
+	private:
+		GameLogic &m_logic;
+		const Object *m_source;
+		const ObjectFilter *m_filter;
+	};
+	PlayerFilter f1(owner);
+	AutoRespawnObjectFilter f2(logic, obj, m_data->m_autoRespawnAtObjectFilter.get());
+	Object *found = logic.partition().getClosestObject(*obj->getPosition(), 1000000.0f, FROM_CENTER_2D, { &f1, &f2 }); // RW 0x8B30B1 (0x49742400) .. 0x8B30F5
+	return found ? found : obj; // RW 0x8B30FD .. 0x8B3100
+}
+
+// RW 0x8B310D (BFME2 0x8AF007, primary vtable 0xC6C360 slot 13 / +0x34): *outCost = m_cost (+0x3C) when outCost != null;
+// returns 1.0f in STATE_REFUNDED (1), float(frame - m_34) / m_time in STATE_AUTO_RESPAWN (3) when m_time > 0, else 0.0f.
+float RespawnUpdate::getRespawnProgress(int *outCost) const
+{
+	if (outCost)
+	{
+		*outCost = m_cost; // RW 0x8B311B
+	}
+	if (m_state == STATE_REFUNDED)
+	{
+		return 1.0f; // RW 0x8B3128
+	}
+	if (m_state == STATE_AUTO_RESPAWN && m_time > 0)
+	{
+		const float elapsed = SimMath::subf32((float)getObject()->logic().getFrame(), (float)m_34); // RW 0x8B3148 .. 0x8B3151
+		return SimMath::divf32(elapsed, (float)m_time);                                             // RW 0x8B3154
+	}
+	return 0.0f; // RW 0x8B3165
+}
+
 // RW 0x8B316B
 const ThingTemplate *RespawnUpdate::respawnTemplate() const
 {
@@ -568,18 +686,12 @@ void RespawnUpdate::onRevived(const Object *producer)
 	setWakeFrame(obj, (UpdateSleepTime)duration);
 }
 
-// RW 0x8B3A35
+// RW 0x8B3A35 (BFME2 0x8AF92F)
 UpdateSleepTime RespawnUpdate::update()
 {
 	Object *obj = getObject();
 	GameLogic &logic = obj->logic();
-	if (m_state == STATE_AUTO_RESPAWN)
-	{
-		// no writer of state 3 is located (S-851); retail data never reaches it (no AutoSpawn:Yes rule)
-		logic.reportError("RespawnUpdate: state 3 (auto respawn) reached on " + obj->getTemplate()->getName() + ": its port is stop S-851");
-		return UPDATE_SLEEP_FOREVER;
-	}
-	if (m_state == STATE_SPAWN_ANIMATION)
+	if (m_state == STATE_SPAWN_ANIMATION) // RW 0x8B3A5B .. 0x8B3B05
 	{
 		const Object::ModelConditionBits none{};
 		obj->clearAndSetModelConditionFlags(m_data->m_respawnAnim, none);
@@ -599,6 +711,43 @@ UpdateSleepTime RespawnUpdate::update()
 				// (RW 0x8B3B5F: the object's group, Object + 0x47C, is not ported)
 			}
 		}
+		return UPDATE_SLEEP_FOREVER;
+	}
+	if (m_state == STATE_AUTO_RESPAWN) // RW 0x8B3B08 .. 0x8B3C05 (BFME2 0x8AFA02 .. 0x8AFAFF)
+	{
+		Object *spawnAt = logic.findObjectByID(m_respawnAt); // RW 0x8B3B12 .. 0x8B3B1B
+		if (!spawnAt)
+		{
+			spawnAt = searchForSuitableSpawnAtObject(); // RW 0x8B3B24 .. 0x8B3B27 -> 0x8B307E
+		}
+		Coord3D pos = *obj->getPosition(); // RW 0x8B3B33 .. 0x8B3B46
+		if (spawnAt)
+		{
+			pos = *spawnAt->getPosition(); // RW 0x8B3B4D .. 0x8B3B64
+			if (ExitInterface *exit = spawnAt->getObjectExitInterface()) // RW 0x68BB14 at RW 0x8B3B67
+			{
+				(void)exit->getNaturalRallyPoint(&pos, true); // RW 0x8B3B72 .. 0x8B3B7A (slot 9 / +0x24)
+			}
+		}
+		obj->setPosition(&pos); // RW 0x697F0F at RW 0x8B3B83
+		const Object::ModelConditionBits none{};
+		obj->clearAndSetModelConditionFlags(none, m_data->m_respawnAnim); // RW 0x5E3BA5 at RW 0x8B3B91
+		emitFX(logic, "RespawnUpdate RespawnFX", m_data->m_respawnFX, *obj); // RW 0x4B1B5A at RW 0x8B3BAA
+		obj->setDisabled(kDisabledParalyzed, logic.getFrame() + m_data->m_respawnAnimationTime); // RW 0x6907F1 at RW 0x8B3BC8
+		m_state = STATE_SPAWN_ANIMATION; // RW 0x8B3BD8
+		if (ActiveBody *body = dynamic_cast<ActiveBody *>(obj->getBodyModule())) // RW 0x8B3BCD .. 0x8B3BEE -> body vslot 0x58 (RW 0x8C47DE)
+		{
+			const float percent = SimMath::mulf32(m_health, 100.0f);
+			if (percent > 100.0f)
+			{
+				logic.noteStop("[S-854] RespawnUpdate: a respawn health above 100% raises the max health (RW 0x8C47F6): not ported");
+			}
+			const float fraction = SimMath::mulf32(percent, 0.01f); // [0xBE5600]
+			body->internalChangeHealth(SimMath::subf32(SimMath::mulf32(fraction, body->getReviveReference()), body->getHealth()));
+		}
+		m_34 = -1;   // RW 0x8B3BF1
+		m_time = -1; // RW 0x8B3BF5
+		return (UpdateSleepTime)m_data->m_respawnAnimationTime; // RW 0x8B3BF9
 	}
 	return UPDATE_SLEEP_FOREVER;
 }
