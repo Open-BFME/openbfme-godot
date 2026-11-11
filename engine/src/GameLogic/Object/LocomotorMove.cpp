@@ -177,7 +177,7 @@ const std::vector<std::string> &Locomotor::allStops()
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
 		"S-084: locomotor cases not ported: the ZAxisBehaviors FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS and RELATIVE_TO_HIGHEST_LAYER, and the projectile / falling "
 		"special cases of RW 0x5E774A / 0x5E5785 (its ramp and walkway height hold is ported: lane WALL-4; the wall-scaling look-ahead RW 0x5E8956, the SCALING_WALLS z case "
-		"and the climbing stealth reveal are ported: lane MECH-D), and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
+		"and the look-ahead's stealth reveal RW 0x5E8CB2 are ported: lane MECH-D; SURFACE_RELATIVE_HEIGHT's climbing stealth reveal RW 0x5E7C0A is not), and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
 		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
 		"constant-calling result, the transform write (RW 0x70BA76) are not run for non-WINGS appearances; an idle unit's height and sleep follow "
 		"the movers' last frame."

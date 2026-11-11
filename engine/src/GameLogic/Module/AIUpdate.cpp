@@ -15,6 +15,7 @@
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/Weapon.h"
 
 #include "Common/GameCommon.h"
 #include "Common/StateHash.h"
@@ -311,7 +312,8 @@ public:
 		const float height = pf.getLayerHeight(start.x, start.y, layer); // RW 0x5E89E2-0x5E8A00
 		const float *basis = o.getBasis();
 		const float step = desiredSpeed < 7.0f ? desiredSpeed : 7.0f; // RW 0xBE4AD4
-		const Coord3D dir{ SimMath::mulf32(basis[0], step), SimMath::mulf32(basis[3], step), SimMath::mulf32(basis[6], step) }; // RW 0x5E8A30-0x5E8A55
+		// RW 0x5E8A30-0x5E8A55: the unit direction RW 0x70B9E0 is (cos, sin, 0), horizontal even when the basis is pitched (review prtrlo)
+		const Coord3D dir{ SimMath::mulf32(basis[0], step), SimMath::mulf32(basis[3], step), SimMath::mulf32(0.0f, step) };
 		Coord3D ahead{ SimMath::addf32(start.x, dir.x), SimMath::addf32(start.y, dir.y), SimMath::addf32(start.z, dir.z) };
 		const float nextHeight = pf.getLayerHeight(ahead.x, ahead.y, layer); // RW 0x5E8A8C
 		float bias = SimMath::addf32(SimMath::subf32(height, nextHeight), 0.1f); // RW 0x5E8A97-0x5E8AB1
@@ -363,8 +365,8 @@ public:
 					else // RW 0x5E8CDC: turn to the wall's facing, clamp the local x, and hug the face
 					{
 						const float *wb = wall->getBasis();
-						const float myx = basis[0], myy = basis[3], myz = basis[6];
-						const float dot = SimMath::addf32(SimMath::addf32(SimMath::mulf32(myx, wb[0]), SimMath::mulf32(myy, wb[3])), SimMath::mulf32(myz, wb[6]));
+						const float myx = basis[0], myy = basis[3]; // RW 0x70B9E0 of both objects: z 0
+						const float dot = SimMath::addf32(SimMath::mulf32(myx, wb[0]), SimMath::mulf32(myy, wb[3]));
 						float angle = wall->getOrientation();
 						if (!(dot >= 0.0f))
 						{
@@ -1031,6 +1033,41 @@ void AIUpdateInterface::aiMoveToPositionEvenIfSleeping(const Coord3D &pos, Comma
 	}
 	privateMoveToPosition(pos, source);
 	wakeUpNow();
+}
+
+// RW 0x696266 dispatches only command 0xF, never AIGroup's move/stealth path.
+// RW 0x66C0B9..0x66C145 clears the old machine and installs the goal/source/shot limit.
+// Execution still uses the existing march representation (S-328), but must replace a busy unit's march.
+bool AIUpdateInterface::aiAttackMoveToPosition(const Coord3D &pos, CommandSourceType source)
+{
+	if (!acceptCommand(source, 0xF)) return false;
+	RoutedCommand command;
+	command.type = 0xF;
+	command.position = pos;
+	command.source = source;
+	command.maxShots = 0x7fffffff;
+	if (routeCommand(command)) return true;
+	Object *obj = getObject();
+	static const int rampage = CombatNames::weaponSetBit("RAMPAGE");
+	if (m_mover->isAiDead() || !GarrisonRules::isMobile(*obj) || BitFlagsTest(obj->getWeaponSetFlags(), (size_t)rampage)) return false;
+	Coord3D goal;
+	goalPositionClipped(pos, source, goal);
+	m_machine->clear();
+	m_machine->setGoalPosition(goal);
+	m_machine->setGoalObject(INVALID_ID);
+	setLastCommandSource(source);
+	m_attackMoveActive = true;
+	m_attackMoveGoal = goal;
+	m_machine->setState(AI_MOVE_TO);
+	if (ObjectWeapons *weapons = obj->getWeapons())
+		if (Weapon *weapon = weapons->currentWeapon())
+		{
+			weapon->clearWhenFiringEnds(); // RW 0x66C121
+			weapon->setMaxShotCount(0x7fffffff);
+		}
+	resetNextMoodCheckTime();
+	wakeUpNow();
+	return true;
 }
 
 bool AIUpdateInterface::aiMoveToPositionFromAttackMove(const Coord3D &goal)

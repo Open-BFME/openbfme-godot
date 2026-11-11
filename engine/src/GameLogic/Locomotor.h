@@ -583,6 +583,7 @@ public:
 	int turnDirection() const { return m_turnDirection; }   // +0xA8: -1 right, 0 none, 1 left
 	void setMaxSpeedCap(float v) { m_maxSpeedCap = v; }     // +0x28
 	void setTemporarySpeedCap(float v) { m_temporarySpeedCap = v; } // +0x2C (-1 = none)
+	float temporarySpeedCap() const { return m_temporarySpeedCap; } // for the callers that pin the group speed matching
 	void setAccelerationCap(float v) { m_accelerationCap = v; }     // +0x30
 	void setBrakingCap(float v) { m_brakingCap = v; }               // +0x34
 	void setTurnRateCap(float v) { m_turnRateCap = v; }             // +0x38

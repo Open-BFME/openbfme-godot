@@ -327,6 +327,38 @@ void TacticalCamera::buildPose(Coord3D &eye, Coord3D &target) const
 	target.x = pos.x;
 	target.y = pos.y;
 	target.z = m_groundLevel;
+	// lane FEAT-BLDFX-1: CameraShakerVolume's rotations (DONOR BFME2 0x65B09). Retail rotates the camera transform in place (Rotate_X / _Y / _Z);
+	// here the eye stays and the look-at point turns by the local pitch and yaw (the roll goes to the presentation's up vector through
+	// cameraShakeRoll). Presentation only.
+	if (m_shakerAngles[0] != 0.0f || m_shakerAngles[1] != 0.0f)
+	{
+		float fx = target.x - eye.x, fy = target.y - eye.y, fz = target.z - eye.z;
+		const float dist = std::sqrt(fx * fx + fy * fy + fz * fz);
+		if (dist > 0.0f)
+		{
+			fx /= dist; fy /= dist; fz /= dist;
+			// right = f x Z, up = right x f (the camera's local X and Y)
+			float rx = fy * 1.0f - fz * 0.0f, ry = fz * 0.0f - fx * 1.0f, rz = 0.0f;
+			float rl = std::sqrt(rx * rx + ry * ry + rz * rz);
+			if (rl < 1e-6f)
+			{
+				rx = 1.0f; ry = 0.0f; rz = 0.0f;
+				rl = 1.0f;
+			}
+			rx /= rl; ry /= rl; rz /= rl;
+			const float ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
+			const float cp = std::cos(m_shakerAngles[0]), sp = std::sin(m_shakerAngles[0]);
+			const float cy = std::cos(m_shakerAngles[1]), sy = std::sin(m_shakerAngles[1]);
+			// Rx then Ry in the camera's local frame: forward = (sin(yaw) cos(pitch), -sin(pitch), cos(yaw) cos(pitch))
+			const float lx = sy * cp, ly = -sp, lz = cy * cp;
+			const float nx = rx * lx + ux * ly + fx * lz;
+			const float ny = ry * lx + uy * ly + fy * lz;
+			const float nz = rz * lx + uz * ly + fz * lz;
+			target.x = eye.x + nx * dist;
+			target.y = eye.y + ny * dist;
+			target.z = eye.z + nz * dist;
+		}
+	}
 }
 
 void TacticalCamera::calcCameraConstraints()
@@ -795,6 +827,21 @@ void TacticalCamera::update(bool uiScrolling, bool gamePaused)
 		m_shakeSin = 0.0f - m_shakeSin;
 		recalc = true;
 	}
+	// lane FEAT-BLDFX-1: the CameraShakerVolume rotations of this client frame (DONOR BFME2 0x65B09 Compute_Rotations over the active shakers), then
+	// a 1/30 s step of their elapsed time (RW 0x65D52's Timestep). The distance test uses the camera's own position (the W3DView transform).
+	{
+		float angles[3];
+		m_cameraShakers.anglesAt(m_eye, angles);
+		const bool moved = angles[0] != m_shakerAngles[0] || angles[1] != m_shakerAngles[1] || angles[2] != m_shakerAngles[2];
+		m_shakerAngles[0] = angles[0];
+		m_shakerAngles[1] = angles[1];
+		m_shakerAngles[2] = angles[2];
+		if (moved || !m_cameraShakers.shakers().empty())
+		{
+			recalc = true;
+		}
+		m_cameraShakers.step(1.0f / 30.0f);
+	}
 
 	if (m_lockObject == INVALID_ID)
 	{
@@ -901,7 +948,7 @@ std::vector<std::string> TacticalCamera::acceptanceStops()
 	return {
 		"[S-450] camera pose: the eye / target maths is RW 0x502858's mode 0 read against ZH W3DView::buildCameraTransform (the rotation about X then Z, the ground level factor); the movement "
 		"modes 1 .. 4 of the state (scripted moves, rotate / zoom / pitch cameras, the waypoint path), the slave camera and the FXPitch / real-zoom variants are not ported; the "
-		"shake (RW 0x486D86, lane FX-4) needs the GameData shake fields (a GameData without them does not shake); CameraShakerVolume (FXList, the scripted shakers) is not ported",
+		"shake (RW 0x486D86, lane FX-4) needs the GameData shake fields (a GameData without them does not shake); CameraShakerVolume is ported by lane FEAT-BLDFX-1 (RW 0x5DFE90 -> donor BFME2 0x65DAD Add_Camera_Shake / 0x65B09 Compute_Rotations; its random fudge uses a private fixed-seed generator, S-687)",
 		"[S-451] GameData: the camera keys must all be present in the install's GameData (their constructor defaults at RW 0x642A00 .. 0x6437FF were resolved for the height, pitch and "
 		"scroll limits only); a mod that deletes one gets an error here, retail would keep the constructor value",
 		"[S-452] scrolling: RW 0x441C56 (the normalisation of the heading of the centre pick ray) is a fast inverse square root (magic 0xBE6EB508 and two Newton steps), the port divides by "
