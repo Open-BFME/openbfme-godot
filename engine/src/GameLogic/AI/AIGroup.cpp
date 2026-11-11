@@ -562,7 +562,7 @@ const float kAheadScale = 0.7f;        // RW 0xBDE0A8
 const float kBehindScale = 0.769f;     // RW 0xC2E448
 const float kNearGoalSq = 360000.0f;   // RW 0xC16784
 
-// RW 0x68B58C(0), else the weapon in slot 0 (RW 0x6C81B0(0) on Object + 0x34C)
+// RW 0x68B58C(0): the weapon of the current slot (the filled-slot mask + 0x374), else the weapon in slot 0 (RW 0x6C81B0(0) on Object + 0x34C)
 const Weapon *groupWeaponOf(const Object &obj)
 {
 	const ObjectWeapons *w = obj.getWeapons();
@@ -598,7 +598,8 @@ float sqOrZero(float v) // RW `comiss 0, v; jbe -> v*v`, else 0
 }
 } // namespace
 
-// RW 0x77005F(withLeader). Callers: the skirmish AI team step RW 0x774F2B (withLeader 1), MSG_DO_ATTACKMOVETO RW 0x77AAEE (0, after the move order).
+// RW 0x77005F(withLeader). Callers: the skirmish AI team step RW 0x774F2B (withLeader 1), MSG_DO_ATTACKMOVETO and MSG_DO_MOVETO_FORMATION RW 0x77AAEE (0,
+// after the move order). MSG_DO_MOVETO, MSG_DO_FORCEMOVETO and the attack orders clear the caps again (RW 0x77B00A -> RW 0x76FD04).
 //   * withLeader and more than one member: the leader is the first member not effectively dead (+ 0x458 bit 0; none: return). Its goal is the pathfind goal
 //     cell's centre (RW 0x68B411 -> 0x8E1BD4) or, when its AI has a goal object (RW 0x668303), that object's position; no goal: no leader. d = |leader - goal|
 //     (RW 0x403111, stored as a float); the leader's weapon range (RW 0x6CA935 on itself; 100 without a weapon) picks the squared band limits below.

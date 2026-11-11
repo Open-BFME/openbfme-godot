@@ -531,7 +531,10 @@ found no closest cell at all and gave no path, after 72% of all their cells.
   search's pause starts when it leaves its obstacle. What a player can
   notice: nothing; the paths are served sooner (in that battle 45 of the
   unreachable searches tested a candidate after such a pause, the only ones
-  whose answer can differ). The Uber pin vector was regenerated.
+  whose answer can differ). That "nothing" was wrong: a search approximate
+  only because its goal footprint fails can still reach its goal cell after
+  such a pause (the 45 count only candidates); see the third step. The Uber
+  pin vector was regenerated.
 - Result (`uber bench` 30k, Uber, 30 frames, back to back, two rounds): logic
   wall 203 / 221 -> 175 / 181 ms (default threads), 240 -> 215 ms (one
   thread); the 15 clash frames 220 / 242 -> 179 / 184 ms, p99 316 / 363 ->
@@ -546,6 +549,38 @@ found no closest cell at all and gave no path, after 72% of all their cells.
   top of the first step (30k, 30 frames, a busy PC): 174 -> 161 ms default
   threads (clash frames 182 -> 154), 254 -> 237 ms one thread; the 10k battle
   within the noise. The Uber pin vector was regenerated again.
+- **Uber rule change (third step, a fix):** an approximate search also
+  covers a goal whose footprint fails on terrain or a structure
+  (`checkDestination`, which ignores units), as in retail, yet such a goal
+  cell may still be reached. On Helm's Deep a horde on the causeway
+  ordered onto the Deeping Wall's top finds no cell on the narrow causeway
+  whose footprint passes, so its closest cell stays its start; the stall
+  ended the search (and the horde retry's) after 256 cells with a path to
+  its own spot, and the horde turned back. Now such a search asks the
+  goal's unit check (`checkForMovement`, which retail asks only when the
+  footprint fits) and skips the stall when no unit blocks the goal's
+  radius-1 box and the goal is in the start's zone (the terrain zone, and
+  the strict zone a structure or a closed gate splits, or a portal chain
+  between them), a valid movement position and, for a human player,
+  inside the logical extent; once the goal cell is closed the stall
+  applies again. A goal held by units (the battle's press) keeps the
+  stall. Searches served in the 30k clash (deterministic counts): 4,290
+  before, 4,215 with this rule (1.7% fewer); exempting goals held by
+  units too 4,064 (5% fewer); stalling only on another zone, an invalid
+  goal or a closed goal cell 3,499 (18% fewer). What a player can notice:
+  a horde ordered onto a wall top whose rim its footprint touches (the
+  Deeping Wall from the causeway) gets its full path, as in Faithful,
+  instead of turning back. In the 30k clash no spared search was seen to
+  reach its goal (a per-search log of the looser variant); they run on to
+  retail's limits (a hierarchical search applies its slack only after
+  2,000 cells), and the battle diverges through the queue's timing.
+  Result (30k, 30 frames, 16 threads, 6 runs each interleaved with
+  `main`'s, runs varying by up to 40 ms): every pair slower, logic +3.3 ms
+  by the median of the pairs (+5.6 ms mean; medians 108.4 -> 113.6 ms),
+  p99 +7.6 ms (medians 135.8 -> 146.8 ms); the 10k battle within the
+  noise (means 59.7 -> 57.4 ms, 3 runs each). A longer stall for these
+  searches (1,024 cells) measured no better (+3.9 ms by the median of the
+  pairs). The Uber pin vector was regenerated (frames 21 to 39 move).
 
 ### PERF-HD: the queue's searches capped at the call's budget (done)
 

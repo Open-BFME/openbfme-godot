@@ -227,7 +227,7 @@ void MapObjectRuntime::createDrawModules(const MapObjectDrawables &drawables, si
 				{
 					m_report.errors.push_back(d.info->name + " " + m.className + ": the draw runtime chose model '" + f.modelName + "' where the state match gave '" + m.model + "'");
 				}
-				if (f.trackCount > 0 && f.tracks[0].anim && f.tracks[0].anim->Get_Num_Frames() > 1 && f.tracks[0].mode != W3D_ANIM_MODE_MANUAL)
+				if (p.draw->needsAdvance()) // as Drawable's entries (S-090)
 				{
 					p.animated = true;
 				}

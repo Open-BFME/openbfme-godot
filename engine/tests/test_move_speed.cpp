@@ -4,12 +4,14 @@
 #include "doctest.h"
 #include "MoveTestUtil.h"
 #include "Common/JobSystem.h"
+#include "GameClient/FormationAssistant.h"
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/Object/AttributeModifierPool.h"
 
 #include <cstdint>
 #include <cmath>
+#include <string>
 #include <cstring>
 
 using namespace movetest;
@@ -356,10 +358,72 @@ TEST_CASE("move SPEED: an attack-move caps every member's locomotor at the slowe
 	w.frames(1);
 	CHECK(fa->curLocomotor()->temporarySpeedCap() == slowMax);
 	CHECK(sa->curLocomotor()->temporarySpeedCap() == slowMax);
-	// a plain move does not match speeds; the caps stay until a force-attack clears them (RW 0x76FD04)
+	// a plain move does not match speeds, and it ends at RW 0x77B00A: the caps go (RW 0x76FD04)
 	w.moveTo(alice, 300.0f, 300.0f);
 	w.frames(1);
-	CHECK(fa->curLocomotor()->temporarySpeedCap() == slowMax);
+	CHECK(fa->curLocomotor()->temporarySpeedCap() == -1.0f);
+	CHECK(sa->curLocomotor()->temporarySpeedCap() == -1.0f);
+}
+
+// RW 0x77B00A -> 0x77A342 -> RW 0x76FD04 also ends MSG_DO_FORCEMOVETO (RW 0x77AAF8) and MSG_DO_ATTACK_OBJECT (RW 0x77C254 / 0x77C260): an attack-move's
+// caps do not outlast them
+TEST_CASE("move SPEED: a force-move and an attack on an object clear the attack-move's speed caps (RW 0x77B00A -> RW 0x76FD04)")
+{
+	for (int order : { (int)MSG_DO_FORCEMOVETO, (int)MSG_DO_ATTACK_OBJECT })
+	{
+		MoveWorld w(100, 100, kGroupSpeedWalkers);
+		Object *fast = w.spawn("FastWalker", 300.0f, 300.0f);
+		Object *slow = w.spawn("SlowWalker", 330.0f, 300.0f);
+		Object *other = w.spawn("SlowWalker", 600.0f, 600.0f);
+		w.buildMap();
+		w.frames(2);
+		AIUpdateInterface *fa = w.aiOf(fast);
+		const int alice = w.playerIndex("Alice");
+		w.select(alice, { fast, slow });
+		w.moveTo(alice, 800.0f, 300.0f, MSG_DO_ATTACKMOVETO);
+		w.frames(1);
+		REQUIRE(fa->curLocomotor()->temporarySpeedCap() == 6.0f);
+		if (order == MSG_DO_FORCEMOVETO)
+		{
+			w.moveTo(alice, 300.0f, 300.0f, MSG_DO_FORCEMOVETO);
+		}
+		else
+		{
+			GameMessage m(MSG_DO_ATTACK_OBJECT, alice);
+			m.appendObjectIDArgument(other->getID());
+			w.send(m);
+		}
+		w.frames(1);
+		CAPTURE(order);
+		CHECK(fa->curLocomotor()->temporarySpeedCap() == -1.0f);
+	}
+}
+
+// MSG_DO_MOVETO_FORMATION (RW 0x77BB58) jumps to RW 0x77AAEB after its move order: RW 0x77005F(0) on the whole selection, as an attack-move
+TEST_CASE("move SPEED: a formation move caps every member's locomotor at the slowest member's max speed (RW 0x77BB58 -> RW 0x77005F(0))")
+{
+	MoveWorld w(100, 100, kGroupSpeedWalkers);
+	Object *fast = w.spawn("FastWalker", 300.0f, 300.0f);
+	Object *slow = w.spawn("SlowWalker", 330.0f, 300.0f);
+	w.buildMap();
+	w.frames(2);
+	const int alice = w.playerIndex("Alice");
+	w.select(alice, { fast, slow });
+	FormationAssistant formation;
+	std::string formationError;
+	REQUIRE(formation.scan("FormationAssistant\n UnitDefinition Unit\n ObjectFilter = ALL\n End\n FormationTemplate Line\n Rows\n Row = Unit Unit\n End\n End\nEnd\n",
+		&formationError));
+	w.aiCommands.setFormationAssistant(&formation);
+	GameMessage m(MSG_DO_MOVETO_FORMATION, alice);
+	m.appendLocationArgument(Coord3D{ 315.0f, 700.0f, 0.0f });
+	m.appendRealArgument(0.0f);
+	m.appendIntegerArgument(0);
+	m.appendBooleanArgument(false);
+	w.send(m);
+	w.frames(1);
+	REQUIRE(w.aiCommands.stats().formationMoves == 1);
+	CHECK(w.aiOf(fast)->curLocomotor()->temporarySpeedCap() == 6.0f);
+	CHECK(w.aiOf(slow)->curLocomotor()->temporarySpeedCap() == 6.0f);
 }
 
 // RW 0x77005F(1), the skirmish AI team step's call (RW 0x774F3B): the first member that is not dead leads, its pathfind goal (RW 0x68B411) is the goal,

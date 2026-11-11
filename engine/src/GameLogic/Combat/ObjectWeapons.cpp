@@ -21,6 +21,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/InvisibilityModules.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/SimMath.h"
@@ -162,11 +163,28 @@ private:
 	ObjectWeapons &m_w;
 };
 
+// RW 0x696057 (lane MECH-D): a CAN_CLIMB_WALLS object is on a wall when its horde keeps one (Object::getHorde RW 0x694BF8, the contain's isScalingWall RW
+// 0x86BD54) or, without a horde, when it is CLIMBING or RAPPELLING (RW 0x696080: model conditions 0x67 / 0x69)
+bool objectIsOnWall(const Object &o)
+{
+	Object *horde = o.getHordeObject(false); // RW 0x693A1A: the object itself when HORDE, else its container
+	ContainModuleInterface *contain = horde ? horde->getContain() : nullptr;
+	HordeContainInterface *hc = contain ? contain->getHordeContainInterface() : nullptr;
+	if (hc)
+	{
+		return hc->isScalingWall();
+	}
+	static const int kClimbing = CombatNames::modelCondition("CLIMBING");
+	static const int kRappelling = CombatNames::modelCondition("RAPPELLING");
+	return o.testModelCondition(kClimbing) || o.testModelCondition(kRappelling);
+}
+
 const char *meleeReachStopLine()
 {
 	return "[S-3806] melee reach (RW 0x6ED843, lane PLAY-4): the footprint test of a unit target is ported; a SIEGE_TOWER target outside the boxes takes RW's top branch "
 		   "(RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: a deployed tower's portal top attack point within 20 in height and the radii in x and y; the portal is WALL-2's, "
-		   "S-4940; INFERENCE: the attacker's Object + 0xB8 is its bounding circle radius); structure obstacle rings are ported, but wall-top / bridge-layer exceptions are not";
+		   "S-4940; INFERENCE: the attacker's Object + 0xB8 is its bounding circle radius); structure obstacle rings are ported, but RW 0x6ED843's WALK_ON_TOP_OF_WALL / bridge-layer tail is not (RW 0x6CC07C's "
+		   "layer rule after it is, lane WALLMELEE-1)";
 }
 
 class ObjectWeapons::RangeHost : public WeaponRangeHost
@@ -207,8 +225,8 @@ public:
 	//   * a STRUCTURE target (RW 0x6ED8D5): rings around the unit footprint find the target obstacle id (RW 0x6ED937 .. 0x6EDA52).
 	//     The WALK_ON_TOP_OF_WALL / bridge-layer tail remains unported (S-3806).
 	//   * any other target (lane PLAY-4 r1): the footprint boxes (Pathfinder::meleeReachCells, RW 0x6EDB0C .. 0x6EDB69); a CAN_CLIMB_WALLS target on a wall
-	//     (RW 0x6EDAD4 -> 0x696057) is not ported (wall climbing is S-084: no unit climbs); a SIEGE_TOWER target outside the boxes takes the top branch
-	//     (RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: siegeTowerTopReach; stop S-3806 for its inference).
+	//     (RW 0x6EDAD4 -> 0x696057, lane MECH-D: objectIsOnWall, and RW 0x66352C's squared edge distance below 5.0) is reached from below; a SIEGE_TOWER target
+	//     outside the boxes takes the top branch (RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: siegeTowerTopReach; stop S-3806 for its inference).
 	bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) override
 	{
 		if (!victim.object)
@@ -241,6 +259,17 @@ public:
 		{
 			return world->pathfinder().meleeStructureReach(*unit, sourcePos, *target, cells);
 		}
+		// RW 0x6EDAD4 (lane MECH-D): a CAN_CLIMB_WALLS victim that is on a wall (RW 0x696057: the horde's wall kept, or no horde and CLIMBING / RAPPELLING)
+		// is reached when RW 0x66352C's squared 2D edge distance (the centres' distance - both radii, 0 when the circles overlap; CircleDistanceSquared) is
+		// below the double at RW 0xC1B678, 5.0 (x87 compare, RW 0x6EDAF1 .. 0x6EDAFB); else the answer is false, without the footprint test. RW 0x66352C reads
+		// both objects' own positions (+0x38), not the position the reach is asked from (review prtrlo)
+		static const int canClimbWalls = CombatNames::kindOf("CAN_CLIMB_WALLS");
+		if (victim.object->isKindOf((unsigned)canClimbWalls) && objectIsOnWall(*victim.object))
+		{
+			const Object &self = source.object ? *source.object : m_w.owner();
+			const float d2 = CircleDistanceSquared(*self.getPosition(), source.boundingCircleRadius, *victim.object->getPosition(), victim.boundingCircleRadius);
+			return (double)d2 < 5.0;
+		}
 		if (world->pathfinder().meleeReachCells(*unit, sourcePos, *target, cells))
 		{
 			return true;
@@ -257,9 +286,25 @@ public:
 	}
 	// lane AIDATA-1: RW 0x6CC07C reads [TheAI + 0x18] + 0xD0, AIData ChaseFromBehindLimit (retail aidata.ini 50.0; the constructor's 50.0 RW 0xBD88C4)
 	float meleeRunDownLimit() override { return m_w.owner().logic().settings().chaseFromBehindLimit; }
-	bool victimFlag11A_40() override { return false; }
-	int layerOf(bool) override { return 0; }
-	bool victimLayerException() override { return false; }
+	// lane WALLMELEE-1, RW 0x6CC07C's layer rule (RW 0x6CC137 .. 0x6CC17E): a WALL_UPGRADE victim (template + 0x11A & 0x40) keeps the reach test's answer; else a source
+	// on the ground cannot hit a victim on a wall top (>= 0x11), and a source on a wall top a victim on the ground only through the victim's created
+	// DynamicPortalBehaviour (RW 0x863983, + 0x3C)
+	bool victimFlag11A_40(const RangeSubject &victim) override
+	{
+		static const int wallUpgrade = CombatNames::kindOf("WALL_UPGRADE");
+		return victim.object && victim.object->isKindOf((unsigned)wallUpgrade);
+	}
+	int layerOf(const RangeSubject &subject, bool victim) override // RW 0x68BBE0
+	{
+		const Object *o = subject.object ? subject.object : (victim ? nullptr : &m_w.owner());
+		return o ? (int)AIWorld::objectLayer(*o) : (int)LAYER_GROUND;
+	}
+	bool victimLayerException(const RangeSubject &victim) override
+	{
+		// RW 0x863983 through the siege modules' integration point (findSiegePortal: the tests' portal stands in for the module there)
+		SiegePortalInterface *portal = victim.object ? findSiegePortal(*const_cast<Object *>(victim.object)) : nullptr;
+		return portal && portal->portalCreated();
+	}
 	float m_meleeReach = 0.0f;
 };
 
