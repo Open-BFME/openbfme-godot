@@ -1882,7 +1882,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			if (shadow)
 			{
 				// Match the existing placement decal's SAGE -> Godot ground projection.
-				shadow->set_position(Vector3(shownAt.x + info->offsetX, shownAt.z, -(shownAt.y + info->offsetY)));
+				shadow->set_position(Vector3(SimMath::addf32(shownAt.x, info->offsetX), shownAt.z, -SimMath::addf32(shownAt.y, info->offsetY))); // the audited file's float rule
 				shadow->set_size(Vector3(info->sizeX, 200.0f, info->sizeY));
 				shadow->set_emission_energy(1.0f);
 				shadow->set_visible(shadow->get_texture(Decal::TEXTURE_EMISSION).is_valid());
@@ -3185,7 +3185,7 @@ void GameWorld::refresh_streaks(bool record)
 	const float eye[3] = { eg.x, -eg.z, eg.y }; // Godot -> SAGE
 	if (!m_streakTextures && m_fs.is_valid() && m_fs->archive_fs())
 	{
-		m_streakTextures.reset(new W3DMaterialFactory(*m_fs->archive_fs()));
+		m_streakTextures.reset(new W3DMaterialFactory(*m_fs->archive_fs(), m_fs->w3dTextureCache()));
 		m_streakTextures->Set_Asset_Packs(m_fs->assetPacks().empty() ? nullptr : &m_fs->assetPacks()); // lane SDK-0
 	}
 	// group the strips by material (lane PROJ-2: the texture of the map's weather, RW 0x4CFA9A: WeatherType NORMAL 0 / SNOWY 1)

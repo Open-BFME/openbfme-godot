@@ -528,7 +528,7 @@ void ScriptEngine::xfer(Xfer &x)
 	auto &reveals = loading ? loadedReveals : m_namedMapReveals;
 	if (v.current >= 7)
 	{
-		x.xferVectorSize(reveals, 13);
+		x.xferVectorSize(reveals, 4 + 1 + 1 + 4 + 1); // the CRC, two empty strings (a length byte each), the radius, the flag
 		std::set<std::uint32_t> names;
 		for (NamedMapReveal &r : reveals)
 		{

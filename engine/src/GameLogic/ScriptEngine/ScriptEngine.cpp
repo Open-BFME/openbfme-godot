@@ -1935,8 +1935,11 @@ void ScriptEngine::updateTeamState(Team &t)
 			handTeamToDefault(t);
 		}
 	}
-	// NOT PORTED (S-1365): the attacker records' expiry (RW 0x7A1FB1 / 0x7A2004: + 0x140 after 900 frames, + 0x13C after 3000) and the team's vslot 0x14
-	// (RW 0x7A59CB, a threat record)
+	// RW 0x7A1FB1 expires the + 0x140 registry: its record payload's + 8 / + 0xC are 0, so RW 0x79F99B answers false and nothing goes (lane RAI-POW).
+	// RW 0x7A2004 expires the + 0x13C workload (an order older than 3000 frames), then vslot 0x14 (RW 0x7A59CB) writes the team's threat order: the
+	// record ATTACK_HEAL_AOE (RW 0x9E691D) consumes (lane RAI-POW-4)
+	t.expireOrders(m_logic.getFrame());
+	t.updateThreatOrder(m_logic);
 }
 
 // RW 0x7A09E4: a team flagged + 0x112 (built by an AIPlayer, not ported: never set here) waits until no member is mid-creation (RW 0x44DDEC(2)) and every
@@ -2272,9 +2275,11 @@ void ScriptEngine::crc(StateHasher &h) const
 	}
 }
 
-// DONOR: BFME2 ScriptEngineNamedMapReveal.cpp (0x3577DA/0x35789D), ScriptEngineRva00358853.cpp,
-// Rva003BC9E0Do.cpp / Rva003BCA12Do.cpp / Rva003BCA43Do.cpp. Named records are first-match CRC keyed; undo removes the record.
-// DATA FACT: the tutorial's Map Setup uses these actions for its opening reveal. Target wrapper/polygon edge parity remains S-6102.
+// RW 0x7BC3A0 (MAP_REVEAL_AT_WAYPOINT) / 0x7C0BCF (MAP_REVEAL_IN_TRIGGER): look, then unlook at once. RW 0x7BD4C1 / 0x7BD4F3 (the permanent
+// ones): createNamedMapReveal RW 0x75A344 (CRC_String of the name, RW 0x7ED86B; a name already in the list RW ScriptEngine + 0x1A59C keeps its
+// record), then doNamedMapReveal RW 0x7592E1 (the first record with that CRC: type 0 a waypoint, 1 a trigger). RW 0x7BD524 (the undos):
+// undoNamedMapReveal RW 0x7593A4, then the record goes (RW 0x75985D). BFME2 donor ScriptEngineNamedMapReveal.cpp (0x3577DA / 0x35789D), the same shape.
+// DATA FACT: the tutorial's Map Setup uses these actions for its opening reveal. The trigger's per-cell test remains S-6102.
 void ScriptEngine::executeMapReveal(const ScriptActionRec &action)
 {
 	ShroudManager *shroud = m_logic.shroud();
@@ -2308,7 +2313,7 @@ void ScriptEngine::executeMapReveal(const ScriptActionRec &action)
 	}
 	std::uint32_t mask = 0;
 	for (Player *player : ScriptConditions::players(*this, definition.player)) mask |= 1u << player->getPlayerIndex();
-	note("[S-6102] regional script reveals use BFME2 wrappers; trigger cell-edge parity remains unverified");
+	if (definition.trigger) note("[S-6102] trigger reveals: the per-cell polygon test is taken as pointInTrigger (unverified)");
 	auto apply = [&](bool add) {
 		if (definition.trigger)
 		{

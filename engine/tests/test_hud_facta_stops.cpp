@@ -59,7 +59,7 @@ TEST_CASE("FACT-A stops: S-1980 .. S-1986 are reported where they apply")
 		CHECK(weapon[0].rfind("[S-1982]", 0) == 0);
 		CHECK(weapon[1].rfind("[S-1983]", 0) == 0);
 
-		// S-1980: a sold structure with a contain (its riders are ordered out as BFME2's OpenContain does)
+		// S-1980: a sold structure with a contain (its riders are ordered out by the contain's slot 0x64; the client's part of the sale is not ported)
 		CHECK_FALSE(reported(r.logic(), "[S-1980]"));
 		Object *withContain = nullptr;
 		for (const std::string &name : reachableTemplates(r))

@@ -365,6 +365,30 @@ std::vector<MapCreationHook> MapCreationHooks::templateEventLists(const ThingTem
 	return out;
 }
 
+bool MapCreationHooks::templateForcesLuaRegistration(const ThingTemplate &tmpl)
+{
+	// RW 0xDA4838: the Object field-table row (name, parseBool RW 0x42E558, userData 0, offset 0x640 = ThingTemplate + 0x640). The one reader that
+	// acts on it is register RW 0x73595C ([Object + 4] -> byte + 0x640, only when Object + 0x260 is null); RW 0x734471 / RW 0x73491A are getters
+	// of the same byte and RW 0x6D26CA copies it, neither decides registration.
+	const FieldValue *v = tmpl.getFinalOverride()->findField("ForceLuaRegistration");
+	if (!v)
+	{
+		return false; // the constructor's zero (RW 0x74021F)
+	}
+	if (const bool *b = std::get_if<bool>(v))
+	{
+		return *b;
+	}
+	// The row's semantic is parseBool, so the slot is a bool; a slot kept verbatim still decides by its token, as the other template booleans do
+	// (SquishCollide's readBool: Yes / True / 1). Neither: the value is not a registration request (the constructor's zero, RW 0x74021F).
+	if (const RawTokens *raw = std::get_if<RawTokens>(v))
+	{
+		const std::string tok = raw->tokens.empty() ? std::string() : raw->tokens.front();
+		return AsciiStringUtil::compareNoCase(tok, "Yes") == 0 || AsciiStringUtil::compareNoCase(tok, "True") == 0 || tok == "1";
+	}
+	return false;
+}
+
 std::vector<MapCreationHook> MapCreationHooks::templateHooks(const ThingTemplate &tmpl, const CreationScriptData &data, std::vector<std::string> *problems,
 	std::vector<std::string> *stops)
 {

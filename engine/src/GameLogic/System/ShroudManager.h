@@ -164,7 +164,7 @@ public:
 	void shroudMapForPlayer(int player);               ///< RW 0xB51A00
 	// RW 0x62F91A's tail: the reveals of a new game (observers permanently; everyone else unless MultiplayerSettings UseShroud)
 	void applyNewGameShroud(bool useShroud, const std::vector<int> &slotPlayers, const std::vector<int> &observerPlayers);
-	// BFME2 donor Rva00739BE0.cpp / Rva00739AF0Siblings.cpp: regional script reveals use the ordinary looker counts.
+	// the regional script reveals (RW 0xB4DBE0 / 0xB4DD90 a circle, RW 0xB4DCA0 / 0xB4DE50 a trigger): the ordinary looker counts
 	void revealCircle(float x, float y, float radius, std::uint32_t mask, bool add);
 	void revealTrigger(const TriggerArea &area, std::uint32_t mask, bool add);
 

@@ -1066,7 +1066,7 @@ TEST_CASE("save4d regional reveals: named polygon reveals survive snapshots and 
 	CHECK(sa.getCellStatus(alice, 2, 2) == CELLSHROUD_CLEAR);
 	CHECK(sa.getCellStatus(alice, 5, 5) == CELLSHROUD_SHROUDED); // inside bounds but outside the concave polygon
 	CHECK(sa.getCellStatus(bob, 2, 2) == CELLSHROUD_SHROUDED);
-	CHECK(a.engine().stats().notes.at("[S-6102] regional script reveals use BFME2 wrappers; trigger cell-edge parity remains unverified") == 1u);
+	CHECK(a.engine().stats().notes.at("[S-6102] trigger reveals: the per-cell polygon test is taken as pointInTrigger (unverified)") == 1u);
 	CHECK(a.engine().takeClientRequests().empty()); // authoritative shroud changes run in the logic
 	const std::vector<std::string> tokens = {"obfme:ScriptEngine", "obfme:Shroud"};
 	std::vector<std::uint8_t> saved, again;
@@ -1084,6 +1084,26 @@ TEST_CASE("save4d regional reveals: named polygon reveals survive snapshots and 
 	// A one-time reveal explores but does not keep a looker.
 	ScriptActions::execute(b.engine(), act("MAP_REVEAL_IN_TRIGGER", {sp(9,"Opening"), sp(11,"Bob")}));
 	CHECK(sb.getCellStatus(bob, 2, 2) == CELLSHROUD_FOGGED);
+}
+
+TEST_CASE("save4d regional reveals: a named reveal with empty strings (11 bytes, the last record of the block) loads again")
+{
+	ScriptGame a, b;
+	a.start(); b.start();
+	ShroudManager sa(*a.lw.logic), sb(*b.lw.logic);
+	for (ShroudManager *shroud : {&sa, &sb})
+	{
+		shroud->init(40, 1); shroud->setExtent(0, 0, 400, 400); shroud->attach();
+	}
+	ScriptActions::execute(a.engine(), act("MAP_REVEAL_PERMANENTLY_AT_WAYPOINT", {sp(7,""), rp(50.0f), sp(11,""), sp(49,"Empty")}));
+	CHECK(a.engine().stats().notes.at("regional map reveal: waypoint not found: ") == 1u);
+	const std::vector<std::string> tokens = {"obfme:ScriptEngine"};
+	std::vector<std::uint8_t> saved, again;
+	a.lw.logic->gameState().saveBlocks(tokens, saved);
+	b.lw.logic->gameState().loadBlocks(tokens, saved);
+	b.lw.logic->gameState().saveBlocks(tokens, again);
+	CHECK(saved == again);
+	CHECK(section(*a.lw.logic, "script engine") == section(*b.lw.logic, "script engine"));
 }
 
 TEST_CASE("save4d regional reveals: repeated names reapply the original record and undo removes only one look")

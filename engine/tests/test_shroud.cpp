@@ -19,6 +19,7 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/LiveGame.h"
+#include "GameClient/MapChunks.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -1072,6 +1073,21 @@ TEST_CASE("shroud regional reveal: world circles preserve player masks and overl
 	CHECK(f.shroud.getCellStatus(alice, 13, 10) == CELLSHROUD_SHROUDED);
 }
 
+
+TEST_CASE("shroud regional reveal: a trigger cell is tested at its centre in whole world units (RW 0xB4FFF0)")
+{
+	Fx f;
+	const int alice = f.idx("Alice");
+	f.shroud.setExtent(-0.75f, -0.75f, 1000.0f, 800.0f); // cell 2's centre is -0.75 + 2 * 40 + 20 = 99.25, cut to 99
+	TriggerArea area;
+	area.name = "Edge";
+	area.points = {{99.1f, 99.1f}, {240.0f, 99.1f}, {240.0f, 240.0f}, {99.1f, 240.0f}};
+	f.shroud.revealTrigger(area, 1u << alice, true);
+	CHECK(f.shroud.getCellStatus(alice, 2, 2) == CELLSHROUD_SHROUDED); // (99, 99) is outside; the exact centre (99.25, 99.25) would be inside
+	CHECK(f.shroud.getCellStatus(alice, 3, 3) == CELLSHROUD_CLEAR);    // (139, 139)
+	CHECK(f.shroud.getCellStatus(alice, 5, 5) == CELLSHROUD_CLEAR);    // (219, 219)
+	CHECK(f.shroud.getCellStatus(alice, 6, 6) == CELLSHROUD_SHROUDED); // (259, 259)
+}
 
 TEST_CASE("shroud retail: campaign maps draw unexplored black shroud while bare viewers opt out")
 {

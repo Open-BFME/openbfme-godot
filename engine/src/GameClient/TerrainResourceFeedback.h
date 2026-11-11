@@ -42,6 +42,9 @@
 //     (int)(length / 60)), (int)(length / 20)) segments, pieceLength = length / count, step = range / count; each segment is a TerrainClaimSegment shadow
 //     (RW 0xC79088, type 0x40 SHADOW_ADDITIVE_DECAL) at centre + (sin mid, cos mid) * (radius - pieceLength / 2), rotated -mid, opacity 1.0, the object's
 //     indicator colour, its two size floats pieceLength (BFME2 0x4E4F82: minLength 20, maxLength 60, opacity 1, colour -1 until set);
+//   * a claimant with Radius 0 (the module's default; TerrainResourceManager::claim, RW 0x75BDC2, records it unchanged): the sampler still returns the whole
+//     range, but the segment builder's length / circumference is 0 / 0; on x86 the float-to-int conversion gives a non-positive count, so retail draws no
+//     segments. The port skips a non-positive radius before that division (the C++ conversion would be undefined), drawing nothing as retail does;
 //   * the collector is cleared when the placement ends (placeBuildAvailable null, RW 0x69C606 / 0x69C80B) and refilled at the next placement start;
 //   * the draw order (RW 0x6A2CA8 .. 0x6A2D01, read in the binary): handleBuildPlacements constructs PlaceTerrainResourceClaimantFeedback (RW 0x4EAE72 ->
 //     its constructor RW 0x4EADC7 ends in createPotentialClaimDecal RW 0x8EACFC) before it finishes the collector (RW 0x4E9B34 -> RW 0x4E9958 ->
@@ -175,6 +178,9 @@ public:
 	static std::string stopLine(); ///< "[S-5030] ..." (the HUD's stops)
 	static constexpr float kVertexSpacing = 10.0f; ///< MAP_XY_FACTOR (RW 0xBD83D4 = 0.1 the inverse)
 	static constexpr const char *kClaimArcTexture = "TerrainClaimSegment.dds"; ///< the shadow's texture (RW 0xC79088)
+	// RW 0x8E9744's segment count for one free range of a circle of `circumference`: 0 when the circle has no positive circumference (a Radius-0 claim's
+	// length / circumference is 0 / 0; retail's float-to-int conversion then gives no positive count, so it draws nothing, and C++'s is undefined)
+	static int claimSegmentCount(float length, float circumference);
 
 private:
 	void buildClaimCircles(const GameLogic &logic, int localPlayer);

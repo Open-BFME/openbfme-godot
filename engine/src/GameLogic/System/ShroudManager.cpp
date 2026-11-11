@@ -551,8 +551,8 @@ void ShroudManager::shape(int cx, int cy, const Radii &r, float facing, std::uin
 	polygon(xs, ys, 16, mask, add);
 }
 
-// DONOR: BFME2 Rva00739BE0.cpp, 0x739A30/0x739BE0: ceil(radius * inverse), floor(world offset * inverse), round look/unlook.
-// TARGET: the same grid conversion and circle raster are already ported above (VIS-1). Target wrapper equivalence remains unverified (S-6102).
+// RW 0xB4DBE0 (look) / 0xB4DD90 (unlook): ceil(radius * inverse), floor((p - lo) * inverse), then the circle shape RW 0xB50C90 (BFME2 donor
+// Rva00739BE0.cpp, 0x739A30 / 0x739BE0, the same shape)
 void ShroudManager::revealCircle(float x, float y, float radius, std::uint32_t mask, bool add)
 {
 	int cx, cy;
@@ -563,8 +563,9 @@ void ShroudManager::revealCircle(float x, float y, float radius, std::uint32_t m
 
 void ShroudManager::revealTrigger(const TriggerArea &area, std::uint32_t mask, bool add)
 {
-	// DONOR: BFME2 ScriptEngineNamedMapReveal.cpp and Rva00739AF0Siblings.cpp: scan the trigger bounds, gate each cell on its polygon.
-	// INFERENCE (S-6102): the gate uses the cell centre and the existing RotWK pointInTrigger predicate; edge/rounding parity is not established.
+	// RW 0xB4DCA0 (look) / 0xB4DE50 (unlook): the trigger's bounds (RW 0x70CE4A) to cells, floor((p - lo) * inverse), then every row of that
+	// rectangle (RW 0xB50510) with a per-cell test (BFME2 donor ScriptEngineNamedMapReveal.cpp, Rva00739AF0Siblings.cpp).
+	// INFERENCE (S-6102): the test is taken as pointInTrigger; the polygon object at trigger + 0x38 that retail asks was not read.
 	if (area.points.empty()) return;
 	float minX = area.points[0].x, maxX = minX, minY = area.points[0].y, maxY = minY;
 	for (const Point2F &p : area.points)
@@ -579,8 +580,11 @@ void ShroudManager::revealTrigger(const TriggerArea &area, std::uint32_t mask, b
 	{
 		for (int x = std::max(0, x1); x <= std::min(m_countX - 1, x2); ++x)
 		{
-			const float wx = SimMath::pc24Add(m_loX, SimMath::pc24Mul(SimMath::pc24Add((float)x, 0.5f), m_cellSize));
-			const float wy = SimMath::pc24Add(m_loY, SimMath::pc24Mul(SimMath::pc24Add((float)y, 0.5f), m_cellSize));
+			// RW 0xB4FFF0 (the cell test of RW 0xB4DCA0 -> 0xB50E00 -> 0xB50510): fild; fmul cell; fadd lo; + cell * 0.5 (RW 0xBD86A0); _ftol2, so
+			// the polygon sees the centre in whole world units
+			const float half = SimMath::pc24Mul(m_cellSize, 0.5f);
+			const float wx = (float)ftolLow(SimMath::pc24Add(SimMath::pc24Add(SimMath::pc24MulD((double)x, m_cellSize), m_loX), half));
+			const float wy = (float)ftolLow(SimMath::pc24Add(SimMath::pc24Add(SimMath::pc24MulD((double)y, m_cellSize), m_loY), half));
 			if (ScriptConditions::pointInTrigger(area, wx, wy)) hline(x, x, y, mask & kPlayerBits, add);
 		}
 	}
