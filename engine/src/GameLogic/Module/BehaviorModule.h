@@ -121,7 +121,7 @@ public:
 	// (all 16 contain tables of 2.01 hold RW 0x86561F at + 0x64: OpenContain 0xC59B54, TransportContain 0xC5A6F4, HordeTransportContain 0xC5C3D4,
 	// GarrisonContain 0xC5C6FC, HordeGarrisonContain 0xC5CA54, SiegeEngineContain 0xC5D6CC, HordeSiegeEngineContain 0xC5DA74 and the rest), so
 	// OpenContain answers for every contain the port sells. HordeContain, the one ported contain that is not an OpenContain, keeps this default: the sale
-	// reaches only KindOf STRUCTURE and no structure of 2.01 or Ennorath carries a HordeContain (598 HordeContain blocks in the mod, none on a structure).
+	// reaches only KindOf STRUCTURE and no structure of 2.01 carries a HordeContain.
 	virtual void onSelling() {}
 	// RotWK ContainModuleInterface::getHordeContainInterface (B1 HordeContainCreatePayload.cpp)
 	virtual HordeContainInterface *getHordeContainInterface() { return nullptr; }
@@ -134,6 +134,9 @@ public:
 	// RW 0xC5C9F0). The defaults are OpenContain's answers; a contain class that is not ported answers through UnportedBehaviorModule (no contain at all) ----
 	// slot 0x10 isGarrisonable: GarrisonContain RW 0x8BD372 true, OpenContain RW 0x9188EB false (TunnelContain RW 0xC5DCE0 + 0x10: RW 0x9188EB false, lane UI-1)
 	virtual bool isGarrisonable() const { return false; }
+	// PR 284: slot 0x30, asked by ActionManager::getEnterMessage (RW 0x82CFB5): SlaughterHordeContain RW 0xC5F0D0 and CitadelSlaughterHordeContain RW
+	// 0xC5F2E8 + 0x30 = RW 0x8BD372 true; every other contain table of RW 0xC59AF0 .. 0xC5F688 + 0x30 = RW 0x9188EB false
+	virtual bool isSlaughterContain() const { return false; }
 	// lane UI-1: slot 0xC8 isDisplayedOnControlBar (the control bar's transport inventory RW 0x943D6F -> RW 0x94251F asks it): OpenContain RW 0x9188EB false;
 	// GarrisonContain / HordeGarrisonContain, TransportContain / HordeTransportContain, SiegeEngineContain / HordeSiegeEngineContain and TunnelContain RW 0x8BD372
 	// true (their contain tables RW 0xC5C698, 0xC5C9F0, 0xC5A690, 0xC5C370, 0xC5D668, 0xC5DA10, 0xC5DCE0). HordeContain's table was not read: false (INFERENCE:

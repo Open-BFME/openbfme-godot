@@ -180,6 +180,7 @@ void BuildAssistantSell::sellObject(Object *obj)
 		// contain table of 2.01: the kill-on-death byte is cleared, then every rider is ordered out with CMD_FROM_AI (contain vslot 0x80)
 		c->onSelling();
 	}
+	m_logic.noteStop(acceptanceStops()[0]); // S-1980: the sale's client part (the animation loop and the cash text) is not ported
 	++m_stats.sold;
 }
 

@@ -1,4 +1,4 @@
-// OpenBFME. PORT-20 (issue #76) tests: the contain's vslot 0x64 onSelling — the call BuildAssistant::sellObject makes on a sold building's contain.
+// OpenBFME. PORT-20 tests: the contain's vslot 0x64 onSelling — the call BuildAssistant::sellObject makes on a sold building's contain.
 //
 // RotWK 2.01 facts (game.dat md5 daed3668, caveat S-001), each read with tools/mod/rw.py on the address in the comment:
 //
@@ -15,9 +15,9 @@
 //     readers are GarrisonContain::onRemoving (RW 0x87C0B6, the gate of the fling-and-kill branch RW 0x87C0DD), HordeGarrisonContain::onDie (RW 0x87CF7D) and
 //     the horde transport's die (RW 0x87AE29). The sale is what clears it: a garrison destroyed WITHOUT a sale keeps it and takes the branch.
 //
-// Synthetic data only (no retail or Ennorath files): a sellable tower with a GarrisonContain and soldiers with an AI. The garrison's data is the one Ennorath's
-// garrison structures carry except KillPassengersOnDeath, which the mod leaves at No (its garrison structures are HordeGarrisonContain with
-// DamagePercentToUnits 0%) — the row is Yes here so that the gate above can be seen at all. The expectations are RW's, not the ported code's.
+// Synthetic data only (no retail files): a sellable tower with a GarrisonContain and soldiers with an AI. KillPassengersOnDeath is Yes here so that the
+// gate above can be seen at all (no sellable retail structure sets it: the only retail Yes is GondorGwaihir's TransportContain). The expectations are
+// RW's, not the ported code's.
 #include "doctest.h"
 #include "CombatTestUtil.h"
 
@@ -41,8 +41,7 @@ using namespace combattest;
 
 namespace
 {
-// A tower the sale accepts (KindOf STRUCTURE, a CommandSet with a SELL button, RW 0x7966C6 .. 0x7966F6) whose garrison data is Ennorath's except
-// KillPassengersOnDeath; DamagePercentToUnits 0% is what every garrison structure of the mod sets.
+// A tower the sale accepts (KindOf STRUCTURE, a CommandSet with a SELL button, RW 0x7966C6 .. 0x7966F6) with a garrison that kills its riders on death.
 const char kPort20Objects[] =
 	"Object Port20Tower\n"
 	"  KindOf = STRUCTURE SELECTABLE IMMOBILE\n"
