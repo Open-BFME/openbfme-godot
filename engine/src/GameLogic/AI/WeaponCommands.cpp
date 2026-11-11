@@ -114,26 +114,6 @@ bool atPosition(GameLogic &logic, const GameMessage &m, bool withLocation)
 	group.clearTemporarySpeedCaps(); // RW 0x77A342 -> RW 0x76FD04
 	return true;
 }
-// RW 0x77B6EF .. 0x77B7C7: the status NO_AUTO_ACQUIRE (0x17) of an object; on a HORDE (template KindOf byte + 0x115 bit 5) through RW 0x748650 -> RW 0x293D3B,
-// which sets it on the horde and every member (BFME2 decomp ObjectConditionAndPassengerWeaponSet.cpp, INFERENCE: the top object is the containing horde)
-void setNoAutoAcquire(Object &o, bool on)
-{
-	static const int noAuto = CombatNames::status("NO_AUTO_ACQUIRE");
-	Object *top = &o;
-	if (o.getContainedBy() && o.getContainedBy()->isKindOf((unsigned)CombatNames::kinds().horde))
-	{
-		top = o.getContainedBy();
-	}
-	if (top->isKindOf((unsigned)CombatNames::kinds().horde) && top->getContain() && top->getContain()->getContainedItemsList())
-	{
-		for (Object *m : *top->getContain()->getContainedItemsList())
-		{
-			m->setStatus((unsigned)noAuto, on);
-		}
-	}
-	top->setStatus((unsigned)noAuto, on);
-}
-
 // RW 0x693C53..0x693C7B: inspect each live weapon of the member; RW 0x6CBABB..0x6CBAC9 asks each nugget's slot 0x34.
 bool hasSlaveAttackWeapon(const Object &o)
 {
@@ -160,7 +140,13 @@ bool hasSlaveAttackWeapon(const Object &o)
 	return false;
 }
 
-// MSG_TOGGLE_NO_AUTO_ACQUIRE (RW 0x77B6C4): per-member or source-based toggle; related-object lookup and AI state tests are in PORT18_RW.md.
+// MSG_TOGGLE_NO_AUTO_ACQUIRE 1115 (RW 0x77B6C4): { objectID source } (the button's object, 0 none). With a source, the value set on the group is the opposite
+// of the source's NO_AUTO_ACQUIRE (no source object: off); without one each member toggles its own. Per member: a SlavedUpdate member (behavior slot 26,
+// RW 0x68CBBC) whose weapons carry a SlaveAttackNugget (RW 0x693C2D) makes its master the related object (RW 0x68CBE2), and that pointer is kept for the
+// next members (RW 0x77B6D7 sets it once, 0x77B75A is its only write); a member already at the value is skipped (RW 0x77B779); a selected HORDE sets the
+// status across its members (RW 0x748650 -> 0x694569, nothing without a horde contain), any other object on itself; turning it on idles a member whose
+// AI state is active (AI vslot 0x1BC, RW 0x662B3C; aiIdle(CMD_FROM_PLAYER), RW 0x5E821A); the related object takes the same status and idle (RW 0x77B7A6 ..
+// 0x77B80E)
 bool toggleNoAutoAcquire(GameLogic &logic, const GameMessage &m)
 {
 	const GameMessageArgument *src = arg(m, 0, ARGUMENTDATATYPE_OBJECTID);

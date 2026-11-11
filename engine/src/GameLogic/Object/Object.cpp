@@ -794,6 +794,7 @@ Team *Object::getOriginalTeam() const
 
 void Object::setTeam(Team *team)
 {
+	m_logic.noteRadarLogicWrite(); // the owner the radar's attack scan filters by may change between logic steps
 	// lane BACKLOG4: RW 0x699554 .. 0x699570 (BFME2 decomp ObjectSetTeam.cpp Object::setTeam, tier B same-shape: "to prevent spawning useful units for a
 	// player after he dies"): the team of a player who is not active (RW 0x6AAC52: an observer, Player + 0x35A, or defeated, + 0x754) is replaced by the
 	// neutral player's default team (ThePlayerList + 0x18 -> + 0x30C). Retail reads the team's player without a test; a team without one is kept here
@@ -2050,6 +2051,7 @@ void Object::doAttemptDamage(DamageInfo &info)
 			if (info.m_input.m_shouldPlayUnderAttackEva)
 			{
 				m_radarAttackFrame = m_logic.getFrame();
+				m_logic.noteRadarLogicWrite(); // the HUD may already have sampled this logic frame
 				// lane EVADAMAGE-1: RW 0x67B580 .. 0x67B776, the Eva half for the local player's object (RW 0x6AA7B2): the logic's part of the choice and
 				// the scan (EvaDamageNotice.h; reads only), the rest is the client's (ClientEvent::EVA_DAMAGED)
 				if (notifyDrawable && m_client && owner == m_logic.players().getLocalPlayer())

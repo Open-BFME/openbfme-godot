@@ -431,7 +431,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_shroud = std::make_unique<ShroudManager>(*m_logic);
 	m_shroud->init(m_vision.partitionCellSize, m_vision.unlookPersistFrames);
 	m_shroud->setDisplayLevels(m_vision.clearAlpha, m_vision.fogAlpha, m_vision.shroudAlpha);
-	m_shroud->setDisplayed(options.start != nullptr); // a bare map load (viewers) has no explored map: the client shows it without the shroud
+	m_shroud->setDisplayed(options.start != nullptr || options.campaign); // playable single-player maps retain unexplored shroud; bare viewers opt out
 	{
 		float maxX = 0.0f, maxY = 0.0f;
 		if (!m_terrain.getExtent(0, maxX, maxY))

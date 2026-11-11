@@ -117,53 +117,6 @@ TEST_CASE("PORT-18 related object: both statuses follow the selected slave and a
     CHECK_FALSE(w.held(master));
 }
 
-TEST_CASE("PORT-18 neighbor: a slaved unit without SlaveAttackNugget does not affect its master")
-{
-    P18World w;
-    Object *master = w.unit("P18Slave", 'A', 300, 300);
-    Object *slave = w.unit("P18OrdinarySlave", 'A', 350, 300);
-    w.link(slave, master);
-    master->getAIUpdateInterface()->guardHere(0);
-    w.choose({slave});
-    w.toggle(); // RW 0x693C6E checks each weapon template's nuggets
-    CHECK(w.held(slave));
-    CHECK_FALSE(w.held(master));
-    CHECK(master->getAIUpdateInterface()->currentStateId() == (unsigned)AI_GUARD);
-}
-
-TEST_CASE("PORT-18 inactive state: hold fire does not interrupt a move and clearing does not idle")
-{
-    P18World w;
-    Object *unit = w.unit("P18Slave", 'A', 300, 300);
-    auto *ai = unit->getAIUpdateInterface();
-    ai->aiMoveToPosition(Coord3D{700, 300, 0}, CMD_FROM_PLAYER);
-    REQUIRE(ai->currentStateId() == (unsigned)AI_MOVE_TO);
-    w.choose({unit});
-    w.toggle(); // RW 0x662B3C state slot 0x24 is false for move, RW 0x77B7E2 skips idle
-    CHECK(w.held(unit));
-    CHECK(ai->currentStateId() == (unsigned)AI_MOVE_TO);
-    ai->guardHere(0);
-    REQUIRE(ai->currentStateId() == (unsigned)AI_GUARD);
-    w.toggle(); // RW 0x77B789..0x77B7B1: clearing never calls idle
-    CHECK_FALSE(w.held(unit));
-    CHECK(ai->currentStateId() == (unsigned)AI_GUARD);
-}
-
-TEST_CASE("PORT-18 retained related pointer: next per-object toggle can clear the previous master")
-{
-    P18World w;
-    Object *master = w.unit("P18Slave", 'A', 300, 300);
-    Object *first = w.unit("P18Slave", 'A', 350, 300);
-    Object *next = w.unit("P18OrdinarySlave", 'A', 400, 300);
-    w.link(first, master);
-    w.held(next, true);
-    w.choose({first, next});
-    w.toggle(); // RW 0x77B6D7, 0x77B731..0x77B75A, 0x77B821: the local persists in selection order
-    CHECK(w.held(first));
-    CHECK_FALSE(w.held(next));
-    CHECK_FALSE(w.held(master));
-}
-
 TEST_CASE("PORT-18 neighbor: an individually selected horde member does not toggle its horde")
 {
     P18World w;

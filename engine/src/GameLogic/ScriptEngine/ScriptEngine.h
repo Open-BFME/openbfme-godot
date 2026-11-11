@@ -499,6 +499,15 @@ private:
 	std::map<std::pair<std::string, std::string>, Counter> m_counters;
 	std::map<std::pair<std::string, std::string>, bool> m_flags;
 	std::vector<std::pair<std::string, ObjectID>> m_namedObjects; ///< insertion order
+	struct NamedMapReveal
+	{
+		std::uint32_t nameCrc = 0;
+		std::string target, player;
+		float radius = 0;
+		bool trigger = false;
+	};
+	std::vector<NamedMapReveal> m_namedMapReveals; // BFME2 ScriptEngineNamedMapReveal.cpp: insertion order, first CRC match
+	void executeMapReveal(const ScriptActionRec &action);
 	std::map<std::pair<std::string, std::string>, ObjectID> m_references; ///< lane CASTLE-UNPACK: RW + 0x191B8 (hashed once one exists)
 	std::vector<std::pair<std::string, std::vector<std::string>>> m_objectLists; ///< creation order
 	const std::vector<TriggerArea> *m_triggers = nullptr;

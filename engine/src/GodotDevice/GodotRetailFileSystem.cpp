@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotRetailFileSystem.h"
+#include "GodotDevice/GodotW3DMaterial.h"
 #include "Common/PathIO.h"
 #include "Common/BfmeGame.h"
 #include "Common/GameEdition.h"
@@ -125,6 +126,12 @@ Dictionary RetailFileSystem::set_asset_packs(const PackedStringArray &folders)
 	d["notes"] = notes;
 	d["not_covered"] = toGodot(AssetPacks::notCovered());
 	return d;
+}
+
+std::shared_ptr<W3DTextureCache> RetailFileSystem::w3dTextureCache()
+{
+	if (!m_w3dTextures) m_w3dTextures = std::make_shared<W3DTextureCache>();
+	return m_w3dTextures;
 }
 
 std::unique_ptr<W3DFileSource> RetailFileSystem::renderW3DSource()
@@ -335,6 +342,7 @@ Dictionary RetailFileSystem::mount_bfme1_path(const String &root)
 {
 	setBfme1Mounted(false); // Sol review r1: a failed mount leaves no BFME1 client behaviour behind (set again only once this one succeeds)
 	m_fs.reset();
+	m_w3dTextures.reset(); // the textures belong to the files this mount resolved
 	m_mounted = false;
 	m_bfme1 = false;
 	m_bfme1Root.clear();
@@ -504,6 +512,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 	std::string error;
 	setBfme1Mounted(false); // RotWK / BFME2
 	m_fs.reset();
+	m_w3dTextures.reset(); // the textures belong to the files this mount resolved
 	m_mounted = false;
 	m_bfme1 = false;
 	m_bfme1Root.clear();
@@ -841,6 +850,7 @@ Dictionary RetailFileSystem::mountBfme2Shell(const std::string &bfme2Root)
 	Dictionary result;
 	PackedStringArray errors;
 	m_fs.reset();
+	m_w3dTextures.reset(); // the textures belong to the files this mount resolved
 	m_mounted = false;
 	m_shellSource = false;
 	m_installRoot.clear();
