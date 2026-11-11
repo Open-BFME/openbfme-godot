@@ -97,14 +97,7 @@ float templateBoundingCircle(const ThingTemplate &tt)
 // RW 0x68BBE0 (inference, as EmotionModules: the AI's pathfinder layer; ground when the object has none)
 int layerOf(Object &obj)
 {
-	if (AIWorld *w = obj.logic().aiWorld())
-	{
-		if (ObjectPathfindAdapter *a = w->findAdapter(obj.getID()))
-		{
-			return (int)a->getLayer();
-		}
-	}
-	return (int)LAYER_GROUND;
+	return (int)AIWorld::objectLayer(obj);
 }
 
 // RW 0x89C33A: not IMMOBILE (template KindOf byte + 0x108 bit 2) and on the ground layer

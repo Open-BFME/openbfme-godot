@@ -84,19 +84,10 @@ void LockWeaponCreate::onBuildComplete()
 {
 	m_needToRunOnBuildComplete = false;
 	Object *obj = getObject();
-	if (obj->getContain())
-	{
-		obj->logic().noteStop("[S-981] LockWeaponCreate: the contain module's weapon lock pass-through (RW 0x69121A, contain slot 0x168) is not ported");
-	}
-	static const int kSwitchedWeapons = ObjectTemplateInfoBuilder::objectStatusIndex("SWITCHED_WEAPONS"); // RW status 0x51
-	if (kSwitchedWeapons >= 0)
-	{
-		obj->setStatus((unsigned)kSwitchedWeapons, m_data->m_slotToLock != 0); // permanent lock: set when the slot is not PRIMARY
-	}
-	if (ObjectWeapons *w = obj->getWeapons())
-	{
-		w->setWeaponLock(m_data->m_slotToLock, LOCKED_PERMANENTLY); // RW 0x6C97F9
-	}
+	// RW 0x8BCE0A: clear the flag byte, then push 2 (LOCKED_PERMANENTLY), push [data+8] (SlotToLock), call Object::setWeaponLock RW 0x69121A —
+	// the contain pass-through (contain slot 0x168), SWITCHED_WEAPONS (status 0x51) = (type == 2 and slot != 0) and the weapon set's lock RW 0x6C97F9
+	// all live in ObjectWeapons::setObjectWeaponLock; one path for one action.
+	ObjectWeapons::setObjectWeaponLock(*obj, m_data->m_slotToLock, LOCKED_PERMANENTLY);
 }
 
 void LockWeaponCreate::crc(StateHasher &hasher) const

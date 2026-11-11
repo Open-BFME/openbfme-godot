@@ -150,6 +150,9 @@ public:
 	float currentAttackRange() const;
 	// lane ARCHER-1: RW 0x6CA935(source): the current weapon's attack range with no target (the scale applied twice, WeaponGetAttackRangeNoTarget); 0 without one
 	float currentAttackRangeNoTarget() const;
+	// RW 0x6CA935(source) on `weapon` (one of this object's): its attack range with no target for another source object, the bonus and the
+	// range host taken from that source as RW 0x6ED8AB's call does (ObjectWeapons.cpp); 0 for a weapon without a template
+	float attackRangeNoTargetFor(const Weapon &weapon, const Object &source) const;
 	// RW 0x6CA83B
 	bool isTooClose(const Object &victim) const;
 	// the weapon's AcceptableAimDelta (radians) of the current weapon

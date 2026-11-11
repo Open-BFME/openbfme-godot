@@ -110,6 +110,8 @@ public:
 		float angle = 0.0f;
 	};
 	bool viewShake(const Coord3D &epicenter, int type, float angle) override;
+	// lane FEAT-BLDFX-1: the CameraShakerVolume calls since the last take (TARGET RW 0x5DFE90 / DONOR BFME2 0x65DAD), for the view's queue
+	std::vector<CameraShakerFx> takeCameraShakers() { return m_playback.takeCameraShakers(); }
 	std::vector<ViewShake> takeViewShakes()
 	{
 		std::vector<ViewShake> out;

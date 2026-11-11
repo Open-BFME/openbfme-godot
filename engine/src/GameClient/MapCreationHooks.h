@@ -62,6 +62,11 @@ namespace MapCreationHooks
 // The AILuaEventsList of each AI behavior module of the template, from the template data alone (no script inventory): module tag and list name.
 // The real event registry resolves the name, so a list or a handler the interim scanner cannot read is still found.
 std::vector<MapCreationHook> templateEventLists(const ThingTemplate &tmpl);
+// The template's ForceLuaRegistration (PORT-24): register (RW 0x735941) reads it at RW 0x73595C .. RW 0x735966 only when the object has no AI
+// (Object + 0x260 = 0), and a zero byte sends it to the return at RW 0x735A0D instead of making the Lua object record. The field is the Object
+// field-table row RW 0xDA4838 (name, parseBool RW 0x42E558, userData 0, offset 0x640 = ThingTemplate + 0x640); the ThingTemplate constructor
+// zeroes +0x640 (RW 0x74021F), and copyFrom copies it (RW 0x6D26CA / 0x6D26D0), so a template without the line answers false.
+bool templateForcesLuaRegistration(const ThingTemplate &tmpl);
 // false + *error when the xml or the lua text has no list / no function, or a function has no closing `end` line.
 bool scan(const std::string &scriptEventsXml, const std::string &scriptsLua, CreationScriptData &out, std::string *error);
 // data\scripts\scriptevents.xml and data\scripts\scripts.lua of the mounted archives

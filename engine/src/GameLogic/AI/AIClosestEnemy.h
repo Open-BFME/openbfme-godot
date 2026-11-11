@@ -84,7 +84,7 @@ Object *findClosestEnemyInArea(const TriggerArea &area, Object &me, const Attack
 // range) when `attackRange` otherwise, 99999 (RW 0xBDF350) without `attackRange`; none: the first member (slot 0x48 without a position)
 Object *adjustVictim(Object &victim, Object *attacker, bool attackRange, int arg);
 // RW 0x6FF7FA(source, victim): the source can hit the victim from where it stands (any weapon slot within its attack range, or a melee weapon of a source that
-// does not stand its ground and sees the victim on its layer)
+// does not stand its ground and sees the victim on its layer, or a HORDE's deployed SIEGE_TOWER victim on another)
 bool canAttackFromHere(Object &source, Object &victim);
 // RW 0x6FF412(obj, flags): with an AI, the vision range (RW 0x68E43B) plus the bounding circle (+ 0xB8); with MOOD (2) and a computer unit's mood: asleep 0,
 // alert * AlertRangeModifier, aggressive * AggressiveRangeModifier; 0 without an AI
