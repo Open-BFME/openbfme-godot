@@ -9,6 +9,7 @@
 #include "doctest.h"
 
 #include "StartTestUtil.h"
+#include "AISceneTestUtil.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -156,6 +157,7 @@ struct AttackResult
 	float healthBefore = 0.0f, healthAfterFirst = 0.0f, healthAfter = 0.0f;
 	bool dead = false;
 	int deathFrame = -1;
+	int wallTopFrames = 0;    // lane WALL-5: the frames the attacker spent on a wall top's layer (0x11 .. 0x40)
 	std::string target, victimAfter;
 };
 
@@ -166,6 +168,13 @@ inline AttackResult siegeAttack(starttest::Shared &s, const std::string &map, co
 {
 	AttackResult res;
 	FortressGame g(s, map, aiDefender);
+	if (aiDefender)
+	{
+		// Preserve the Easy defender's construction/gate activity, but isolate the siege pins from background roaming draws.
+		Player *defender = g.ofFaction("FactionMen");
+		REQUIRE(defender);
+		testutil::deferRoamingDefense(g.game->logic(), defender->getPlayerIndex());
+	}
 	g.frames(2);
 	Object *gate = g.named(gateName);
 	REQUIRE(gate);
@@ -208,6 +217,11 @@ inline AttackResult siegeAttack(starttest::Shared &s, const std::string &map, co
 	for (int f = 0; f < frames; ++f)
 	{
 		g.frames(1);
+		if (ai)
+		{
+			const int l = (int)ai->adapter().getLayer();
+			res.wallTopFrames += l >= (int)LAYER_WALL_FIRST && l <= (int)LAYER_WALL_LAST ? 1 : 0;
+		}
 		Object *t = g.game->logic().findObjectByID(tid);
 		if (res.firstHit < 0 && (!t || healthOf(t) < res.healthBefore))
 		{

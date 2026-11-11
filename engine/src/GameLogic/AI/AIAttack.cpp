@@ -3,10 +3,16 @@
 
 #include "GameLogic/AI/AIAttack.h"
 #include "GameLogic/AI/AIAttackMelee.h"
+#include "GameLogic/AI/AIEmotionStates.h"
 #include "GameLogic/AI/TurretAI.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 
 #include "Common/StateHash.h"
+#include "Common/GameCommon.h"
+#include "Common/Team.h"
+#include "GameLogic/AI/AIGarrisonStates.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIMove.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -19,6 +25,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Weapon.h"
 
@@ -53,6 +60,47 @@ bool victimGone(const Object *victim)
 {
 	return !victim || !CombatQueries::isAlive(*victim);
 }
+
+// RW 0x644FD0 (two SSE loops, the same as the movers use)
+float normalizeAngle(float a)
+{
+	const float pi = 3.14159274f, twoPi = 6.28318548f;
+	if (a > pi)
+	{
+		do
+		{
+			a = SimMath::subf32(a, twoPi);
+		} while (a > pi);
+	}
+	if (-pi < a)
+	{
+		return a;
+	}
+	do
+	{
+		a = SimMath::addf32(a, twoPi);
+	} while (-pi >= a);
+	return a;
+}
+
+// RW 0x6939DF: the object is a horde member: with status HORDE_MEMBER (0x26) it has a container id (+ 0x78); without, its container exists and is a HORDE
+// (template + 0x115 bit 0x20); its horde is then that container (RW 0x693A1A(0) / the id at + 0x78)
+Object *hordeOf(Object &o)
+{
+	static const int kHordeMember = CombatNames::status("HORDE_MEMBER");
+	static const int kHorde = CombatNames::kindOf("HORDE");
+	Object *c = o.getContainedBy();
+	if (o.testStatus((unsigned)kHordeMember))
+	{
+		return c;
+	}
+	return c && c->isKindOf((unsigned)kHorde) ? c : nullptr;
+}
+
+const char *const kStopAim =
+	"[S-7175] AIAttackAimAtTargetState::updateInternal (RW 0x75232F, lane AIMAIM-1): an owner whose template sets FiringArc (+ 0x54C below 360.0, RW 0xBDC1F4) "
+	"is not handled: RW 0x7523B7 .. 0x7523F6 (the victim inside the arc, RW 0x68FA3D, unless AI vslot 0x23C answers 2) and RW 0x752572 .. 0x7525D3 (AI vslot "
+	"0x238, Object + 0x1C0) are not ported";
 
 // RW 0x741798 (ZH AIStates.cpp cannotPossiblyAttackObject; lane SPELL-3 review r3): the owner (machine + 0x14) and the goal object (RW 0x8DBACE). A victim that is
 // effectively dead (+ 0x458 bit 0) while the owner's current weapon (RW 0x68B58C(0)) needs no victim (template + 0x16B) keeps the attack (false); without
@@ -244,8 +292,12 @@ StateReturnType AIAttackState::onEnter()
 		return STATE_FAILURE;
 	}
 	m_attackMachine = createAttackMachine();
+	// ATKSTATE-1a: + 0x49 is cleared, then for an attack on an object set to "the victim is an enemy" (BFME2 0x74B692 .. 0x74B6E5); update's non-enemy drop
+	// reads it (RW 0x7512C6). RotWK's onEnter does the same: RW 0x74D066 clears it, RW 0x74D0B9 sets it after the gone / FLEE_OFF_MAP gate
+	m_victimWasEnemyOnEnter = false;
 	if (m_isAttackingObject)
 	{
+		m_victimWasEnemyOnEnter = source.getRelationship(*machine().goalObject()) == ENEMIES;
 		m_attackMachine->setGoalObject(machine().goalObject()->getID());
 	}
 	else
@@ -283,6 +335,21 @@ StateReturnType AIAttackState::update()
 	}
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
+	// lane ATKSTATE-1a: a STONED attacker (model condition 129, RW 0x7511F5; BFME2 0x74F78B) fails
+	static const int kStoned = CombatNames::modelCondition("STONED");
+	if (source.testModelCondition(kStoned))
+	{
+		return STATE_FAILURE;
+	}
+	// RW 0x75120C (BFME2 0x74F79B .. 0x74F7BA): a goal object that is UNATTACKABLE (status 0x3C) clears the machine's goal object and fails
+	{
+		Object *goal = machine().goalObject();
+		if (goal && goal->testStatus((unsigned)CombatNames::statuses().unattackable))
+		{
+			machine().setGoalObject(INVALID_ID);
+			return STATE_FAILURE;
+		}
+	}
 	ObjectWeapons *w = source.getWeapons();
 	if (!w || !m_attackMachine)
 	{
@@ -295,7 +362,10 @@ StateReturnType AIAttackState::update()
 	if (m_isAttackingObject)
 	{
 		Object *victim = machine().goalObject();
-		if (victimGone(victim))
+		// RW 0x751285 (BFME2 0x74F81B): a victim that is FLEE_OFF_MAP (status 0x32) counts as gone. What retail does with a gone victim (AI vslot 0x240, then
+		// the inner machine runs on unless ARMY_OF_DEAD) is stop S-583; the port's ZH handling below is kept
+		static const int kFleeOffMap = CombatNames::status("FLEE_OFF_MAP");
+		if (victimGone(victim) || victim->testStatus((unsigned)kFleeOffMap))
 		{
 			// a lone unit fighting a horde moves on to the next member while the horde lives
 			if (Object *next = a.replacementVictim())
@@ -307,6 +377,28 @@ StateReturnType AIAttackState::update()
 			{
 				a.notifyVictimIsDead();
 				return STATE_SUCCESS; // my, that was easy
+			}
+		}
+		// lane ATKSTATE-1a, RW 0x7512C6 (BFME2 0x74F82A .. 0x74F8A7): a victim that is no enemy now, that was an enemy at onEnter (+ 0x49), on an attack whose AI's
+		// last command source (AI vslot 0x23C) has bit 2 (CMD_FROM_AI), from an attacker that is not IS_MELEE_ATTACKING (status 0x1C), and that is no TREE (KindOf
+		// + 0x113 bit 6): the AI's goal object is cleared, the team's target too when it is this victim (RW 0x7A3E36), the AI hears the victim is dead
+		// (vslot 0x240) and the attack fails
+		{
+			static const int kTree = CombatNames::kindOf("TREE");
+			const bool isEnemy = source.getRelationship(*victim) == ENEMIES;
+			if (!isEnemy && m_victimWasEnemyOnEnter && ((unsigned)a.lastCommandSource() & 2u) != 0 &&
+				!source.testStatus((unsigned)CombatNames::statuses().isMeleeAttacking) && !victim->isKindOf((unsigned)kTree))
+			{
+				machine().setGoalObject(INVALID_ID);
+				if (Team *team = source.getTeam())
+				{
+					if (AIHuntState::teamTarget(*team, source.logic()) == victim)
+					{
+						team->setTeamTargetId(0);
+					}
+				}
+				a.notifyVictimIsDead();
+				return STATE_FAILURE;
 			}
 		}
 		// lane STEALTH-1 (RW 0x75232F, the attack sub-state: RW 0x752382 .. 0x7523B2): a victim that is stealthed and undetected for the attacker's player (RW 0x694C0D) ends
@@ -348,6 +440,34 @@ StateReturnType AIAttackState::update()
 	{
 		return STATE_FAILURE;
 	}
+	// lane ATKSTATE-1a, RW 0x7514F7 .. 0x751599 (BFME2 0x74FA79 .. 0x74FB2F): with the inner machine in its state 0xE4 the attack model conditions
+	// ATTACKING, ATTACKING_STRUCTURE and ATTACKING_POSITION are cleared; in any other state (or none) ATTACKING is set, ATTACKING_STRUCTURE when the goal
+	// object is a STRUCTURE (KindOf bit 7) and ATTACKING_POSITION on an attack on a position; neither of the last two is cleared here. INFERENCE (S-7164):
+	// the port's attack machines define no state 0xE4, so the clear branch is not reached
+	{
+		static const int kAttacking = CombatNames::modelCondition("ATTACKING"), kAttackingStructure = CombatNames::modelCondition("ATTACKING_STRUCTURE"),
+						 kAttackingPosition = CombatNames::modelCondition("ATTACKING_POSITION");
+		const unsigned kInnerState0xE4 = 0xE4;
+		if (m_attackMachine->currentStateId() == kInnerState0xE4)
+		{
+			source.setModelConditionState(kAttacking, false);
+			source.setModelConditionState(kAttackingStructure, false);
+			source.setModelConditionState(kAttackingPosition, false);
+		}
+		else
+		{
+			source.setModelConditionState(kAttacking, true);
+			const Object *goal = machine().goalObject();
+			if (goal && goal->isKindOf((unsigned)CombatNames::kinds().structure))
+			{
+				source.setModelConditionState(kAttackingStructure, true);
+			}
+			if (!m_isAttackingObject)
+			{
+				source.setModelConditionState(kAttackingPosition, true);
+			}
+		}
+	}
 	StateReturnType r;
 	{
 		KeptSubMachines<AIStateMachine>::Run run(m_keptMachines); // the shot can end this state inside the update (onExit below)
@@ -380,7 +500,10 @@ void AIAttackState::onExit(StateExitType)
 	{
 		t->setTurretTargetObject(nullptr, false); // lane GARRISON-2: RW 0x74D25D -> 0x6622C7(turret 0, none) (ZH AIStates.cpp:5722)
 	}
+	// RW onExit (BFME2 0x74B889): the model conditions ATTACKING, ATTACKING_STRUCTURE and ATTACKING_POSITION (+ 0x110 bits 5 .. 7) are cleared
 	obj.setModelConditionState(CombatNames::modelCondition("ATTACKING"), false);
+	obj.setModelConditionState(CombatNames::modelCondition("ATTACKING_STRUCTURE"), false);
+	obj.setModelConditionState(CombatNames::modelCondition("ATTACKING_POSITION"), false);
 	if (ObjectWeapons *w = obj.getWeapons())
 	{
 		w->updateWeaponStatusConditions();
@@ -413,6 +536,7 @@ void AIAttackState::crc(StateHasher &h) const
 	h.addI32(m_lockedSlotOnEnter);
 	h.addU32(m_shotsFired);
 	h.addBool(m_meleeMachine);
+	h.addBool(m_victimWasEnemyOnEnter);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -435,6 +559,7 @@ StateReturnType AIAttackApproachState::onEnter()
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
 	Object *victim = victimOf(machine());
+	m_waiting = false; // RW 0x74E6CE clears + 0x71 before its first return
 	if (m_att->isAttackingObject() && victimGone(victim))
 	{
 		return STATE_SUCCESS; // already killed the victim
@@ -456,7 +581,25 @@ StateReturnType AIAttackApproachState::onEnter()
 	}
 	const Coord3D goal = victim ? *victim->getPosition() : machine().goalPosition();
 	m_prevVictimPos = goal;
+	if (!GarrisonRules::isMobile(source) || a.curLocomotorSpeed() < 0.1f)
+	{
+		// an owner that cannot move (Object::isMobile RW 0x690E97 false, or its locomotor's max speed RW 0x5E3F49 below 0.1, RW 0xBD83D4: a speedless
+		// locomotor such as the fortress catapults' FloatingCatapultLocomotor) asks for no path: it waits two seconds and then fails unless the victim came
+		// into range (RW 0x74E6CE: + 0x71 = 1, + 0x68 = frame + 2 * LOGICFRAMES_PER_SECOND, before the turret and computePath; BFME2 decomp
+		// AIAttackApproachTargetStateOnEnter.cpp onEnter retail 0x0034CD3A; update: see AIAttackApproachState::update). The port made a move at speed 0
+		// and held the victim, never firing
+		m_waiting = true;
+		m_waitFrame = a.frame() + 2u * (unsigned)LOGICFRAMES_PER_SECOND;
+		return STATE_CONTINUE;
+	}
 	aimTurret(a, *m_att, victim, machine().goalPosition()); // lane GARRISON-2: RW 0x74E6CE before the path
+	return startMove(goal, victim);
+}
+
+StateReturnType AIAttackApproachState::startMove(const Coord3D &goal, Object *victim)
+{
+	AIUpdateInterface &a = ai();
+	Object &source = owner();
 	// lane PHYS-1: the approach's computePath RW 0x749A3E asks for an attack path (RW 0x663802 -> computeAttackPath 0x6668CA -> findAttackPath 0x6FC18E): a free cell in
 	// weapon reach, reserved, instead of a move to the victim's centre (the destination is not adjusted). A HORDE object attacks through its horde machine (the approach
 	// state 0xC9, computePath RW 0x74A594, S-590); a HORDE that reaches this generic approach keeps the move to the victim (RW 0x749A3E's branch distinctions and the
@@ -490,6 +633,29 @@ StateReturnType AIAttackApproachState::update()
 	if (inRange())
 	{
 		return STATE_SUCCESS;
+	}
+	if (m_waiting)
+	{
+		// RW 0x749D46 reads the wait (+ 0x71 / + 0x68) only for an object target: the wait over -> failure
+		if (m_att->isAttackingObject())
+		{
+			return a.frame() > m_waitFrame ? STATE_FAILURE : STATE_CONTINUE;
+		}
+		// a position target (attack-ground) runs computePath RW 0x749A3E on every update instead: it fails at once for an owner that is not mobile
+		// (RW 0x749A7A); a mobile owner gets the path its onEnter skipped and holds the attack while the move runs (a speedless one: until the
+		// target comes into range or a new command)
+		if (!GarrisonRules::isMobile(owner()))
+		{
+			return STATE_FAILURE;
+		}
+		if (!m_move)
+		{
+			const StateReturnType entered = startMove(machine().goalPosition(), nullptr);
+			if (entered != STATE_CONTINUE)
+			{
+				return entered;
+			}
+		}
 	}
 	if (!m_move)
 	{
@@ -532,6 +698,8 @@ void AIAttackApproachState::crc(StateHasher &h) const
 	h.addFloat(m_prevVictimPos.y);
 	h.addFloat(m_prevVictimPos.z);
 	h.addU32(m_approachFrame);
+	h.addBool(m_waiting);
+	h.addU32(m_waitFrame);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -565,57 +733,126 @@ StateReturnType AIAttackAimState::onEnter()
 		return STATE_SUCCESS;
 	}
 	setStatusBit(owner(), CombatNames::statuses().isAimingWeapon, true);
-	return STATE_CONTINUE;
+	// lane AIMAIM-1: the FiringArc gates of RW 0x75232F are not ported (reported here, once per aim; no retail template sets FiringArc: S-1022)
+	if (static_cast<const ThingTemplate *>(owner().getTemplate())->getFinalOverride()->findField("FiringArc"))
+	{
+		owner().logic().noteStop(kStopAim);
+	}
+	// lane AIMAIM-1: RW 0x753443 .. 0x753447: onEnter answers updateInternal(first call): the first turn is made at once
+	return aim(true);
 }
 
 StateReturnType AIAttackAimState::update()
 {
-	AIUpdateInterface &a = ai();
+	// the victim moved out of reach: walk again. RotWK's aim never does this itself (RW 0x75232F); the attack machine's state condition
+	// outOfWeaponRangeObject (to the chase state, BFME2 AttackStateMachine.cpp) does, and those conditions are not ported (S-325): this test stands in for it
+	// (B1 conditions of 0x66; the melee machine's 0xE1)
 	ObjectWeapons *w = weaponsOf(machine());
+	Object *victim = victimOf(machine());
+	if (w && w->hasAnyWeapon() && !(m_att->isAttackingObject() && victimGone(victim)) && !AttackVictimInRange(machine()))
+	{
+		if (ai().isImmobile())
+		{
+			return STATE_FAILURE;
+		}
+		machine().setState(m_approachId);
+		return STATE_CONTINUE;
+	}
+	return aim(false); // RW 0x753456
+}
+
+// RW 0x75232F AIAttackAimAtTargetState::updateInternal(firstCall) (lane AIMAIM-1; BFME2 1.06 the same rule, decomp AIAttackAimAtTargetStateUpdateInternal.cpp:196)
+StateReturnType AIAttackAimState::aim(bool firstCall)
+{
+	AIUpdateInterface &a = ai();
+	Object &self = owner();
+	ObjectWeapons *w = weaponsOf(machine());
+	// RW 0x752345 .. 0x75235D: no AI or no weapon (RW 0x68B4AF) -> FAILURE
 	if (!w || !w->hasAnyWeapon())
 	{
 		return STATE_FAILURE;
 	}
 	Object *victim = victimOf(machine());
-	if (m_att->isAttackingObject() && victimGone(victim))
+	const Weapon *weapon = w->currentWeapon(); // RW 0x68B58C(0)
+	const WeaponTemplate *wt = weapon ? weapon->getTemplate() : nullptr;
+	if (m_att->isAttackingObject())
 	{
-		return STATE_FAILURE; // cannot aim at dead things
-	}
-	if (!AttackVictimInRange(machine()))
-	{
-		if (a.isImmobile())
+		// RW 0x752382 .. 0x7523B2: no victim, a dead one (+ 0x458 bit 0), a victim with status FLEE_OFF_MAP (0x32) or stealthed and undetected for the owner's
+		// player (RW 0x694C0D) -> FAILURE
+		static const int kFleeOffMap = CombatNames::status("FLEE_OFF_MAP");
+		static const int kIgnoringStealth = CombatNames::status("IGNORING_STEALTH");
+		if (victimGone(victim) || victim->testStatus((unsigned)kFleeOffMap))
 		{
 			return STATE_FAILURE;
 		}
-		machine().setState(m_approachId); // the victim moved out of reach: walk again (B1 conditions of 0x66; the melee machine's 0xE1)
-		return STATE_CONTINUE;
+		if (!self.testStatus((unsigned)kIgnoringStealth) && InvisibilityManager::isStealthedAndUndetected(*victim, self.getControllingPlayer()))
+		{
+			return STATE_FAILURE;
+		}
 	}
-	// lane GARRISON-2: RW 0x75232F: the turret that holds the current weapon aims (and fires: TurretAI's machine); a turret that turns keeps the body in this state
+	// lane GARRISON-2: RW 0x7523F8 .. 0x752443: the turret that holds the current weapon aims (and fires: TurretAI's machine); a turret that turns keeps the
+	// body in this state
 	if (aimTurret(a, *m_att, victim, machine().goalPosition()) && a.turretTurnRate() != 0.0f)
 	{
 		return STATE_CONTINUE;
 	}
-	// lane MODCOMPAT-MOD1 (a pre-existing gap): RW 0x7524B5 .. 0x7524C1, after the turret and the aim tolerance and before the turn (vslot 0x21C / 0x210):
-	// an owner with RUNNING_DOWN_FROM_BEHIND (status 0x4B) succeeds without turning. The port turned it every frame: a horde member running a fleeing target
-	// down (the run-down RW 0x87631F orders it to attack) took an angle goal each frame, which replaced the walk its horde's pass gave it (RW 0x877B69: a
-	// running-down member of a moving horde is driven to its slot), so it stood with MOVING beside its marching horde until the leash took it (RW 0x877B4F)
-	if (isRunningDown(owner()))
+	// RW 0x752448 .. 0x7524B0: the tolerance is the weapon's AcceptableAimDelta (+ 0x2C, 0 without a weapon), at least 0.035 (RW 0xC2A1BC), at least 0.3
+	// (RW 0xBE29D4) for a DISABLED_HELD owner (Object + 0x1C8 bit 3); the turn rate is the current locomotor's (RW 0x5E372D), 0 without one
+	float tolerance = wt ? wt->m_aimDelta : 0.0f;
+	if (kRelativeAngleThreshold > tolerance)
+	{
+		tolerance = kRelativeAngleThreshold;
+	}
+	float turnRate = 0.0f;
+	if (Locomotor *loco = a.curLocomotor())
+	{
+		turnRate = loco->getMaxTurnRate(a.locomotorHost());
+	}
+	if ((self.getDisabledMask() & 0x8u) != 0 && 0.3f > tolerance)
+	{
+		tolerance = 0.3f;
+	}
+	// lane MODCOMPAT-MOD1 (a pre-existing gap): RW 0x7524B5 .. 0x7524C1, before the turn (vslot 0x21C / 0x210): an owner with RUNNING_DOWN_FROM_BEHIND (status
+	// 0x4B) succeeds without turning. The port turned it every frame: a horde member running a fleeing target down (the run-down RW 0x87631F orders it to
+	// attack) took an angle goal each frame, which replaced the walk its horde's pass gave it (RW 0x877B69: a running-down member of a moving horde is driven
+	// to its slot), so it stood with MOVING beside its marching horde until the leash took it (RW 0x877B4F)
+	if (isRunningDown(self))
 	{
 		return STATE_SUCCESS;
 	}
-	const Coord3D target = victim ? *victim->getPosition() : machine().goalPosition();
-	const float relAngle = a.relativeAngleTo(target);
-	float aimDelta = w->aimDelta();
-	if (aimDelta < kRelativeAngleThreshold)
+	// RW 0x7524C6 .. 0x752561: the point aimed at is the machine's goal position (machine + 0x24); on an object, a melee weapon (RW 0x441B59; RW 0x9188EB, the
+	// other test, answers false) at a WALK_ON_TOP_OF_WALL (60) or BLOCKING_GATE (137) victim aims at the victim's "Ram" contact point (RW 0xC2A1C0; RW
+	// 0x690BD2(caller position, mode 0, not preferred)); without one, a victim that is not a WALL_UPGRADE (150) is aimed at its position
+	Coord3D target = machine().goalPosition();
+	if (m_att->isAttackingObject())
 	{
-		aimDelta = kRelativeAngleThreshold;
+		static const int kWallTop = CombatNames::kindOf("WALK_ON_TOP_OF_WALL");
+		static const int kBlockingGate = CombatNames::kindOf("BLOCKING_GATE");
+		static const int kWallUpgrade = CombatNames::kindOf("WALL_UPGRADE");
+		bool contact = false;
+		if (wt && (victim->isKindOf((unsigned)kWallTop) || victim->isKindOf((unsigned)kBlockingGate)) && wt->m_meleeWeapon)
+		{
+			contact = ObjectGeometry::worldspaceBestContactPoint(*victim, *self.getPosition(), "Ram", false, target);
+		}
+		if (!victim->isKindOf((unsigned)kWallUpgrade) && !contact)
+		{
+			target = *victim->getPosition();
+		}
 	}
-	const float absAngle = relAngle < 0.0f ? SimMath::subf32(0.0f, relAngle) : relAngle;
+	float relAngle = emotionRelAngle(self, target); // RW 0x4B3D8D
+	// RW 0x7525D9 .. 0x752602: a weapon with an AimDirection (+ 0x30) above 0 aims that much off: normalizeAngle(rel - AimDirection) (RW 0x644FD0)
+	if (wt && wt->m_aimDirection > 0.0f)
+	{
+		relAngle = normalizeAngle(SimMath::subf32(relAngle, wt->m_aimDirection));
+	}
+	// RW 0x752606 .. 0x752664: a unit that turns in place takes the goal angle (vslot 0x21C, its angle + rel, SSE) while the tolerance is below pi (RW 0xBDD388)
+	// and the angle is above it or this is the first call; another walks at the point (vslot 0x210)
+	const double absAngle = SimMath::absD((double)relAngle);
 	if (m_canTurnInPlace)
 	{
-		if (absAngle > aimDelta)
+		if (3.14159274f > tolerance && ((double)tolerance < absAngle || firstCall))
 		{
-			a.setLocomotorGoalOrientation(SimMath::addf32(owner().getOrientation(), relAngle));
+			a.setLocomotorGoalOrientation(SimMath::addf32(self.getOrientation(), relAngle));
 			m_setLocomotor = true;
 		}
 	}
@@ -623,7 +860,35 @@ StateReturnType AIAttackAimState::update()
 	{
 		a.setLocomotorGoalPositionExplicit(target);
 	}
-	if (absAngle < aimDelta)
+	// RW 0x75266A .. 0x752749: an owner INSIDE_GARRISON (0x3A) shoots with its horde's weapon when it is a horde member (RW 0x6939DF, the container id + 0x78),
+	// else its own: no current weapon there, or the victim (the goal position) out of its range (RW 0x6CC653 / 0x6CC622, extra 0, min range checked) -> FAILURE
+	static const int kInsideGarrison = CombatNames::status("INSIDE_GARRISON");
+	if (self.testStatus((unsigned)kInsideGarrison))
+	{
+		Object *shooter = hordeOf(self);
+		if (!shooter)
+		{
+			shooter = &self;
+		}
+		ObjectWeapons *sw = shooter->getWeapons();
+		if (!sw || !sw->currentWeapon())
+		{
+			return STATE_FAILURE;
+		}
+		if (!(victim ? sw->isWithinAttackRange(*victim) : sw->isWithinAttackRange(machine().goalPosition())))
+		{
+			return STATE_FAILURE;
+		}
+	}
+	// RW 0x7526CC .. 0x7526DD: RW 0x744B25(victim) fails the aim when the victim (its horde, for a member) has an AI container (+ 0x27C); a horde is in none,
+	// and the port keeps no other container there: INFERENCE (S-7175), always passes
+	if (firstCall)
+	{
+		return STATE_CONTINUE; // RW 0x7526E7
+	}
+	// RW 0x7526ED .. 0x752775: aimed when the angle is within the tolerance or within half the turn rate (RW 0xBD869C): then the victim's AI slot 0x204 (this
+	// owner's id, 1) and slot 0x208 may hold the attacker (CONTINUE); INFERENCE (S-7175, as S-1106): every ported AI class answers no (RW 0x9188EB)
+	if ((double)tolerance > absAngle || (double)SimMath::mulf32(turnRate, 0.5f) > absAngle)
 	{
 		return STATE_SUCCESS;
 	}
@@ -734,13 +999,23 @@ void AIAttackFireState::onExit(StateExitType)
 	{
 		return; // the object is being deleted: its modules are going away
 	}
+	// lane ATKRESET-1: AIAttackFireWeaponState::onExit RW 0x74C8BE (vtable 0xC27858 slot 5; BFME2 0x74B08A identical, decomp
+	// AIAttackFireWeaponStateOnExit.cpp): IS_FIRING_WEAPON (0x0D) and IGNORING_STEALTH (0x1B) are cleared, the current weapon's status is written back
+	// (RW 0x6CDCE7); a swing cancelled before it landed (PRE_ATTACK) ends (+ 0x1C = 0) and the status is written back again; then END_FIRE_STATE (0x52)
+	static const int kIgnoringStealth = CombatNames::status("IGNORING_STEALTH");
+	static const int kEndFireState = CombatNames::status("END_FIRE_STATE");
 	owner().setStatus((unsigned)CombatNames::statuses().isFiringWeapon, false);
+	owner().setStatus((unsigned)kIgnoringStealth, false);
 	ObjectWeapons *w = owner().getWeapons();
-	if (w && w->currentWeapon() && w->currentStatus() == WEAPON_PRE_ATTACK)
+	if (Weapon *cur = w ? w->currentWeapon() : nullptr)
 	{
-		// a swing that was cancelled before it landed (the victim moved away): the pre-attack ends (ZH AIAttackFireWeaponState::onExit)
-		w->currentWeapon()->setWhenPreAttackFinished(0);
+		if (w->weaponStatusWriteBack(*cur) == WEAPON_PRE_ATTACK)
+		{
+			cur->setWhenPreAttackFinished(0);
+			w->weaponStatusWriteBack(*cur);
+		}
 	}
+	owner().setStatus((unsigned)kEndFireState, false);
 }
 
 void AIAttackFireState::crc(StateHasher &h) const

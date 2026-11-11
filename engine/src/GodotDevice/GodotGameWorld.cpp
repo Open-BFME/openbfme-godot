@@ -9,6 +9,9 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "GodotDevice/GodotGameWorld.h"
+#include "GodotDevice/GodotW3DModelBuilder.h"
+#include <godot_cpp/classes/decal.hpp>
+#include "GodotDevice/GodotShaderBudget.h"
 #include "Common/MD5.h"
 #include "GameClient/ObjectShadow.h"
 #include "GameClient/InGameChat.h"
@@ -363,6 +366,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("reset_logic_wait_sites"), &GameWorld::reset_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("set_render_interpolation", "enabled"), &GameWorld::set_render_interpolation);
 	ClassDB::bind_method(D_METHOD("set_perf3_client", "enabled"), &GameWorld::set_perf3_client); // lane PERF-3
+	ClassDB::bind_method(D_METHOD("set_draw_culling", "enabled"), &GameWorld::set_draw_culling); // lane GPUPERF-2
+	ClassDB::bind_method(D_METHOD("get_draw_culling"), &GameWorld::get_draw_culling);
 	ClassDB::bind_method(D_METHOD("get_perf3_client"), &GameWorld::get_perf3_client);
 	ClassDB::bind_method(D_METHOD("set_logic_thread", "enabled"), &GameWorld::set_logic_thread);
 	ClassDB::bind_method(D_METHOD("get_logic_thread"), &GameWorld::get_logic_thread);
@@ -787,6 +792,7 @@ void GameWorld::clear_scene()
 	m_game.reset(); // the objects (and through them the drawables) first
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
+	for (uint32_t id = 0; id < m_views.size(); ++id) remove_view(id);
 	m_views.clear();
 	m_dynamicModels.clear();
 	m_staticModels.clear();
@@ -811,6 +817,15 @@ void GameWorld::clear_scene()
 }
 
 // lane GLOW-1 (S-5231): a model draw module's GlowEnabled / GlowEmissive (module data + 0x128 / + 0x129, RW 0x4C518B): 0 none, 1 glows, 2 glows emissive only
+// lane SELWALL-1: a drawable whose models receive the selection decals: KINDOF_WALK_ON_TOP_OF_WALL, the casters RotWK's decal projection collects
+// (W3DProjectedShadowManager RW 0x50C876 .. 0x50C8B1: iterateObjectsInRange with that bit; the retail maps' bridges are such objects, S-161). INFERENCE
+// (S-2522): every such model receives the decals over it, not RotWK's at most 16 objects within sqrt(sx^2 + sy^2) + 50 of the decal
+static bool selectionDecalReceiver(const Drawable *d)
+{
+	static const int bit = ObjectTemplateInfoBuilder::kindOfIndex("WALK_ON_TOP_OF_WALL");
+	return d && d->isKindOfIndex(bit);
+}
+
 static int staticGlowOf(const ModuleData *data)
 {
 	const W3DModelDrawModuleData *md = dynamic_cast<const W3DModelDrawModuleData *>(data);
@@ -855,6 +870,7 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 	}
 	staticInst->set_house_colors_enabled(false); // client-only trees and props have no owner
 	staticInst->set_auto_update(false);
+	staticInst->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the trees and props off screen leave the draw
 	m_clientRuntime.reset(new MapObjectRuntime(*m_assets));
 	m_clientRuntime->build(m_game->clientOnly(), false);
 	m_treeTopple.reset(new TreeTopple()); // lane SPELL-3
@@ -1280,6 +1296,11 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	if (m_fxPlayer && m_fxPlayer->playback())
 	{
 		m_liveFX.reset(new LiveFX(*m_game, *m_fxPlayer->playback())); // lane FX-2: from here on the logic's effect calls play
+		// lane FEAT-BLDFX-1 (S-117): the map's Scorch objects enter the terrain scorch buffer (BFME2 W3DTerrainVisualLoad.cpp:526)
+		for (const MapScorch &s : m_game->classified().report.scorches)
+		{
+			m_fxPlayer->playback()->addMapScorch(s.position, s.radius, s.type);
+		}
 		// lane PERF-1 r2: every particle texture decoded during the load (280 retail textures, about 30-70 ms), not at its first use in a battle
 		const double tp = nowMs();
 		m_fxPlayer->preload_textures(0.0);
@@ -1365,6 +1386,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	dyn->set_house_colors_enabled(m_houseColors);
 	dyn->set_playing(false); // time only enters through set_instance_pose
 	dyn->set_pose_culling(m_perf3Client); // PiP supplies an additional frustum when a second camera sees the live objects.
+	dyn->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the same frusta decide what is drawn
 	timings["static_layer_ms"] = timing::elapsedMs(t0);
 
 	t0 = nowMs();
@@ -1626,6 +1648,11 @@ void GameWorld::remove_view(uint32_t drawableId)
 	W3DInstancer *dyn = instancerOf(m_dynamicId);
 	for (EntryView &e : m_views[drawableId].entries)
 	{
+		if (auto *decal = e.shadowDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(e.shadowDecalId))) : nullptr)
+		{
+			decal->set_visible(false);
+			decal->queue_free();
+		}
 		if (e.instance >= 0 && dyn)
 		{
 			dyn->remove_instance(e.instance);
@@ -1698,6 +1725,11 @@ bool GameWorld::view_is_local(size_t id, const W3DInstancer &dyn, const LogicSna
 	{
 		const DrawEntry &e = entries[k];
 		const EntryView &ev = v.entries[k];
+		const ModelConditionInfo *state = e.draw ? e.draw->currentModelState() : nullptr;
+		if (ev.shadowDecalId || (state && state->hasShadow && (state->shadow.type == 0x40 || state->shadow.type == 0x800)))
+		{
+			return false; // Godot decal lifecycle/resource access belongs to the main thread.
+		}
 		if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
 		{
 			if (ev.instance >= 0 && !(e.frontTireBones.empty() && e.rearTireBones.empty()) && !(ev.tireChanges == e.tireChanges && ev.tireInstance == ev.instance))
@@ -1804,6 +1836,59 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 	{
 		DrawEntry &e = entries[k];
 		EntryView &ev = v.entries[k];
+		// BFME2 W3DShadowManagerAddShadow routes 0x40 / 0x800 to projected
+		// shadows; W3DProjectedShadowManagerFlushDecals uses the additive preset.
+		// Device inference (S-3304): Godot emission projects the texture onto terrain.
+		// Exact retail ShadowOpacity* timing and projected-shadow blend parity remain open.
+		Decal *shadow = ev.shadowDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(ev.shadowDecalId))) : nullptr;
+		const ModelConditionInfo *state = e.draw ? e.draw->currentModelState() : nullptr;
+		const ModelShadowInfo *info = state && state->hasShadow ? &state->shadow : nullptr;
+		const auto *modelData = dynamic_cast<const W3DModelDrawModuleData *>(e.data);
+		const bool additive = info && (info->type == 0x40 || info->type == 0x800) && !info->texture.empty() &&
+			info->sizeX > 0.0f && info->sizeY > 0.0f && (!modelData || !modelData->m_shadowForceDisable);
+		if (additive && !fogHidden && !e.moduleHidden && !e.conditionHidden && d->drawOpacity() > 0.0f)
+		{
+			const std::string file = info->texture.find('.') == std::string::npos ? info->texture + ".tga" : info->texture;
+			if (ev.shadowDecalTexture != file)
+			{
+				Ref<W3DModelBuilder> loader;
+				loader.instantiate();
+				const Ref<Texture2D> texture = loader->load_texture(m_fs, toGodot(file));
+				if (texture.is_valid())
+				{
+					if (!shadow)
+					{
+						shadow = memnew(Decal);
+						shadow->set_name(String("DrawableAdditiveDecal_") + String::num_int64(id) + "_" + String::num_int64(k));
+						add_child(shadow);
+						ev.shadowDecalId = shadow->get_instance_id();
+						shadow->set_meta("object_id", (int64_t)d->getObjectID());
+						shadow->set_cull_mask(1u << 19); // GodotMapTerrain only
+						shadow->set_albedo_mix(0.0f);
+						shadow->set_upper_fade(0.0f);
+						shadow->set_lower_fade(0.0f);
+						shadow->set_meta("acceptance_stop", "[S-3304] additive drawable decals: projection/blend and ShadowOpacity timing are unverified");
+					}
+					shadow->set_texture(Decal::TEXTURE_EMISSION, texture);
+					shadow->set_meta("shadow_texture", toGodot(file));
+				}
+				else
+				{
+					if (shadow) shadow->set_texture(Decal::TEXTURE_EMISSION, Ref<Texture2D>());
+					UtilityFunctions::push_error(String("Drawable additive decal: ") + String(Variant(loader->get_report())));
+				}
+				ev.shadowDecalTexture = file; // a missing texture is reported once per state, never retried every frame
+			}
+			if (shadow)
+			{
+				// Match the existing placement decal's SAGE -> Godot ground projection.
+				shadow->set_position(Vector3(SimMath::addf32(shownAt.x, info->offsetX), shownAt.z, -SimMath::addf32(shownAt.y, info->offsetY))); // the audited file's float rule
+				shadow->set_size(Vector3(info->sizeX, 200.0f, info->sizeY));
+				shadow->set_emission_energy(1.0f);
+				shadow->set_visible(shadow->get_texture(Decal::TEXTURE_EMISSION).is_valid());
+			}
+		}
+		else if (shadow) shadow->set_visible(false);
 		// RENDER-2: a structure being built moves along its own Z by the draw's construction offset (RW 0x4B686D)
 		Transform3D entryXf = xf;
 		if (e.constructionOffsetZ != 0.0f)
@@ -1918,7 +2003,13 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			{
 				glowModel = plainModel + (f.glow == 2 ? "|glow-emissive" : "|glow");
 			}
-			const std::string &model = glowModel.empty() ? plainModel : glowModel;
+			// lane SELWALL-1: a wall top or bridge (KINDOF_WALK_ON_TOP_OF_WALL) gets a model of its own whose surfaces draw the selection decals
+			std::string selModel;
+			if (shown && selectionDecalReceiver(d))
+			{
+				selModel = (glowModel.empty() ? plainModel : glowModel) + "|sel";
+			}
+			const std::string &model = !selModel.empty() ? selModel : glowModel.empty() ? plainModel : glowModel;
 			if (model != ev.model)
 			{
 				if (ev.instance >= 0)
@@ -1941,6 +2032,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 						if (!swappedModel.empty())
 						{
 							dyn->Set_Build_Texture_Swaps(*f.textureSwaps); // taken by the add below (and add_model_colored's)
+						}
+						if (!selModel.empty())
+						{
+							dyn->Set_Build_Selection_Decals(true); // lane SELWALL-1: taken by the add below
 						}
 						if (!coloredModel.empty())
 						{
@@ -2084,6 +2179,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				{
 					ev.staticKey += ev.staticGlow == 2 ? "|glow-emissive" : "|glow";
 				}
+				if (selectionDecalReceiver(d))
+				{
+					ev.staticKey += "|sel"; // lane SELWALL-1: as on the animated path
+				}
 				if (ev.staticKeyColored)
 				{
 					const HouseColorParams &pp = ev.staticKeyPalette;
@@ -2113,6 +2212,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				{
 					const double tm = nowMs();
 					dyn->Set_Build_Texture_Swaps(swaps);
+					dyn->Set_Build_Selection_Decals(selectionDecalReceiver(d)); // lane SELWALL-1
 					if(colored) {
 					 PackedInt64Array colors;for(auto color:palette.colors) colors.push_back((int64_t)color);
 					 mid=dyn->add_model_colored(toGodot(e.staticModel),palette.kind,colors);
@@ -3085,7 +3185,7 @@ void GameWorld::refresh_streaks(bool record)
 	const float eye[3] = { eg.x, -eg.z, eg.y }; // Godot -> SAGE
 	if (!m_streakTextures && m_fs.is_valid() && m_fs->archive_fs())
 	{
-		m_streakTextures.reset(new W3DMaterialFactory(*m_fs->archive_fs()));
+		m_streakTextures.reset(new W3DMaterialFactory(*m_fs->archive_fs(), m_fs->w3dTextureCache()));
 		m_streakTextures->Set_Asset_Packs(m_fs->assetPacks().empty() ? nullptr : &m_fs->assetPacks()); // lane SDK-0
 	}
 	// group the strips by material (lane PROJ-2: the texture of the map's weather, RW 0x4CFA9A: WeatherType NORMAL 0 / SNOWY 1)
@@ -3115,13 +3215,14 @@ void GameWorld::refresh_streaks(bool record)
 			if (m_streakShader[add].is_null())
 			{
 				m_streakShader[add].instantiate();
-				m_streakShader[add]->set_code(String("shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled, ")
+				const String streakCode = String("shader_type spatial;\nrender_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled, ")
 					+ (add ? "blend_add" : "blend_mix")
 					+ ";\nuniform sampler2D tex : hint_default_white, filter_linear_mipmap, repeat_disable;\n"
 					  "void fragment() {\n\tvec4 t = texture(tex, UV) * COLOR;\n"
 					  "\tALBEDO = clamp(t.rgb, 0.0, 1.0);\n" // RENDER-3 (S-831): the gamma-space transparent pass takes the gamma value
 					+ String(add ? "\tALPHA = 1.0;\n}\n" // PROJ-2: DAT 0xD9B2E4 is SRCBLEND ONE / DSTBLEND ONE: the texture's alpha does not weigh the sum
-								 : "\tALPHA = t.a;\n}\n")); // DAT 0xD9B2F0: SRC_ALPHA / INV_SRC_ALPHA
+								 : "\tALPHA = t.a;\n}\n"); // DAT 0xD9B2F0: SRC_ALPHA / INV_SRC_ALPHA
+				SetShaderCode(m_streakShader[add].ptr(), streakCode, add ? "W3D streak additive" : "W3D streak alpha");
 			}
 			mat.instantiate();
 			mat->set_shader(m_streakShader[add]);
@@ -4248,6 +4349,18 @@ void GameWorld::set_perf3_client(bool enabled)
 	if (W3DInstancer *d = instancerOf(m_dynamicId))
 	{
 		d->set_pose_culling(enabled);
+	}
+}
+
+void GameWorld::set_draw_culling(bool enabled)
+{
+	m_drawCulling = enabled;
+	for (uint64_t id : { m_dynamicId, m_staticId })
+	{
+		if (W3DInstancer *d = instancerOf(id))
+		{
+			d->set_draw_culling(enabled);
+		}
 	}
 }
 
@@ -6897,9 +7010,26 @@ Dictionary GameWorld::get_fx_report() const
 		}
 	}
 	d["stops"] = stops;
-	if (m_fxPlayer)
+	if (m_fxPlayer && m_fxPlayer->playback())
 	{
 		d["particles"] = m_fxPlayer->get_stats();
+		// lane FEAT-BLDFX-1: the client effect state (scorches RW 0x5E0045, dynamic decals RW 0x5E05AB, light pulses RW 0x5DFAA3, camera shakers RW 0x5DFE90; the bodies are DONOR BFME2 0x67EA3 / 0x10C785 / 0x6DE3D / 0x65DAD)
+		const FXPlayback &playback = *m_fxPlayer->playback();
+		Dictionary scorches;
+		scorches["count"] = (int64_t)playback.scorches().entries().size();
+		scorches["additions"] = (int64_t)playback.scorches().additions();
+		scorches["duplicates"] = (int64_t)playback.scorches().duplicates();
+		scorches["evictions"] = (int64_t)playback.scorches().evictions();
+		d["scorches"] = scorches;
+		Dictionary decals;
+		decals["count"] = (int64_t)playback.decals().size();
+		d["decals"] = decals;
+		Dictionary lights;
+		lights["active"] = (int64_t)playback.lightPulses().enabledCount();
+		lights["additions"] = (int64_t)playback.lightPulses().additions();
+		lights["refused_range"] = (int64_t)playback.lightPulses().refusedRange();
+		lights["overflow"] = (int64_t)playback.lightPulses().overflow();
+		d["light_pulses"] = lights;
 	}
 	return d;
 }

@@ -103,7 +103,9 @@ TEST_CASE("idle1 retail: a cavalry melee leaves no rider running on the spot (RW
 	{
 		const TurnScenario s = runTurns(cavalry, "MordorFighterHorde", 260.0f, 300);
 		MESSAGE(reportOf(cavalry, s));
-		CHECK(s.probe.turnedCavalry >= 30); // not vacuous: riders turn where they stand in the melee
+		// merge queue q41 (DECOMPFIX-1104B's aim, AIMAIM-1 RW 0x75232F, moves the melee; measured once on the merged tree and at its merge point): the knights
+		// turn on the spot in 25 member-frames (the warg riders 45), so the floor that keeps the check from being vacuous is 20 (was 30)
+		CHECK(s.probe.turnedCavalry >= 20); // tolerance: not vacuous: riders turn where they stand in the melee
 		CHECK(s.probe.turnedCavalryMoving == 0);
 		CHECK(s.probe.stillMovingStreaks == 0);
 	}

@@ -25,7 +25,8 @@
 //     heights meet (other.z - (a sphere's radius + offset z) <= this shape's z + (sphere radius / cylinder or box height) + offset z, and this shape's z <= the other's z +
 //     its height + offset z); then circle / circle (RW 0xAD48F0: centre distance^2 <= (r1 + r2)^2), box / circle (RW 0xAD4870 -> 0xAD45A0: the circle's centre's
 //     squared distance from the box, axes (cos, sin) / (-sin, cos) stored as floats), box / box (RW 0xAD4790 -> 0xAD4660: the four axes' separation test).
-// INFERENCE (stop S-1029): crushPolicy is PHYS-1's reading of RW 0x69519A (the line test RW 0x6F5BB0 not ported); the x87 sin / cos are SimMath::sinCosDet;
+// INFERENCE (stop S-1029): crushPolicy is PHYS-1's reading of RW 0x69519A (RW 0x6950F3's quick path test RW 0x695159 -> 0x6F5BB0 is not asked: taken as
+// passing; Pathfinder::quickDoesPathExist is ported by lane QPATH-1, the gate before it, RW 0x664485 / 0x5E2DF4, is not read); the x87 sin / cos are SimMath::sinCosDet;
 // the members of the horde's map + 0x170 are not ported (the horde's contained list only).
 
 #pragma once

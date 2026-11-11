@@ -404,6 +404,8 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_pose_culling", "enabled"), &W3DInstancer::set_pose_culling); // lane PERF-3
 	ClassDB::bind_method(D_METHOD("set_extra_pose_frustum", "planes"), &W3DInstancer::set_extra_pose_frustum);
 	ClassDB::bind_method(D_METHOD("get_pose_culling"), &W3DInstancer::get_pose_culling);
+	ClassDB::bind_method(D_METHOD("set_draw_culling", "enabled"), &W3DInstancer::set_draw_culling); // lane GPUPERF-2
+	ClassDB::bind_method(D_METHOD("get_draw_culling"), &W3DInstancer::get_draw_culling);
 	ClassDB::bind_method(D_METHOD("get_instance_palette", "instance"), &W3DInstancer::get_instance_palette);
 	ClassDB::bind_method(D_METHOD("update_now"), &W3DInstancer::update_now);
 	ClassDB::bind_method(D_METHOD("update_mappers"), &W3DInstancer::update_mappers);
@@ -572,6 +574,7 @@ void W3DInstancer::ensure_occlusion_passes(MeshGpu &gpu, bool mark, bool color)
 		auto make = [&](int pass, int priority) {
 			W3DShaderKey k = base;
 			k.OcclusionPass = pass;
+			k.SelectionDecals = false; // lane SELWALL-1: a marker pass draws no decal
 			Ref<ShaderMaterial> m = gpu.Materials[i]->duplicate(); // the surface's textures and colours: the passes keep its alpha test
 			m->set_shader(Materials->Get_Shader(k));
 			m->set_render_priority(priority);
@@ -687,7 +690,7 @@ Dictionary W3DInstancer::setup(const Ref<RetailFileSystem> &fs)
 		FsRef = fs;
 		Source = fs->renderW3DSource(); // lane SDK-0: the asset packs in front (render side only)
 		Assets.reset(new WW3DAssetManager(*Source));
-		Materials.reset(new W3DMaterialFactory(*fs->archive_fs()));
+		Materials.reset(new W3DMaterialFactory(*fs->archive_fs(), fs->w3dTextureCache()));
 		Materials->Set_Asset_Packs(fs->assetPacks().empty() ? nullptr : &fs->assetPacks());
 		Materials->Set_Alpha_Override(AlphaOverride); // lane BUILD-5 r3
 		// housecolor.ini: the table only names which textures have a house texture; applying it is stop S-022 (reported per surface).
@@ -931,6 +934,24 @@ std::string W3DInstancer::Texture_Swap_Suffix(const std::vector<std::pair<std::s
 
 int64_t W3DInstancer::add_model(const String &model_name)
 {
+	if (PendingSelectionDecals)
+	{
+		// lane SELWALL-1: the wall model's meshes under their own name (after a colour set's suffix, before the texture swaps'), their factory flag on
+		PendingSelectionDecals = false;
+		const std::string savedSuffix = BuildSuffix;
+		BuildSuffix += "#sel";
+		if (Materials)
+		{
+			Materials->Set_Selection_Decals(true);
+		}
+		const int64_t id = add_model(model_name);
+		if (Materials)
+		{
+			Materials->Set_Selection_Decals(false);
+		}
+		BuildSuffix = savedSuffix;
+		return id;
+	}
 	if (PendingSwaps.empty())
 	{
 		return build_model(model_name);
@@ -1033,6 +1054,7 @@ int64_t W3DInstancer::build_model(const String &model_name)
 			item.Sub = &sub;
 			item.SubIndex = (int)(&sub - proto->SubObjects.data());
 			item.Mesh = gpu;
+			item.Rigid = !gpu->Data.Skin;
 			item.MM.instantiate();
 			item.MM->set_transform_format(MultiMesh::TRANSFORM_3D);
 			item.MM->set_custom_aabb(kMultiMeshBounds); // lane PERF-HD: see kMultiMeshBounds
@@ -2016,6 +2038,21 @@ void W3DInstancer::write_buffers()
 	int dithered = 0, sortedItems = 0, visible = 0, writes = 0;
 	bool missedCamera = false;
 	bool sortRewritten = false;
+	// lane GPUPERF-2: the instances in view of the cameras of this moment (the draws written below leave the others out; cull_draws redoes it at
+	// frame_pre_draw with the cameras the frame is drawn with)
+	if (DrawCulling)
+	{
+		std::vector<Plane> planes;
+		Transform3D cullXf;
+		if (cull_frustum(planes, cullXf))
+		{
+			compute_in_view(planes, cullXf);
+		}
+		else
+		{
+			InViewValid = false;
+		}
+	}
 	for (std::unique_ptr<Model> &mp : Models)
 	{
 		Model &m = *mp;
@@ -2050,7 +2087,7 @@ void W3DInstancer::write_buffers()
 			{
 				m.Dithered += d.Dithered;
 				m.SortedItems += d.HasBatch ? 1 : 0;
-				visible += (int)d.Order.size();
+				visible += (int)d.Packed.size(); // lane GPUPERF-2: the drawn set may be smaller than Order (empty when every member is off screen)
 				continue;
 			}
 			wrote = true;
@@ -2058,7 +2095,6 @@ void W3DInstancer::write_buffers()
 			d.Dithered = 0;
 			const int bone = d.Sub->BoneIndex;
 			const size_t drawIndex = (size_t)(&d - m.Draws.data());
-			const bool rigid = !d.Mesh->Data.Skin;
 			std::vector<int> &ids = d.Order;
 			ids.clear();
 			for (int id : m.InstanceIds)
@@ -2109,67 +2145,13 @@ void W3DInstancer::write_buffers()
 					missedCamera = true;
 				}
 			}
-			float *buf = d.Buffer.ptrw();
-			int count = 0;
 			for (int id : ids)
 			{
 				const Instance &inst = Instances[(size_t)id];
-				const Instance &src = pose_source(inst); // lane PERF-HD
-				const float fade = src.Pose.PivotFade[(size_t)bone] * inst.Opacity; // PROJ-2: the drawable's opacity
-				if (d.Mesh->HasOpaque && fade < 0.999f) ++d.Dithered;
-				float *o = buf + (size_t)count * 16;
-				const Basis &b = inst.Xf.basis;
-				o[0] = b.rows[0][0]; o[1] = b.rows[0][1]; o[2] = b.rows[0][2]; o[3] = inst.Xf.origin.x;
-				o[4] = b.rows[1][0]; o[5] = b.rows[1][1]; o[6] = b.rows[1][2]; o[7] = inst.Xf.origin.y;
-				o[8] = b.rows[2][0]; o[9] = b.rows[2][1]; o[10] = b.rows[2][2]; o[11] = inst.Xf.origin.z;
-				o[12] = inst.InfantryLight ? -(float)(src.PaletteOffset + 1) : (float)src.PaletteOffset;
-				o[13] = fade;
-				o[14] = inst.HcPacked;
-				o[15] = (float)((rigid ? (int)bone : 0) + 1024 * inst.Sway + (inst.Fogged ? 16384 : 0) // lane VISUAL-2: the sway type, the fogged light
-					+ (inst.OcclusionSlot << W3D_OCCLUSION_SLOT_SHIFT) + (inst.Occluder ? W3D_OCCLUSION_OCCLUDER_BIT : 0) // lane OCCLUDE-1
-				+ (inst.NoSceneFog ? W3D_NO_SCENE_FOG_BIT : 0)); // lane INGAMEBG-1
-				++count;
+				if (d.Mesh->HasOpaque && pose_source(inst).Pose.PivotFade[(size_t)bone] * inst.Opacity < 0.999f) ++d.Dithered; // S-029 counts the members, drawn or culled
 			}
-			d.MM->set_buffer(d.Buffer);
-			d.MM->set_visible_instance_count(count);
-			// Share the actual surface shaders: skinning, vegetation sway and alpha cutouts must match the visible mesh.
-			// Separate batches are necessary because casting is a GeometryInstance property, while eligibility is per drawable.
-			int shadowCount = 0;
-			for (int id : ids)
-				if (Instances[(size_t)id].CastShadow) ++shadowCount;
-			if (shadowCount != 0 && d.ShadowMM.is_null())
-			{
-				d.ShadowMM.instantiate();
-				d.ShadowMM->set_transform_format(MultiMesh::TRANSFORM_3D);
-				d.ShadowMM->set_use_custom_data(true);
-				d.ShadowMM->set_mesh(d.Mesh->Mesh);
-				MultiMeshInstance3D *shadow = memnew(MultiMeshInstance3D);
-				shadow->set_name(String(d.Node->get_name()) + "_shadow");
-				shadow->set_multimesh(d.ShadowMM);
-				shadow->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
-				add_child(shadow);
-			}
-			if (d.ShadowMM.is_valid())
-			{
-				if (d.ShadowMM->get_instance_count() != d.Allocated)
-				{
-					d.ShadowMM->set_instance_count(d.Allocated);
-					d.ShadowBuffer.resize((int64_t)d.Allocated * 16);
-				}
-				float *shadowBuffer = d.ShadowBuffer.ptrw();
-				int out = 0;
-				for (size_t i = 0; i < ids.size(); ++i)
-				{
-					if (Instances[(size_t)ids[i]].CastShadow)
-					{
-						std::memcpy(shadowBuffer + (size_t)out * 16, d.Buffer.ptr() + i * 16, 16 * sizeof(float));
-						++out;
-					}
-				}
-				d.ShadowMM->set_buffer(d.ShadowBuffer);
-				d.ShadowMM->set_visible_instance_count(shadowCount);
-			}
-			visible += count;
+			pack_draw(m, d); // lane GPUPERF-2: the buffer, the MultiMeshes' boxes and the shadow batch
+			visible += (int)d.Packed.size();
 			m.Dithered += d.Dithered;
 		}
 		if (wrote) ++writes;
@@ -2182,6 +2164,14 @@ void W3DInstancer::write_buffers()
 		m.BuffersDirty = false;
 		dithered += m.Dithered;
 		sortedItems += m.SortedItems;
+	}
+	if (DrawCulling)
+	{
+		int culled = 0;
+		for (const std::unique_ptr<Model> &mp : Models)
+			for (const DrawItem &d : mp->Draws)
+				culled += (int)d.Order.size() - (int)d.Packed.size();
+		DrawCulled = culled;
 	}
 	DitheredFadeInstances = dithered;
 	SortedDrawItems = sortedItems;
@@ -2204,6 +2194,275 @@ void W3DInstancer::write_buffers()
 	{
 		warn("blended draw items are drawn in insertion order: no sort camera (set_sort_camera) and no current Camera3D");
 	}
+}
+
+void W3DInstancer::set_draw_culling(bool enabled)
+{
+	if (DrawCulling == enabled)
+	{
+		return;
+	}
+	DrawCulling = enabled;
+	InViewValid = false;
+	for (std::unique_ptr<Model> &m : Models)
+	{
+		m->BuffersDirty = true; // every draw list is written again (all instances, or the ones in view) by the next update
+		if (!enabled)
+		{
+			for (DrawItem &d : m->Draws)
+			{
+				d.MM->set_custom_aabb(kMultiMeshBounds); // the large box again (lane PERF-HD: Godot need not walk the slots)
+				if (d.ShadowMM.is_valid())
+				{
+					d.ShadowMM->set_custom_aabb(AABB());
+				}
+			}
+		}
+	}
+	PoseDirty = true;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (enabled && !PreDrawConnected && rs)
+	{
+		rs->connect("frame_pre_draw", callable_mp(this, &W3DInstancer::cull_draws));
+		PreDrawConnected = true;
+	}
+	// lane GPUPERF-2 review: a scene that updates itself by hand (GameWorld's static layer, set_auto_update(false)) will not apply the dirty buffers
+	// while culling is off (cull_draws returns at once), so the instances the last compaction left out would stay missing. Repack now: the toggle is rare
+	// and this is only the manual-update scene the caller owns.
+	if (!AutoUpdate && Assets)
+	{
+		update_now();
+	}
+}
+
+bool W3DInstancer::cull_frustum(std::vector<Plane> &planes, Transform3D &nodeXf) const
+{
+	planes.clear();
+	if (!is_inside_tree() || get_viewport() == nullptr || get_viewport()->get_camera_3d() == nullptr)
+	{
+		return false;
+	}
+	const TypedArray<Plane> main = get_viewport()->get_camera_3d()->get_frustum();
+	if (main.size() != 6)
+	{
+		return false;
+	}
+	for (int64_t k = 0; k < main.size(); ++k)
+	{
+		planes.push_back(main[k]);
+	}
+	for (const Plane &pl : ExtraPoseFrustum)
+	{
+		planes.push_back(pl); // planes 6..11: the PiP camera's (an instance is drawn when it meets either frustum)
+	}
+	nodeXf = get_global_transform();
+	return true;
+}
+
+void W3DInstancer::compute_in_view(const std::vector<Plane> &planes, const Transform3D &nodeXf)
+{
+	InView.assign(Instances.size(), 0);
+	const Vector3 ns = nodeXf.basis.get_scale_abs();
+	const real_t nodeScale = std::max(ns.x, std::max(ns.y, ns.z));
+	auto inside = [&](const Vector3 &c, real_t r, size_t first, size_t last) {
+		for (size_t k = first; k < last; ++k)
+		{
+			if (planes[k].distance_to(c) > r)
+			{
+				return false;
+			}
+		}
+		return true;
+	};
+	for (std::unique_ptr<Model> &mp : Models)
+	{
+		const float radius = cull_radius(*mp); // S-1730: the sphere the pose culling uses
+		for (int id : mp->InstanceIds)
+		{
+			const Instance &inst = Instances[(size_t)id];
+			if (inst.Removed) continue;
+			const Vector3 centre = nodeXf.xform(inst.Xf.origin);
+			const Vector3 sc = inst.Xf.basis.get_scale_abs();
+			const real_t r = radius * std::max(sc.x, std::max(sc.y, sc.z)) * nodeScale;
+			InView[(size_t)id] = (inside(centre, r, 0, 6) || (planes.size() == 12 && inside(centre, r, 6, 12))) ? 1 : 0;
+		}
+	}
+	CullPlanes = planes;
+	CullNodeXf = nodeXf;
+	InViewValid = true;
+	++InViewEpoch;
+}
+
+void W3DInstancer::pack_draw(Model &m, DrawItem &d)
+{
+	const int bone = d.Sub->BoneIndex;
+	const bool culling = DrawCulling && InViewValid;
+	const float radius = culling ? cull_radius(m) : 0.0f;
+	d.Packed.clear();
+	float *buf = d.Buffer.ptrw();
+	int count = 0;
+	AABB box;
+	// the instance matrix (transform, palette, fade, house colour, shading flags): shared by the colour and the shadow batches, so a shadow batch can
+	// be built from instances the camera culling left out
+	auto fill = [&](const Instance &inst, float *o) {
+		const Instance &src = pose_source(inst); // lane PERF-HD
+		const float fade = src.Pose.PivotFade[(size_t)bone] * inst.Opacity; // PROJ-2: the drawable's opacity
+		const Basis &b = inst.Xf.basis;
+		o[0] = b.rows[0][0]; o[1] = b.rows[0][1]; o[2] = b.rows[0][2]; o[3] = inst.Xf.origin.x;
+		o[4] = b.rows[1][0]; o[5] = b.rows[1][1]; o[6] = b.rows[1][2]; o[7] = inst.Xf.origin.y;
+		o[8] = b.rows[2][0]; o[9] = b.rows[2][1]; o[10] = b.rows[2][2]; o[11] = inst.Xf.origin.z;
+		o[12] = inst.InfantryLight ? -(float)(src.PaletteOffset + 1) : (float)src.PaletteOffset;
+		o[13] = fade;
+		o[14] = inst.HcPacked;
+		o[15] = (float)((d.Rigid ? (int)bone : 0) + 1024 * inst.Sway + (inst.Fogged ? 16384 : 0) // lane VISUAL-2: the sway type, the fogged light
+			+ (inst.OcclusionSlot << W3D_OCCLUSION_SLOT_SHIFT) + (inst.Occluder ? W3D_OCCLUSION_OCCLUDER_BIT : 0) // lane OCCLUDE-1
+			+ (inst.NoSceneFog ? W3D_NO_SCENE_FOG_BIT : 0)); // lane INGAMEBG-1
+	};
+	auto sphereBoxOf = [&](const Instance &inst) {
+		const Vector3 sc = inst.Xf.basis.get_scale_abs();
+		const real_t r = radius * std::max(sc.x, std::max(sc.y, sc.z));
+		return AABB(inst.Xf.origin - Vector3(r, r, r), Vector3(2 * r, 2 * r, 2 * r));
+	};
+	for (int id : d.Order)
+	{
+		if (culling && (size_t)id < InView.size() && !InView[(size_t)id])
+		{
+			continue; // lane GPUPERF-2: outside every camera's frustum
+		}
+		const Instance &inst = Instances[(size_t)id];
+		fill(inst, buf + (size_t)count * 16);
+		if (culling)
+		{
+			const AABB sphereBox = sphereBoxOf(inst);
+			box = count == 0 ? sphereBox : box.merge(sphereBox);
+		}
+		d.Packed.push_back(id);
+		++count;
+	}
+	d.MM->set_buffer(d.Buffer);
+	d.MM->set_visible_instance_count(count);
+	if (culling)
+	{
+		// the drawn instances' spheres in the instancer's space (the draw item nodes sit at its origin); a box for an empty list too (a large one would
+		// make Godot walk the slots again)
+		d.Box = count > 0 ? box : AABB(Vector3(), Vector3(1, 1, 1));
+		d.MM->set_custom_aabb(d.Box);
+	}
+	d.PackedEpoch = culling ? InViewEpoch : 0;
+	// Share the actual surface shaders: skinning, vegetation sway and alpha cutouts must match the visible mesh.
+	// Separate batches are necessary because casting is a GeometryInstance property, while eligibility is per drawable.
+	// lane GPUPERF-2 review: the shadow batch is built from every caster of the draw item, not from the camera-visible Packed list: an instance behind the
+	// camera or outside its frustum still throws a shadow onto the visible ground (update_now keeps such a caster posed for exactly this case), and a
+	// shadow-only batch culled with the colour batch would lose it. Its box is the casters' spheres, so the shadow pass has the casters it needs.
+	int shadowCount = 0;
+	AABB shadowBox;
+	for (int id : d.Order)
+	{
+		const Instance &inst = Instances[(size_t)id];
+		if (!inst.CastShadow)
+		{
+			continue;
+		}
+		if (culling)
+		{
+			const AABB sphereBox = sphereBoxOf(inst);
+			shadowBox = shadowCount == 0 ? sphereBox : shadowBox.merge(sphereBox);
+		}
+		++shadowCount;
+	}
+	if (shadowCount != 0 && d.ShadowMM.is_null())
+	{
+		d.ShadowMM.instantiate();
+		d.ShadowMM->set_transform_format(MultiMesh::TRANSFORM_3D);
+		d.ShadowMM->set_use_custom_data(true);
+		d.ShadowMM->set_mesh(d.Mesh->Mesh);
+		MultiMeshInstance3D *shadow = memnew(MultiMeshInstance3D);
+		shadow->set_name(String(d.Node->get_name()) + "_shadow");
+		shadow->set_multimesh(d.ShadowMM);
+		shadow->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+		add_child(shadow);
+	}
+	if (d.ShadowMM.is_valid())
+	{
+		if (d.ShadowMM->get_instance_count() != d.Allocated)
+		{
+			d.ShadowMM->set_instance_count(d.Allocated);
+			d.ShadowBuffer.resize((int64_t)d.Allocated * 16);
+		}
+		float *shadowBuffer = d.ShadowBuffer.ptrw();
+		int out = 0;
+		for (int id : d.Order)
+		{
+			const Instance &inst = Instances[(size_t)id];
+			if (!inst.CastShadow)
+			{
+				continue;
+			}
+			fill(inst, shadowBuffer + (size_t)out * 16);
+			++out;
+		}
+		d.ShadowMM->set_buffer(d.ShadowBuffer);
+		d.ShadowMM->set_visible_instance_count(shadowCount);
+		if (culling)
+		{
+			d.ShadowMM->set_custom_aabb(shadowCount > 0 ? shadowBox : AABB(Vector3(), Vector3(1, 1, 1)));
+		}
+	}
+}
+
+void W3DInstancer::cull_draws()
+{
+	if (!DrawCulling || !Materials || !is_inside_tree())
+	{
+		return;
+	}
+	const auto t0 = std::chrono::steady_clock::now();
+	std::vector<Plane> planes;
+	Transform3D nodeXf;
+	if (!cull_frustum(planes, nodeXf))
+	{
+		return; // no camera: the lists stay as written
+	}
+	bool same = InViewValid && nodeXf == CullNodeXf && planes.size() == CullPlanes.size();
+	for (size_t k = 0; same && k < planes.size(); ++k)
+	{
+		same = planes[k] == CullPlanes[k];
+	}
+	if (!same)
+	{
+		compute_in_view(planes, nodeXf); // the cameras moved: every list is checked against them
+	}
+	// a list packed with this InView is current; the others (packed before the cameras moved, or before write_buffers recomputed InView for moved
+	// instances) are checked and packed again where their drawn set changed
+	int culled = 0;
+	int visible = 0;
+	for (std::unique_ptr<Model> &mp : Models)
+	{
+		for (DrawItem &d : mp->Draws)
+		{
+			if (d.PackedEpoch != InViewEpoch)
+			{
+				PackScratch.clear();
+				for (int id : d.Order)
+				{
+					if ((size_t)id < InView.size() && InView[(size_t)id])
+					{
+						PackScratch.push_back(id);
+					}
+				}
+				if (PackScratch != d.Packed || d.MM->get_visible_instance_count() != (int)d.Packed.size())
+				{
+					pack_draw(*mp, d);
+				}
+				d.PackedEpoch = InViewEpoch;
+			}
+			culled += (int)d.Order.size() - (int)d.Packed.size();
+			visible += (int)d.Packed.size();
+		}
+	}
+	DrawCulled = culled;
+	VisibleInstances = visible; // lane GPUPERF-2 review: this compaction changes what is drawn, so the reported count follows it
+	CullMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
 void W3DInstancer::update_mappers()
@@ -2510,6 +2769,16 @@ void W3DInstancer::_notification(int what)
 	if (what == NOTIFICATION_PREDELETE)
 	{
 		release_palette_rd();
+		RenderingServer *rs = RenderingServer::get_singleton();
+		if (PreDrawConnected && rs)
+		{
+			const Callable c = callable_mp(this, &W3DInstancer::cull_draws);
+			if (rs->is_connected("frame_pre_draw", c))
+			{
+				rs->disconnect("frame_pre_draw", c);
+			}
+			PreDrawConnected = false;
+		}
 	}
 	if (what == NOTIFICATION_READY)
 	{
@@ -2524,7 +2793,7 @@ void W3DInstancer::_notification(int what)
 void W3DInstancer::_process(double delta)
 {
 	if (Playing) GlobalTime += delta * TimeScale;
-	update_now();
+	if (PresentationUpdates) update_now();
 }
 
 Vector3 W3DInstancer::get_bone_position(int64_t instance, int bone) const
@@ -2601,6 +2870,9 @@ Dictionary W3DInstancer::get_stats() const
 	s["dithered_fade_instances"] = DitheredFadeInstances; // S-029 in the last update
 	s["sorted_draw_items"] = SortedDrawItems;
 	s["interleaved_batch_pairs"] = InterleavedBatchPairs; // S-029 (second condition) in the last update
+	s["draw_culling"] = DrawCulling;         // lane GPUPERF-2: set_draw_culling, the slots the last compaction left out of the draw lists, its time
+	s["draw_culled"] = DrawCulled;
+	s["draw_cull_ms"] = CullMs;
 	return s;
 }
 

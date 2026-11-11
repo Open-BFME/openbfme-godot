@@ -6,6 +6,7 @@
 #pragma once
 
 #include <godot_cpp/classes/image.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
 
 #include <string>
 
@@ -14,6 +15,7 @@ class AptFileSource;
 namespace godot
 {
 // `stem` is the archive path without extension (art/compiledtextures/<two letters>/<lower-case stem>): <stem>.dds, else <stem>.jpg with <stem>.png as its
-// second stream; null when none decodes. *pairedPng: the .png was merged (S-1482)
-Ref<godot::Image> loadPackedTexture(AptFileSource &source, const std::string &stem, bool *pairedPng);
+// second stream; null when none decodes. *pairedPng: the .png was merged (S-1482).
+// preloadedJpg may supply the caller's already-read JPG bytes. DDS still takes precedence; the PNG companion is read normally.
+Ref<godot::Image> loadPackedTexture(AptFileSource &source, const std::string &stem, bool *pairedPng, const PackedByteArray *preloadedJpg = nullptr);
 } // namespace godot

@@ -21,7 +21,7 @@
 //   EnvironmentData v2/v3  TARGET Open-BFME-1 BaseHeightMapWriteEnvironmentData.cpp (v3)
 //   NamedCameras v2        TARGET Open-BFME-1 Rva00747E80WriteNamedCameras.cpp
 //   CameraAnimationList    TARGET (lane CAMANIM-1) RW 0x948CFD / 0x94622C / 0x9D65B1, BFME2 decomp Rva00540E82Init.cpp:254-294
-//   WaypointsList v1       DONOR ZH TerrainLogic.cpp:1280; TARGET Open-BFME-2 TerrainLogic_parseWaypointData.cpp
+//   WaypointsList v1       DONOR ZH TerrainLogic.cpp:1280; TARGET Open-BFME-2 TerrainLogic.cpp parseWaypointDataChunk
 //   SkyboxSettings v1      TARGET Open-BFME-1 Water/WaterRenderObjReadSkyBoxSettings.cpp
 
 #pragma once

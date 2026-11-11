@@ -11,6 +11,7 @@
 #include "Siege1TestUtil.h"
 
 #include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Module/GateModules.h"
 
 #include <cstdio>
 
@@ -30,10 +31,13 @@ struct GateRun
 	float healthAfter = 0.0f;
 	float distAtHit = -1.0f;             // the unit's 2D distance from the gate at its first damage
 	std::string otherDamaged;            // the other objects that lost health, in object list order
+	int gateContacts = 0;                // lane GATECOLLIDE-1: the gate pairs whose shapes overlapped (AIWorld::gateContacts) over the attack
+	int gatePushOuts = 0;                // and the gate's move-away requests (push-out scan and repel; GateOpenAndCloseBehavior::pushOutRequests)
 };
 
-// `unit` made `d` in front of the gate named `gateName` (along the gate's own facing, on the side of Player_2_Start), ordered to attack it for `frames` frames
-GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateName, const char *unit, float d, int frames)
+// `unit` made `d` in front of the gate named `gateName` (along the gate's own facing, on the side of Player_2_Start), ordered to attack it for `frames` frames;
+// `closeFirst`: the gate is closed (GateOpenAndCloseBehavior::close, its CLOSED state reached) before the unit is made
+GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateName, const char *unit, float d, int frames, bool closeFirst = false)
 {
 	GateRun r;
 	FortressGame g(s, map, false);
@@ -56,6 +60,18 @@ GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateN
 	g.frames(2);
 	Object *gate = g.named(gateName);
 	REQUIRE(gate);
+	if (closeFirst)
+	{
+		GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+		REQUIRE(b);
+		b->close();
+		for (int i = 0; i < 200 && b->state() != GateOpenAndCloseBehavior::CLOSED; ++i)
+		{
+			g.frames(1);
+		}
+		REQUIRE(b->state() == GateOpenAndCloseBehavior::CLOSED);
+		REQUIRE(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED);
+	}
 	Player *me = g.ofFaction("FactionMordor");
 	REQUIRE(me);
 	g.game->shroud().revealMapForPlayerPermanently(me->getPlayerIndex());
@@ -83,6 +99,9 @@ GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateN
 	r.ordered = ai && ai->aiAttackObject(gate, CMD_FROM_PLAYER);
 	const ObjectID gid = gate->getID();
 	const float before = healthOf(gate);
+	GateOpenAndCloseBehavior *gb = GateOpenAndCloseBehavior::findGate(*gate);
+	const unsigned long long contactsBefore = g.game->ai().gateContacts();
+	const unsigned pushOutsBefore = gb ? gb->pushOutRequests() : 0u;
 	for (int f = 1; f <= frames; ++f)
 	{
 		g.frames(1);
@@ -103,6 +122,8 @@ GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateN
 	}
 	Object *t = g.game->logic().findObjectByID(gid);
 	r.healthAfter = t ? healthOf(t) : 0.0f;
+	r.gateContacts = (int)(g.game->ai().gateContacts() - contactsBefore);
+	r.gatePushOuts = t && gb ? (int)(gb->pushOutRequests() - pushOutsBefore) : -1;
 	r.shots = (int)(c.projectilesLaunched - launched);
 	r.contacts = (int)(c.projectileContactHits - hits);
 	for (const std::pair<ObjectID, float> &h : health)
@@ -114,14 +135,15 @@ GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateN
 		}
 	}
 	MESSAGE(std::string(unit) << " in front of " << std::string(gateName) << " from " << d << ": ordered " << r.ordered << ", shots " << r.shots << ", contacts " << r.contacts << " (" << r.contactsWhileStanding << " while it stood), first damage "
-				  << r.firstHit << " from " << r.distAtHit << ", death " << r.deathFrame << ", health at the end " << r.healthAfter << ", others damaged: " << r.otherDamaged);
+				  << r.firstHit << " from " << r.distAtHit << ", death " << r.deathFrame << ", health at the end " << r.healthAfter << ", others damaged: " << r.otherDamaged
+				  << ", gate contacts " << r.gateContacts << ", gate move-away requests " << r.gatePushOuts);
 	return r;
 }
 // a pinned run made twice: the two runs must agree (the port is deterministic; a difference is a bug, not a re-pin)
-GateRun pinnedRun(starttest::Shared &s, const char *map, const char *gateName, const char *unit, float d, int frames)
+GateRun pinnedRun(starttest::Shared &s, const char *map, const char *gateName, const char *unit, float d, int frames, bool closeFirst = false)
 {
-	const GateRun a = attackFromFront(s, map, gateName, unit, d, frames);
-	const GateRun b = attackFromFront(s, map, gateName, unit, d, frames);
+	const GateRun a = attackFromFront(s, map, gateName, unit, d, frames, closeFirst);
+	const GateRun b = attackFromFront(s, map, gateName, unit, d, frames, closeFirst);
 	CHECK(a.shots == b.shots);
 	CHECK(a.contacts == b.contacts);
 	CHECK(a.contactsWhileStanding == b.contactsWhileStanding);
@@ -129,6 +151,9 @@ GateRun pinnedRun(starttest::Shared &s, const char *map, const char *gateName, c
 	CHECK(a.deathFrame == b.deathFrame);
 	CHECK(a.distAtHit == b.distAtHit);
 	CHECK(a.otherDamaged == b.otherDamaged);
+	CHECK(a.healthAfter == b.healthAfter);
+	CHECK(a.gateContacts == b.gateContacts);
+	CHECK(a.gatePushOuts == b.gatePushOuts);
 	return a;
 }
 } // namespace
@@ -174,12 +199,18 @@ TEST_CASE("siege1 gate: #64's catapult made inside its MinimumAttackRange of Hel
 	// merge queue q32 (#159's ramp cells, RW 0x93527F, move the stones' scatter at Helm's Deep; measured once on the merged tree, the change appears at #159's merge point): one contact while the gate stands (two), first hit and death unchanged
 	// merge queue q33 (MODCOMPAT-MOD1's modules move the stones' scatter; measured at each merge point and named with a contact log): two contacts while the
 	// gate stands, both the gatehouse in the line of fire (HelmsDeepGatehouseLeft at frame 259, HelmsDeepGatehouseCenter at 294), first hit 48, death 319
-	// lane WARG-1 (FindClosestPath RW 0x6FB869 at the attack path's adjust RW 0x666E51 and computePath's fallback, the unclamped cells RW 0x6E8CE6; measured once on the lane's tree after the archive merge, a CI host): one contact while the gate stands, death 319 -> 354
-	CHECK(r.contactsWhileStanding == 1);
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): no contact while the gate stands (two), first hit 53 (48), death 393 (319)
+	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the throwers' drives, the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps them): one contact while the gate stands (0), death 427 (223)
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): contacts while it stood 1 -> 0
+	CHECK(r.contactsWhileStanding == 0);
 	// lane MODCOMPAT-MOD1 (GeometryUpgrade: every object reads its own GeometryInfo, RW Object + 0xA8, for its combat circle and sphere (+ 0xB8 / + 0xBC), partition cells and pathfinder footprint, and the gate's open / closed switch runs the full refresh RW 0x68B244; measured at its commit, a CI host):
 	// first hit 49 -> 48, the gate's death 287 -> 252
-	CHECK(r.firstHit == 48);
-	CHECK(r.deathFrame == 354);
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first hit 53 -> 52
+	CHECK(r.firstHit == 52);
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the Mordor catapult from 120: death 427 -> 393
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 393 -> 222
+	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): death 222 -> 324
+	CHECK(r.deathFrame == 324); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 393 -> 223
 }
 
 TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's gate break it; the arch takes no stone meant for the gate")
@@ -195,26 +226,42 @@ TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's ga
 	// merge queue q34 (#161's block search, block zones RW 0x9389A6 and raised branch RW 0x9389CE, moves the AI defender and the random stream at Helm's
 	// Deep; measured once on the merged tree and at each merge point, SPELLFIX-1 and #160 keep the archive's values): the catapult 10 shots (9), death 326
 	// (292); the ballista two contacts while the gate stands (0; what they met was not identified, as the trebuchet's one since q31), death 467 (389)
-	// lane WARG-1 (FindClosestPath RW 0x6FB869 at the attack path's adjust RW 0x666E51 and computePath's fallback, the unclamped cells RW 0x6E8CE6; measured once on the lane's tree after the archive merge, a CI host): the catapult 7 shots (10), death 224 (326); the trebuchet death 386 (387); the
-	// ballista one contact while the gate stands (2), death 311 (467)
-	CHECK(c.shots == 7);
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): the catapult 8 shots (10), one contact while the gate stands (0), death 258 (326); the trebuchet two contacts (1); the Dwarven
+	// catapult two contacts (0); the ballista three contacts (2); what they met was not identified (as since q31); the first hits and the other deaths hold
+	// with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): the catapult 9 shots, three contacts, death 292; the trebuchet three contacts; the Dwarven catapult no contact, death 301; the
+	// ballista no contact, death 350
+	// merge queue q37 (#187's rebuilt paths on top of WARG-1's FindClosestPath, measured once on the merged tree; ATKRESET-1 keeps them): the catapult 6 shots (9), no contact (3),
+	// death 190 (292); the trebuchet no contact (3), death 341 (386); the Dwarven catapult two contacts (0), death 369 (301); the ballista death 389 (350)
+	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the throwers' drives, the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps them): the catapult 7 shots (6), one contact while the gate stands (0), death 224 (190); the trebuchet death 387 (341); the Dwarven
+	// catapult no contact (2), death 301 (369); the ballista one contact (0); what they met was not identified (as since q31)
+	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): shots 7 -> 9
+	CHECK(c.shots == 9);
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): contacts while it stood 1 -> 0
 	CHECK(c.contactsWhileStanding == 0);
 	CHECK(c.firstHit == 20);
-	CHECK(c.deathFrame == 224);
+	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): death 224 -> 292
+	CHECK(c.deathFrame == 292);
 	const GateRun t = pinnedRun(*s, kHelmsDeep, "Main Gate", "GondorTrebuchet", 400.0f, 600);
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): contacts while it stood 0 -> 1
 	CHECK(t.contactsWhileStanding == 1);
-	CHECK(t.firstHit == 19);
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first hit 19 -> 18
+	CHECK(t.firstHit == 18);
+	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): death 387 -> 386
 	CHECK(t.deathFrame == 386);
 	const GateRun dc = pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenCatapult", 400.0f, 600);
 	// its two stones a throw (until q31): both met HelmsDeepGatehouseLeft at frame 102 and, at frame 341, the front of the arch (HelmsDeepGatehouseCenter) 51 before
 	// its centre at z 174, below the lintel (the stones fell short; not the lintel reaching down, which the pair rule removed)
 	CHECK(dc.contactsWhileStanding == 0);
-	CHECK(dc.deathFrame == 369);
+	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the Dwarven catapult's death 301 -> 267
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 267 -> 367
+	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): death 367 -> 334
+	CHECK(dc.deathFrame == 334);
 	const GateRun b = pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBallista", 400.0f, 600);
 	// merge queue q27: one contact while the gate stands (was 0) and death 311 -> 389, LOS-1 (the terrain line of sight with the wall layers' heights;
 	// measured at each merge point)
 	CHECK(b.contactsWhileStanding == 1);
-	CHECK(b.deathFrame == 311);
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 389 -> 350
+	CHECK(b.deathFrame == 350);
 }
 
 TEST_CASE("siege1 gate: Mordor's catapult and Gondor's trebuchet in front of Minas Tirith's gate break it")
@@ -224,11 +271,14 @@ TEST_CASE("siege1 gate: Mordor's catapult and Gondor's trebuchet in front of Min
 	CHECK(c.ordered);
 	// merge queue q28 (measured once on the merged tree and at each merge point): the catapult's stones no longer meet MinisGate1 while the gate stands
 	// (1 -> 0) and the first hit is at 20 (21); the trebuchet breaks the gate at 158 (203)
-	CHECK(c.contactsWhileStanding == 0);
+	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): the catapult one contact while the gate stands (0), first hit 23 (21), death 125 (123); the trebuchet holds
+	CHECK(c.contactsWhileStanding == 1);
 	// With map creeps removed, both first-hit engine pins are frame 21.
 	// Contact limits and the original gate-death pins remain unchanged.
-	CHECK(c.firstHit == 21);
-	CHECK(c.deathFrame == 123);
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first hit 23 -> 22
+	CHECK(c.firstHit == 22);
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 125 -> 124
+	CHECK(c.deathFrame == 124);
 	const GateRun t = pinnedRun(*s, kMinasTirith, "Gate", "GondorTrebuchet", 400.0f, 600);
 	CHECK(t.contactsWhileStanding == 0);
 	CHECK(t.firstHit == 21);
@@ -239,10 +289,35 @@ TEST_CASE("siege1 gate: the rams, Grond and the mumak in front of the gates (no 
 {
 	OPENBFME_REQUIRE_START(s);
 	// merge queue q35 (#132's ground-structure melee reach, measured once on the merged tree and at each merge point; SIMSMALL-1, #178 and #179 keep the archive's values): the rams 99 -> 134, 102 -> 145 at Helm's Deep, 57 -> 90 at Minas Tirith
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 134);
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 143); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244); lane WARG-1 (FindClosestPath, measured once on the lane's tree): 145 -> 143
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 134 -> 131
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 131);
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 143 -> 136
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 136); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244); lane WARG-1 (FindClosestPath, measured once on the lane's tree): 145 -> 143
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorGrond", 250.0f, 600).deathFrame == 128);
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorMumakil", 250.0f, 600).deathFrame == 247); // merge queue q27: 246 -> 247, LOS-1
-	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 90);
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorMumakil", 250.0f, 600).deathFrame == 246); // merge queue q27: 246 -> 247, LOS-1; lane PATH-REBUILD: 247 -> 246
+	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 90 -> 94
+	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 94);
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "MordorGrond", 250.0f, 600).deathFrame == 83);
+}
+
+// lane GATECOLLIDE-1: the gates' contact pass (AIWorld::processGateContacts) lets a CLOSED gate repel the objects touching its closed box unless the gate is
+// their goal or victim (RW 0x89C6F5; that exemption: `gatepush1 gates retail: ...`, test_hud5_gates.cpp). An orc horde and a ram ordered to attack the CLOSED
+// main gate stop short of the closed box (the orcs' first blow from 71, the ram's from 29): no gate pair overlaps, so the pass changes nothing in their
+// attack. The ram's three move-away requests are the gate's push-out scans as it dies and opens (RW 0x89C759), not contacts
+TEST_CASE("siege1 gate: an orc horde and a ram attacking Helm's Deep's CLOSED main gate never touch its closed box (no gate contact)")
+{
+	OPENBFME_REQUIRE_START(s);
+	const GateRun r = pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorFighterHorde", 250.0f, 600, true);
+	REQUIRE(r.ordered);
+	CHECK(r.gateContacts == 0);
+	CHECK(r.gatePushOuts == 0);
+	CHECK(r.firstHit == 41);
+	CHECK(r.deathFrame == -1); // the orcs do not break it in 600 frames
+	CHECK(r.healthAfter == 3552.0f);
+	const GateRun ram = pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600, true);
+	REQUIRE(ram.ordered);
+	CHECK(ram.gateContacts == 0);
+	CHECK(ram.gatePushOuts == 3);
+	CHECK(ram.firstHit == 57);
+	CHECK(ram.deathFrame == 123);
 }

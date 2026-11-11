@@ -139,7 +139,8 @@ bool Pathfinder::adjustToMeleeDestination(const PathfindObject &obj, const Pathf
 			return false;
 		}
 	}
-	const PathfindLayerEnum layer = LAYER_GROUND;
+	// lane WALLMELEE-1, RW 0x6EEC07: the destination's layer for the unit (RW 0x680A75); the spiral's cells must be of that layer exactly (RW 0x6E9070)
+	const PathfindLayerEnum layer = getLayerAt(obj, *dest);
 	const Coord3D pos = obj.getPosition();
 	const float dz0 = SimMath::subf32(pos.z, dest->z), dy0 = SimMath::subf32(pos.y, dest->y), dx0 = SimMath::subf32(pos.x, dest->x);
 	const float d0 = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz0, dz0), SimMath::mulf32(dy0, dy0)), SimMath::mulf32(dx0, dx0));
@@ -244,7 +245,7 @@ bool Pathfinder::adjustToMeleeDestination(const PathfindObject &obj, const Pathf
 //     accepted when marked or |dest - point| + 20 <= d0: RW 0x6F3C87 (adjustToPossibleDestination) on the point, dest = point, true; else false.
 // INFERENCE (stop S-787): RW 0x68C9AC is the target's position; RW 0x667C76 is false; RW 0x6EA0EC's WALK_ON_TOP_OF_WALL cell test (RW 0x6E82B3) is the obstacle test;
 // RW 0x6F3082 is checkDestination with no other unit's goal in it; RW 0x938939's obstacle-zone mapping and the siege-deploy branches (RW 0x863983 / 0x8C9C01) are
-// not ported; RW 0x6FB754 is canApproachToTarget (lane PLAY-4, its callback RW 0x6F61BD in AIPathfindSearch.cpp); RW 0x6F5BB0 is clientSafeQuickDoesPathExist. Lane
+// not ported; RW 0x6FB754 is canApproachToTarget (lane PLAY-4, its callback RW 0x6F61BD in AIPathfindSearch.cpp); RW 0x6F5BB0 is quickDoesPathExist (lane QPATH-1). Lane
 // WALL-2 ported the mark (RW 0x74661A: the step's layer above the ground, or RW 0x6EAD32: its ground cell an obstacle with bit 17).
 
 #include "GameLogic/AI/AIPathfindHost.h"
@@ -262,11 +263,12 @@ bool Pathfinder::meleeOwnFootprintFree(const PathfindObject &obj)
 	const PathfindObjectID self = obj.getID();
 	const bool human = !obj.isComputerControlled();
 	const bool largeRect = obj.isKindOf(PK_LARGE_RECTANGLE_PATHFIND);
+	const PathfindLayerEnum ownLayer = getLayerAt(obj, obj.getPosition()); // RW 0x6EE70D: RW 0x680A75(unit, its position), lane WALLMELEE-1
 	for (int x = here.x - below; x < here.x + above; ++x)
 	{
 		for (int y = here.y - below; y < here.y + above; ++y)
 		{
-			const PathfindCell *c = getCell(LAYER_GROUND, x, y);
+			const PathfindCell *c = getCell(ownLayer, x, y);
 			if (c == nullptr || c->getType() == PathfindCell::CELL_BRIDGE_IMPASSABLE || (c->getImpassableToPlayers() && human) || c->getType() == PathfindCell::CELL_OBSTACLE)
 			{
 				return false;
@@ -390,13 +392,13 @@ bool Pathfinder::findMeleeEngagementLocation(const PathfindObject &obj, const Pa
 		}
 		const zoneStorageType zone = m_zoneManager.getEffectiveZone(mv, true, own->getZone());
 		// lane WALL-2, RW 0x6F39AD .. 0x6F3A05: the search's layer is the destination's (RW 0x680A75), the ground for a WALK_ON_TOP_OF_WALL target that is not
-		// WALL_UPGRADE
-		PathfindLayerEnum layer = getLayerAt(dest->x, dest->y, dest->z);
+		// WALL_UPGRADE; lane WALLMELEE-1: RW 0x6F39B5 passes the unit, the object form
+		PathfindLayerEnum layer = getLayerAt(obj, *dest);
+		const PathfindCell *destCell = getCell(layer, cell.x, cell.y); // RW 0x6F39C7: the cell on RW 0x680A75's layer, before the override
 		if (target.isKindOf(PK_WALK_ON_TOP_OF_WALL) && !wallUpgrade)
 		{
-			layer = LAYER_GROUND;
+			layer = LAYER_GROUND; // RW 0x6F3A05
 		}
-		const PathfindCell *destCell = getCell(layer, cell.x, cell.y);
 		if (destCell && m_zoneManager.getEffectiveZone(mv, true, destCell->getZone()) == zone)
 		{
 			int crowd = 0;
@@ -411,7 +413,10 @@ bool Pathfinder::findMeleeEngagementLocation(const PathfindObject &obj, const Pa
 			if (c == nullptr || c->getType() == PathfindCell::CELL_OBSTACLE || c->getType() == PathfindCell::CELL_BRIDGE_IMPASSABLE ||
 				(c->getImpassableToPlayers() && human) || m_zoneManager.getEffectiveZone(mv, true, c->getZone()) != zone)
 			{
-				return false; // RW 0x6E9070
+				// RW 0x6E9070; NOT PORTED (S-787): its test that the cell's own layer (>> 4 & 0x3F) is the search's. With it the port's ground
+				// search for a wall section (the WALK_ON_TOP_OF_WALL override) refuses the cells at the wall's foot, and Helm's Deep's mine carrier
+				// never drops its charge at the culvert (lane WALLMELEE-1, measured): the cells' layers there need reading against RotWK's first
+				return false;
 			}
 			adjustCoordToCell(x, y, center, out, layer);
 			return range.inRangeFrom(out, 0.0f) && meleeFootprintFree(obj, x, y, layer, radius, center);
@@ -508,7 +513,7 @@ bool Pathfinder::meleeBackOff(PathfindObject &obj, const PathfindLocomotorInfo &
 	// RW 0x6FB754 (lane PLAY-4: CanApproachToTarget ported; PHYS-1 had taken isLinePassable for it, whose goal reservations of other units closed every
 	// line out of a horde, so a lone melee unit never got near a horde member)
 	const bool open = canApproachToTarget(obj, loco, *dest, weaponRange, meleeWeapon);
-	if (open && clientSafeQuickDoesPathExist(loco, &pos, dest, &obj)) // RW 0x6F5BB0 with the unit (lane WALL-2: its portals)
+	if (open && quickDoesPathExist(obj, &pos, dest, &loco)) // RW 0x6F5BB0 with the unit and its set (lane QPATH-1)
 	{
 		return true;
 	}
@@ -532,7 +537,7 @@ bool Pathfinder::meleeBackOff(PathfindObject &obj, const PathfindLocomotorInfo &
 	{
 		p.x = SimMath::subf32(p.x, dx);
 		p.y = SimMath::subf32(p.y, dy);
-		if (clientSafeQuickDoesPathExist(loco, &pos, &p, &obj))
+		if (quickDoesPathExist(obj, &pos, &p, &loco))
 		{
 			reached = true;
 			break;

@@ -55,6 +55,10 @@ bool AptView3DKeepAspect(const std::string &value);
 // frame stays around the panels and titles it frames. With equal scales, or without `stretchWithStage`, the result is the clip's rectangle, as
 // retail's. `keepAspect` false: the clip's rectangle (the camera's own aspect is not ported, S-1483)
 void AptView3DImageSize(float rectW, float rectH, float scaleX, float scaleY, bool keepAspect, bool stretchWithStage, int &width, int &height);
+// lane PERF-2 (not retail): a View3D viewer renders its scene twice (black and white clears) into images the clip's size every frame, then draws them
+// stretched over the clip. More pixels than `budget` (1920x1080's count for the menus) cost an integrated GPU a large share of the frame and show no
+// more: the size is scaled down to at most `budget` pixels with its aspect kept (both sides at least 1).
+void AptView3DPixelBudget(int &width, int &height, int budget);
 // Sol r1 (ONLINE-5): does the View3D clip at `path` ("_level<N>.<...>", its target path) belong to one of `menuLevels` (the levels of the shell's menu
 // screens)? Those clips stretch with the stage (AptView3DImageSize); any other level's (GuiFX's end screen, an in-game movie) keeps retail's aspect
 bool AptView3DOnMenuLevel(const std::string &path, const std::vector<int> &menuLevels);

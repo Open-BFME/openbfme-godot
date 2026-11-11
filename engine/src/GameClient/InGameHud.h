@@ -53,6 +53,7 @@
 class ArchiveFileSystem;
 class GameTextSource;
 class LiveGame;
+class Player;
 class RetailObjectWorld;
 
 class InGameHud : public ScriptLocalView
@@ -327,11 +328,15 @@ private:
 	UpdateParts m_updateParts;                     // lane SELPERF-1
 	// lane SELPERF-1: what m_selectionDecals was built for (rebuilt when any changes, else refreshed)
 	unsigned m_decalLogicFrame = ~0u;
+	unsigned m_radarLogicFrame = ~0u; ///< the logic frame noteAttacks / noteLogicEvents last read (their state moves once per logic frame)
+	std::uint32_t m_radarLogicWrites = 0; ///< GameLogic::radarLogicWrites() at that read; a later write in the same logic frame reads again
+	const Player *m_radarLocalPlayer = nullptr; ///< the local player at that read (noteAttacks keeps only that player's attacks)
 	std::vector<ObjectID> m_decalSelection;
 	SelectionDecalSettings m_decalBuiltSettings;
 	const GameLogic *m_decalLogic = nullptr;
 	unsigned long long m_decalBuilds = 0;
 	unsigned long long m_decalVersion = 0;
+	void markRaisedSelectionDecals(); // lane SELWALL-1
 	unsigned m_decalClientFrame = ~0u;              // the client frame the markers were last refreshed in
 	DrawableIconUI m_iconUI;                  // lane HUD-5
 	IconUISettings m_iconSettings;

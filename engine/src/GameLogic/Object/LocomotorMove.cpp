@@ -11,9 +11,8 @@
 //   S-081  numeric parity: the movers mix x87 and SSE (moveForward RW 0x5E586F) and call the CRT / x87
 //          trigonometry; the facade reproduces the operation order and precision, but sin / cos / atan2 come
 //          from the platform libm (SimMath.h) and no retail oracle compares full sequences.
-//   S-084  movers and cases not ported (HOVER and SHIP: lane SHIP-1; GIANT_BIRD's rotateTowardsPosition branch: lane TAKEOVER-1), ScalesWalls look-ahead, ZAxisBehavior other
-//          than NO_Z_MOTIVE_FORCE, FLOATING_Z and SEA_LEVEL and their layer / projectile / falling special cases, the HORDE formation
-//          path nodes.
+//   S-084  movers and cases not ported (HOVER and SHIP: lane SHIP-1; GIANT_BIRD's rotateTowardsPosition branch: lane TAKEOVER-1), the FIXED_* ZAxisBehaviors,
+//          the layer / projectile / falling cases and the HORDE formation path nodes. The ScalesWalls look-ahead is ported (lane MECH-D).
 
 #include "GameLogic/Locomotor.h"
 
@@ -150,7 +149,7 @@ LocomotorMatrix LocomotorMatrix::identity()
 	return r;
 }
 
-// RW 0x5E3D0x (constructor): caps 99999, temporary cap -1, matrix identity (RW 0x5E3DE3), flags 0.
+// RW 0x5E3D02 (constructor): caps 99999, temporary cap -1, matrix identity (RW 0x5E3DE3), flags 0 but bit 10.
 Locomotor::Locomotor(const LocomotorTemplate *tmpl)
 	: m_template(tmpl ? tmpl->getFinalOverride() : nullptr)
 	, m_closeEnoughDist(tmpl ? tmpl->getFinalOverride()->m_closeEnoughDist : 0.0f)
@@ -163,6 +162,11 @@ Locomotor::Locomotor(const LocomotorTemplate *tmpl)
 	{
 		throw std::logic_error("Locomotor: null template");
 	}
+	// RW 0x5E3E6A: setFlag(10, final template + 0xC8) (lane LOCODIST-1: getLocomotorDistanceToGoal RW 0x664127 reads it)
+	if (m_template->m_closeEnoughDist3D)
+	{
+		m_flags |= LOCOMOTOR_FLAG_CLOSE_ENOUGH_DIST_3D;
+	}
 }
 
 const std::vector<std::string> &Locomotor::allStops()
@@ -171,9 +175,9 @@ const std::vector<std::string> &Locomotor::allStops()
 		"S-081: locomotor numeric parity unproven: the movers mix x87 and SSE (moveForward RW 0x5E586F) and use the CRT / x87 sin, cos and atan2; "
 		"operation order and PC24 precision are reproduced through NumericState, the trigonometry is NumericState's deterministic double-double "
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
-		"S-084: locomotor cases not ported: the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
-		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT, FIXED_SURFACE_RELATIVE_HEIGHT and FIXED_ABSOLUTE_HEIGHT (the last two: RW 0x5E78DB; the stealth reveal of a climbing object, RW 0x5E7C0A, is not ported) and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
-		"and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
+		"S-084: locomotor cases not ported: the ZAxisBehaviors FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS and RELATIVE_TO_HIGHEST_LAYER, and the projectile / falling "
+		"special cases of RW 0x5E774A / 0x5E5785 (its ramp and walkway height hold is ported: lane WALL-4; the wall-scaling look-ahead RW 0x5E8956, the SCALING_WALLS z case "
+		"and the look-ahead's stealth reveal RW 0x5E8CB2 are ported: lane MECH-D; SURFACE_RELATIVE_HEIGHT's climbing stealth reveal RW 0x5E7C0A is not), and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
 		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
 		"constant-calling result, the transform write (RW 0x70BA76) are not run for non-WINGS appearances; an idle unit's height and sleep follow "
 		"the movers' last frame."
@@ -1320,9 +1324,22 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 {
 	const LocomotorTemplate &t = *m_template;
 	int zAxis = t.m_zAxisBehavior;
-	if (zAxis == Z_SCALING_WALLS && !host.isScalingWall())
+	if (zAxis == Z_SCALING_WALLS)
 	{
-		zAxis = Z_NO_Z_MOTIVE_FORCE; // RW 0x5E76CA-0x5E76EC: an object that is not on a wall is moved like NO_Z_MOTIVE_FORCE
+		if (!host.isScalingWall())
+		{
+			zAxis = Z_NO_Z_MOTIVE_FORCE; // RW 0x5E76CA-0x5E76EC: an object that is not on a wall is moved like NO_Z_MOTIVE_FORCE
+		}
+		else
+		{
+			// RW 0x5E76AC case 9, when the horde's wall is kept (the BFME2 decomp LocomotorRva001E7ECA.cpp rva001E7ECA: no switch case 9): no z motive force,
+			// no ground snap; the climb's z in the working matrix stays, the common tail writes the pending position
+			Coord3D p{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
+			const Coord3D cur = host.getPosition();
+			const Coord3D effective = host.hasPendingPosition() ? host.getPendingPosition() : cur;
+			host.setPendingPosition(Coord3D{ effective.x, effective.y, SimMath::subf32(SimMath::mulf32(p.z, 2.0f), cur.z) });
+			return;
+		}
 	}
 	if (zAxis == Z_FLOATING_Z)
 	{
@@ -1455,10 +1472,16 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 	Coord3D pos{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
 	if (!host.zMotionSuppressed())
 	{
-		// RW 0x5E774A-0x5E7816: z comes from the terrain (RW 0x5E5785 on the ground layer, else the terrain query);
-		// the layer / water / falling special cases are not ported (S-084)
+		// RW 0x5E774A-0x5E7816: z comes from TheTerrainLogic->getLayerHeight at the object's layer (vslot 0x1C; RW 0x5E5785's water case on the ground layer
+		// is not ported, S-084). Lane WALL-4, RW 0x5E77AF .. 0x5E77EE: after the first second (TheGameLogic + 0x40 above LOGICFRAMES_PER_SECOND, RW 0xD9F608) an
+		// object on the ramp layer or a raised walkway that is more than 20 (RW 0xBDBC6C, SSE) above that height keeps its own
 		noteStopOf(1);
-		pos.z = host.groundHeightAt(pos.x, pos.y);
+		float surface = host.groundHeightAt(pos.x, pos.y);
+		if (host.logicFrame() > (unsigned)LOGICFRAMES_PER_SECOND && host.isOnRampOrRaisedLayer() && SimMath::subf32(pos.z, surface) > 20.0f)
+		{
+			surface = pos.z;
+		}
+		pos.z = surface;
 		m_matrix.m[2][3] = pos.z;
 	}
 	// tail, RW 0x5E7C40: the pending position is the previous effective position with an extrapolated z
@@ -1676,9 +1699,9 @@ void Locomotor::locomotorMoveTowardsPosition(LocomotorHost &host, const Coord3D 
 	{
 		m_nearPathEnd = path->isNearPathEnd(); // RW 0x5E2DBA
 	}
-	if (t.m_scalesWalls)
+	if (t.m_scalesWalls && host.wallScalingLookAhead(desiredSpeed))
 	{
-		noteStopOf(1); // the wall-scaling look-ahead (RW 0x5E8956-0x5E8FF8) is not ported
+		return; // RW 0x5E8956 .. 0x5E8FF8: the climb / rappel set the position; the appearance movers do not run
 	}
 	switch (t.m_appearance)
 	{

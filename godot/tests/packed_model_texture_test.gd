@@ -53,6 +53,7 @@ func _check_corrupt_mask() -> bool:
 	var jpg := folder.path_join("zzpackedprobe.jpg")
 	var png := folder.path_join("zzpackedprobe.png")
 	var plain_jpg := folder.path_join("zzpackedplain.jpg")
+	var bad_jpg := folder.path_join("zzpackedbad.jpg")
 	var image := Image.create(2, 2, false, Image.FORMAT_RGB8)
 	image.fill(Color.WHITE)
 	_check(image.save_jpg(jpg) == OK)
@@ -60,6 +61,10 @@ func _check_corrupt_mask() -> bool:
 	var file := FileAccess.open(png, FileAccess.WRITE)
 	_check(file != null)
 	file.store_string("invalid PNG companion")
+	file.close()
+	file = FileAccess.open(bad_jpg, FileAccess.WRITE)
+	_check(file != null)
+	file.store_string("invalid JPEG colour")
 	file.close()
 	var fs = ClassDB.instantiate("RetailFileSystem")
 	fs.set_mods(PackedStringArray([mod_path]))
@@ -70,12 +75,87 @@ func _check_corrupt_mask() -> bool:
 	_check(builder.get_report().errors.is_empty(), str(builder.get_report()))
 	_check(builder.load_texture(fs, "ZZPackedProbe.tga") == null)
 	_check(builder.get_report().errors.has("could not decode texture art\\compiledtextures\\zz\\zzpackedprobe.jpg"), str(builder.get_report()))
+	_check(builder.load_texture(fs, "ZZPackedBad.tga") == null)
+	_check(builder.get_report().errors.has("could not decode texture art\\compiledtextures\\zz\\zzpackedbad.jpg"), str(builder.get_report()))
+	# The callers pass their already-read JPG buffer to the packed loader. A bad
+	# buffer must still fail, and neither failed JPG nor companion may be cached.
+	_check(image.save_jpg(bad_jpg) == OK)
+	var mask := Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	mask.set_pixel(0, 0, Color(0.25, 0.5, 0.75, 0.125))
+	mask.set_pixel(1, 0, Color(0.5, 0.75, 1.0, 0.25))
+	mask.set_pixel(0, 1, Color(0.75, 1.0, 0.25, 0.5))
+	mask.set_pixel(1, 1, Color(1.0, 0.25, 0.5, 0.75))
+	_check(mask.save_png(png) == OK)
+	# Mounted mods are immutable; remount the repaired fixture before retrying.
+	fs = ClassDB.instantiate("RetailFileSystem")
+	fs.set_mods(PackedStringArray([mod_path]))
+	_check(fs.mount_retail().ok)
+	var repaired: Texture2D = builder.load_texture(fs, "ZZPackedBad.tga")
+	_check(repaired != null)
+	_check(builder.get_report().errors.is_empty(), str(builder.get_report()))
+	var paired: Texture2D = builder.load_texture(fs, "ZZPackedProbe.tga")
+	if _check(paired != null):
+		# The white JPEG leaves the PNG's colour and alpha unchanged, byte for byte.
+		_check(paired.get_image().get_data() == mask.get_data())
+	_check(builder.get_report().errors.is_empty(), str(builder.get_report()))
+	_check(str(builder.get_report().texture.packed_texture_stop).begins_with("[S-1482]"))
 	DirAccess.remove_absolute(png)
 	DirAccess.remove_absolute(jpg)
 	DirAccess.remove_absolute(plain_jpg)
+	DirAccess.remove_absolute(bad_jpg)
 	for path in [folder, mod_path.path_join("art/compiledtextures"), mod_path.path_join("art"), mod_path]:
 		DirAccess.remove_absolute(path)
 	return true
+
+## The textures of an instancer's materials by mesh surface, and those materials.
+func _surface_resources(renderer: Node) -> Dictionary:
+	var out := {}
+	for child in renderer.get_children():
+		if not child is MultiMeshInstance3D:
+			continue
+		var mesh: Mesh = child.multimesh.mesh
+		for surface in mesh.get_surface_count():
+			var material: ShaderMaterial = mesh.surface_get_material(surface)
+			var texture: Texture2D = material.get_shader_parameter("w3d_tex0")
+			if texture != null:
+				out[str(child.name) + ":" + str(surface)] = [texture, material]
+	return out
+
+## Another instancer on the same mount takes the decoded textures (W3DTextureCache) with its own materials and the S-1482 note; one on a
+## new mount decodes its own.
+func _check_shared_textures(fs: RefCounted, first: Node) -> void:
+	var original := {}
+	var all := _surface_resources(first)
+	for key in all:
+		if str(key).begins_with("GUGdfHrs_SKN_"): # the first renderer also drew GUGdfHrs_SKNL
+			original[key] = all[key]
+	var expected := ["GUGdfHrs_SKN_GUGDFHRS_SKN_GANDALF_W:0", "GUGdfHrs_SKN_GUGDFHRS_SKN_GUHORSE:0"] # the rider and the horse
+	var got := original.keys()
+	got.sort()
+	_check(got == expected, str(all.keys()))
+	var remounted: RefCounted = ClassDB.instantiate("RetailFileSystem")
+	if not _check(remounted.mount_retail().ok):
+		return
+	for source in [fs, remounted]:
+		var second: Node3D = ClassDB.instantiate("W3DInstancer")
+		root.add_child(second)
+		if not _check(second.setup(source).ok):
+			second.free()
+			return
+		var report: Dictionary = second.get_model_report(second.add_model("GUGdfHrs_SKN"))
+		_check(report.errors.is_empty(), str(report))
+		var packed_note := false
+		for note in report.notes:
+			packed_note = packed_note or (str(note).contains("[S-1482] model texture") and str(note).contains("gushadowfaxh.jpg"))
+		_check(packed_note, str(report))
+		var again := _surface_resources(second)
+		_check(again.keys() == original.keys(), str(again.keys()) + " vs " + str(original.keys()))
+		for key in original:
+			if not _check(again.has(key), key):
+				continue
+			_check(again[key][1] != original[key][1], key + ": a material of its own")
+			_check((again[key][0] == original[key][0]) == (source == fs), key + (": the same texture on the same mount" if source == fs else ": its own texture on a new mount"))
+		second.free()
 
 func _run() -> void:
 	if OS.get_environment("ROTWK_INSTALL").is_empty() or OS.get_environment("BFME2_INSTALL").is_empty():
@@ -134,5 +214,6 @@ func _run() -> void:
 				_check(_check_texture(texture, colour, mask))
 				horse_textures += 1
 	_check(horse_textures == 2)
+	_check_shared_textures(fs, renderer)
 	_check(_check_corrupt_mask())
 	_finish("PACKED MODEL TEXTURE PASS")

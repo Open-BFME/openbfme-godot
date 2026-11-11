@@ -62,8 +62,9 @@ const SpecialPowerTemplate *powerOf(const CommandButton &b)
 	return TheSpecialPowerStore && !b.m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(b.m_specialPowerName) : nullptr;
 }
 
-// the UnitCost test (RW 0x82E000 / 0x82D605): with a cost, the object's horde interface (Object + 0x258 slot 0x7C) member count (slot 0x188) must reach it.
-// INFERENCE: slot 0x188 is the member count (the script condition RW 0x7E6195 reads it so); no contain or no horde interface: no test
+// the UnitCost test (RW 0x82E000 / 0x82D605): with a cost, the object's horde interface (Object + 0x258 slot 0x7C) member count (slot 0x188, RW 0x82D659)
+// must reach it; no contain or no horde interface: no test. Lane NECRODIE-1: slot 0x188 is RW 0x86C09B, the members without the banner carrier
+// (HordeContain::payloadCount), as the trigger's payment reads it (RW 0x855273)
 bool unitCostMet(const Object &obj, const SpecialPowerTemplate &t)
 {
 	if (t.m_unitCost == 0)
@@ -71,8 +72,8 @@ bool unitCostMet(const Object &obj, const SpecialPowerTemplate &t)
 		return true;
 	}
 	ContainModuleInterface *c = obj.getContain();
-	const HordeContainInterface *h = c ? c->getHordeContainInterface() : nullptr;
-	return !h || c->getContainCount() >= (unsigned)t.m_unitCost;
+	const HordeContain *h = c && c->getHordeContainInterface() ? dynamic_cast<const HordeContain *>(c) : nullptr;
+	return !h || h->payloadCount() >= (unsigned)t.m_unitCost;
 }
 
 // RW 0x82C366 (lane WALL-2): the pathfinder exists; the object's AI follows a path (RW 0x6628CD: AIUpdate + 0x1FC 1 or 4, a path, and a node of it carries a
@@ -702,17 +703,18 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 			return false;
 		}
 	}
-	// RW 0x82D2C9 (PATHABLE_ONLY): RW 0x6F5BB0(obj, its position, loc, 0), the port's quick path test with the object's locomotor (S-1280, as FindPositionAround)
+	// RW 0x82D2C9 (PATHABLE_ONLY): RW 0x6F5BB0(obj, its position, loc, 0) (RW 0x82D2F5: no locomotor set given), Pathfinder::quickDoesPathExist (lane QPATH-1)
 	if (t.m_flags & SPF_PATHABLE_ONLY)
 	{
 		AIUpdateInterface *ai = obj.getAIUpdateInterface();
 		AIWorld *world = logic.aiWorld();
 		if (!ai || !world)
 		{
-			return false; // RW 0x6F5BB0: no AI (+ 0x260) and no locomotor set given -> no (INFERENCE: its earlier status / Object + 0x4AC tests, RW 0x44DDEC / 0x68C053, do not apply)
+			// RW 0x6F5BB0 without an AI (+ 0x260) and no set: "Failure 2". Its earlier tests give the same answer: IMMOBILE -> false, and Object + 0x4AC
+			// (RW 0x68C053) is never set in the port (S-4851)
+			return false;
 		}
-		const PathfindLocomotorInfo loco = ai->locomotorInfo();
-		if (!world->pathfinder().clientSafeQuickDoesPathExist(loco, obj.getPosition(), &loc, &ai->adapter())) // lane WALL-2: with the unit, its portals
+		if (!world->pathfinder().quickDoesPathExist(ai->adapter(), obj.getPosition(), &loc, nullptr))
 		{
 			return false;
 		}
@@ -957,5 +959,38 @@ bool canDoSpecialPowerAtObject(Object &obj, Object *target, CommandSourceType so
 std::vector<std::string> stopLines()
 {
 	return { kStopUpgrade, kStopLayer, kStopRequirements, kStopTypeTest, kStopObjectTypeTest };
+}
+
+// PR 284: RW 0x82CEFB (see ActionManager.h)
+EnterMessage getEnterMessage(const Object &target, const std::vector<const Object *> &selection)
+{
+	static const int kCanEnterAnything = ObjectTemplateInfoBuilder::objectStatusIndex("CAN_ENTER_ANYTHING"); // 0x5D
+	static const int kHoldingTheRing = ObjectTemplateInfoBuilder::objectStatusIndex("HOLDING_THE_RING");     // 0x5E
+	static const int kCommandCenter = ObjectTemplateInfoBuilder::kindOfIndex("COMMANDCENTER");               // 17
+	ContainModuleInterface *contain = const_cast<Object &>(target).getContain(); // Object + 0x258
+	if (selection.empty() || !contain) // RW 0x82CF04 .. 0x82CF22
+	{
+		return ENTER_MESSAGE_ENTER;
+	}
+	if (contain->getContainCount() > 0) // RW 0x82CF2A .. 0x82CF36: vslot 0x114(0)
+	{
+		const Object &first = *selection.front();
+		// RW 0x82CF48 .. 0x82CF75: the contain's vslot 0x20 is RW 0x9188EB (false) in every contain table, so only the status decides
+		if (first.getControllingPlayer() != target.getControllingPlayer() && first.testStatus((unsigned)kCanEnterAnything))
+		{
+			return ENTER_MESSAGE_CONTEST;
+		}
+	}
+	if (target.isKindOf((unsigned)kCommandCenter)) // RW 0x82CF84
+	{
+		for (const Object *o : selection) // RW 0x82CF93 .. 0x82CFAF
+		{
+			if (o->testStatus((unsigned)kHoldingTheRing))
+			{
+				return ENTER_MESSAGE_DELIVER_RING;
+			}
+		}
+	}
+	return contain->isSlaughterContain() ? ENTER_MESSAGE_SLAUGHTER : ENTER_MESSAGE_ENTER; // RW 0x82CFB1 .. 0x82CFC1: vslot 0x30
 }
 } // namespace ActionManager

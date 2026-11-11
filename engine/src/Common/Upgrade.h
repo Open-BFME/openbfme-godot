@@ -36,6 +36,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -134,9 +135,9 @@ public:
 	// RW 0x66F2C8: UseObjectTemplateForCostDiscount names a template -> that template's ThingTemplate::calcCostToBuild(player, producer, BuildCost); otherwise
 	// BuildCost, and with a player: the sum of the sub upgrades' calcCostToBuild(null, null) when there are sub upgrades (the skip of a sub upgrade that the
 	// producer's contained object answers for, RW 0x694BF8 / slot 0xAC, is not ported: S-486), times (an OBJECT upgrade without NoUpgradeDiscount)
-	// fstp(1.0 + Player::getUpgradeCostChange(name)) (RW 0x6AE7CB), as cvttss2si(cvtsi2ss(cost) * factor). The Brutal AI scaling (RW 0x6AA61B) is S-204's.
+	// fstp(1.0 + Player::getUpgradeCostChange(name)) (RW 0x6AE7CB), as cvttss2si(cvtsi2ss(cost) * factor). A Brutal skirmish AI pays trunc((1.0 - m) * cost) (RW 0x66F3AC, lane BRUTALAI-1).
 	int calcCostToBuild(const Player *player, const Object *producer) const;
-	// RW 0x66F1A8: cvttss2si(cvtsi2ss(LOGICFRAMES_PER_SECOND = 5) * BuildTime) (the Brutal AI branch is S-204's)
+	// RW 0x66F1A8: cvttss2si(cvtsi2ss(LOGICFRAMES_PER_SECOND = 5) * BuildTime) ; a Brutal skirmish AI: cvttss2si((1.0 - m) * BuildTime * 5.0) (RW 0x66F1CC, lane BRUTALAI-1)
 	int calcTimeToBuild(const Player *player) const;
 	const ThingTemplate *costDiscountTemplate() const { return m_costDiscountTemplate; }
 
@@ -224,7 +225,8 @@ public:
 private:
 	std::vector<std::string> m_unknownSubUpgrades; // lane MODS-2
 	UpgradeTemplate *newUpgrade(const std::string &name, bool assignBit); // RW 0x66FC27
-	std::map<std::string, std::unique_ptr<UpgradeTemplate>> m_byName;
+	// lane PERF-SIM-1: upgrades are looked up by name in the AI's per-frame legality checks; the map is not iterated
+	std::unordered_map<std::string, std::unique_ptr<UpgradeTemplate>> m_byName;
 	std::vector<UpgradeTemplate *> m_byBit;
 	std::vector<std::unique_ptr<UpgradeTemplate>> m_retired; ///< reloaded templates (RW frees them; kept so stale pointers stay valid)
 	int m_nextBit = 0;                                      ///< RW + 0x10

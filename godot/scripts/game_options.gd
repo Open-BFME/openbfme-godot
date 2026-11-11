@@ -95,7 +95,7 @@ func _ready() -> void:
 	_gamma_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_gamma_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	var shader := Shader.new()
-	shader.code = """shader_type canvas_item;
+	var code := """shader_type canvas_item;
 uniform sampler2D screen_tex : hint_screen_texture, filter_nearest;
 uniform float inv_gamma = 1.0;
 void fragment() {
@@ -104,6 +104,8 @@ void fragment() {
 	COLOR = vec4(pow(i / 256.0, vec3(inv_gamma)), 1.0);
 }
 """
+	ShaderBudget.check(code, "game_options gamma")
+	shader.code = code
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 	_gamma_rect.material = mat
@@ -323,6 +325,7 @@ func apply_brightness() -> void:
 	set_gamma(st.get("display_gamma", 1.0))
 
 
+var _preset_detail_logged := "" # the last Low preset line printed (apply_detail runs per edit)
 ## lane OPTS-5: true while the Options menu is up: its brightness slider's pending gamma stays through every other edit (apply_global runs per edit);
 ## ACCEPT / CANCEL set the saved one (the shell's Save / Cancel) after the menu clears it
 var hold_gamma := false
@@ -334,6 +337,42 @@ func set_gamma(gamma: float) -> void:
 	(_gamma_rect.material as ShaderMaterial).set_shader_parameter("inv_gamma", 1.0 / clampf(gamma, 0.6, 6.0)) # DX8Wrapper::Set_Gamma's bound
 
 
+## The Low graphics preset (scripts/display_settings.gd) lowers the detail toward GameLOD.ini's StaticGameLOD = Low only while Options.ini names
+## no StaticGameLOD (the port's stand-in for retail's hardware detection, S-2481); a level the player chose wins.
+func _preset_detail_overrides() -> bool:
+	if game == null or not ("_display" in game) or game._display == null or not game._display.has_method("tier"):
+		return false
+	if str(game._display.tier()) != "low":
+		return false
+	return shell == null or not shell.get_options().has("StaticGameLOD")
+
+
+const TERRAIN_SHADER := "res://shaders/terrain.gdshader"
+const TERRAIN_LOW_SHADER := "res://shaders/terrain_low.gdshader"
+
+
+func _apply_terrain_shader() -> void:
+	if _world == null or not is_instance_valid(_world):
+		return
+	var terrain: Node = _world.get_node_or_null("Terrain/Terrain")
+	if terrain == null:
+		terrain = _world.find_child("Terrain", true, false)
+	if terrain == null:
+		return
+	var inner: Node = terrain.get_node_or_null("Terrain")
+	if inner != null:
+		terrain = inner
+	var want: String = TERRAIN_LOW_SHADER if _preset_detail_overrides() else TERRAIN_SHADER
+	for child in terrain.get_children():
+		if child is MeshInstance3D and child.mesh != null and child.mesh.get_surface_count() > 0:
+			var mat := child.mesh.surface_get_material(0) as ShaderMaterial
+			if mat == null or mat.shader == null or mat.shader.resource_path == want:
+				return
+			mat.shader = load(want)
+			print("GAME OPTIONS terrain shader %s" % ("low: no normal map" if want == TERRAIN_LOW_SHADER else "full"))
+			return
+
+
 ## the static detail level's effects that need no game (the texture reduction for what loads next) and, in a game, the FX player's particle limits
 func apply_detail() -> Dictionary:
 	if shell == null:
@@ -342,13 +381,27 @@ func apply_detail() -> Dictionary:
 	if not _detail.get("ok", false):
 		problems.append("detail: " + str(_detail.get("error", "no level")))
 		return _detail
-	ClassDB.class_call_static("GameWorld", "set_texture_reduction", _detail.texture_reduction)
+	var reduction := int(_detail.texture_reduction)
+	var particle_cap := int(_detail.max_particle_count)
+	var min_priority := int(_detail.min_particle_priority)
+	var skip_priority := int(_detail.min_particle_skip_priority)
+	if _preset_detail_overrides():
+		reduction += 1
+		particle_cap = mini(particle_cap, 500)
+		min_priority = 4
+		skip_priority = 6
+		var line := "low graphics preset: texture reduction %d, %d particles, shadow lod %d, terrain normal map off (Options.ini names no StaticGameLOD)" % [reduction, particle_cap, 1]
+		if line != _preset_detail_logged:
+			_preset_detail_logged = line
+			print("GAME OPTIONS ", line)
+	ClassDB.class_call_static("GameWorld", "set_texture_reduction", reduction)
+	_apply_terrain_shader()
 	if game != null and game.has_method("set_shadow_lod"):
 		game.set_shadow_lod(_detail.shadow_lod)
 	if _world != null and _world.has_method("get_fx_player"):
 		var fx = _world.get_fx_player()
 		if fx != null:
-			fx.set_particle_lod(_detail.max_particle_count, _detail.min_particle_priority, _detail.min_particle_skip_priority)
+			fx.set_particle_lod(particle_cap, min_priority, skip_priority)
 	var wfx = game.get("_weather_fx") if game != null else null
 	if wfx != null and is_instance_valid(wfx):
 		wfx.detail = weather_fx_detail() # lane WEATHERFX-1

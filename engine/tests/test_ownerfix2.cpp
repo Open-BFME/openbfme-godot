@@ -22,6 +22,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/LiveGame.h"
+#include "GameClient/SelectionDecals.h"
 #include "GameClient/TerrainResourceFeedback.h"
 #include "GameLogic/Economy.h"
 #include "GameLogic/Module/TerrainResourceBehavior.h"
@@ -36,7 +37,9 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 using retailtest::PeImage;
@@ -73,6 +76,30 @@ NewGameMessage evendim(const starttest::Shared &s, std::uint32_t seed)
 		slot.startPos = i;
 		slot.color = i;
 		slot.teamNumber = i;
+	}
+	return m;
+}
+
+// Evendim, slot 0 an idle human, slot 1 an easy computer on its team (an ally), slot 2 an easy computer on team 1 (an enemy): the mask 3 test
+NewGameMessage evendim3(const starttest::Shared &s, std::uint32_t seed)
+{
+	NewGameMessage m;
+	m.game.mapName = "maps/map mp evendim/map mp evendim.map";
+	m.game.seed = seed;
+	m.game.startingCash = -1;
+	m.game.rules = MpGameRules::defaults(RULES_MODE_SKIRMISH);
+	const char *factions[3] = { "FactionMen", "FactionMen", "FactionMordor" };
+	const int starts[3] = { 0, 4, 1 };
+	const int teams[3] = { 0, 0, 1 };
+	for (int i = 0; i < 3; ++i)
+	{
+		SkirmishGameSlot &slot = m.game.slots[i];
+		slot.state = i == 0 ? SLOT_PLAYER : SLOT_EASY_AI;
+		slot.name = i == 0 ? u"Player0" : (i == 1 ? u"Player1" : u"Player2");
+		slot.playerTemplate = factionIndex(s.world->playerTemplates(), factions[i]);
+		slot.startPos = starts[i];
+		slot.color = i;
+		slot.teamNumber = teams[i];
 	}
 	return m;
 }
@@ -411,10 +438,46 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 	CHECK(fb.placement().decalSize == radius * 2.0f);
 	CHECK(std::fmod(fb.placement().decalCenter.x, grid.cellSize()) == 0.0f);
 	CHECK(fb.placement().decalOpacity == 0x80);
-	// every vertex of free ground has the full opacity (weight 12)
+	// every vertex of free ground has the full weight 12: the alpha of the decal's diffuse, 0xFF (lane PLACEDECAL-1: setOpacity RW 0x73228B leaves a type
+	// 0x2000 decal's diffuse 0xFFFFFFFF)
 	for (std::uint8_t a : fb.placement().maskAlpha)
 	{
-		CHECK(a == 0x80);
+		CHECK(a == 0xFF);
+	}
+	{
+		// lane PLACEDECAL-1: the decal the HUD draws: SHADOW_DECAL_TERRAIN_CLAIM, its diffuse white, on the terrain only (+ 0x64), the mask's alphas.
+		// Lane ECOCIRCLE-2: the placement's claim arcs come first (the newest of RotWK's addDecal list), then this decal (the Men start's own Visible
+		// claimants hold claims too, so the count is not just the placement decal's): re-pinned from decals.size() == 1 with decals[0] the placement decal
+		std::vector<SelectionDecal> decals;
+		const TerrainResourceDecalCounts counts = fb.appendDecals("TerrainResourceClaimDecal", "PlaceTerrainResourceClaimantDecal", decals);
+		CHECK(counts.arcs == fb.claimArcs().size());
+		REQUIRE(counts.place == 1);
+		REQUIRE(decals.size() == counts.arcs + counts.place + counts.claims);
+		for (size_t i = 0; i < counts.arcs; ++i)
+		{
+			CHECK(decals[i].style == 0x40u);
+			CHECK(decals[i].texture == TerrainResourceFeedback::kClaimArcTexture);
+		}
+		const SelectionDecal &d = decals[counts.arcs];
+		CHECK(d.style == 0x2000u);
+		CHECK(d.color == 0xFFFFFFFFu);
+		CHECK(d.terrainOnly);
+		CHECK(d.texture == "PlaceTerrainResourceClaimantDecal");
+		CHECK(d.size == radius * 2.0f);
+		CHECK(d.sizeY == 0.0f);
+		CHECK(d.position.x == fb.placement().decalCenter.x);
+		CHECK(d.position.y == fb.placement().decalCenter.y);
+		CHECK(d.maskVx0 == fb.placement().maskVx0);
+		CHECK(d.maskVy0 == fb.placement().maskVy0);
+		CHECK(d.maskW == fb.placement().maskW);
+		CHECK(d.maskH == fb.placement().maskH);
+		CHECK(d.maskAlpha == fb.placement().maskAlpha);
+		// the mask covers the decal's square: from the vertex at or below its corner to the one at or above the opposite corner
+		const float sp = TerrainResourceFeedback::kVertexSpacing;
+		CHECK(d.maskVx0 == (int)std::floor((d.position.x - radius) / sp));
+		CHECK(d.maskVy0 == (int)std::floor((d.position.y - radius) / sp));
+		CHECK(d.maskVx0 + d.maskW - 1 == (int)std::ceil((d.position.x + radius) / sp));
+		CHECK(d.maskVy0 + d.maskH - 1 == (int)std::ceil((d.position.y + radius) / sp));
 	}
 	// the local player's finished farm there: its disc is owned by a visible object of the player: nothing claimable at the same spot, half way it shares
 	Object *farm = make(logic, "GondorFarm", *human, px, py);
@@ -441,7 +504,7 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 		// its 13 cells one by one; half over the farm's ground the mask holds partial weights
 		fb.updatePlacement(logic, me, farmT, Coord3D{ px + radius, py, 0.0f }, u"%d%%");
 		const ResourcePlacementFeedback &pl = fb.placement();
-		const std::uint32_t base = ((std::uint32_t)pl.decalOpacity << 24) | (pl.color & 0xFFFFFFu);
+		const std::uint32_t base = 0xFFFFFFFFu; // lane PLACEDECAL-1: the decal's diffuse
 		int mismatches = 0, partialVertices = 0, vertices = 0;
 		for (int j = 0; j < pl.maskH; ++j)
 		{
@@ -450,7 +513,7 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 				const std::uint8_t want = (std::uint8_t)(TerrainResourceClaimView::vertexColor(logic, base, pl.maskVx0 + i, pl.maskVy0 + j, me) >> 24);
 				const std::uint8_t got = pl.maskAlpha[(size_t)j * (size_t)pl.maskW + (size_t)i];
 				mismatches += got != want ? 1 : 0;
-				partialVertices += (want != 0 && want != pl.decalOpacity) ? 1 : 0;
+				partialVertices += (want != 0 && want != 0xFF) ? 1 : 0;
 				++vertices;
 			}
 		}
@@ -515,6 +578,23 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 		}
 	}
 	CHECK(sawFarm);
+	{
+		// lane PLACEDECAL-1: the claims as the HUD draws them: SHADOW_ALPHA_DECAL, the diffuse 0x806464C8 (setColor, then setOpacity 0x80), terrain only
+		std::vector<SelectionDecal> decals;
+		fb.updatePlacement(logic, me, nullptr, Coord3D{ px, py, 0.0f }, u"%d%%");
+		fb.appendDecals("TerrainResourceClaimDecal", "PlaceTerrainResourceClaimantDecal", decals);
+		REQUIRE(decals.size() == fb.claimedDecals().size());
+		for (size_t i = 0; i < decals.size(); ++i)
+		{
+			CHECK(decals[i].object == fb.claimedDecals()[i].id);
+			CHECK(decals[i].style == 0x20u);
+			CHECK(decals[i].color == 0x806464C8u);
+			CHECK(decals[i].terrainOnly);
+			CHECK(decals[i].texture == "TerrainResourceClaimDecal");
+			CHECK(decals[i].size == fb.claimedDecals()[i].size);
+			CHECK(decals[i].maskW == 0);
+		}
+	}
 	fb.updateSelection(logic, me, 0);
 	CHECK(fb.claimedDecals().empty());
 	// a template without a TerrainResourceBehavior (a barracks), or none: no placement feedback
@@ -538,6 +618,289 @@ TEST_CASE("ownerfix2 retail: a farm's placement shows its claimable share (RW 0x
 	{
 		MESSAGE("the enemy farm is in the local player's sight (status " << (int)sh.getStatusAt(me, efx, efy) << "): the fog clause is not reached here");
 	}
+}
+
+TEST_CASE("ownerfix2 retail: a resource building's placement collects the own and allied Visible claimants and draws their claim arcs (RW 0x6A2CC8 mask 3, "
+	"RW 0x8E99EE / RW 0x8E9744)")
+{
+	// RW 0x6A2CC8 .. 0x6A2CFC: the placement branch clears the collector, enumerates the claimants with getPlayersWithRelationship(local, 3, false) and
+	// finishes it; RW 0x8E9C35 keeps the Visible records whose object exists; the arcs of RW 0x8E99EE / RW 0x8E9744 are the free ranges of every collected
+	// circle. Enemy claimants are not in mask 3, so they are not drawn (the owner's memory of enemy circles is not what the RotWK placement code does).
+	OPENBFME_REQUIRE_START(s);
+	NewGameMessage m = evendim3(*s, 47);
+	Game g;
+	load(*s, m, g);
+	GameLogic &logic = g.game->logic();
+	Player *human = playerAtStart(logic, 0);
+	Player *ally = playerAtStart(logic, 4);
+	Player *enemy = playerAtStart(logic, 1);
+	REQUIRE(human);
+	REQUIRE(ally);
+	REQUIRE(enemy);
+	REQUIRE(logic.shroud());
+	const int me = human->getPlayerIndex();
+	logic.shroud()->revealMapForPlayerPermanently(me);
+	logic.runLogicFrame();
+	const TerrainResourceManager &grid = logic.economy().resources();
+	REQUIRE(grid.hasGrid());
+	const ThingTemplate *farmT = logic.things().findTemplate("GondorFarm");
+	REQUIRE(farmT);
+	const TerrainResourceBehaviorModuleData *data = TerrainResourceClaimView::resourceDataOf(*farmT);
+	REQUIRE(data);
+	const float radius = data->m_radius;
+	const int r = (int)std::ceil(radius / grid.cellSize());
+	const int n = 2 * r + 3;
+	// a free block of cells whose cell centres are not SHROUDED for the local player (so the arcs are not dropped by the shroud rule), away from the
+	// blocks already used
+	std::vector<std::pair<int, int>> used;
+	auto freeBlock = [&](int &ox, int &oy) {
+		for (int y = 1; y + n < grid.height(); y += 2)
+		{
+			for (int x = 1; x + n < grid.width(); x += 2)
+			{
+				bool near = false;
+				for (const auto &u : used)
+				{
+					near = near || (std::abs(x - u.first) < 3 * n && std::abs(y - u.second) < 3 * n);
+				}
+				if (near)
+				{
+					continue;
+				}
+				bool ok = true;
+				for (int j = 0; j < n && ok; ++j)
+				{
+					for (int i = 0; i < n && ok; ++i)
+					{
+						const TerrainResourceManager::Cell *c = grid.cellAt(x + i, y + j);
+						if (!c || c->state != TerrainResourceManager::CELL_FREE)
+						{
+							ok = false;
+							break;
+						}
+						const float wx = ((float)(x + i) + 0.5f) * grid.cellSize() + grid.originX();
+						const float wy = ((float)(y + j) + 0.5f) * grid.cellSize() + grid.originY();
+						ok = logic.shroud()->getStatusAt(me, wx, wy) != CELLSHROUD_SHROUDED;
+					}
+				}
+				if (ok)
+				{
+					ox = x + n / 2;
+					oy = y + n / 2;
+					used.push_back({ ox, oy });
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	auto centre = [&](int x, int y) { return Coord3D{ ((float)x + 0.5f) * grid.cellSize() + grid.originX(), ((float)y + 0.5f) * grid.cellSize() + grid.originY(), 0.0f }; };
+	int ox = 0, oy = 0, ax = 0, ay = 0, ex = 0, ey = 0;
+	REQUIRE(freeBlock(ox, oy));
+	REQUIRE(freeBlock(ax, ay));
+	REQUIRE(freeBlock(ex, ey));
+	Object *ownFarm = make(logic, "GondorFarm", *human, centre(ox, oy).x, centre(ox, oy).y);
+	Object *allyFarm = make(logic, "GondorFarm", *ally, centre(ax, ay).x, centre(ax, ay).y);
+	Object *enemyFarm = make(logic, "MordorSlaughterHouse", *enemy, centre(ex, ey).x, centre(ex, ey).y);
+	ownFarm->friend_onBuildComplete();
+	allyFarm->friend_onBuildComplete();
+	enemyFarm->friend_onBuildComplete();
+	logic.runLogicFrame();
+	// no placement: the collector is empty
+	TerrainResourceFeedback fb;
+	fb.updatePlacement(logic, me, nullptr, centre(ox, oy), u"%d%%");
+	CHECK(fb.placement().active == false);
+	CHECK(fb.claimCircles().empty());
+	CHECK(fb.claimArcs().empty());
+	const std::uint32_t hashBefore = logic.computeStateHash();
+	fb.updatePlacement(logic, me, farmT, centre(ox, oy), u"%d%%");
+	CHECK(logic.computeStateHash() == hashBefore); // client only: the feedback reads the logic and the shroud, it writes neither
+	REQUIRE(fb.placement().active);
+	auto circleOf = [&](ObjectID id) {
+		for (const ResourceClaimCircle &c : fb.claimCircles())
+		{
+			if (c.id == id)
+			{
+				return &c;
+			}
+		}
+		return static_cast<const ResourceClaimCircle *>(nullptr);
+	};
+	REQUIRE(circleOf(ownFarm->getID()));
+	REQUIRE(circleOf(allyFarm->getID()));
+	CHECK(circleOf(enemyFarm->getID()) == nullptr); // mask 3 = the local player and allies only (RW 0x6A8695)
+	CHECK(circleOf(ownFarm->getID())->position.x == ownFarm->getPosition()->x);
+	CHECK(circleOf(ownFarm->getID())->radius == radius);
+	CHECK(circleOf(ownFarm->getID())->color == (0xFF000000u | (human->getPlayerColor() & 0x00FFFFFFu)));
+	CHECK(circleOf(allyFarm->getID())->color == (0xFF000000u | (ally->getPlayerColor() & 0x00FFFFFFu)));
+	size_t ownArcs = 0, allyArcs = 0;
+	for (const ResourceClaimArc &a : fb.claimArcs())
+	{
+		CHECK(a.id != enemyFarm->getID());
+		CHECK(a.length > 0.0f); // tolerance: the segment's pieceLength is the arc raster's
+		CHECK(a.shroudLevel > 0); // tolerance: a visible segment has a non-zero shroud level
+		if (a.id == ownFarm->getID())
+		{
+			++ownArcs;
+			CHECK(a.color == (0xFF000000u | (human->getPlayerColor() & 0x00FFFFFFu)));
+			CHECK(std::abs(std::hypot(a.position.x - ownFarm->getPosition()->x, a.position.y - ownFarm->getPosition()->y) - (radius - a.length * 0.5f)) < 0.01f); // tolerance: the segment sits at radius - pieceLength / 2 (float)
+
+		}
+		if (a.id == allyFarm->getID())
+		{
+			++allyArcs;
+		}
+	}
+	CHECK(ownArcs > 0); // tolerance: at least one free segment of the farm's ring (the count is the raster's)
+	CHECK(allyArcs > 0); // tolerance: as above, for the ally's farm
+	// a claim that is not Visible (RW 0x8E9C35: record + 0x10 false) is not collected, even the local player's own
+	int hx = 0, hy = 0;
+	REQUIRE(freeBlock(hx, hy));
+	Object *hidden = make(logic, "GondorBarracks", *human, centre(hx, hy).x, centre(hx, hy).y);
+	REQUIRE(hidden);
+	logic.economy().resources().claim(*hidden, radius, false, false);
+	fb.updatePlacement(logic, me, farmT, centre(ox, oy), u"%d%%");
+	CHECK(circleOf(hidden->getID()) == nullptr);
+	REQUIRE(circleOf(ownFarm->getID()));
+	// a Visible claim of radius 0 (the module's default Radius): collected (RW 0x8E9C35 has no radius test) but it makes no segment; RW 0x8E9744's
+	// count is 0 there and its loop never runs, the port skips the circle before the 0 / 0 (review of #243)
+	Object *zero = make(logic, "GondorBarracks", *human, centre(hx, hy).x + 30.0f, centre(hx, hy).y); // beside the hidden one (no free block is left)
+	REQUIRE(zero);
+	logic.economy().resources().claim(*zero, 0.0f, true, false);
+	fb.updatePlacement(logic, me, farmT, centre(ox, oy), u"%d%%");
+	REQUIRE(circleOf(zero->getID()));
+	for (const ResourceClaimArc &a : fb.claimArcs())
+	{
+		CHECK(a.id != zero->getID());
+		CHECK(std::isfinite(a.position.x));
+		CHECK(std::isfinite(a.length));
+	}
+	REQUIRE(circleOf(ownFarm->getID()));
+	{
+		// the device's decals (lane ECOCIRCLE-2): the arcs first (they are the newest of RotWK's addDecal list), then the placement decal, then the claims
+		std::vector<SelectionDecal> decals;
+		const TerrainResourceDecalCounts counts = fb.appendDecals("TerrainResourceClaimDecal", "PlaceTerrainResourceClaimantDecal", decals);
+		CHECK(counts.arcs == fb.claimArcs().size());
+		CHECK(counts.place == 1);
+		CHECK(counts.claims == fb.claimedDecals().size());
+		REQUIRE(decals.size() == counts.arcs + counts.place + counts.claims);
+		for (size_t i = 0; i < counts.arcs; ++i)
+		{
+			CHECK(decals[i].style == 0x40u); // SHADOW_ADDITIVE_DECAL
+			CHECK(decals[i].texture == TerrainResourceFeedback::kClaimArcTexture);
+			CHECK(decals[i].terrainOnly);
+			CHECK(decals[i].size == fb.claimArcs()[i].length);
+			CHECK(decals[i].angle == -fb.claimArcs()[i].angle); // the shadow's normalizeAngle(-mid) RW 0x8E98C8
+			CHECK(decals[i].color == (((std::uint32_t)fb.claimArcs()[i].shroudLevel << 24) | (fb.claimArcs()[i].color & 0xFFFFFFu)));
+		}
+		CHECK(decals[counts.arcs].style == 0x2000u); // the placement claim decal after them
+	}
+	// a Visible claim of a barracks? none (no TerrainResourceBehavior): no placement feedback
+	fb.updatePlacement(logic, me, logic.things().findTemplate("GondorBarracks"), centre(ox, oy), u"%d%%");
+	CHECK(fb.claimCircles().empty());
+	CHECK(fb.claimArcs().empty());
+	// the shrouded claimant: the collector still holds it (RW 0x8E9C35 has no shroud test), but the port drops its segments where the local player's
+	// shroud covers the ground (the shroud pass covers retail's shadow; INFERENCE S-5030). A normal own / allied claim circle is lit by its owner's
+	// (and the owner's allies') shared vision, so the filter bites at an unlit edge: the farm's shroud record is removed to make its ring unlit, then
+	// every fogged cell goes back to never seen. The claim in the logic stays.
+	fb.updatePlacement(logic, me, farmT, centre(ox, oy), u"%d%%"); // the barracks check above ended the placement: start it again
+	const size_t arcsBeforeShroud = fb.claimArcs().size();
+	logic.shroud()->unregisterObject(*ownFarm);
+	logic.shroud()->undoRevealMapForPlayerPermanently(me);
+	logic.shroud()->shroudMapForPlayer(me);
+	const std::uint32_t hashBeforeShrouded = logic.computeStateHash();
+	fb.updatePlacement(logic, me, farmT, centre(ox, oy), u"%d%%");
+	CHECK(logic.computeStateHash() == hashBeforeShrouded);
+	REQUIRE(circleOf(ownFarm->getID())); // still collected (the collector has no shroud test)
+	size_t shroudedOwnArcs = 0;
+	for (const ResourceClaimArc &a : fb.claimArcs())
+	{
+		shroudedOwnArcs += a.id == ownFarm->getID() ? 1 : 0;
+	}
+	CHECK(shroudedOwnArcs == 0);                 // every segment of the unlit ring is under the shroud: none is drawn
+	CHECK(fb.claimArcs().size() < arcsBeforeShroud); // tolerance: the unlit ring's segments went (the rest of the map's claims may stay lit)
+	// and it goes when the placement ends
+	fb.updatePlacement(logic, me, farmT, centre(ox, oy), u"%d%%"); // the barracks check above ended the placement: start it again
+	CHECK(fb.placement().active);
+	fb.updatePlacement(logic, me, nullptr, centre(ox, oy), u"%d%%");
+	CHECK(fb.claimCircles().empty());
+	CHECK(fb.claimArcs().empty());
+	// review of #243: the segment count of RW 0x8E9744 alone; a non-positive circumference (the Radius-0 claimant above) gives no segment
+	CHECK(TerrainResourceFeedback::claimSegmentCount(0.0f, 0.0f) == 0);
+	CHECK(TerrainResourceFeedback::claimSegmentCount(100.0f, 0.0f) == 0);
+	CHECK(TerrainResourceFeedback::claimSegmentCount(2.0f * 3.14159265f * 300.0f, 2.0f * 3.14159265f * 300.0f) == 32); // tolerance: pi as a float
+}
+
+#include "Common/ModelState.h"
+#include "GameClient/ControlBarCommands.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
+
+TEST_CASE("placedecal1 retail: every decal shadow a building's placement ghost shows is an alpha decal (the grid's 0x20 / 0x400) at Peak 0xFF, no offset")
+{
+	// lane PLACEDECAL-1: the placement ghost's decal shadow is drawn in the selection decals' grid (lane ECOCIRCLE-2: which draws the additive types
+	// 0x40 / 0x800 too now, as added shares): the retail data gives no ghost one. The ghost shows the state its draw module picks for BUILD_PLACEMENT_CURSOR (findBestInfo, RW 0x4B4379), which may be
+	// a state without the flag (the default); every DOZER_CONSTRUCT template's is surveyed (not a wall span's pieces, nor the other flags a ghost may
+	// carry). The diffuse is white at Peak (S-5032)
+	OPENBFME_REQUIRE_START(s);
+	ModelConditionFlags flags;
+	const int bit = ModelCondition::indexOf("BUILD_PLACEMENT_CURSOR");
+	REQUIRE(bit == 0x6C); // RW 0x69C708 -> RW 0x679512 (GameClient/PlacementGhost.h)
+	flags.set((size_t)bit, true);
+	// the ghosts: the templates of every command set's DOZER_CONSTRUCT buttons
+	std::set<std::string> ghosts;
+	REQUIRE(TheCommandStore);
+	for (const ThingTemplate *tt : s->world->things().templates())
+	{
+		const FieldValue *v = tt->findField("CommandSet");
+		const std::string *setName = v ? std::get_if<std::string>(v) : nullptr;
+		const CommandSet *set = setName ? TheCommandStore->findCommandSet(*setName) : nullptr;
+		for (int i = 0; set && i < CommandSet::MAX_BUTTONS; ++i)
+		{
+			const CommandButton *b = set->getCommandButton(i);
+			if (b && b->m_command == GUI_COMMAND_DOZER_CONSTRUCT && !b->m_objectName.empty())
+			{
+				ghosts.insert(b->m_objectName);
+			}
+		}
+	}
+	CHECK(ghosts.size() > 50); // tolerance: every faction's buildings (their count is the data's)
+	int shadows = 0, alpha = 0, peak = 0, lod = 0, offset = 0;
+	std::set<std::string> textures;
+	for (const std::string &name : ghosts)
+	{
+		const ThingTemplate *tt = s->world->things().findTemplate(name);
+		if (!tt)
+		{
+			continue;
+		}
+		for (const ThingTemplate::Nugget &n : tt->getFinalOverride()->drawModules().nuggets())
+		{
+			const W3DModelDrawModuleData *data = dynamic_cast<const W3DModelDrawModuleData *>(n.data.get());
+			const ModelConditionInfo *info = data ? data->findBestInfo(flags) : nullptr;
+			if (!info || !info->hasShadow || !(info->shadow.type & 0x10C60) || info->shadow.texture.empty())
+			{
+				continue;
+			}
+			++shadows;
+			alpha += (info->shadow.type & 0x10C60) == 0x20 || (info->shadow.type & 0x10C60) == 0x400 ? 1 : 0;
+			peak += info->shadowOpacityPeak == 0xFFu ? 1 : 0;          // RW 0x4C30A8's default: the diffuse white
+			lod += info->shadow.overrideLODVisibility ? 1 : 0;         // addShadow's gate passes whatever the LOD (RW 0x50BF7B)
+			offset += info->shadow.offsetX != 0.0f || info->shadow.offsetY != 0.0f ? 1 : 0; // DecalShadowCentre's axes are not exercised by the data
+			char line[256];
+			std::snprintf(line, sizeof line, "%s: %s %g x %g, type 0x%X", tt->getName().c_str(), info->shadow.texture.c_str(), info->shadow.sizeX,
+				info->shadow.sizeY, (unsigned)info->shadow.type);
+			textures.insert(line);
+		}
+	}
+	for (const std::string &x : textures)
+	{
+		MESSAGE("placedecal1: " << x);
+	}
+	CHECK(shadows > 0); // tolerance: the well and the statues (their count is the data's)
+	CHECK(alpha == shadows);
+	CHECK(peak == shadows);
+	CHECK(lod == shadows);
+	CHECK(offset == 0);
 }
 
 #include "GameClient/DrawableIconUI.h"

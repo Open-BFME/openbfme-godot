@@ -33,9 +33,11 @@
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 class ArchiveFileSystem;
@@ -74,11 +76,27 @@ struct W3DMaterialResult
 // Shared by every texture loader of the render side (model surfaces, particles, decals, roads / rivers / water / sky): one precedence.
 Ref<Image> Load_Asset_Pack_Image(const AssetPacks *packs, const std::string &name, std::string &error);
 
+// The decoded archive textures the material factories of one RetailFileSystem mount share (RetailFileSystem::w3dTextureCache), by the factory's
+// texture cache key. Every W3DInstancer has its own factory (the world, the placement ghost's views, each Apt 3D view, the WotR maps), and each
+// decoded and uploaded the same textures again. Entries are weak (instance ids): a texture lives while a factory holds it, as before. Only
+// textures are shared: materials carry an instancer's palette and mapper state. An asset pack's replacement stays per factory (its "pack:" key is
+// looked up before these). Presentation only, main thread only.
+struct W3DTextureCache
+{
+	struct Entry
+	{
+		uint64_t Id = 0;        // the Texture2D's instance id
+		std::string PackedNote; // its S-1482 note, if any
+	};
+	std::map<std::string, Entry> Entries;
+	std::size_t SweepAt = 256; // Export_Texture drops the dead entries when Entries reaches this size
+};
+
 // Builds materials and caches shaders and textures. Textures are read through the mounted archives.
 class W3DMaterialFactory
 {
 public:
-	explicit W3DMaterialFactory(ArchiveFileSystem &fs) : Fs(fs) {}
+	explicit W3DMaterialFactory(ArchiveFileSystem &fs, std::shared_ptr<W3DTextureCache> shared = {}) : Fs(fs), SharedTextures(std::move(shared)) {}
 
 	// Stop S-119 (lane MAPOBJ-1): with a housecolor.ini table set, a classic surface whose stage 0 texture has a house colour texture gets
 	// the HouseColor shader permutation and that texture as `w3d_hc_tex` (the table must outlive the factory). Off (nullptr) by default.
@@ -94,6 +112,9 @@ public:
 	void Set_Asset_Packs(const AssetPacks *packs) { Packs = packs; }
 	// lane BUILD-5 r3: the surfaces this factory builds belong to a translucent drawable (W3DShaderKey::AlphaOverride); off by default
 	void Set_Alpha_Override(bool on) { AlphaOverride = on; }
+	// lane SELWALL-1: the surfaces this factory builds belong to a wall top or bridge model (W3DShaderKey::SelectionDecals: its opaque surfaces draw the
+	// selection's merge decals); off by default
+	void Set_Selection_Decals(bool on) { SelectionDecals = on; }
 	// RW 0x531C77 applied to the texture `name` (its A8R8G8B8 texels; another format stays as it is, as retail's switch leaves it), then mipmaps; cached
 	// by "#<path>#<kind>&<c0>&<c1>&<c2>" (retail names the new texture "#<texture>#<options>", RW 0x54BDE0). Invalid when the texture is missing.
 	Ref<Texture2D> Recolored_House_Texture(const std::string &name, const HouseColorParams &params, std::vector<std::string> &errors, std::vector<std::string> &notes);
@@ -130,13 +151,21 @@ public:
 private:
 	Ref<Texture2D> Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing = false, std::vector<std::string> *notes = nullptr);
 	static Ref<Texture2D> Placeholder_Texture(bool flatNormal);
+	// W3DTextureCache: take another factory's texture for `key` into Textures (and its note into `notes`), or publish ours
+	void Import_Texture(const std::string &key, std::map<std::string, std::string> &notes);
+	void Export_Texture(const std::string &key, const std::map<std::string, std::string> &notes);
 
 	ArchiveFileSystem &Fs;
+	std::shared_ptr<W3DTextureCache> SharedTextures;
 	const HouseColorTable *HouseColors = nullptr;
 	const AssetPacks *Packs = nullptr; // lane SDK-0
 	HouseColorParams HouseParams;
 	std::vector<std::pair<std::string, std::string>> TextureSwaps; // stop S-5015
 	bool AlphaOverride = false;
+	bool SelectionDecals = false; // lane SELWALL-1
+	// Shared entries live while a requesting factory owns them; the process lookup
+	// holds weak pointers and cannot keep GPU resources alive at shutdown.
+	std::vector<std::shared_ptr<const Ref<Shader>>> ShaderOwners;
 	std::map<std::string, Ref<Shader>> Shaders;
 	std::map<std::string, Ref<Texture2D>> Textures; // by virtual path
 	std::map<std::string, std::string> PackedHouseTextureNotes; // retain S-1482 on cache hits

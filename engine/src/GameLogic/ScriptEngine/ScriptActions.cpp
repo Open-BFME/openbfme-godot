@@ -70,9 +70,7 @@ const std::set<int> &clientActions()
 			"AUDIO_RESTORE_VOLUME_ALL_TYPE", "AUDIO_OVERRIDE_VOLUME_TYPE", "AUDIO_RESTORE_VOLUME_TYPE", "AUDIO_SET_VOLUME_TYPE", "CAMEO_FLASH",
 			"NAMED_FLASH", "TEAM_FLASH", "ENABLE_HOUSE_COLOR", "DRAW_SKYBOX_BEGIN", "DRAW_SKYBOX_END", "SUSPEND_BACKGROUND_SOUNDS",
 			"RESUME_BACKGROUND_SOUNDS", "SET_VISUAL_SPEED_MULTIPLIER", "SHOW_WEATHER", "SCREEN_SHAKE", "SELECT_BUILDER_BUTTON_FLASH", "HERO_SELECT_BUTTON_FLASH",
-			"CLOSE_OBJECTIVES_SCREEN", "PLAYER_SELECT_SKILLSET", "MAP_REVEAL_AT_WAYPOINT", "MAP_SHROUD_AT_WAYPOINT", "MAP_REVEAL_PERMANENTLY_AT_WAYPOINT",
-			"MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT", "MAP_REVEAL_PERMANENTLY_IN_TRIGGER", "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER",
-			"MAP_REVEAL_IN_TRIGGER", // lane BFME2CAMP1: RW 0x7C0BCF (the trigger, the players: a one-off reveal, RW 0xB4DCA0 / 0xB4DE50), as the reveals above
+			"CLOSE_OBJECTIVES_SCREEN", "PLAYER_SELECT_SKILLSET", "MAP_SHROUD_AT_WAYPOINT",
 			// lane SCRIPT-2: the victory screen (RW 0x7BF05C: TheShell's victory window, no logic), the objectives button flash (RW 0x7BDF4E), the command
 			// bar edits (RW 0x7C6793 ...: TheControlBar). Lane BACKLOG3: the radar event actions are ported below (radarEventAction)
 			"VICTORY_SCREEN", "FLASH_OBJECTIVES_BUTTON", "FLASH_SPELL_STORE_BUTTON", "FLASH_PLANNING_MODE_BUTTON", // lane CAMPUI-1: RW 0x6D455F's other two slots "COMMANDBAR_REMOVE_BUTTON_OBJECTTYPE", "COMMANDBAR_ADD_BUTTON_OBJECTTYPE_SLOT",
@@ -136,7 +134,6 @@ bool positionOf(ScriptEngine &engine, const std::string &name, Coord3D &out, boo
 //   TEAM_CREATE_RADAR_EVENT (RW 0x7C0B61): the team by name (getTeamNamed), only when it has a unit (RW 0x7A07D8: a member that is not dead, not Object + 0x94
 //   bit 0, not a STRUCTURE (KindOf bit 7), not a PROJECTILE (bit 25) and not IGNORE_FOR_VICTORY (bit 148)), at the members' average position (RW 0x7A0ECD).
 // The radar is the client's: the logic records the event (GameLogic::noteRadarEvent), Radar::noteLogicEvents applies it.
-// INFERENCE (stop S-2452): Object + 0x94 bit 0 is not read (isEffectivelyDead stands for both of RW 0x7A07D8's first two tests).
 void radarEventAction(ScriptEngine &engine, const ScriptActionRec &a, const std::string &name)
 {
 	GameLogic &logic = engine.logic();
@@ -170,7 +167,7 @@ void radarEventAction(ScriptEngine &engine, const ScriptActionRec &a, const std:
 		int n = 0;
 		for (const Object *o = team->getFirstMember(); o; o = o->friend_teamNext())
 		{
-			hasUnit = hasUnit || (!o->isEffectivelyDead() && !o->isKindOf(kStructure) && !o->isKindOf(kProjectile) && !o->isKindOf(kIgnoreForVictory));
+			hasUnit = hasUnit || (!o->isEffectivelyDead() && !o->isDestroyed() && !o->isKindOf(kStructure) && !o->isKindOf(kProjectile) && !o->isKindOf(kIgnoreForVictory));
 			// RW 0x7A0ECD: every member, SSE sums in member order, times 1 / n
 			x = SimMath::addf32(x, o->getPosition()->x);
 			y = SimMath::addf32(y, o->getPosition()->y);
@@ -662,6 +659,13 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 				p->setCanBuildUnits(enable);
 			}
 		}
+		return;
+	}
+	if (name == "MAP_REVEAL_AT_WAYPOINT" || name == "MAP_REVEAL_PERMANENTLY_AT_WAYPOINT" ||
+		name == "MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT" || name == "MAP_REVEAL_IN_TRIGGER" ||
+		name == "MAP_REVEAL_PERMANENTLY_IN_TRIGGER" || name == "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER")
+	{
+		engine.executeMapReveal(a);
 		return;
 	}
 	if (name == "MAP_REVEAL_ALL" || name == "MAP_REVEAL_ALL_PERM" || name == "MAP_REVEAL_ALL_UNDO_PERM" || name == "MAP_SHROUD_ALL")

@@ -611,6 +611,53 @@ std::vector<DrawBatch> ParticleDrawBuilder::build(const ParticleSystemManager &m
 		for (size_t k = begin; k < end; ++k)
 		{
 			Slot &slot = slots[parallel[k]];
+			if (m_visible)
+			{
+				// lane GPUPERF-3: the box of the particles the module would draw (the visible ones), grown by 3 x the largest size: a sprite reaches
+				// size / sqrt(2) (billboard) or sqrt(2) x size (ground aligned), a quad sqrt(2) x size, a butterfly's wing 3 x size, a streak's
+				// side size; the volume layers move toward the camera by under 0.1 x size
+				const ParticleSystem &sys = *slot.system;
+				float lo[3] = { 0, 0, 0 }, hi[3] = { 0, 0, 0 };
+				float big = 0.0f;
+				bool any = false;
+				for (int p = sys.firstParticle(); p >= 0; p = manager.particle(p).sysNext)
+				{
+					const Particle &pp = manager.particle(p);
+					if (sys.isParticleInvisible(pp))
+					{
+						continue;
+					}
+					const float c[3] = { pp.pos.x, pp.pos.y, pp.pos.z };
+					for (int a = 0; a < 3; ++a)
+					{
+						lo[a] = any ? std::min(lo[a], c[a]) : c[a];
+						hi[a] = any ? std::max(hi[a], c[a]) : c[a];
+					}
+					big = std::max(big, std::fabs(lookOf(pp).size));
+					any = true;
+				}
+				if (!any)
+				{
+					continue; // nothing visible: the module would build an empty batch (dropped below)
+				}
+				for (int a = 0; a < 3; ++a)
+				{
+					lo[a] -= 3.0f * big;
+					hi[a] += 3.0f * big;
+				}
+				if (!m_visible(lo, hi))
+				{
+					slot.batch.culled = true;
+					slot.batch.kind = slot.drawClass == MODULE_DEFAULT_DRAW ? DrawBatch::SPRITES : DrawBatch::MESH;
+					slot.batch.ribbon = slot.drawClass == MODULE_STREAK_DRAW;
+					if (slot.drawClass == MODULE_DEFAULT_DRAW)
+					{
+						slot.batch.groundAligned = sys.info().m_isGroundAligned;
+						slot.batch.volume = sys.info().m_particleType == PARTICLE_TYPE_VOLUME_PARTICLE;
+					}
+					continue;
+				}
+			}
 			switch (slot.drawClass)
 			{
 			case MODULE_DEFAULT_DRAW: buildSprites(*slot.system, manager, slot.batch); break;
@@ -631,7 +678,7 @@ std::vector<DrawBatch> ParticleDrawBuilder::build(const ParticleSystemManager &m
 		}
 		DrawBatch &b = slots[ev.slot].batch;
 		const bool empty = b.sprites.empty() && b.gpu.empty() && b.vertices.empty();
-		if (empty)
+		if (empty && !b.culled)
 		{
 			continue;
 		}

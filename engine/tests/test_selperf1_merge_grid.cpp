@@ -196,7 +196,7 @@ TEST_CASE("selperf1: the merge decal grid keeps every decal in each cell it touc
 	bad[7].texture2 = "nope";
 	CHECK_FALSE(BuildMergeDecalGrid(bad, &Fixture::rect, s, g, &err));
 	CHECK(err.find("nope") != std::string::npos);
-	// nothing to merge: no decal, no texels (the shader draws nothing)
+	// nothing to merge: no merge decal, no merge list in any cell; lane HERORING-1: SHADOW_ALPHA_DECAL decals are the grid's alpha decals
 	std::vector<SelectionDecal> alpha = list;
 	for (SelectionDecal &d : alpha)
 	{
@@ -204,7 +204,8 @@ TEST_CASE("selperf1: the merge decal grid keeps every decal in each cell it touc
 	}
 	REQUIRE(BuildMergeDecalGrid(alpha, &Fixture::rect, s, g, &err));
 	CHECK(g.decals == 0);
-	CHECK(g.rows == 0);
+	CHECK(g.maxPerCell == 0);
+	CHECK(g.alphaDecals == alpha.size());
 }
 
 TEST_CASE("selperf1: the shader's two stencil passes draw what ComposeMergeDecals composes (one outline around the block, nothing inside)")

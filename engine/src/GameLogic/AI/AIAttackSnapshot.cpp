@@ -15,13 +15,17 @@
 
 void AIAttackState::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // 2: lane ATKSTATE-1a's + 0x49 (m_victimWasEnemyOnEnter); a version-1 save loads it as false
 	x.xferVersion(v);
 	AIXfer::coord(x, m_originalVictimPos);
 	x.xferUnsignedInt(&m_victimTeam);
 	x.xferInt(&m_lockedSlotOnEnter);
 	x.xferUnsignedInt(&m_shotsFired);
 	x.xferBool(&m_meleeMachine);
+	if (v.current >= 2)
+	{
+		x.xferBool(&m_victimWasEnemyOnEnter);
+	}
 	std::int32_t made = m_attackMachine ? m_machineMade : MADE_NONE;
 	x.xferInt(&made);
 	if (!x.isLoading())
@@ -65,11 +69,16 @@ void AIAttackState::xfer(Xfer &x)
 
 void AIAttackApproachState::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // 2: the wait of an owner that cannot move
 	x.xferVersion(v);
 	xferMove(x, ai().mover(), m_move);
 	AIXfer::coord(x, m_prevVictimPos);
 	x.xferUnsignedInt(&m_approachFrame);
+	if (v.current >= 2)
+	{
+		x.xferBool(&m_waiting);
+		x.xferUnsignedInt(&m_waitFrame);
+	}
 }
 
 void AIAttackAimState::xfer(Xfer &x)

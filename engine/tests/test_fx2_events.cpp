@@ -706,13 +706,14 @@ TEST_CASE("fx2 retail: a trebuchet shelling an orc pit in a live game plays its 
 TEST_CASE("fx2 stops: open effect stops are reported (S-684 and S-685 retired)")
 {
 	const std::vector<std::string> s = LiveFX::stops();
-	REQUIRE(s.size() == 6);
+	REQUIRE(s.size() == 7); // lane FEAT-BLDFX-1 added the S-687 line (the FXList nugget sinks)
 	CHECK(s[0].rfind("[S-680] fire FX:", 0) == 0);
 	CHECK(s[1].rfind("[S-681] damage FX:", 0) == 0);
 	CHECK(s[2].rfind("[S-683] effects not played:", 0) == 0);
 	CHECK(s[3].rfind("[S-682] live FX:", 0) == 0);
 	CHECK(s[4].rfind("[S-686] TransitionDamageFX:", 0) == 0);
-	CHECK(s[5].rfind("[S-4642] BuffNugget buffs", 0) == 0); // lane SPELL-4
+	CHECK(s[5].rfind("[S-687] FXList nugget sinks", 0) == 0); // lane FEAT-BLDFX-1
+	CHECK(s[6].rfind("[S-4642] BuffNugget buffs", 0) == 0); // lane SPELL-4
 	for (const std::string &line : s)
 	{
 		CHECK(line.find("S-684") == std::string::npos);

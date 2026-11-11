@@ -31,6 +31,7 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <string>
@@ -360,6 +361,119 @@ TEST_CASE("hud5 gates retail: a computer player's gate (Helm's Deep at start 1) 
 	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSING);
 }
 
+// RW 0x8ED6DC / 0x8ED726 (the manager's gate list + 0xA74): an AI group temporarily closes the enemy gates whose OPEN (passable) geometry is the one in the
+// pathfinder's map before its AIs run, and restores their OPEN geometry after (the poll RW 0x89C12F). A logically CLOSED gate is skipped by both walks and
+// ends the frame with its CLOSED geometry: the gate's own update (RW 0x89CC29) ran earlier in phase 5 (RW 0x62E9D4 .. 0x62EB5D), the manager later (RW 0x62EBEF).
+TEST_CASE("rai gate object retail: the group's gate walk closes the enemy gate that is passable for its AIs and reopens it; a closed gate keeps its closed geometry (RW 0x8ED6DC / 0x8ED726)")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	Player *owner = gate->getControllingPlayer();
+	REQUIRE(owner);
+	CHECK_FALSE(owner->isSkirmishAI());
+	SkirmishAIManager &m = g.game->logic().skirmishAI();
+	CHECK(m.findAI(owner->getPlayerIndex()) == nullptr);
+	Player *ai = nullptr;
+	for (int i = 0; i < g.game->players().getPlayerCount(); ++i)
+	{
+		Player *p = g.game->players().getNthPlayer(i);
+		ai = p && p->getPlayerType() == PLAYER_COMPUTER ? p : ai;
+	}
+	REQUIRE(ai);
+	REQUIRE(ai->isSkirmishAI());
+	REQUIRE(m.findAI(ai->getPlayerIndex()));
+	CHECK(b->relationshipTo(*ai) == ENEMIES); // RW 0x89C18E: the only gate filter besides the poll
+	// every gate registers itself in the manager's list at construction (RW 0x89C04B -> 0x8EDA39)
+	CHECK(std::find(m.gates().begin(), m.gates().end(), b) != m.gates().end());
+	std::vector<SkirmishAIManager::GateWalkSample> trace;
+	m.setGateWalkTrace(&trace);
+	auto walkStates = [&](bool before) {
+		std::vector<int> states;
+		for (const SkirmishAIManager::GateWalkSample &x : trace)
+		{
+			if (x.gate == b && x.before == before)
+			{
+				states.push_back(x.geometryState);
+			}
+		}
+		return states;
+	};
+	// the gate is open by default (OpenByDefault): its OPEN geometry is the one in the pathfinder's map, so the before walk gives the group's AIs the CLOSED
+	// geometry (RW 0x89C9FA(0)) and the after walk restores OPEN (RW 0x89CA84(1, 0))
+	g.frames(12); // the manager updates from logic frame 10
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::OPEN);
+	REQUIRE(b->isSettled());
+	trace.clear();
+	g.frames(1);
+	CHECK(walkStates(true) == std::vector<int>{ GateOpenAndCloseBehavior::GEOMETRY_CLOSED });
+	CHECK(walkStates(false) == std::vector<int>{ GateOpenAndCloseBehavior::GEOMETRY_OPEN });
+	CHECK(b->state() == GateOpenAndCloseBehavior::OPEN);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
+	CHECK(g.shapeActive(*gate, "OpenLeft"));
+	CHECK_FALSE(g.shapeActive(*gate, "Closed"));
+	CHECK_FALSE(g.blocksCentre(*gate));
+	// the human closes it and lets it settle: its own update puts the CLOSED geometry in the pathfinder's map, and the poll RW 0x89C12F is false in CLOSED,
+	// so both walks leave it alone
+	g.send(MSG_CLOSE_GATE, owner->getPlayerIndex(), gate->getID());
+	g.frames(70);
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(b->isSettled());
+	trace.clear();
+	g.frames(1);
+	CHECK(walkStates(true) == std::vector<int>{ GateOpenAndCloseBehavior::GEOMETRY_CLOSED });
+	CHECK(walkStates(false) == std::vector<int>{ GateOpenAndCloseBehavior::GEOMETRY_CLOSED });
+	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED);
+	CHECK(g.shapeActive(*gate, "Closed"));
+	CHECK_FALSE(g.shapeActive(*gate, "OpenLeft"));
+	CHECK(g.blocksCentre(*gate));
+	// the next frame's gate update closes it again when it had been opened; here nothing opens it, so the end of every frame has it closed
+	g.frames(1);
+	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED);
+	CHECK(g.blocksCentre(*gate));
+	m.setGateWalkTrace(nullptr);
+}
+
+// RW 0x89CD4D .. 0x89CD59: the update's dead path opens the gate and drops it from the manager's gate list; the walk no longer touches it
+TEST_CASE("rai gate object retail: a dead gate leaves the manager's gate list and keeps its open geometry (RW 0x89CD4D .. 0x89CD59)")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	SkirmishAIManager &m = g.game->logic().skirmishAI();
+	g.frames(12);
+	REQUIRE(b->state() == GateOpenAndCloseBehavior::OPEN);
+	REQUIRE(std::find(m.gates().begin(), m.gates().end(), b) != m.gates().end());
+	std::vector<SkirmishAIManager::GateWalkSample> trace;
+	m.setGateWalkTrace(&trace);
+	gate->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+	CHECK(gate->isEffectivelyDead());
+	g.frames(1); // the gate's own update, phase 5: its dead path opens the geometry and unregisters it
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
+	CHECK(g.shapeActive(*gate, "OpenLeft"));
+	CHECK_FALSE(g.blocksCentre(*gate));
+	CHECK(std::find(m.gates().begin(), m.gates().end(), b) == m.gates().end());
+	// the walk that follows in the same frame does not list it any more, and later frames do not put it back
+	trace.clear();
+	g.frames(1);
+	bool walked = false;
+	for (const SkirmishAIManager::GateWalkSample &x : trace)
+	{
+		walked = walked || x.gate == b;
+	}
+	CHECK_FALSE(walked);
+	CHECK(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_OPEN);
+	m.setGateWalkTrace(nullptr);
+}
+
 // Sol's review (HUD-5 r1): Minas Tirith's gate with a computer owner. Its only gate (MinisGateDoor, object "Gate") has a GateOpenAndCloseBehavior and no
 // AIGateUpdate, so nothing opens or closes it for the computer (RW 0x8B4D34 is AIGateUpdate's): an enemy at the gate and then one of the owner's units at it
 // leave its state as it was; a message still moves it (the dispatcher's case RW 0x77BF7B has no owner test)
@@ -547,6 +661,88 @@ TEST_CASE("gatepush1 gates retail: the closed gate repels a colliding unit (Repe
 	// a plain unit at the closed gate is repelled (RW 0x89C6F5 -> 0x89C5A2)
 	collide->onCollide(bumper, nullptr, nullptr);
 	CHECK(askedBy(*bumper, *gate));
+}
+
+// ---- lane GATECOLLIDE-1: the gates' contacts (RotWK's collision manager holds every object without INERT / NO_COLLIDE, a HORDE with AIData
+// HordesWaitForHordes, RW 0x68E31F; the pairs RW 0xB6D730 /
+// 0xB6D060) bring the closed gate's repel (RW 0x89C6F5) into the game -------------------------------------------------------------------------------
+TEST_CASE("gatecollide1 gates retail: a unit whose path was made through the open main gate meets the closed gate, is repelled (RW 0x89C6F5) and never reaches the far side")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	g.frames(2);
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	REQUIRE(b->isOpen());
+	Player *owner = gate->getControllingPlayer();
+	REQUIRE(owner);
+	const Gateway w = gatewayOf(*gate);
+	const Coord3D at = *gate->getPosition();
+	// the unit's side of the gate: its distance along the gate's direction from the gate's position (the CLOSED box, 1 deep at offset -5, lies at -6 .. -4)
+	const auto side = [&](const Object &u) { return (u.getPosition()->x - at.x) * w.dirX + (u.getPosition()->y - at.y) * w.dirY; };
+	// a porter far enough out that it reaches the doorway after the CLOSED geometry is in (above PercentOpenForPathing, 50 % of the 61 frames), its order
+	// given with the close order, so its path is made through the open gate
+	std::string error;
+	const float lateral = 24.0f;
+	const Coord3D start{ at.x - w.dirX * 800.0f - w.dirY * lateral, at.y - w.dirY * 800.0f + w.dirX * lateral, at.z };
+	Object *walker = g.game->createObject("MenPorter", owner->getPlayerIndex(), start, 0.0f, &error);
+	REQUIRE_MESSAGE(walker, error);
+	g.frames(1);
+	g.send(MSG_CLOSE_GATE, owner->getPlayerIndex(), gate->getID());
+	const Coord3D goal{ at.x + w.dirX * 300.0f - w.dirY * lateral, at.y + w.dirY * 300.0f + w.dirX * lateral, at.z };
+	walker->getAIUpdateInterface()->aiMoveToPosition(goal, CMD_FROM_PLAYER);
+	int closedFrame = -1, repelFrame = -1;
+	bool nearAtSwitch = false, reachedFarSide = false, sawPath = false, pathThroughDoorway = false;
+	const unsigned long long contactsBefore = g.game->ai().gateContacts();
+	GateOpenAndCloseBehavior::State stateAtRepel = GateOpenAndCloseBehavior::OPEN;
+	for (int i = 0; i < 150; ++i)
+	{
+		g.frames(1);
+		if (!sawPath && walker->getAIUpdateInterface()->mover().path())
+		{
+			// the path the order made: one of its legs crosses the gate's plane inside the doorway (|lateral| within the gate's bounding radius)
+			sawPath = true;
+			const Path *path = walker->getAIUpdateInterface()->mover().path();
+			const auto along = [&](const Coord3D &q) { return (q.x - at.x) * w.dirX + (q.y - at.y) * w.dirY; };
+			const auto across = [&](const Coord3D &q) { return -(q.x - at.x) * w.dirY + (q.y - at.y) * w.dirX; };
+			for (const PathNode *n = path->getFirstNode(); n && n->getNext(); n = n->getNext())
+			{
+				const Coord3D a = *n->getPosition(), c = *n->getNext()->getPosition();
+				const float sa = along(a), sc = along(c);
+				if (sa < 0.0f && sc >= 0.0f) // tolerance: the gate's plane
+				{
+					const float u = sa / (sa - sc);
+					const Coord3D x{ a.x + (c.x - a.x) * u, a.y + (c.y - a.y) * u, a.z };
+					pathThroughDoorway = std::fabs(across(x)) <= w.radius; // tolerance: the doorway, within the gate's bounding radius
+				}
+			}
+		}
+		if (closedFrame < 0 && b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED)
+		{
+			closedFrame = i;
+			nearAtSwitch = side(*walker) < -6.0f; // tolerance: outside the closed box (-6 .. -4), on the near side
+		}
+		if (repelFrame < 0 && askedBy(*walker, *gate))
+		{
+			repelFrame = i;
+			stateAtRepel = b->state();
+		}
+		reachedFarSide = reachedFarSide || (closedFrame >= 0 && side(*walker) >= 0.0f); // tolerance: the gate's plane
+	}
+	const unsigned long long contacts = g.game->ai().gateContacts() - contactsBefore;
+	MESSAGE("the closed geometry came in at frame " << closedFrame << ", the gate repelled the porter at frame " << repelFrame << "; it ends at side " << side(*walker)
+	                                                << "; gate contacts " << contacts);
+	REQUIRE(sawPath);
+	REQUIRE(pathThroughDoorway); // the order's path was made through the open gate
+	REQUIRE(closedFrame == 31);
+	REQUIRE(nearAtSwitch); // the porter was outside the closed box, on the near side, when the closed geometry came in
+	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(repelFrame == 70); // the repel (RW 0x89C6F5 -> 0x89C5A2): the gate became its move-away requester when it touched the closed box
+	CHECK(stateAtRepel == GateOpenAndCloseBehavior::CLOSED); // the gate had finished closing (100 %) before the porter reached it
+	CHECK_FALSE(reachedFarSide);
+	CHECK(contacts == 2); // every gate pair on the map that overlapped (only the porter comes near a gate; on main: none, no pass)
 }
 
 TEST_CASE("hud5 gates: the acceptance stops are reported")

@@ -3,6 +3,7 @@
 set(OPENBFME_FACTC_TESTS
     tests/test_factc_sweep.cpp
     tests/test_factc_started.cpp
+    tests/test_necrodie1.cpp
 )
 
 # simulation sources (sim audit manifest): the modules are object state that enters the lockstep hash

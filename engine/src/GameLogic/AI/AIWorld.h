@@ -91,6 +91,7 @@ public:
 	PathfindObjectID getID() const override;
 	const Coord3D &getPosition() const override;
 	float getOrientation() const override;
+	Coord2D getUnitDirection2D() const override; // the transform's basis, as AIUpdateInterface::unitDirectionOf
 	PathfindLayerEnum getLayer() const override { return m_layer; }
 	void setLayer(PathfindLayerEnum layer) { m_layer = layer; }
 	float getHeightAboveTerrain() const override;
@@ -114,6 +115,8 @@ public:
 	const PathfindObject *getTopContainer() const override;
 	bool isParked() const override;
 	bool hasAI() const override;
+	bool isStatusImmobile() const override;
+	bool getAILocomotorInfo(PathfindLocomotorInfo &out) const override;
 	PathfindObjectID getIgnoredObstacleID() const override;
 	bool canPathThroughUnits() const override;
 	bool isAircraftThatAdjustsDestination() const override;
@@ -207,6 +210,11 @@ public:
 	// ---- objects ----
 	ObjectPathfindAdapter &adapterFor(Object &obj);
 	ObjectPathfindAdapter *findAdapter(PathfindObjectID id) const;
+	// RW 0x68BBE0 (BFME2 0x68B511), Object's layer: the ground when + 0x4AC (BFME2 + 0x48C) is set, else + 0x428 (lane WALLMELEE-1): the object's
+	// pathfinder layer (its adapter's), the ground for an object without one. INFERENCE (S-4840): + 0x4AC (set for a horde and its members by HordeContain's
+	// transform reaction RW 0x871536 -> 0x68C02E, cleared 13 frames later by RW 0x68C05A) is not ported, and + 0x428 is set by the mover and, for an object with an AI,
+	// at its map placement (RW 0x62E14C) only, not for every object at load (RW 0x62DCE4) or at an OCL's creation (RW 0x5F1439 / 0x5F2349)
+	static PathfindLayerEnum objectLayer(const Object &obj);
 	Object *findObject(PathfindObjectID id) const;
 	// parsed once per template (the final override), errors kept in movementErrors()
 	const ObjectMovementInfo &movementInfo(const ThingTemplate &tt);
@@ -215,6 +223,7 @@ public:
 	void objectLeftWorld(Object &obj);
 	void addObjectToPathfindMap(Object &obj);
 	void removeObjectFromPathfindMap(Object &obj);
+	void removeObjectFromPathfindMapKeepGateFlag(Object &obj); // lane WALLFOOT-1: RW 0x6E861E, the gate's removal (bit 17 kept)
 	// the AI of an object (null when it has none)
 	AIUpdateInterface *aiOf(PathfindObjectID id) const;
 	AIUpdateInterface *aiOf(const Object &obj) const;
@@ -236,6 +245,15 @@ public:
 	void processCrateContacts();
 	unsigned long long crateContacts() const { return m_crateContacts; } ///< the overlapping crate pairs met so far (statistics)
 	size_t crateCount() const { return m_crates.size(); }
+	// lane GATECOLLIDE-1 (S-1940 / S-581): RotWK's collision manager also holds the gates (STRUCTURE IMMOBILE, no NO_COLLIDE: RW 0x68E31F), and a gate's
+	// collide interface (RW 0x89C6F5) repels the units that touch its CLOSED geometry. The overlap pass above skips the immobile AIs, so the gates of the
+	// skirmish AI manager's gate list (RW 0x89C04B -> 0x8EDA39) get their own pass after the crates', as the crates do: each gate in id order meets the
+	// AI objects (registered as RW 0x68E31F: no INERT or NO_COLLIDE, a HORDE only with AIData HordesWaitForHordes; no IMMOBILE: RW 0xB6D730's group test)
+	// whose shapes overlap its active shapes (RW 0xAD2CE0), in id order, both ways, the lower id first (RW 0xB6D060; the order across the pairs is the
+	// port's, S-780). INFERENCE: the objects with an AI only. The gate list is derived (the modules register themselves), not saved. BFME2 1.06 twins:
+	// 0x68DCC4 / 0xB59490 / 0xABEB80 / 0xB58DE0, the gate's collide interface 0x898F46
+	void processGateContacts();
+	unsigned long long gateContacts() const { return m_gateContacts; } ///< the overlapping gate pairs met so far (statistics)
 	// lane PHYS-1: RW moveAllies 0x6F503B (AIUpdateAllies.cpp): every stationary ally on the cells along `path` is asked to step away; false when not done
 	bool moveAllies(AIUpdateInterface &mover, Path &path, bool force);
 	// lane MOVE-3 r2: RW 0x6F85A6 moveAlliesAwayFromDestination (RW 0x6F7F3E -> the Bresenham line RW 0x6F57C3 -> each cell RW 0x6F53AF): every cell of the line
@@ -340,6 +358,8 @@ private:
 	std::vector<PathfindObjectID> m_crates, m_crateScratch, m_crateHits;
 	bool m_cratesValid = false;
 	unsigned long long m_crateContacts = 0;
+	std::vector<PathfindObjectID> m_gateScratch, m_gateHits; ///< lane GATECOLLIDE-1: processGateContacts' scratch lists (not state)
+	unsigned long long m_gateContacts = 0;
 	PathfindWallMeshSource *m_wallMeshes = nullptr; // lane WALL-1
 	int m_moveAlliesDepth = 0; // lane PHYS-1: RW pathfinder + 0x1C1BC, the recursion guard of moveAllies
 	int m_peakTickCells = 0;

@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/StructureModules.h"
+#include "GameLogic/Module/StructureToppleUpdate.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/HeroModules.h"
 
@@ -181,6 +182,9 @@ void StructureModules::registerAll(ModuleFactory &modules)
 	bindRuntime<LifetimeUpdate, LifetimeUpdateModuleData>(modules, "LifetimeUpdate");
 	modules.bindTypedData<StructureCollapseUpdateModuleData>("StructureCollapseUpdate", MODULETYPE_BEHAVIOR);
 	bindRuntime<StructureCollapseUpdate, StructureCollapseUpdateModuleData>(modules, "StructureCollapseUpdate");
+	// lane TOPPLE-1: RW 0xC69680 table, runtime RW 0x8A8BB4 (GameLogic/Module/StructureToppleUpdate.h)
+	modules.bindTypedData<StructureToppleUpdateModuleData>("StructureToppleUpdate", MODULETYPE_BEHAVIOR);
+	bindRuntime<StructureToppleUpdate, StructureToppleUpdateModuleData>(modules, "StructureToppleUpdate");
 }
 
 // ---- StructureBody ------------------------------------------------------------------------------------------------------------------
@@ -283,8 +287,7 @@ float StructureCollapseUpdate::getCollapseHeight() const
 void StructureCollapseUpdate::onDie(const DieModuleInterface::Event &event)
 {
 	Object *obj = getObject();
-	bool angle = false;
-	if (!m_data->m_dieMux.isDieApplicable(*obj, event, &angle))
+	if (!m_data->m_dieMux.isDieApplicable(*obj, event))
 	{
 		return;
 	}

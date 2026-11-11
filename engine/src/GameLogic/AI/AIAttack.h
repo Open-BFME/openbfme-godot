@@ -137,6 +137,7 @@ private:
 	int m_lockedSlotOnEnter = -1;
 	unsigned m_shotsFired = 0;
 	bool m_meleeMachine = false;
+	bool m_victimWasEnemyOnEnter = false; ///< ATKSTATE-1a: BFME2 + 0x49, the victim was an enemy at onEnter (BFME2 0x74B692 / 0x74B6E5)
 	const AttackExitConditions *m_exitConditions = nullptr; ///< ZH m_attackParameters
 };
 
@@ -165,11 +166,16 @@ public:
 
 private:
 	bool inRange() const;
+	// the path request and the move toward `goal` (RW 0x749A3E computePath, then the move's onEnter)
+	StateReturnType startMove(const Coord3D &goal, Object *victim);
 	std::unique_ptr<class AIMoveToState> m_move;
 	AIAttackState *m_att;
 	bool m_follow;
 	Coord3D m_prevVictimPos{ 0.0f, 0.0f, 0.0f };
 	unsigned m_approachFrame = 0;
+	// an owner that cannot move waits (RW 0x74E6CE, + 0x68 / + 0x71; BFME2 decomp AIAttackApproachTargetState::onEnter retail 0x0034CD3A)
+	bool m_waiting = false;
+	unsigned m_waitFrame = 0;
 };
 
 class AIAttackAimState : public AIState
@@ -184,6 +190,8 @@ public:
 	void xfer(class Xfer &x) override;
 
 private:
+	StateReturnType aim(bool firstCall); // RW 0x75232F (lane AIMAIM-1)
+
 	AIAttackState *m_att;
 	unsigned m_approachId;
 	bool m_setLocomotor = false;

@@ -65,6 +65,7 @@ TerrainTrees::TerrainTrees(GameLogic &logic) : m_logic(logic)
 void TerrainTrees::reset()
 {
 	m_records.clear();
+	m_clusters.clear();
 	m_events.clear();
 	m_heads.assign((size_t)BUCKETS * BUCKETS, (std::int16_t)-1);
 	m_hasExtent = false;
@@ -91,6 +92,38 @@ void TerrainTrees::setExtent(float loX, float loY, float hiX, float hiY)
 	m_hi[0] = hiX;
 	m_hi[1] = hiY;
 	m_hasExtent = true;
+}
+
+// ---- lane RAI-POW-3: the AI's tree-cluster index (see the header) -------------------------------------------------------------------------
+
+bool TerrainTrees::anyClusterUsed() const
+{
+	for (const Cluster &c : m_clusters.groups())
+	{
+		if (c.used)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// RW 0x683C2D: register the record (+ 0x04) and insert it (RW 0x683807 / 0x683055 / 0x6831BE, the record copies of RW 0x8E42C8 / 0x8E4082 / 0x8E41EB);
+// the sampler's id is the record's index in `from`
+void TerrainTrees::insertCluster(int recordIndex, const std::vector<Record> &from)
+{
+	m_clusters.add((ObjectID)recordIndex, kClusterPadding, [&from](ObjectID id) { return from[(size_t)id].position; });
+}
+
+// RW 0x683D53: the index over the map's tree list, rebuilt from the records as the map made them (a cleared record keeps its place: RW 0x67D3C2)
+void TerrainTrees::rebuildClusters(const std::vector<Record> &from)
+{
+	// the caller has already put the map's records back into m_records (TerrainTrees::xfer); `from` names them
+	m_clusters.clear(); // RW 0x682F3D
+	for (size_t i = 0; i < from.size(); ++i)
+	{
+		insertCluster((int)i, from);
+	}
 }
 
 // RW 0x67D400
@@ -129,6 +162,7 @@ bool TerrainTrees::addTree(const ThingTemplate &tmpl, const Coord3D &position, s
 	r.grabbable = boolField(tmpl, "IsGrabbable");     // + 0x5FB
 	r.harvestable = boolField(tmpl, "IsHarvestable"); // + 0x5FC
 	m_records.push_back(r);
+	insertCluster((int)m_records.size() - 1, m_records); // RW 0x683F17 .. 0x683F20: the record joins the tree cluster index
 	return true;
 }
 
@@ -446,6 +480,23 @@ void TerrainTrees::crc(StateHasher &h) const
 		h.addFloat(r.toppleDirection.y);
 		h.addI32(r.value);
 	}
+	if (anyClusterUsed()) // lane RAI-POW-3: + 0x584's used bytes, hashed once a tree killer marked a cluster (games that never cast it keep their hash)
+	{
+		h.addU32(0x584u);
+		std::uint32_t used = 0;
+		for (const Cluster &c : m_clusters.groups())
+		{
+			used += c.used ? 1u : 0u;
+		}
+		h.addU32(used);
+		for (size_t i = 0; i < m_clusters.groups().size(); ++i)
+		{
+			if (m_clusters.groups()[i].used)
+			{
+				h.addU32((std::uint32_t)i);
+			}
+		}
+	}
 }
 
 // lane SAVE-4d. Retail saves the tree records inside TerrainLogic::xfer (CHUNK_TerrainLogic, RW 0x683F8C, window (1, 2), tier A: the record count, every
@@ -461,7 +512,8 @@ void TerrainTrees::crc(StateHasher &h) const
 void TerrainTrees::xfer(Xfer &x)
 {
 	const bool loading = x.isLoading();
-	XferVersion v{ 1, 1 };
+	// version 2 (lane RAI-POW-3): the tree-cluster index's used bytes, written only once a tree killer marked one (every other snapshot is version 1's)
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || anyClusterUsed() ? 2 : 1) };
 	x.xferVersion(v);
 	std::uint32_t records = loading ? 0 : (std::uint32_t)m_records.size();
 	x.xferUnsignedInt(&records);
@@ -556,6 +608,23 @@ void TerrainTrees::xfer(Xfer &x)
 	}
 	if (!loading)
 	{
+		if (v.current >= 2)
+		{
+			std::uint32_t used = 0;
+			for (const Cluster &c : m_clusters.groups())
+			{
+				used += c.used ? 1u : 0u;
+			}
+			x.xferCount(&used, 1, 4);
+			for (size_t i = 0; i < m_clusters.groups().size(); ++i)
+			{
+				if (m_clusters.groups()[i].used)
+				{
+					std::uint32_t index = (std::uint32_t)i;
+					x.xferUnsignedInt(&index);
+				}
+			}
+		}
 		return;
 	}
 	// lane SAVE-4e: the game's records go back to the map's (kept before the first change), then take the snapshot's changes: a game whose trees changed
@@ -566,9 +635,36 @@ void TerrainTrees::xfer(Xfer &x)
 	{
 		m_records[e.first] = e.second;
 	}
+	// lane RAI-POW-3: the index is the map's (RW 0x683D53 rebuilds it from the records); the snapshot's used bytes go on top
+	rebuildClusters(m_start);
 	m_changed = (int)changed;
 	m_changedFrame = changedFrame;
 	m_toppleSpeed = toppleSpeed;
+	if (v.current >= 2)
+	{
+		std::uint32_t used = 0;
+		x.xferCount(&used, 1, 4);
+		if (used > m_clusters.groups().size())
+		{
+			throw XferException("terrain trees: " + std::to_string(used) + " used cluster(s) of " + std::to_string(m_clusters.groups().size()));
+		}
+		std::vector<char> seen(m_clusters.groups().size(), 0);
+		for (std::uint32_t n = 0; n < used; ++n)
+		{
+			std::uint32_t index = 0;
+			x.xferUnsignedInt(&index);
+			if (index >= m_clusters.groups().size())
+			{
+				throw XferException("terrain trees: used cluster " + std::to_string(index) + " of " + std::to_string(m_clusters.groups().size()));
+			}
+			if (seen[index])
+			{
+				throw XferException("terrain trees: used cluster " + std::to_string(index) + " twice");
+			}
+			seen[index] = 1;
+			m_clusters.groups()[index].used = true;
+		}
+	}
 }
 
 std::string TerrainTrees::stopLine()

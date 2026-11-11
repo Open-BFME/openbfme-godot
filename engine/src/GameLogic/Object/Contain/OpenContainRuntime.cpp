@@ -824,6 +824,24 @@ void OpenContain::orderAllPassengersToExit(int source)
 	}
 }
 
+// RW 0x86561F (contain vslot 0x64, the sale's call at RW 0x796806; the same body in every contain table of 2.01, so no class overrides it):
+//   mov eax, [ecx]              ; the contain's vtable
+//   push 2                      ; CMD_FROM_AI
+//   mov byte ptr [ecx + 0xC1], 0 ; module + 0xE1, the kill-on-death byte (set to 1 by the constructor, RW 0x86806C; read by RW 0x86588C)
+//   call dword ptr [eax + 0x80] ; vslot 0x80 orderAllPassengersToExit
+void OpenContain::onSelling()
+{
+	m_killingRiders = false;             // RW 0x865623
+	orderAllPassengersToExit((int)CMD_FROM_AI); // RW 0x86562A: the virtual, so a horde garrison orders its riders out through RW 0x991027
+}
+
+// RW 0x86588C: `xor eax, eax; cmp byte [ecx + 0xE1], al; je` (the byte cleared by the sale, RW 0x865623), then `mov ecx, [ecx + 4]` (the module data)
+// `cmp byte [ecx + 0x83], al` (KillPassengersOnDeath, data + 0x83): 1 only when both are set
+bool OpenContain::getKillPassengersOnDeath() const
+{
+	return m_killingRiders && openData().m_killPassengersOnDeath;
+}
+
 void OpenContain::onObjectWantsToEnterOrExit(Object *obj, int wants)
 {
 	if (!obj)
@@ -1049,7 +1067,8 @@ const char *OpenContain::shipStop()
 	       "test and their exit to the shore): not ported are the boarding AI (AIPrepareForBoarding RW 0x74403F / 0x756651, the SHIP branch of "
 	       "AIMoveToPositionAndEnterState RW 0x751A8A / 0x756452: the destination adjustment, the ship's states 0x46 / 0x47 and its shore test, "
 	       "privateMoveToPositionAmphibious RW 0x66B564) and the angled exit path RW 0x77122F that the exit states' byte RW 0xDE9064 selects; "
-	       "OpenBFME boundary policy: a ship/rider exit with only zero-initialized destinations retains ordinary path checks instead of a straight leg";
+	       "OpenBFME boundary policy: a ship/rider exit with only zero-initialized destinations retains ordinary path checks instead of a straight leg, and a rider "
+	       "whose machine goal is zero-initialized (no boarding AI set it) ends its exit path at the shore point instead of following that goal";
 }
 
 // lane SHIP-1, RW 0x868516 .. 0x868733 (OpenContain::exitObjectViaDoor with NumberOfExitPaths 0 and a SHIP container). TARGET FACTS (RotWK game.dat, S-001):
@@ -1100,7 +1119,15 @@ void OpenContain::exitShipToShore(const Object &ship, Object &rider)
 	rider.setOrientation(angle);
 	if (!ai->isContained())
 	{
-		std::vector<Coord3D> path{ q, q, goal };
+		// merge queue q37: a rider whose machine goal is still zero-initialized (the boarding AI that would set it, AIMoveToPositionAndEnterState's SHIP
+		// branch, is unported: S-4160) does not follow that goal: the exit path ends at Q. With the rebuilt paths (RW 0x767B0E) the [Q, Q] legs end and
+		// FindClosestPath (RW 0x6FB869) finds a leg towards the map's (0, 0), so the landed riders walked off the shore towards the map's corner
+		const bool noGoal = goal.x == 0.0f && goal.y == 0.0f && goal.z == 0.0f;
+		std::vector<Coord3D> path{ q, q };
+		if (!noGoal)
+		{
+			path.push_back(goal);
+		}
 		ai->aiFollowPath(path, const_cast<Object *>(&ship), CMD_FROM_AI, true);
 		// OpenBFME integration guard requested in #133: an untouched ship and
 		// rider have zero-initialized destinations, not an authored exit lane.
@@ -1113,7 +1140,7 @@ void OpenContain::exitShipToShore(const Object &ship, Object &rider)
 		{
 			ai->setCanPathThroughUnits(false);
 		}
-		q = goal;
+		q = noGoal ? q : goal;
 	}
 	ai->world().pathfinder().updateGoal(ai->pathfindObject(), &q, LAYER_GROUND); // RW 0x68B3AB
 	++m_openStats.shipExitsToShore;
