@@ -825,3 +825,351 @@ TEST_CASE("fx2 retail: a level-up in a live game plays the level's LevelUpFx thr
 	CHECK(fx.stats().missingFXLists.count("GenericLevelUp2FX") == 0);
 	MESSAGE("fx2 retail level-up: " << sites.at("LevelUpFx") << " LevelUpFx calls played");
 }
+
+namespace
+{
+struct PosCallProbeNugget : FXNugget
+{
+	struct Call
+	{
+		bool hasPos = false;
+		Coord3D pos{};
+		bool hasMtx = false;
+		Matrix3D mtx{};
+		float speed = 0.0f;
+		bool hasSecondary = false;
+		Coord3D secondary{};
+	};
+	mutable std::vector<Call> calls;
+	PosCallProbeNugget() : FXNugget(FX_NUGGET_SOUND) {}
+	const FieldParse *fieldParse() const override { return nullptr; }
+	void doFXPos(FXServices &, const Coord3D *pos, const Matrix3D *mtx, float speed, const Coord3D *secondary) const override
+	{
+		Call c;
+		if (pos)
+		{
+			c.hasPos = true;
+			c.pos = *pos;
+		}
+		if (mtx)
+		{
+			c.hasMtx = true;
+			c.mtx = *mtx;
+		}
+		c.speed = speed;
+		if (secondary)
+		{
+			c.hasSecondary = true;
+			c.secondary = *secondary;
+		}
+		calls.push_back(c);
+	}
+};
+} // namespace
+
+// Local 22 (#163) step 1: RW 0x494615 (FXList::doFXPos static wrapper, DONOR BFME2 0x00094C29) forwards (primary, primaryMtx, primarySpeed, secondary) to
+// RW 0x5E21D8 (FXList::doFXPos member, DONOR BFME2 0x001E296E), which passes all four to each nugget's vtable +0x04 doFXPos (RW 0x5E2257 .. 0x5E2268).
+// RayEffectFXNugget::doFXPos (RW 0x5DF95D) requires both primary != nullptr (0x5DF978) and secondary != nullptr (0x5DF983); LaserFXNugget::doFXPos
+// (RW 0x5DFC2E) uses secondary when non-null (0x5DFCB9) instead of TargetPositionOffset.
+TEST_CASE("LOCAL-22 step 1: POSITION_FX forwards weaponSpeed and secondaryPosition through LiveFX::play to FXList::doFXPos (RW 0x494615 -> 0x5E21D8)")
+{
+	if (!hudtest::haveWorld("LOCAL-22 step 1"))
+	{
+		return;
+	}
+	hudtest::SharedWorld &s = hudtest::shared();
+	hudtest::Rig rig(s);
+	FXPlayback playback(*s.mount->fs, RandomAlgorithm::RotWK_GameDat_LCG);
+	static const char kIni[] =
+		"FXList FX_Local22Step1\n"
+		"  RayEffect\n"
+		"    Name = Local22RayTemplate\n"
+		"    PrimaryOffset = X:1 Y:2 Z:3\n"
+		"    SecondaryOffset = X:4 Y:5 Z:6\n"
+		"  End\n"
+		"End\n";
+	REQUIRE(playback.loadIniText("local22_step1.ini", kIni).empty());
+	const FXList *fxList = playback.fxLists().findFXList("FX_Local22Step1");
+	REQUIRE(fxList != nullptr);
+	auto probePtr = std::make_unique<PosCallProbeNugget>();
+	const PosCallProbeNugget *probe = probePtr.get();
+	const_cast<FXList *>(fxList)->addNugget(std::move(probePtr));
+
+	LiveFX fx(*rig.game, playback);
+	static const std::string fxName = "FX_Local22Step1";
+
+	// 1. POSITION_FX with weaponSpeed and hasSecondaryPosition = true (RW 0x6CEA17 .. 0x6CEA58 / RW 0x76B867 .. 0x76B894)
+	FXEvent withSec;
+	withSec.kind = FXEvent::POSITION_FX;
+	withSec.site = "Local22Step1WithSec";
+	withSec.frame = rig.logic().getFrame();
+	withSec.fxList = &fxName;
+	withSec.position = Coord3D{ 100.0f, 200.0f, 10.0f };
+	withSec.weaponSpeed = 175.5f;
+	withSec.secondaryPosition = Coord3D{ 300.0f, 400.0f, 25.0f };
+	withSec.hasSecondaryPosition = true;
+	rig.logic().fxEvents().emit(withSec);
+	fx.flushPending();
+
+	REQUIRE(probe->calls.size() == 1u);
+	CHECK(probe->calls[0].hasPos);
+	CHECK(probe->calls[0].pos.x == 100.0f);
+	CHECK(probe->calls[0].pos.y == 200.0f);
+	CHECK(probe->calls[0].pos.z == 10.0f);
+	CHECK_FALSE(probe->calls[0].hasMtx);
+	CHECK(probe->calls[0].speed == 175.5f);
+	REQUIRE(probe->calls[0].hasSecondary);
+	CHECK(probe->calls[0].secondary.x == 300.0f);
+	CHECK(probe->calls[0].secondary.y == 400.0f);
+	CHECK(probe->calls[0].secondary.z == 25.0f);
+	// RayEffectFXNugget::doFXPos (RW 0x5DF95D) fired because secondary != nullptr
+	REQUIRE(playback.events().size() == 1u);
+	CHECK(playback.events()[0].kind == "rayEffect");
+	CHECK(playback.events()[0].detail == "Local22RayTemplate");
+	CHECK(playback.events()[0].pos.x == 101.0f);
+	CHECK(playback.events()[0].pos.y == 202.0f);
+	CHECK(playback.events()[0].pos.z == 13.0f);
+
+	// 2. POSITION_FX with hasSecondaryPosition = false (default): secondary is nullptr and RayEffect does not fire (RW 0x5DF983)
+	playback.clearEvents();
+	FXEvent noSec;
+	noSec.kind = FXEvent::POSITION_FX;
+	noSec.site = "Local22Step1NoSec";
+	noSec.frame = rig.logic().getFrame();
+	noSec.fxList = &fxName;
+	noSec.position = Coord3D{ 50.0f, 60.0f, 5.0f };
+	rig.logic().fxEvents().emit(noSec);
+	fx.flushPending();
+
+	REQUIRE(probe->calls.size() == 2u);
+	CHECK(probe->calls[1].speed == 0.0f);
+	CHECK_FALSE(probe->calls[1].hasSecondary);
+	CHECK(playback.events().empty());
+}
+
+// Local 22 (#163) step 2:
+// - Weapon::preFireWeapon (RW 0x6CEA17 .. 0x6CEA5D, DONOR BFME2 0x002CDC3D WeaponReloadWithBonus.cpp:170) and
+//   WeaponFireSpecialAbilityUpdate::startUnpacking (RW 0x895FC4 .. 0x89602B, DONOR BFME2 0x0049283E WeaponFireSpecialAbilityUpdate.cpp:509)
+//   gate on source->getDrawable() != nullptr (RW 0x70E013) and call FXList::doFXPos(fx, d->getPosition(), d->getTransformMatrix(), wt->m_weaponSpeed, d->getPosition())
+//   via Drawable::getPosition (RW 0x676711 .. 0x67679A) and Drawable::getTransformMatrix (RW 0x6765B9 .. 0x676706).
+// - AIGiantBirdAttackState::onEnter (RW 0x76B84C .. 0x76B894, DONOR BFME2 0x00368DE2 AIGiantBirdAttackStateOnEnter.cpp:431) gates on
+//   owner->getDrawable() != nullptr and calls fireFX->doFXPos(&victim->m_position, owner->getDrawable()->getTransformMatrix(), wt.m_weaponSpeed, &victim->m_position).
+TEST_CASE("LOCAL-22 step 2: POSITION_FX drawablePosition / drawableMatrix and FXEventLog::drawablePositionEvent use Drawable's interpolated pose (RW 0x676711, 0x6765B9, 0x6CEA25, 0x895FC4, 0x76B84C)")
+{
+	if (!hudtest::haveWorld("LOCAL-22 step 2"))
+	{
+		return;
+	}
+	hudtest::SharedWorld &s = hudtest::shared();
+	hudtest::Rig rig(s);
+	const auto context = s.world->enterContext();
+	FXPlayback playback(*s.mount->fs, RandomAlgorithm::RotWK_GameDat_LCG);
+	static const char kIni[] =
+		"FXParticleSystem Local22Step2Sys\n"
+		"  System\n"
+		"    Priority = ALWAYS_RENDER\n"
+		"    Lifetime = 50 50\n"
+		"    BurstCount = 1 1\n"
+		"    BurstDelay = 100 100\n"
+		"  End\n"
+		"End\n"
+		"FXList FX_Local22Step2\n"
+		"  ParticleSystem\n"
+		"    Name = Local22Step2Sys\n"
+		"    OrientToObject = Yes\n"
+		"    Offset = X:10 Y:0 Z:5\n"
+		"  End\n"
+		"End\n";
+	REQUIRE(playback.loadIniText("local22_step2.ini", kIni).empty());
+	const FXList *fxList = playback.fxLists().findFXList("FX_Local22Step2");
+	REQUIRE(fxList != nullptr);
+	auto probePtr = std::make_unique<PosCallProbeNugget>();
+	const PosCallProbeNugget *probe = probePtr.get();
+	const_cast<FXList *>(fxList)->addNugget(std::move(probePtr));
+
+	LiveFX fx(*rig.game, playback);
+	std::string err;
+	Object *unit = rig.game->createObject("GondorFighter", rig.index(), Coord3D{ 100.0f, 200.0f, 0.0f }, 0.0f, &err);
+	REQUIRE_MESSAGE(unit != nullptr, err);
+	rig.game->advance(0.2);
+	fx.flushPending();
+	probe->calls.clear();
+	playback.particles().reset();
+	const Coord3D logicPos{ 100.0f, 200.0f, 0.0f };
+	unit->setPosition(&logicPos);
+	unit->setOrientation(0.0f);
+	Drawable *d = rig.game->drawables().findByObject(unit->getID());
+	REQUIRE(d != nullptr);
+
+	// Simulate the render-side drawable having an interpolated pose (RW 0x676711 / RW 0x6765B9) distinct from the logic object's (100, 200, 0) / 0 rad:
+	// interpolated position (140, 260, 12) and 90-degree rotation about +Z (basis columns: X=(0,1,0), Y=(-1,0,0), Z=(0,0,1)).
+	const Coord3D interpPos{ 140.0f, 260.0f, 12.0f };
+	const float interpBasis[9] = {
+		0.0f, -1.0f, 0.0f,
+		1.0f, 0.0f, 0.0f,
+		0.0f, 0.0f, 1.0f
+	};
+	d->setTransform(&interpPos, interpBasis);
+
+	// 1. FXEventLog::drawablePositionEvent (RW 0x6CEA25 .. 0x6CEA58 / RW 0x895FC4 .. 0x896026):
+	//    passes d->getPosition(), d->getTransformMatrix(), weaponSpeed, and d->getPosition() as secondary.
+	static const std::string fxName = "FX_Local22Step2";
+	FXEvent preAttack = FXEventLog::drawablePositionEvent("PreAttackFX", rig.logic().getFrame(), fxName, *unit, 225.0f);
+	CHECK(preAttack.drawablePosition);
+	CHECK(preAttack.drawableMatrix);
+	CHECK(preAttack.hasSecondaryPosition);
+	CHECK(preAttack.weaponSpeed == 225.0f);
+	rig.logic().fxEvents().emit(preAttack);
+	fx.flushPending();
+
+	REQUIRE(probe->calls.size() == 1u);
+	CHECK(probe->calls[0].hasPos);
+	CHECK(probe->calls[0].pos.x == 140.0f);
+	CHECK(probe->calls[0].pos.y == 260.0f);
+	CHECK(probe->calls[0].pos.z == 12.0f);
+	REQUIRE(probe->calls[0].hasMtx);
+	CHECK(probe->calls[0].mtx.Row[0][0] == 0.0f);
+	CHECK(probe->calls[0].mtx.Row[0][1] == -1.0f);
+	CHECK(probe->calls[0].mtx.Row[0][3] == 140.0f);
+	CHECK(probe->calls[0].mtx.Row[1][0] == 1.0f);
+	CHECK(probe->calls[0].mtx.Row[1][1] == 0.0f);
+	CHECK(probe->calls[0].mtx.Row[1][3] == 260.0f);
+	CHECK(probe->calls[0].mtx.Row[2][2] == 1.0f);
+	CHECK(probe->calls[0].mtx.Row[2][3] == 12.0f);
+	CHECK(probe->calls[0].speed == 225.0f);
+	REQUIRE(probe->calls[0].hasSecondary);
+	CHECK(probe->calls[0].secondary.x == 140.0f);
+	CHECK(probe->calls[0].secondary.y == 260.0f);
+	CHECK(probe->calls[0].secondary.z == 12.0f);
+	// ParticleSystemFXNugget::doFXPos (RW 0x5E1256 -> 0x5E1270, RW 0x5E131B .. 0x5E1442): Offset (10, 0, 5) rotated by 90 deg around +Z is (0, 10, 5),
+	// added to the drawable's interpolated position (140, 260, 12) -> (140, 270, 17), and oriented to the drawable's interpolated matrix.
+	playback.step();
+	REQUIRE(playback.particles().systemCount() == 1u);
+	Matrix3D sysMtx{};
+	playback.particles().forEachSystem([&](const FXParticleSystem::ParticleSystem &sys) { sysMtx = sys.transform(); });
+	CHECK(sysMtx.Row[0][0] == 0.0f);
+	CHECK(sysMtx.Row[0][1] == -1.0f);
+	CHECK(sysMtx.Row[1][0] == 1.0f);
+	CHECK(sysMtx.Row[1][1] == 0.0f);
+	CHECK(sysMtx.Row[0][3] == 140.0f);
+	CHECK(sysMtx.Row[1][3] == 270.0f);
+	CHECK(sysMtx.Row[2][3] == 17.0f);
+
+	// 2. GiantBirdGrabFX pattern (RW 0x76B84C .. 0x76B894): pos and secondary are victim's position, primaryMtx is owner drawable's interpolated matrix,
+	//    speed is wt.m_weaponSpeed.
+	FXEvent grab = FXEventLog::objectEvent(FXEvent::POSITION_FX, "GiantBirdGrabFX", rig.logic().getFrame(), fxName, *unit);
+	grab.position = Coord3D{ 500.0f, 600.0f, 30.0f };
+	grab.drawableMatrix = true;
+	grab.weaponSpeed = 310.0f;
+	grab.secondaryPosition = grab.position;
+	grab.hasSecondaryPosition = true;
+	rig.logic().fxEvents().emit(grab);
+	fx.flushPending();
+
+	REQUIRE(probe->calls.size() == 2u);
+	CHECK(probe->calls[1].pos.x == 500.0f);
+	CHECK(probe->calls[1].pos.y == 600.0f);
+	CHECK(probe->calls[1].pos.z == 30.0f);
+	REQUIRE(probe->calls[1].hasMtx);
+	CHECK(probe->calls[1].mtx.Row[0][0] == 0.0f);
+	CHECK(probe->calls[1].mtx.Row[0][1] == -1.0f);
+	CHECK(probe->calls[1].mtx.Row[0][3] == 140.0f);
+	CHECK(probe->calls[1].mtx.Row[1][0] == 1.0f);
+	CHECK(probe->calls[1].mtx.Row[1][3] == 260.0f);
+	CHECK(probe->calls[1].speed == 310.0f);
+	REQUIRE(probe->calls[1].hasSecondary);
+	CHECK(probe->calls[1].secondary.x == 500.0f);
+	CHECK(probe->calls[1].secondary.y == 600.0f);
+	CHECK(probe->calls[1].secondary.z == 30.0f);
+
+	// 3. Drawable gate (RW 0x6CEA27, RW 0x895FF8, RW 0x76B85D): an object without a drawable skips drawablePosition / drawableMatrix POSITION_FX calls.
+	unit->friend_bindToClient(nullptr);
+	FXEvent noDrawable = FXEventLog::drawablePositionEvent("PreAttackFX", rig.logic().getFrame(), fxName, *unit, 225.0f);
+	rig.logic().fxEvents().emit(noDrawable);
+	fx.flushPending();
+	CHECK(probe->calls.size() == 2u);
+	REQUIRE(fx.stats().skipped.count("PositionFX without a drawable") == 1u);
+	CHECK(fx.stats().skipped.at("PositionFX without a drawable") == 1u);
+}
+
+// Local 22 (#163) neighbouring test: existing OBJECT_FX, WEAPON_FIRE_FX, and plain POSITION_FX calls keep playing at the same place,
+// and the logic state hash is unaffected by drawable pose changes on the client.
+TEST_CASE("LOCAL-22 neighbouring: existing OBJECT_FX, WEAPON_FIRE_FX, and plain POSITION_FX keep playing at the same place")
+{
+	if (!hudtest::haveWorld("LOCAL-22 neighbouring"))
+	{
+		return;
+	}
+	hudtest::SharedWorld &s = hudtest::shared();
+	hudtest::Rig rig(s);
+	const auto context = s.world->enterContext();
+	FXPlayback playback(*s.mount->fs, RandomAlgorithm::RotWK_GameDat_LCG);
+	static const char kIni[] =
+		"FXList FX_Local22PlainPos\n"
+		"  ViewShake\n"
+		"    Type = NORMAL\n"
+		"  End\n"
+		"End\n";
+	REQUIRE(playback.loadIniText("local22_neighbour.ini", kIni).empty());
+	const FXList *fxList = playback.fxLists().findFXList("FX_Local22PlainPos");
+	REQUIRE(fxList != nullptr);
+	auto probePtr = std::make_unique<PosCallProbeNugget>();
+	const PosCallProbeNugget *probe = probePtr.get();
+	const_cast<FXList *>(fxList)->addNugget(std::move(probePtr));
+
+	LiveFX fx(*rig.game, playback);
+	std::string err;
+	Object *unit = rig.game->createObject("GondorFighter", rig.index(), Coord3D{ 100.0f, 200.0f, 0.0f }, 0.0f, &err);
+	REQUIRE_MESSAGE(unit != nullptr, err);
+	rig.game->advance(0.2);
+	fx.flushPending();
+	probe->calls.clear();
+	const Coord3D logicPos{ 100.0f, 200.0f, 0.0f };
+	unit->setPosition(&logicPos);
+	unit->setOrientation(0.0f);
+	Drawable *d = rig.game->drawables().findByObject(unit->getID());
+	REQUIRE(d != nullptr);
+	const Coord3D interpPos{ 140.0f, 260.0f, 12.0f };
+	d->setPosition(&interpPos);
+
+	const std::uint32_t hashBefore = rig.logic().computeStateHash();
+	static const std::string fxName = "FX_Local22PlainPos";
+
+	// Plain objectEvent(POSITION_FX) without drawablePosition/drawableMatrix still uses the captured logic position (100, 200, 0) and logic transform.
+	FXEvent plainObjPos = FXEventLog::objectEvent(FXEvent::POSITION_FX, "FXListDie", rig.logic().getFrame(), fxName, *unit);
+	rig.logic().fxEvents().emit(plainObjPos);
+	// Plain ground hit POSITION_FX without hasTransform still passes nullptr for primaryMtx and nullptr for secondary.
+	FXEvent groundPos;
+	groundPos.kind = FXEvent::POSITION_FX;
+	groundPos.site = "ProjectileDetonation";
+	groundPos.frame = rig.logic().getFrame();
+	groundPos.fxList = &fxName;
+	groundPos.position = Coord3D{ 75.0f, 85.0f, 0.0f };
+	rig.logic().fxEvents().emit(groundPos);
+	// OBJECT_FX still plays at the captured object's logic position (100, 200, 0).
+	FXEvent objFx = FXEventLog::objectEvent(FXEvent::OBJECT_FX, "DamageFX", rig.logic().getFrame(), fxName, *unit);
+	rig.logic().fxEvents().emit(objFx);
+	fx.flushPending();
+
+	const std::uint32_t hashAfter = rig.logic().computeStateHash();
+	CHECK(hashBefore == hashAfter);
+	REQUIRE(probe->calls.size() == 3u);
+	// 1. Plain objectEvent(POSITION_FX): logic position (100, 200, 0), hasMtx = true (logic transform), speed = 0, hasSecondary = false
+	CHECK(probe->calls[0].pos.x == 100.0f);
+	CHECK(probe->calls[0].pos.y == 200.0f);
+	CHECK(probe->calls[0].pos.z == 0.0f);
+	CHECK(probe->calls[0].hasMtx);
+	CHECK(probe->calls[0].mtx.Row[0][3] == 100.0f);
+	CHECK(probe->calls[0].mtx.Row[1][3] == 200.0f);
+	CHECK(probe->calls[0].speed == 0.0f);
+	CHECK_FALSE(probe->calls[0].hasSecondary);
+	// 2. Ground POSITION_FX: (75, 85, 0), hasMtx = false, speed = 0, hasSecondary = false
+	CHECK(probe->calls[1].pos.x == 75.0f);
+	CHECK(probe->calls[1].pos.y == 85.0f);
+	CHECK_FALSE(probe->calls[1].hasMtx);
+	CHECK_FALSE(probe->calls[1].hasSecondary);
+	// 3. OBJECT_FX (FXList::doFXObj -> nugget::doFXObj -> doFXPos): primary's captured logic position (100, 200, 0) and transform
+	CHECK(probe->calls[2].pos.x == 100.0f);
+	CHECK(probe->calls[2].pos.y == 200.0f);
+	CHECK(probe->calls[2].hasMtx);
+}
