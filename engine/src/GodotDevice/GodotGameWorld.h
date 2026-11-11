@@ -525,6 +525,9 @@ public:
 	// it changes no pixel of a frame and nothing of the simulation. Default on
 	void set_perf3_client(bool enabled);
 	bool get_perf3_client() const { return m_perf3Client; }
+	// lane GPUPERF-2: the draw culling of the live and the static objects' instancers (W3DInstancer::set_draw_culling) on / off (default on)
+	void set_draw_culling(bool enabled);
+	bool get_draw_culling() const { return m_drawCulling; }
 	// SMOOTH-1 (S-810): the logic worker thread on / off (the single-thread fallback for debugging); also the default of the next load (option logic_thread)
 	void set_logic_thread(bool enabled);
 	bool get_logic_thread() const;
@@ -736,6 +739,8 @@ private:
 	std::vector<MapCacheEntry> m_mapCache;           ///< maps\\mapcache.ini, read by setup()
 	struct EntryView
 	{
+		uint64_t shadowDecalId = 0;
+		std::string shadowDecalTexture;
 		int64_t instance = -1;
 		std::string model;              ///< the lower-case model the instance shows ("" none)
 		std::string rawModel, rawLowered; ///< lane PERF-1: the last model name as the draw gave it and its lower-case form (lowered once per change)
@@ -958,6 +963,7 @@ private:
 	bool m_animations = true;
 	bool m_houseColors = true;
 	bool m_perf3Client = true; // lane PERF-3: set_perf3_client
+	bool m_drawCulling = true; // lane GPUPERF-2: set_draw_culling
 	bool m_textureAnimation = true;
 	double m_timeScale = 1.0;
 	double m_textureClock = 0.0;

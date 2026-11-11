@@ -76,7 +76,9 @@ const std::vector<std::string> *listField(const ThingTemplate &tt, ListField whi
 	bool valid = table && slots.table == table;
 	for (int k = 0; valid && k < kListFieldCount; ++k)
 	{
-		valid = slots.index[k] == (size_t)-1 || (slots.index[k] < table->size() && (*table)[slots.index[k]] == names[k]);
+		// a row the table lacks is looked for again on every use: a cached absence could outlive its table (another factory's table at the same
+		// address); the supported tables have both rows
+		valid = slots.index[k] < table->size() && (*table)[slots.index[k]] == names[k];
 	}
 	if (!valid)
 	{

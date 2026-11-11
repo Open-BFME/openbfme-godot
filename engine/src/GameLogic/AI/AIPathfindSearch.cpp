@@ -249,6 +249,86 @@ bool Pathfinder::clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco,
 	return obj != nullptr && portalPathExists(obj, loco, z1, z2); // RW 0x6F5EDA .. 0x6F5EE7 (lane WALL-2)
 }
 
+bool Pathfinder::pathToObject(const PathfindObject &unit, const PathfindLocomotorInfo &loco, const Coord3D &from, const PathfindObject &target)
+{
+	// RW 0x6F5F65 (the shared path-to-object test lane GARRISON-2 ported for the horde garrison; RW 0x6F5F6F .. 0x6F5F9A): the movement set's ground / water /
+	// cliff / air / deep-water bit, else "no path"; the caller's set, the unit's AI's otherwise. The unit must have an AI for the quick path test's own
+	// locomotor answers (RW 0x6F5BB0 reads AI + 0x1CC when the caller passes none)
+	if ((loco.validSurfaces & (LOCOMOTORSURFACE_GROUND | LOCOMOTORSURFACE_WATER | LOCOMOTORSURFACE_CLIFF | LOCOMOTORSURFACE_AIR | LOCOMOTORSURFACE_DEEP_WATER)) == 0 ||
+		!unit.hasAI())
+	{
+		return false;
+	}
+	// RW 0x6F5FAA .. 0x6F5FED: the target's position, its layer (RW 0x680A75) and centred cell (RW 0x6EA076)
+	Coord3D to = target.getPosition();
+	const PathfindLayerEnum layer = searchDestinationLayer(to);
+	ICoord2D centre;
+	worldToCell(&to, true, &centre);
+	const PathfindCell *goal = getCell(layer, centre.x, centre.y);
+	if (!goal)
+	{
+		return false;
+	}
+	// RW 0x6F6009 / 0x6F600C: an OBSTACLE cell (the target's own footprint) walks from it at once. Any other cell retries at the position plus the first
+	// shape's offset (RW 0x6F600E .. 0x6F6061: RW 0xAD1AE0(0), + 0x10 / 0x14 / 0x18); not an obstacle there either, the quick path test to that offset point
+	// (RW 0x6F6070); an obstacle there, the walk from that cell
+	if (goal->getType() != PathfindCell::CELL_OBSTACLE)
+	{
+		const PathfindShape first = target.getGeometry().shape(0);
+		to.x = SimMath::addf32(to.x, first.offsetX);
+		to.y = SimMath::addf32(to.y, first.offsetY);
+		to.z = SimMath::addf32(to.z, first.offsetZ);
+		worldToCell(&to, true, &centre);
+		goal = getCell(layer, centre.x, centre.y);
+		if (!goal)
+		{
+			return false;
+		}
+		if (goal->getType() != PathfindCell::CELL_OBSTACLE)
+		{
+			return quickDoesPathExist(unit, &from, &to, &loco); // RW 0x6F6070
+		}
+	}
+	// RW 0x6F607A .. 0x6F6137: the footprint's own obstacle id, the from cell's effective zone (RW 0x938D89), d from the bounding circle radius
+	const PathfindMovement mv = makeMovement(&unit, loco);
+	const PathfindCell *fromCell = getClippedCell(searchDestinationLayer(from), &from);
+	if (!fromCell)
+	{
+		return false;
+	}
+	// RW 0x938D89 is the odd (flag 1) table with the strict type rules: getEffectiveZone(mv, false, ..) (lane QPATH-1, S-162; as quickDoesPathExist)
+	const zoneStorageType fromZone = m_zoneManager.getEffectiveZone(mv, false, fromCell->getZone());
+	const PathfindObjectID obstacle = goal->getObstacleID();
+	const int d = 2 - SimMath::truncToInt32(SimMath::mulf32(target.getGeometry().boundingCircleRadius(), -0.1f));
+	const int dirs[4][2] = { { d, 0 }, { -d, 0 }, { 0, d }, { 0, -d } };
+	for (const auto &dir : dirs) // RW 0x6F5EF3, four times (+x, -x, +y, -y)
+	{
+		// RW 0x6E94B2: Bresenham from the centre to the end cell, both included
+		const int x0 = centre.x, y0 = centre.y, x1 = centre.x + dir[0], y1 = centre.y + dir[1];
+		const int steps = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
+		for (int k = 0; k <= steps; ++k)
+		{
+			const int x = steps == 0 ? x0 : x0 + (x1 - x0) * k / steps;
+			const int y = steps == 0 ? y0 : y0 + (y1 - y0) * k / steps;
+			const PathfindCell *c = getCell(layer, x, y);
+			if (!c)
+			{
+				break; // off the grid: this direction finds nothing
+			}
+			if (c->getObstacleID() != obstacle)
+			{
+				const zoneStorageType z = m_zoneManager.getEffectiveZone(mv, false, c->getZone()); // RW 0x6F5F2B (RW 0x938D89)
+				if (z == fromZone || portalPathExists(&unit, loco, fromZone, z, false)) // RW 0x6F5547
+				{
+					return true;
+				}
+				break;
+			}
+		}
+	}
+	return false;
+}
+
 bool Pathfinder::quickDoesPathExist(const PathfindObject &obj, const Coord3D *from, const Coord3D *to, const PathfindLocomotorInfo *overrideSet)
 {
 	// lane QPATH-1. TARGET RW 0x6F5BB0 (BFME2 0x6F477E, Open-BFME-2 58a44077a5 GameLogic/Pathfinder/pathfinder.cpp:2951); RotWK only moves Object's AI
@@ -1485,14 +1565,15 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 	ICoord2D goalNdx;
 	worldToCell(to, true, &goalNdx);
 	bool approx = false;
+	// lane UBER-3P: approximate only because the goal's footprint fails (terrain, a structure or the map's edge), with no unit blocking the goal's
+	// radius-1 box, in the start's zone: the goal cell may still be reached
+	bool footprintOnly = false;
 	{
 		// TARGET RW 0x6FD306 .. 0x6FD3EC: checkDestination (RW 0x6F1584) with the unit's footprint, then checkForMovement (RW 0x6EB792) with the info's
 		// radius 1 (RW 0x6FD341: the literal, not the footprint radius; lane BACKLOG5), flags 0xC for a HERO else 0x1C, transient, the AI's ignored obstacle
 		int out = 0;
 		const bool destOK = checkDestination(obj, goalNdx.x, goalNdx.y, destinationLayer, radius, centerInCell, &out, true);
-		bool moveOK = true;
-		if (destOK && obj)
-		{
+		auto goalMoveOK = [&]() {
 			PathfindCheckMovement info;
 			info.cell = goalNdx;
 			info.layer = destinationLayer;
@@ -1502,12 +1583,18 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 			info.transient = true;
 			info.ignoreId = obj->hasAI() ? obj->getIgnoredObstacleID() : PATHFIND_INVALID_ID;
 			info.mv = makeMovement(obj, loco);
-			moveOK = checkForMovement(obj, info, nullptr);
-		}
+			return checkForMovement(obj, info, nullptr);
+		};
+		const bool moveOK = (destOK && obj) ? goalMoveOK() : true;
 		if (!destOK || !moveOK)
 		{
 			approx = true;
 		}
+		// lane UBER-3P (Uber only; retail asks checkForMovement only when the footprint fits, RW 0x6FD306 .. 0x6FD3EC; Open-BFME-2 pathfinder.cpp
+		// InternalFindPath, Rva 0x002FBBEB: `!CheckDestination(..) || !checkForMovement(..)`): checkDestination ignores the units, so a failed footprint is terrain or a structure in it (a horde's narrows to 3 x 3) or, for a human
+		// player, the logical border; the goal's unit check is asked for the stall's decision only, and a goal whose radius-1 box units block (a
+		// battle's press) keeps the stall
+		footprintOnly = !destOK && m_uberLimits && obj && goalMoveOK();
 	}
 	ICoord2D startCellNdx;
 	worldToCell(&clipFrom, &startCellNdx);
@@ -1543,6 +1630,25 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		{
 			// RW 0x6FD80C .. 0x6FD846: different zones and no portal chain between them (RW 0x6F5547, lane WALL-2): the goal is treated as unreachable
 			approx = true;
+			footprintOnly = false;
+		}
+		if (footprintOnly)
+		{
+			// lane UBER-3P: the terrain variant above does not split a zone at a structure (a building, a wall's base, a closed gate), so the exemption
+			// also needs the start's and the goal's strict zones (getEffectiveZone(mv, false, ..), as quickDoesPathExist) to meet or a portal chain
+			// between them, and for a human player a goal cell inside the logical extent (examineNeighboringCells skips the cells outside it)
+			const zoneStorageType sS = m_zoneManager.getEffectiveZone(mv, false, parentCell->getZone());
+			const zoneStorageType sG = m_zoneManager.getEffectiveZone(mv, false, goalCell->getZone());
+			ICoord2D g;
+			worldToCell(to, &g);
+			if (isHuman && (g.x < m_logicalExtent.lo.x || g.y < m_logicalExtent.lo.y || g.x > m_logicalExtent.hi.x || g.y > m_logicalExtent.hi.y))
+			{
+				footprintOnly = false;
+			}
+			else if (sS != sG && !portalPathExists(obj, loco, sS, sG, false))
+			{
+				footprintOnly = false;
+			}
 		}
 	}
 	{
@@ -1550,6 +1656,7 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 		if (!validMovementPosition(obj, loco, destinationLayer, to))
 		{
 			approx = true;
+			footprintOnly = false;
 		}
 		if (!validMovementPosition(obj, loco, layer, &fromPos))
 		{
@@ -1658,14 +1765,16 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 				}
 			}
 		}
-		// lane UBER-3P (Uber profile only, docs/UBER.md): a search that cannot reach its goal (an approximate search: the goal is in another zone or
-		// not a valid movement position; or the goal cell was closed, its footprint rejected) ends here once its answer has held for kUberStallCells
+		// lane UBER-3P (Uber profile only, docs/UBER.md): a search that cannot reach its goal (an approximate search: the goal is in another zone, not
+		// a valid movement position or held by units; or the goal cell was closed, its footprint rejected) ends here once its answer has held for kUberStallCells
 		// cells: the closest cell (or, with none yet, the candidate key that would test a new one) did not change, and the exhausted search's answer
 		// (the path to that closest cell, or none) is given. In a battle the repaths toward a contact point in the press fail this way and kept
 		// expanding up to the slack or MaxCellsFindPathLimit. Measured on the 30,000-troop clash (2,094 searches): a failed search's closest cell was
 		// final after ~10 cells and never replaced 250 cells on; 1,182 of the 1,644 unreachable searches found no closest cell at all (72% of their
-		// cells), 45 of them tested a candidate after such a pause. A tunnelling search tests no candidates: its pause starts when it leaves the obstacle
-		if (m_uberLimits && (approx || goalCell->getClosed()))
+		// cells), 45 of them tested a candidate after such a pause. A tunnelling search tests no candidates: its pause starts when it leaves the obstacle.
+		// A goal whose footprint fails on terrain or a structure alone (footprintOnly) may be reachable and keeps searching until its cell is closed: a horde
+		// on Helm's Deep's causeway ordered onto the Deeping Wall's rim passes no closer cell on the narrow causeway, and the stall gave it a path to its own spot
+		if (m_uberLimits && ((approx && !footprintOnly) || goalCell->getClosed()))
 		{
 			if (m_isTunneling)
 			{

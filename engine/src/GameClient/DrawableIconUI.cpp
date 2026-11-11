@@ -311,7 +311,8 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 	ObjectID mousedOver, std::vector<IconUIOp> &out)
 {
 	out.clear();
-	static const int IGNORED_IN_GUI = kindIndex("IGNORED_IN_GUI"), WALL_SEGMENT = kindIndex("WALL_SEGMENT"), DEFENSIVE_WALL = kindIndex("DEFENSIVE_WALL");
+	static const int IGNORED_IN_GUI = kindIndex("IGNORED_IN_GUI"), WALL_SEGMENT = kindIndex("WALL_SEGMENT"), DEFENSIVE_WALL = kindIndex("DEFENSIVE_WALL"),
+					 HORDE_KIND = kindIndex("HORDE");
 	const float zoomScale = s.zoom > 0.0f ? 1.0f / s.zoom : 1.0f;
 	struct Queued
 	{
@@ -351,6 +352,43 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 		}
 		// RW 0x68DF5B: the health box width
 		if (kindOf(*obj, IGNORED_IN_GUI))
+		{
+			continue;
+		}
+		// A decoration exists only for a health bar, a construction caption or a veterancy mark. The health bar's own gate
+		// (wantsHealthBar) admits an object only when it is selected (or its container is), under the mouse, or the mode shows
+		// every / every damaged bar. The anchor and the world-to-screen projection below are the expensive part of the walk,
+		// so objects that cannot produce any decoration skip them. The produced list is the one the full walk gives.
+		const Object *containerOf = obj->getContainedBy();
+		const bool selectedNow = selected.count(obj->getID()) != 0 || (containerOf && selected.count(containerOf->getID()) != 0);
+		bool barCandidate = false;
+		if (s.showObjectHealth)
+		{
+			if (selectedNow || mousedOver == obj->getID() || s.healthBarMode == IconUISettings::HEALTH_BARS_ALWAYS)
+			{
+				barCandidate = true;
+			}
+			else if (s.healthBarMode == IconUISettings::HEALTH_BARS_DAMAGED)
+			{
+				const BodyModuleInterface *body = obj->getBodyModule();
+				barCandidate = body && body->getHealth() < body->getMaxHealth();
+			}
+		}
+		const bool hordeMember = containerOf && kindOf(*containerOf, HORDE_KIND);
+		bool vetCandidate = false;
+		if (s.veterancyFilter && obj->getExperienceTracker() && !hordeMember)
+		{
+			// the same rank gate as the marks list below: none at rank <= 1, nor for a level of
+			// RequiredExperience <= 1 without a next level. Most hordes are rank 1, and their anchor sums every member.
+			const ExperienceTracker *xp = obj->getExperienceTracker();
+			const ExperienceLevelTemplate *level = TheExperienceLevelSystem ? TheExperienceLevelSystem->findLevel(xp->getLevelName()) : nullptr;
+			vetCandidate = level && level->m_rank > 1 && !(level->m_requiredExperience <= 1 && !xp->upcomingLevel());
+		}
+		// The marks list inserts "[S-1951] no VeterancyPipDrawObjectFilter" when a living non-member with a tracker reaches it
+		// and the filter is missing. Those objects emit no decoration, so skipping them would drop the note. Keep them in the
+		// walk; the marks list still inserts the note only after the same on-screen queue the old walk used.
+		const bool noteCandidate = !s.veterancyFilter && obj->getExperienceTracker() && !obj->isEffectivelyDead() && !hordeMember;
+		if (!barCandidate && !obj->isUnderConstruction() && !vetCandidate && !noteCandidate)
 		{
 			continue;
 		}

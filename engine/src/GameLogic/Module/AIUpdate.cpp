@@ -11,8 +11,11 @@
 #include "GameLogic/AI/TurretAI.h"
 #include "Common/Thing/RawModuleData.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/Weapon.h"
 
 #include "Common/GameCommon.h"
 #include "Common/StateHash.h"
@@ -272,6 +275,222 @@ public:
 		obj().clearAndSetModelConditionFlags(c, s);
 	}
 	void notifyWheelsStopped() override { m_ai.setLocomotorGoalNone(); }
+
+	// lane MECH-D: RW 0x5E8956 .. 0x5E8FF8, the dispatcher's ScalesWalls look-ahead. The retail code (BFME2 decomp LocomotorMoveTowardsPositionHorde.cpp
+	// Locomotor::rva001E9083 lines 1335-1470; RotWK 0x5E8956 .. 0x5E8FF8 statement for statement): no HORDE_MEMBER status, not contained, its producer is no
+	// HORDE, the object is no HORDE but KindOf CAN_CLIMB_WALLS; the point one step ahead (the unit direction x min(desired speed, 7)) has a SCALEABLE_WALL in
+	// its pathfinder cell within the wall's major radius and below its top: climb (already CLIMBING: rise by desired speed x 0.6, else turn to the wall and
+	// clamp the local x, hug the face). No wall under the step but above the ground + bias: rappel (already RAPPELLING: sink by desired speed x 0.6, land at
+	// the ground and drop the path). The climb and rappel set the position and CLIMBING / RAPPELLING and reveal a stealthed object; a landed object clears
+	// both and the movers run. True: the position was set and the appearance movers do not run. The local player's EVA event 15 on an enemy wall is client
+	// presentation and not ported (S-4461).
+	bool wallScalingLookAhead(float desiredSpeed) override
+	{
+		Object &o = obj();
+		static const int kHordeMember = CombatNames::status("HORDE_MEMBER");
+		static const int kHorde = CombatNames::kindOf("HORDE");
+		static const int kClimb = CombatNames::kindOf("CAN_CLIMB_WALLS");
+		static const int kScaleableWall = CombatNames::kindOf("SCALEABLE_WALL");
+		static const int kClimbing = CombatNames::modelCondition("CLIMBING");
+		static const int kRappelling = CombatNames::modelCondition("RAPPELLING");
+		static const int kMoving = CombatNames::modelCondition("MOVING");
+		if (o.testStatus((unsigned)kHordeMember) || o.getContainedBy() != nullptr)
+		{
+			return false;
+		}
+		if (Object *producer = o.logic().findObjectByID(o.getProducerID()); producer && producer->isKindOf((unsigned)kHorde))
+		{
+			return false;
+		}
+		if (o.isKindOf((unsigned)kHorde) || !o.isKindOf((unsigned)kClimb))
+		{
+			return false;
+		}
+		Pathfinder &pf = m_ai.world().pathfinder();
+		const PathfindLayerEnum layer = m_ai.adapter().getLayer();
+		const Coord3D start = *o.getPosition();
+		const float height = pf.getLayerHeight(start.x, start.y, layer); // RW 0x5E89E2-0x5E8A00
+		const float *basis = o.getBasis();
+		const float step = desiredSpeed < 7.0f ? desiredSpeed : 7.0f; // RW 0xBE4AD4
+		// RW 0x5E8A30-0x5E8A55: the unit direction RW 0x70B9E0 is (cos, sin, 0), horizontal even when the basis is pitched (review prtrlo)
+		const Coord3D dir{ SimMath::mulf32(basis[0], step), SimMath::mulf32(basis[3], step), SimMath::mulf32(0.0f, step) };
+		Coord3D ahead{ SimMath::addf32(start.x, dir.x), SimMath::addf32(start.y, dir.y), SimMath::addf32(start.z, dir.z) };
+		const float nextHeight = pf.getLayerHeight(ahead.x, ahead.y, layer); // RW 0x5E8A8C
+		float bias = SimMath::addf32(SimMath::subf32(height, nextHeight), 0.1f); // RW 0x5E8A97-0x5E8AB1
+		if (bias < 0.0f)
+		{
+			bias = 0.0f;
+		}
+		const PathfindLayerEnum aheadLayer = pf.getLayerAt(ahead.x, ahead.y, ahead.z); // RW 0x680A75 (INFERENCE: the object's gate flag is not read by the port's getLayerAt)
+		const PathfindCell *cell = pf.getCell(aheadLayer, &ahead);                       // RW 0x5E3CC9
+		Object *wall = nullptr;
+		if (cell && cell->getObstacleID() != PATHFIND_INVALID_ID)
+		{
+			wall = o.logic().findObjectByID((ObjectID)cell->getObstacleID()); // RW 0x5E8AD4-0x5E8AE7
+		}
+		bool climbing = false, descending = false, landed = false;
+		if (wall && wall->isKindOf((unsigned)kScaleableWall)) // RW 0x5E8AFA: KindOf SCALEABLE_WALL
+		{
+			const float c = SimMath::cosf32(wall->getOrientation()), s = SimMath::sinf32(wall->getOrientation());
+			const Coord3D &wpos = *wall->getPosition();
+			const auto toLocal = [&](const Coord3D &p) {
+				const float dx = SimMath::subf32(p.x, wpos.x), dy = SimMath::subf32(p.y, wpos.y);
+				return Coord3D{ SimMath::addf32(SimMath::mulf32(c, dx), SimMath::mulf32(s, dy)), SimMath::subf32(SimMath::mulf32(c, dy), SimMath::mulf32(s, dx)),
+					SimMath::subf32(p.z, wpos.z) };
+			};
+			const auto toWorld = [&](const Coord3D &p) {
+				return Coord3D{ SimMath::addf32(SimMath::subf32(SimMath::mulf32(c, p.x), SimMath::mulf32(s, p.y)), wpos.x),
+					SimMath::addf32(SimMath::addf32(SimMath::mulf32(s, p.x), SimMath::mulf32(c, p.y)), wpos.y), SimMath::addf32(p.z, wpos.z) };
+			};
+			const float major = m_ai.world().movementInfo(*wall->getTemplate()).geometry.majorRadius; // RW 0xAD1920 on the geometry
+			const float maxH = ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::cachedShapesOf(*wall->getTemplate()));
+			const Coord3D local = toLocal(ahead);
+			if (SimMath::absD((double)local.x) <= (double)major && local.z <= maxH) // RW 0x5E8B33-0x5E8BD8
+			{
+				const float top = SimMath::addf32(wpos.z, maxH);
+				if (ahead.z < top) // RW 0x5E8BEA
+				{
+					ahead.x = SimMath::subf32(ahead.x, dir.x);
+					ahead.y = SimMath::subf32(ahead.y, dir.y);
+					ahead.z = SimMath::subf32(ahead.z, dir.z);
+					climbing = true;
+					if (o.testModelCondition(kClimbing)) // RW 0x5E8C1B: already on the face, rise
+					{
+						ahead.z = SimMath::addf32(ahead.z, SimMath::mulf32(desiredSpeed, 0.6f)); // RW 0xBDAD70
+						if (ahead.z > top)
+						{
+							ahead.z = top;
+						}
+					}
+					else // RW 0x5E8CDC: turn to the wall's facing, clamp the local x, and hug the face
+					{
+						const float *wb = wall->getBasis();
+						const float myx = basis[0], myy = basis[3]; // RW 0x70B9E0 of both objects: z 0
+						const float dot = SimMath::addf32(SimMath::mulf32(myx, wb[0]), SimMath::mulf32(myy, wb[3]));
+						float angle = wall->getOrientation();
+						if (!(dot >= 0.0f))
+						{
+							angle = SimMath::addf32(angle, 3.14159274f);
+							while (angle > 3.14159274f)
+							{
+								angle = SimMath::subf32(angle, 6.28318548f);
+							}
+							while (-3.14159274f >= angle)
+							{
+								angle = SimMath::addf32(angle, 6.28318548f);
+							}
+						}
+						o.setOrientation(angle);
+						Coord3D moved = toLocal(ahead);
+						if (moved.x > major)
+						{
+							moved.x = major;
+						}
+						else if (SimMath::subf32(0.0f, major) > moved.x)
+						{
+							moved.x = SimMath::subf32(0.0f, major);
+						}
+						ahead = toWorld(moved);
+					}
+				}
+				else
+				{
+					landed = true; // RW 0x5E8E8D: at the top
+				}
+			}
+		}
+		else // RW 0x5E8EC2: no SCALEABLE_WALL under the step
+		{
+			const float ground = pf.getLayerHeight(ahead.x, ahead.y, layer);
+			if (ahead.z > SimMath::addf32(ground, bias)) // RW 0x5E8EF0
+			{
+				ahead.x = SimMath::subf32(ahead.x, dir.x);
+				ahead.y = SimMath::subf32(ahead.y, dir.y);
+				ahead.z = SimMath::subf32(ahead.z, dir.z);
+				descending = true;
+				if (o.testModelCondition(kRappelling)) // RW 0x5E8F28
+				{
+					ahead.z = SimMath::subf32(ahead.z, SimMath::mulf32(desiredSpeed, 0.6f));
+					if (SimMath::addf32(ground, 1.0f) >= ahead.z) // RW 0x5E8F5D
+					{
+						ahead.z = ground;
+						m_ai.mover().destroyPath(); // RW 0x5E8F85 -> AI vslot 0x220
+						if (!o.testModelCondition(kMoving))
+						{
+							o.setModelConditionState(kMoving, true); // RW 0x5E8F8A: the MOVING condition
+						}
+						landed = true;
+					}
+				}
+			}
+		}
+		if (!(descending || climbing || landed))
+		{
+			// RW 0x5E8FAD: no climb this frame: both conditions go and the appearance movers run
+			if (o.testModelCondition(kClimbing))
+			{
+				o.setModelConditionState(kClimbing, false);
+			}
+			if (o.testModelCondition(kRappelling))
+			{
+				o.setModelConditionState(kRappelling, false);
+			}
+			return false;
+		}
+		o.setPosition(&ahead); // RW 0x5E8C5C-0x5E8C62: Thing::setPosition RW 0x70C201
+		const auto reveal = [&] {
+			// RW 0x5E8CB2-0x5E8CD7: a stealthed climber is revealed (RW 0x7767A9 markAsDetected(0, 1, null, true))
+			StealthUpdate *st = StealthUpdate::of(o);
+			if (st && st->isEnabled())
+			{
+				st->markAsDetected(0, 1, nullptr, true);
+			}
+		};
+		if (descending) // RW 0x5E8C71: RAPPELLING
+		{
+			if (o.testModelCondition(kClimbing))
+			{
+				o.setModelConditionState(kClimbing, false);
+			}
+			if (!o.testModelCondition(kRappelling))
+			{
+				o.setModelConditionState(kRappelling, true);
+			}
+			reveal();
+		}
+		else if (climbing) // RW 0x5E9011: CLIMBING
+		{
+			if (o.testModelCondition(kRappelling))
+			{
+				o.setModelConditionState(kRappelling, false);
+			}
+			if (!o.testModelCondition(kClimbing))
+			{
+				o.setModelConditionState(kClimbing, true);
+			}
+			reveal();
+		}
+		else // RW 0x5E9058: landed; both conditions go
+		{
+			if (o.testModelCondition(kClimbing))
+			{
+				o.setModelConditionState(kClimbing, false);
+			}
+			if (o.testModelCondition(kRappelling))
+			{
+				o.setModelConditionState(kRappelling, false);
+			}
+		}
+		return true;
+	}
+	bool isScalingWall() const override
+	{
+		// RW 0x694BF8 (getHorde) + AI vslot 0x7C + HordeContain interface vslot 0x238 (RW 0x86BD54): the horde's locomotor has ScalesWalls and it keeps a wall
+		Object *horde = obj().getHordeObject(false); // RW 0x693A1A: the object itself when HORDE, else its container; not the producer
+		ContainModuleInterface *contain = horde ? horde->getContain() : nullptr;
+		HordeContainInterface *hc = contain ? contain->getHordeContainInterface() : nullptr;
+		return hc && hc->isScalingWall();
+	}
 
 	bool hasHordeContain() const override { return hordeInterface() != nullptr; }
 	void hordeBeginReform() override
@@ -814,6 +1033,41 @@ void AIUpdateInterface::aiMoveToPositionEvenIfSleeping(const Coord3D &pos, Comma
 	}
 	privateMoveToPosition(pos, source);
 	wakeUpNow();
+}
+
+// RW 0x696266 dispatches only command 0xF, never AIGroup's move/stealth path.
+// RW 0x66C0B9..0x66C145 clears the old machine and installs the goal/source/shot limit.
+// Execution still uses the existing march representation (S-328), but must replace a busy unit's march.
+bool AIUpdateInterface::aiAttackMoveToPosition(const Coord3D &pos, CommandSourceType source)
+{
+	if (!acceptCommand(source, 0xF)) return false;
+	RoutedCommand command;
+	command.type = 0xF;
+	command.position = pos;
+	command.source = source;
+	command.maxShots = 0x7fffffff;
+	if (routeCommand(command)) return true;
+	Object *obj = getObject();
+	static const int rampage = CombatNames::weaponSetBit("RAMPAGE");
+	if (m_mover->isAiDead() || !GarrisonRules::isMobile(*obj) || BitFlagsTest(obj->getWeaponSetFlags(), (size_t)rampage)) return false;
+	Coord3D goal;
+	goalPositionClipped(pos, source, goal);
+	m_machine->clear();
+	m_machine->setGoalPosition(goal);
+	m_machine->setGoalObject(INVALID_ID);
+	setLastCommandSource(source);
+	m_attackMoveActive = true;
+	m_attackMoveGoal = goal;
+	m_machine->setState(AI_MOVE_TO);
+	if (ObjectWeapons *weapons = obj->getWeapons())
+		if (Weapon *weapon = weapons->currentWeapon())
+		{
+			weapon->clearWhenFiringEnds(); // RW 0x66C121
+			weapon->setMaxShotCount(0x7fffffff);
+		}
+	resetNextMoodCheckTime();
+	wakeUpNow();
+	return true;
 }
 
 bool AIUpdateInterface::aiMoveToPositionFromAttackMove(const Coord3D &goal)
@@ -1865,6 +2119,13 @@ bool AIUpdateInterface::setModelCondition(const char *name, bool on)
 	}
 	getObject()->setModelConditionState(modelConditionIndex(name), on);
 	return true;
+}
+
+// lane AIRBORNE-1: the AIRBORNE_TARGET status write of doLocomotor (RW 0x66A49E: push 6; call 0x62684D Object::setStatus)
+void AIUpdateInterface::setAirborneTarget(bool on)
+{
+	static const int kAirborneTarget = CombatNames::status("AIRBORNE_TARGET");
+	getObject()->setStatus((unsigned)kAirborneTarget, on);
 }
 
 // lane SAILS-1: RW 0x666FA3 (BFME2 0x66717B), the sails of a SHIP from its facing. The decomp misnames the body: its row sits in

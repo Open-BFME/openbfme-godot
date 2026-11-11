@@ -1,5 +1,5 @@
 // OpenBFME. TEAMUNITS-1 tests: the script condition TEAM_HAS_UNITS (RotWK RW 0x7E9F44) and the action TEAM_CREATE_RADAR_EVENT (RW 0x7C0B61) count a
-// member as retail's Team::hasAnyUnits does (RW 0x7A07D8; donor Open-BFME-2 Team_hasAnyUnits.cpp:41-56, BFME2 0x79DEC4, same shape: both editions): not
+// member as retail's Team::hasAnyUnits does (RW 0x7A07D8; donor Open-BFME-2 Team.cpp (Team::hasAnyUnits), BFME2 0x79DEC4, same shape: both editions): not
 // dead, not DESTROYED, not a STRUCTURE, PROJECTILE or IGNORE_FOR_VICTORY. Synthetic data, no retail files.
 #include "doctest.h"
 #include "LogicTestUtil.h"

@@ -5,6 +5,7 @@
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
+#include "AISceneTestUtil.h"
 
 #include "Common/NumericState.h"
 #include "Common/Player.h"
@@ -199,6 +200,8 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 4242, g, &error), error);
 	LiveGame &live = *g.live;
 	GameLogic &logic = live.logic();
+	// Keep the rebuild movement vector independent of Easy roaming's shared RNG draws from frame 35.
+	testutil::deferRoamingDefense(logic, live.players().findPlayerWithName(live.report().startSlotPlayers[1])->getPlayerIndex());
 	Player *men = live.players().findPlayerWithName(live.report().startSlotPlayers[0]);
 	REQUIRE(men);
 	// a free Men wall segment far from the bases (KeepObjectDie: it stays in the world dead), killed, then Boromir on its rubble
@@ -735,7 +738,12 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// in the mover hash)
 	// merge queue q38 (measured once on the merged tree and at LOCODIST-1's merge point; goals unchanged): 0xE4523180 -> 0x45726314 (the retail locomotor
 	// distance to the goal, RW 0x664127, moves when the units arrive)
-	CHECK(a.hashes.back() == 0x45726314U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// merge queue q43 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x45726314 -> 0xCA4B529D at #230's merge point
+	// (the AI's position sampler and base structure groups, hashed in the AI state) -> 0x57D4FF8F at #231's (the DEFENSIVE tactic's state); the later items keep it
+	// merge queue q46 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x57D4FF8F (#262 and #270 keep it) -> 0x8ECFDB13 at
+	// #267's merge point -> 0x658900C4 at #269's -> 0x5B377D5A at #271's (each ports a targetless tactic: the hashed unported-tactic counter) -> 0x162264F8 with the
+	// review fix (the team threat walk and the horde soldier's threat, RW 0x66362D / 0x693A1A)
+	CHECK(a.hashes.back() == 0x162264F8U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

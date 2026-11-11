@@ -17,6 +17,8 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/SimMath.h"
 #include "Common/JobSystem.h"
+#include "GameClient/MapChunks.h"
+#include "GameLogic/ScriptEngine/ScriptConditions.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -547,6 +549,45 @@ void ShroudManager::shape(int cx, int cy, const Radii &r, float facing, std::uin
 		ys[15 - i] = ftolLow(py);
 	}
 	polygon(xs, ys, 16, mask, add);
+}
+
+// RW 0xB4DBE0 (look) / 0xB4DD90 (unlook): ceil(radius * inverse), floor((p - lo) * inverse), then the circle shape RW 0xB50C90 (BFME2 donor
+// Rva00739BE0.cpp, 0x739A30 / 0x739BE0, the same shape)
+void ShroudManager::revealCircle(float x, float y, float radius, std::uint32_t mask, bool add)
+{
+	int cx, cy;
+	worldToCell(x, y, cx, cy); // an off-map centre may still have an on-map radius
+	const int r = SimMath::ceilToInt(SimMath::pc24Mul(radius, m_cellSizeInv));
+	shape(cx, cy, Radii{r, r, r}, 0.0f, mask, add);
+}
+
+void ShroudManager::revealTrigger(const TriggerArea &area, std::uint32_t mask, bool add)
+{
+	// RW 0xB4DCA0 (look) / 0xB4DE50 (unlook): the trigger's bounds (RW 0x70CE4A) to cells, floor((p - lo) * inverse), then every row of that
+	// rectangle (RW 0xB50510) with a per-cell test (BFME2 donor ScriptEngineNamedMapReveal.cpp, Rva00739AF0Siblings.cpp).
+	// INFERENCE (S-6102): the test is taken as pointInTrigger; the polygon object at trigger + 0x38 that retail asks was not read.
+	if (area.points.empty()) return;
+	float minX = area.points[0].x, maxX = minX, minY = area.points[0].y, maxY = minY;
+	for (const Point2F &p : area.points)
+	{
+		minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+		minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+	}
+	int x1, y1, x2, y2;
+	worldToCell(minX, minY, x1, y1);
+	worldToCell(maxX, maxY, x2, y2);
+	for (int y = std::max(0, y1); y <= std::min(m_countY - 1, y2); ++y)
+	{
+		for (int x = std::max(0, x1); x <= std::min(m_countX - 1, x2); ++x)
+		{
+			// RW 0xB4FFF0 (the cell test of RW 0xB4DCA0 -> 0xB50E00 -> 0xB50510): fild; fmul cell; fadd lo; + cell * 0.5 (RW 0xBD86A0); _ftol2, so
+			// the polygon sees the centre in whole world units
+			const float half = SimMath::pc24Mul(m_cellSize, 0.5f);
+			const float wx = (float)ftolLow(SimMath::pc24Add(SimMath::pc24Add(SimMath::pc24MulD((double)x, m_cellSize), m_loX), half));
+			const float wy = (float)ftolLow(SimMath::pc24Add(SimMath::pc24Add(SimMath::pc24MulD((double)y, m_cellSize), m_loY), half));
+			if (ScriptConditions::pointInTrigger(area, wx, wy)) hline(x, x, y, mask & kPlayerBits, add);
+		}
+	}
 }
 
 void ShroudManager::lookAt(int cellX, int cellY, const Radii &r, float facing, std::uint32_t mask)

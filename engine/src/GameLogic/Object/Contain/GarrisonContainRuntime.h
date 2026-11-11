@@ -170,6 +170,10 @@ private:
 	void createInitialRoster();                       // RW 0x87BA4C
 	void validateRallyPoint();                        // RW 0x87B3EC
 	static bool currentWeaponIsMelee(const Object &obj); // RW 0x68B58C(0) -> RW 0x441B59
+	// lane GARRISONWEAPON-1: the WeaponSetType CONTAINED (RW 0x87BF44 `push 0x14`) of onContaining / onRemoving
+	static constexpr int kWeaponSetContained = 20;
+	static bool hasContainedWeaponSet(const Object &obj);    // RW 0x691014(20)
+	static void setContainedOnHordeMembers(Object &rider);   // RW 0x87BF5D .. 0x87BF9D / 0x87C225 .. 0x87C267
 
 	const GarrisonContainModuleData *m_garrison;
 	const HordeGarrisonContainModuleData *m_horde;
@@ -197,6 +201,7 @@ public:
 	CitadelSlaughterHordeContain(Thing *thing, const CitadelSlaughterHordeContainBehaviorData *data);
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override;
 	bool addToContain(Object *obj) override;
+	bool isSlaughterContain() const override { return true; } // PR 284: contain table RW 0xC5F2E8 + 0x30 = RW 0x8BD372
 	UpdateSleepTime update() override;
 	void crc(StateHasher &h) const override;
 	static const char *stopLine();

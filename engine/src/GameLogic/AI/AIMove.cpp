@@ -369,7 +369,9 @@ bool AIMover::requestMeleeApproachPath(const Coord3D &target, bool bypassOffset)
 	{
 		dest.x = SimMath::addf32(dest.x, dx);
 		dest.y = SimMath::addf32(dest.y, dy);
-		const float h1 = m_host.groundHeightAt(dest.x, dest.y), h0 = m_host.groundHeightAt(target.x, target.y);
+		// lane WALLMELEE-1, RW 0x663AB4 .. 0x663AF8: the heights of the target's layer for the unit (RW 0x680A75(unit, target)) at the offset point and the target
+		const PathfindLayerEnum layer = m_pf.getLayerAt(obj, target);
+		const float h1 = m_pf.getLayerHeight(dest.x, dest.y, layer), h0 = m_pf.getLayerHeight(target.x, target.y, layer);
 		if (SimMath::absD((double)SimMath::subf32(h1, h0)) > 10.0)
 		{
 			dest = target;
@@ -380,7 +382,7 @@ bool AIMover::requestMeleeApproachPath(const Coord3D &target, bool bypassOffset)
 	{
 		return false;
 	}
-	m_pf.updateGoal(obj, &dest, LAYER_GROUND);
+	m_pf.updateGoal(obj, &dest, m_pf.getLayerAt(obj, dest)); // RW 0x68B3AB -> 0x8E28AC: the goal's layer for the unit (RW 0x680A75), lane WALLMELEE-1
 	const float ex = SimMath::subf32(pos.x, dest.x), ey = SimMath::subf32(pos.y, dest.y);
 	if (SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(ex, ey, 0.0f))) < 20.0f)
 	{
@@ -1190,6 +1192,15 @@ unsigned AIMover::doLocomotor()
 	if (!blocked && m_blockedFrames > 1)
 	{
 		m_blockedFrames = 1;
+	}
+	if (loco)
+	{
+		// lane AIRBORNE-1, RW 0x66A472 .. 0x66A4A0 (BFME2 0x66A3A0 doLocomotor, decomp AIUpdateInterface_doLocomotor.cpp:678, tier A): every pass with a
+		// locomotor, also one that does not work when dead (RW 0x6699D3 jumps to RW 0x66A45B), sets AIRBORNE_TARGET to height above terrain (RW 0x70B8AE) >
+		// the current locomotor template's AirborneTargetingHeight (+ 0xC0, an int): fild; fcomip; jbe (an unordered height clears it). Without a
+		// locomotor retail jumps past this tail (RW 0x6699B9 -> RW 0x66A4B5)
+		const int airborneHeight = loco->getTemplate().m_airborneTargetingHeight;
+		m_host.setAirborneTarget((double)obj.getHeightAboveTerrain() > (double)airborneHeight);
 	}
 	m_curMaxBlockedSpeed = AI_FAST_SPEED;
 	m_host.updateSailModelConditions(); // RW 0x66A4B7 (BFME2 0x66AF25): after the blocked-speed reset, before the sleep test
