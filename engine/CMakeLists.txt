@@ -180,6 +180,7 @@ include(cmake/Experience.cmake) # OPENBFME_XP_SOURCES / OPENBFME_XP_TESTS (lane 
 include(cmake/FactB.cmake)      # OPENBFME_FACTB_TESTS (lane FACT-B: Isengard and Mordor)
 include(cmake/Port4.cmake) # OPENBFME_PORT4_TESTS
 include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
+include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
 include(cmake/Port15.cmake) # PORT-15: LockWeaponCreate/Object::setWeaponLock (OPENBFME_PORT15_TESTS)
@@ -729,6 +730,7 @@ add_executable(openbfme_tests
     ${OPENBFME_XP_TESTS}
     ${OPENBFME_FACTB_TESTS}
     ${OPENBFME_PLAY2_TESTS}
+    ${OPENBFME_PORT54_TESTS}
     ${OPENBFME_PORT4_TESTS}
     ${OPENBFME_PORT8_TESTS}
     ${OPENBFME_PORT11_TESTS}
