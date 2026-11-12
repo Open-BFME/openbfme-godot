@@ -861,7 +861,10 @@ bool HordeTransportContain::addToContain(Object *obj)
 	}
 	// RW 0x87A329: OpenContain's add, the horde's world exit RW 0x990E5F (UNSELECTABLE only for a selected drawable: client side; out of the world unless it holds
 	// the Ring), the CONTAINED weapon set
-	openContainAdd(obj);
+	if (!openContainAdd(obj))
+	{
+		return true; // accepted, but onContaining killed the rider or the horde transport: the exit already ran (OpenContain::openContainAdd)
+	}
 	static const int holdingTheRing = statusBit("HOLDING_THE_RING");
 	if (obj->isInWorld() && !obj->testStatus((unsigned)holdingTheRing))
 	{

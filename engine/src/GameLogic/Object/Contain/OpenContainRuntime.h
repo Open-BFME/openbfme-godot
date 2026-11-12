@@ -177,8 +177,9 @@ public:
 protected:
 	// contain slot 0xB0(obj) (OpenContain RW 0x865C15: the data's ObjectStatusOfContained; SiegeEngineContain RW 0x87ED55: a crew member's ObjectStatusOfCrew)
 	virtual const ObjectStatusMaskType &statusMaskFor(const Object *obj) const;
-	// RW 0x8674C2's body (main slot 0x74 of the horde contains calls it directly)
-	void openContainAdd(Object *obj);
+	// RW 0x8674C2's body (main slot 0x74 of the horde contains calls it directly). False when the rider is not inside afterwards: it was in a container
+	// already, or onContaining killed the rider or the container (see the body)
+	bool openContainAdd(Object *obj);
 	// RW 0x8665BE -> 0x865EB6
 	void openContainRemove(Object *obj);
 	void objectOnContainedBy(Object *rider); // RW 0x6901AE

@@ -281,3 +281,85 @@ TEST_CASE("PORT-62 unknown grab weapon: nothing fires and the name reaches the r
 	}
 	CHECK(reported == 1); // once per name, not once per rider or per container
 }
+
+namespace
+{
+// a lethal variant of the fixture: the grab does 400 SLASH, rider and bystander leave the game when they die (DestroyDie), and with `killsSelf` the grab's
+// area takes in the grabber too (RadiusDamageAffects SELF, with ALLIES because the source is its own ally for the relationship mask and without NOT_SIMILAR,
+// which skips an ally of the source's own template; RW 0x90D77C), whose 300 health and DestroyDie make the same fire kill it
+std::string lethalObjects(const std::string &grabLines, bool killsSelf)
+{
+	auto swap = [](std::string s, const std::string &from, const std::string &to, bool all) {
+		for (size_t at = s.find(from); at != std::string::npos; at = all ? s.find(from, at + to.size()) : std::string::npos)
+		{
+			s.replace(at, from.size(), to);
+		}
+		return s;
+	};
+	std::string s = objects(grabLines);
+	s = swap(s, "    Damage = 40\n", "    Damage = 400\n", false);
+	s = swap(s, "    MaxHealth = 100\n  End\n", "    MaxHealth = 100\n  End\n  Behavior = DestroyDie ModuleTag_Die\n  End\n", true);
+	if (killsSelf)
+	{
+		s = swap(s, "  RadiusDamageAffects = ENEMIES NOT_SIMILAR\n", "  RadiusDamageAffects = ALLIES ENEMIES SELF\n", false);
+		s = swap(s, "    MaxHealth = 1000\n  End\n", "    MaxHealth = 300\n  End\n  Behavior = DestroyDie ModuleTag_Die\n  End\n", false);
+	}
+	return s;
+}
+} // namespace
+
+// onContaining can kill (the grab fire RW 0x86AA8A runs inside OpenContain::addToContain RW 0x8674C2 at RW 0x867530, before the rider is linked at RW 0x867543).
+// GameLogic::destroyObject (RW 0x62BBAB) runs Object::onDestroy (RW 0x6902FA) at once, whose leave-the-container step reads + 0x27C, still null then, so the
+// destroyed rider would stay in the list and the next frames (TransportContain::update -> letRidersUpgradeWeaponSet) would read a freed object. The port
+// finishes the entry and runs the exit: the rider is not in the list, and the frames after the destroy list freed it run clean.
+TEST_CASE("PORT-62 lethal grab: a rider the grab kills does not stay in the transport (RW 0x86AA8A inside RW 0x8674C2)")
+{
+	const WeaponLookup lookup;
+	CombatWorld w(lethalObjects(std::string(kGrab) + kFireYes, false).c_str());
+	w.combat().setAutoAcquireEnabled(false);
+	Object *container = w.unit("Port62Grabber", 'A', 200.0f, 200.0f);
+	Object *rider = w.unit("Port62Rider", 'B', 210.0f, 200.0f);
+	REQUIRE(container != nullptr);
+	REQUIRE(rider != nullptr);
+	TransportContain *transport = dynamic_cast<TransportContain *>(container->getContain());
+	REQUIRE(transport != nullptr);
+	const ObjectID riderId = rider->getID();
+	CHECK(transport->addToContain(rider)); // accepted: the grab kills it inside the add
+	CHECK(rider->isDestroyed());
+	CHECK(rider->getContainedBy() == nullptr);
+	CHECK(transport->getContainCount() == 0);
+	w.frames(3); // the destroy list frees the rider; TransportContain::update walks its riders every frame
+	CHECK(w.byId(riderId) == nullptr);
+	CHECK(transport->getContainCount() == 0);
+	CHECK_FALSE(container->isEffectivelyDead());
+}
+
+// The same fire killing the grabber (RadiusDamageAffects SELF): with EjectPassengersOnDeath the container's own death (OpenContain::onDie RW 0x867120 ->
+// removeAllContained) takes the rider out inside onContaining, so the rider must not be linked to the dead container afterwards. With
+// FireGrabWeaponOnVictim = Yes the grab kills the rider too; with No the rider is shielded from the fire (RW 0x86AA6B), and the container's death kills it
+// instead (TransportContain::killRidersWhoAreNotFreeToExit RW 0x86B05F -> kill(8, 0) RW 0x86B0CB: the fixture's rider has no AI, so it is not free to exit)
+// before removeAllContained takes it out. Either way the rider leaves the list once and is never linked to the dead grabber.
+TEST_CASE("PORT-62 lethal grab: a grab that kills the transport leaves no rider pointing at it (RW 0x86AA8A, RW 0x867120)")
+{
+	for (const bool riderDies : { false, true })
+	{
+		CAPTURE(riderDies);
+		const WeaponLookup lookup;
+		CombatWorld w(lethalObjects(std::string(kGrab) + (riderDies ? kFireYes : kFireNo) + "    EjectPassengersOnDeath = Yes\n", true).c_str());
+		w.combat().setAutoAcquireEnabled(false);
+		Object *container = w.unit("Port62Grabber", 'A', 200.0f, 200.0f);
+		Object *rider = w.unit("Port62Rider", 'B', 210.0f, 200.0f);
+		REQUIRE(container != nullptr);
+		REQUIRE(rider != nullptr);
+		TransportContain *transport = dynamic_cast<TransportContain *>(container->getContain());
+		REQUIRE(transport != nullptr);
+		const ObjectID riderId = rider->getID();
+		CHECK(transport->addToContain(rider));
+		CHECK(container->isDestroyed());
+		CHECK(rider->getContainedBy() == nullptr);
+		CHECK(transport->getContainCount() == 0);
+		CHECK(rider->isDestroyed());
+		w.frames(3); // the destroy list frees both
+		CHECK(w.byId(riderId) == nullptr);
+	}
+}
