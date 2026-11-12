@@ -6,6 +6,7 @@
 // TARGET FACTS (RotWK game.dat, caveat S-001), read from the disassembly:
 //   * layout: + 4 / + 8 a vector of 0xE8-byte records (begin / end), + 0x10 the owning player. The record (RW 0x780713 from a template, RW 0x780DD4 from a
 //     dying object, copy RW 0x6E267E):
+//       + 0x00 the dead hero's button image (RW 0x780F06 from RespawnUpdate::getDeadImage RW 0x8B33E4 / BFME2 0x8AF2DE; RW 0x6E2FB3 in the Living World),
 //       + 0x08 experience (float, the dying object's tracker + 0x10), + 0x0C rank (tracker + 0x24; from a template RW 0x73CE2A: 1 unless a create module
 //       names a level), + 0x10 base rank (tracker helper + 0x0C, RW 0x79D102), + 0x14 .. + 0xA3 the object's upgrade mask (Object + 0x28C),
 //       + 0xA4 cost (template BuildCost, RW 0x780713; RespawnUpdate's rule cost for the level, RW 0x8B3C07), + 0xA8 the frame production started (-1 = not
@@ -51,6 +52,7 @@ class ThingTemplate;
 
 struct HeroRecord
 {
+	std::string deadImage;          ///< + 0x00 (dead hero's ButtonImage, RW 0x780F06 / 0x6E2FB3)
 	float experience = 0.0f;        ///< + 0x08
 	int rank = 0;                   ///< + 0x0C
 	int baseRank = 0;               ///< + 0x10

@@ -26,8 +26,9 @@
 // Lane PRODUCTION1: the producer's experience from a made unit and a finished upgrade (RW 0x8A27F9 / 0x8A2015), VeteranUnitsFromVeteranFactory (RW 0x8A27D4),
 // the PRODUCTION rate (RW 0x8A1EBC), the entry's upgrade bit and the upgrade modules of the new unit (RW 0x8A2922 .. 0x8A2946).
 // NOT PORTED (stop S-203): audio (speed bonus loop, voices), the EVA messages, the speed bonus model condition (a player bonus map), the entry name /
-// script naming (RW +0x40), the horde-join of entry + 0x3C, the BuildFadeInOnCreateList extra objects' drawables, SecondaryQueue selection of the
-// dispatcher is ported but hero queues are not.
+// script naming (RW +0x40), the BuildFadeInOnCreateList extra objects' drawables, SecondaryQueue selection of the
+// dispatcher is ported but hero queues are not. Entry + 0x3C horde target: the setter (slot 14, RW 0x8A03A0) is ported (LOCAL-23); its reader
+// (the made unit joining that horde) is not ported and was not located in RW (Ennorath's EvilPort has no DestinationTemplate, so it never queues).
 
 #pragma once
 
@@ -140,6 +141,7 @@ public:
 	virtual bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
 								 bool ignoreCommandPoints) = 0;
 	virtual void cancelUnitCreate(ProductionID productionID) = 0;        // slot 10, RW 0x8A13EE
+	virtual void setEntryHordeTarget(ProductionID productionID, ObjectID hordeTarget) = 0; // slot 14, RW 0x8A03A0 (DONOR BFME2 0x0049CC15)
 	virtual void cancelUnitCreateByType(const ThingTemplate *type, bool all) = 0; // slot 5, RW 0x8A0428
 	virtual int countUnitTypeInQueue(const ThingTemplate *type) const = 0; // slot 7, RW 0x8A056C (type 1 entries only)
 	virtual bool isSecondaryQueue() const = 0;                           // slot 30, RW 0x8A06E2
@@ -187,6 +189,7 @@ public:
 	bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
 						 bool ignoreCommandPoints) override;
 	void cancelUnitCreate(ProductionID productionID) override;
+	void setEntryHordeTarget(ProductionID productionID, ObjectID hordeTarget) override; // slot 14, RW 0x8A03A0
 	void cancelUnitCreateByType(const ThingTemplate *type, bool all) override;
 	int countUnitTypeInQueue(const ThingTemplate *type) const override;
 	bool isSecondaryQueue() const override { return m_data->m_secondaryQueue; }
