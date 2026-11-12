@@ -126,6 +126,8 @@ public:
 
 private:
 	bool chooseWeapon();
+	// RW 0x7515C8 .. 0x7515DA: the inner attack machine's update; a positive sleep becomes STATE_CONTINUE (PORT-14)
+	StateReturnType updateAttackMachine();
 	std::unique_ptr<AIStateMachine> createAttackMachine();
 	std::unique_ptr<AIStateMachine> makeGenericAttackMachine();
 	int m_machineMade = MADE_NONE;
@@ -133,11 +135,12 @@ private:
 	KeptSubMachines<AIStateMachine> m_keptMachines; // review of #64: the attack machine dropped during its own update (see KeptSubMachines)
 	bool m_follow, m_isAttackingObject, m_isForceAttacking;
 	Coord3D m_originalVictimPos{ 0.0f, 0.0f, 0.0f };
-	ObjectID m_victimTeam = 0;
+	ObjectID m_victimTeam = 0; ///< RW 0x74D08C stores a Team*; the port keeps the stable team id (SAVE-4c)
 	int m_lockedSlotOnEnter = -1;
 	unsigned m_shotsFired = 0;
 	bool m_meleeMachine = false;
-	bool m_victimWasEnemyOnEnter = false; ///< ATKSTATE-1a: BFME2 + 0x49, the victim was an enemy at onEnter (BFME2 0x74B692 / 0x74B6E5)
+	bool m_victimWasEnemyOnEnter = false; ///< ATKSTATE-1a / PORT-14: RW + 0x49 (0x74D066 / 0x74D0B9 / 0x7512C8), the victim was ENEMIES at onEnter
+	bool m_weaponMeleeOnEnter = false; ///< PORT-14 tail: RW + 0x48 (0x441B59, WeaponTemplate + 0x125 MeleeWeapon, stored by onEnter), the weapon class the machine was made for
 	const AttackExitConditions *m_exitConditions = nullptr; ///< ZH m_attackParameters
 };
 

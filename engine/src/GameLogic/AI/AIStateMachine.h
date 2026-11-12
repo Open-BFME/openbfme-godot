@@ -122,6 +122,9 @@ public:
 	Object &owner() const;
 	unsigned successId() const { return m_successId; }
 	unsigned failureId() const { return m_failureId; }
+	// PORT-14 tail, RW State + 0x1C: the terminal flag. BFME2 StateMachine::defineState (0x004D7B0F) stores it when success == failure == the state's own id,
+	// i.e. the state leads nowhere but the end of its machine; the attack parent restarts its inner machine from one (RW 0x75159E .. 0x7515C2).
+	bool isTerminal() const { return m_id == m_successId && m_id == m_failureId; }
 	const std::vector<AIStateCondition> &conditions() const { return m_conditions; }
 
 private:
@@ -182,6 +185,8 @@ public:
 
 	AIState *currentState() const { return m_currentState; }
 	unsigned currentStateId() const { return m_currentState ? m_currentState->id() : (unsigned)AI_NO_STATE; }
+	// RW machine + 0x1C (BFME2 StateMachine::defineState: the first state defined, 999999 while none): the state a reset enters
+	unsigned defaultStateId() const { return m_defaultStateId; }
 	// lane PHYS-1: the temporary state's id (AI_NO_STATE when none; RW machine + 0x50)
 	unsigned temporaryStateId() const { return m_temporaryState ? m_temporaryState->id() : (unsigned)AI_NO_STATE; }
 	unsigned temporaryStateFrameEnd() const { return m_temporaryStateFrameEnd; } // lane FLANK-1 (tests): the frame after which a timed temporary state ends
@@ -205,6 +210,8 @@ public:
 	void clearGoalAngle() { m_haveGoalAngle = false; m_goalAngle = 0.0f; }
 	void setGoalObject(ObjectID id) { m_goalObjectID = id; }
 	Object *goalObject() const;
+	// RW 0x8DBDFF StateMachine::isGoalObjectDestroyed: goal id 0 -> false; an id that no longer resolves -> true; else the object's dead bit (+ 0x458 bit 0)
+	bool isGoalObjectDestroyed() const;
 	const std::vector<Coord3D> &goalPath() const { return m_goalPath; }
 	// lane BFME2CAMP1: RotWK AIStateMachine + 0x4C (ZH AIStateMachine::m_goalSquad): the squad privateAttackTeam sets (RW 0x751E97: made when there is none,
 	// then filled from the team, emptied first), deleted by the machine's clear (RW 0x75464E) and by nothing else; null when there is none
