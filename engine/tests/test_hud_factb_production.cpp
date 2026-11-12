@@ -202,10 +202,14 @@ void buildEveryStructure(const std::string &faction, Results &res)
 		{
 			const Coord3D site = g.rig.freeSpot(start.x + 250.0f + 60.0f * (float)k, start.y + 40.0f * (float)(k % 3), 220.0f);
 			const ICoord2D px = g.pointAt(site);
-			while ((g.hud->input().ui().clientFrame() & 1u) == 0u)
+			// HudInput::update does not advance the client frame (HudInput::cameraFrame does, and this rig has no camera frame): on an even frame step it
+			// once by hand and update again, so the odd frame judges the pointer's site (review lane PRTRLW: the unbounded wait could never end)
+			if ((g.hud->input().ui().clientFrame() & 1u) == 0u)
 			{
-				g.hud->input().update(); // every update advances the client frame (HudInput): stop on the odd one, which judges the pointer's site
+				g.hud->input().ui().advanceClientFrame();
+				g.hud->input().update();
 			}
+			REQUIRE((g.hud->input().ui().clientFrame() & 1u) == 1u);
 			const int code = g.hud->input().ui().placeLegalCode();
 			if (code != (int)LBC_OK)
 			{

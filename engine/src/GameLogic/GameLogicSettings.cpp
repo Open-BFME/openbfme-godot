@@ -528,10 +528,12 @@ bool finish(Load &l, unsigned blockBit, const char *blockName, const std::vector
 		return false;
 	}
 	out = l.state().values;
-	if (l.state().blocks & 1u) // GameData fields can also be followed by separate AIData / MultiplayerSettings loads into the same settings object
+	// set only, never cleared (review lane PRTRLW, Sol note): GameData fields are additive like retail's INI table, so a later scan that lacks a row (or a
+	// separate AIData / MultiplayerSettings scan into the same settings object) keeps what an earlier GameData scan loaded
+	if ((l.state().seen & (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD)) == (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD) &&
+		l.state().minDistFromEdgeOfMapForBuildSeen)
 	{
-		out.buildRulesLoaded = (l.state().seen & (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD)) == (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD) &&
-			l.state().minDistFromEdgeOfMapForBuildSeen;
+		out.buildRulesLoaded = true;
 	}
 	out.builderMoveLoaded = (l.state().seen & SEEN_BUILDERMOVE) != 0; // lane BUILD-3
 	out.builderFadeLoaded = (l.state().seen & (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN)) == (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN); // lane PORTERFOG-1

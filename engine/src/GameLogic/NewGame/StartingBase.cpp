@@ -131,6 +131,8 @@ void StartingBase::placeForPlayer(GameLogic &logic, int slotNum, const SkirmishG
 		result.errors.push_back("slot " + std::to_string(slotNum) + " (" + player.getPlayerName() + "): the map has no waypoint " + startName);
 		return;
 	}
+	// RW 0x62AC75: "Player_%d_Rally" (RW 0xBFDA08) for the same start is looked up too (RW 0x628C29), right after the start waypoint
+	const Waypoint *rally = terrain->findWaypointByName("Player_" + std::to_string(slot.startPos + 1) + "_Rally");
 	Coord3D pos = wp->location;
 	pos.z = logic.getGroundHeight(pos.x, pos.y);
 	Object *conYard = nullptr;
@@ -158,6 +160,17 @@ void StartingBase::placeForPlayer(GameLogic &logic, int slotNum, const SkirmishG
 			pl.structure = true;
 			result.placed.push_back(pl);
 		}
+		// RW 0x62ADC4 .. 0x62ADFA: the zero-offset base point moves half the structure's bounding sphere radius (Object + 0xBC, mulss 0.5f RW 0xBD869C,
+		// subss) to the south and takes the ground height there (TerrainLogic vtable + 0x18)
+		pos.y = SimMath::subf32(pos.y, SimMath::mulf32(CombatQueries::boundingSphereRadius(*conYard), 0.5f));
+		pos.z = logic.getGroundHeight(pos.x, pos.y);
+	}
+	// RW 0x62AE09 .. 0x62AE34: with a Player_<n>_Rally waypoint the zero-offset base point is the rally waypoint (its ground height) instead
+	// (BFME2 0x641C75, tier A: open-bfme-2 GameLogic.cpp placeNetworkBuildingsForPlayer `if(rally){pos=rally->position;...}`)
+	if (rally)
+	{
+		pos = rally->location;
+		pos.z = logic.getGroundHeight(pos.x, pos.y);
 	}
 	for (int i = 0; i < PlayerTemplate::NUM_STARTING_UNITS; ++i)
 	{
@@ -167,12 +180,13 @@ void StartingBase::placeForPlayer(GameLogic &logic, int slotNum, const SkirmishG
 			continue;
 		}
 		const Coord3D &off = pt.m_startingUnitOffset[i];
+		// RW 0x62AE37 .. 0x62AE64: an offset is added to the structure's position, or to the start waypoint's when no structure was made
 		const Coord3D base = conYard ? *conYard->getPosition() : wp->location;
 		Coord3D unitPos;
 		if (off.x == 0.0f && off.y == 0.0f && off.z == 0.0f) // RW 0x62B0F9: Coord3D::operator== against (0, 0, 0)
 		{
-			// lane MODS-3 (Edain's StartingUnit5 FreeBuildPorterEgg): RW 0x62B074 .. 0x62B111: findPositionAround(the base point (the zero offset adds
-			// nothing), flags 0, minRadius r, maxRadius r * 1.4 (RW 0xBDBC98, mulss), the random start angle (RW 0xBFD290), maxZDelta RW 0xBF7328,
+			// lane MODS-3 (Edain's StartingUnit5 FreeBuildPorterEgg): RW 0x62B074 .. 0x62B111: findPositionAround(the zero-offset base point `pos` above
+			// (lane EDAINMAPS-3: the rally waypoint, else the start moved south of a structure), flags 0, minRadius r, maxRadius r * 1.4 (RW 0xBDBC98, mulss), the random start angle (RW 0xBFD290), maxZDelta RW 0xBF7328,
 			// no objects); r is 50 (RW 0xBD88C4), the structure's bounding circle radius (Object + 0xB8, RW 0x62AD57) when one was placed, its
 			// CastleBehavior's MaxCastleRadius (RW 0x797ED7) when it has one. No position found: the unit is not made (RW 0x62B11F)
 			float r = 50.0f;
@@ -189,8 +203,8 @@ void StartingBase::placeForPlayer(GameLogic &logic, int slotNum, const SkirmishG
 			options.minRadius = r;
 			options.maxRadius = SimMath::mulf32(r, 1.4f);
 			options.startAngle = RANDOM_START_ANGLE;
-			Coord3D found = base;
-			if (!FindPosition::findPositionAround(logic, base, options, found))
+			Coord3D found = pos;
+			if (!FindPosition::findPositionAround(logic, pos, options, found))
 			{
 				continue;
 			}

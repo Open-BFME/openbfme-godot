@@ -19,7 +19,7 @@
 // LBC_TOO_CLOSE_TO_SUPPLIES on overlap before the DOZER clear-path gate (RW 0x796942..0x796A3C); sample type-4 obstacles also reject a missing object or
 // an INERT template (+0x113 & 2, KindOf 89; RW 0x794AE2..0x794B21); HERO is +0x113 & 4 and does not trigger that branch, contrary to the issue prose.
 // INFERENCE / stop S-301: template Geometry (BOX with its radii, CYLINDER / SPHERE a disc) is tested in 2D; shroud (VIS-1), the clear-path query, factory
-// exit width / extra bib checks, cleared-by-build objects and exact non-ground sample-layer selection remain unported. The preview's PortSnapView carries only
+// exit width / extra bib checks, cleared-by-build objects and the WALL_SEGMENT sample layer (RW 0x680B70, taken as the ground: S-161) remain unported. The preview's PortSnapView carries only
 // immutable settings/boundary data; it deliberately does not read live pathfinder cells or objects while the logic worker runs.
 //
 // Simulation maths goes through SimMath.

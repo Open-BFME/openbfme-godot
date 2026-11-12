@@ -110,6 +110,10 @@ public:
 		int rank = 0;
 		float rankProgress = 0.0f;
 		std::string rankLabelFormat, timeRemainingText;
+		// RW 0x92FBAB: the selected structure's cost modifier interface.
+		bool costVisible = false, costUpgradeDiscount = false;
+		int costAmount = 0;
+		std::string costLabelFormat;
 	};
 	void setLocalState(const LocalState &s) { m_local = s; }
 	static std::string rankText(const LocalState &state);
@@ -318,6 +322,10 @@ private:
 	bool m_arcShown = false, m_sideShown = false, m_started = false, m_evil = false;
 	LocalState m_local;
 	void syncRank();     // lane HUD-5: RW 0x9305CE
+	void hideCostModifier(); // RW 0x92F67B
+	void syncCostModifier(); // RW 0x92FBAB
+	bool m_costShown = false, m_costSet = false, m_costUpgradeDiscount = false;
+	int m_costAmount = 0;
 	void hideRank();     // RW 0x92F636
 	void rankCall(const std::string &fn, const std::vector<std::string> &args);
 	bool m_rankShown = false, m_rankSet = false; ///< + 4 / + 0xC of the rank interface (PalantirCommandUI + 0x38)

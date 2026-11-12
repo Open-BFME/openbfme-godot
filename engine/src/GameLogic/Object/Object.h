@@ -396,6 +396,8 @@ public:
 	bool affectedByUpgrade(const UpgradeTemplate *upgrade) const;
 	// RW 0x691438: the upgrade's own bit clears; every upgrade module whose resetUpgrade(that bit) succeeds is removed (RW 0x8D2688)
 	void removeUpgrade(const UpgradeTemplate *upgrade);
+	// RW 0x68E083 / BFME2 0x0028DA28: resets all upgrades on the object and its upgrade modules
+	void resetUpgrades();
 	// RW 0x6936FE: the controlling player's completed upgrades | the object's | its castle keep's (a CastleMemberBehavior's keepId); attemptUpgrade on every mux that did not
 	// execute, then postUpgradeCheck on every mux
 	void updateUpgradeModules();

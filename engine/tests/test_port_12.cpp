@@ -1,4 +1,4 @@
-// OpenBFME tests for Port 12 (fork issue 67): RotWK's footprint edge margin, supply geometry border, and sample-cell INERT condition.
+// OpenBFME tests for Port 12 / issue #67: RotWK's footprint edge margin, supply geometry border, and sample-cell INERT condition.
 // Everything is synthetic; no retail game assets are required. GPL-3.0.
 
 #include "doctest.h"
@@ -144,6 +144,13 @@ TEST_CASE("PORT-12: parse MinDistFromEdgeOfMapForBuild and require it with the o
 		"End\n";
 	REQUIRE_MESSAGE(GameLogicSettingsLoader::scanGameData(withoutMargin, missing, &error), error);
 	CHECK_FALSE(missing.buildRulesLoaded); // do not silently assume a missing edge margin is zero
+
+	// review lane PRTRLW (Sol note): GameData rows are additive, so a later scan without the margin row keeps an earlier complete scan's readiness
+	GameLogicSettings twice;
+	REQUIRE_MESSAGE(GameLogicSettingsLoader::scanGameData(kBuildRules, twice, &error), error);
+	REQUIRE_MESSAGE(GameLogicSettingsLoader::scanGameData(withoutMargin, twice, &error), error);
+	CHECK(twice.buildRulesLoaded);
+	CHECK(twice.minDistFromEdgeOfMapForBuild == 30.0f);
 
 	GameLogicSettings laterAIData;
 	laterAIData.buildRulesLoaded = true;

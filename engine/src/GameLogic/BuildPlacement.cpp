@@ -45,13 +45,14 @@ bool outsidePlayableMargin(const PlayableExtent &extent, float x, float y, float
 
 // RotWK's checkSampleBuildLocation (0x794A2B -> 0x6EAE05) rejects no cell, bit 18, and a type-4 obstacle whose object is missing or INERT.
 // At RW 0x794B14 the template byte +0x113 is tested with mask 2 (KindOf INERT, index 89); HERO is mask 4 (index 90) and does not trigger this branch.
-// getLayerAt is the current pathfinder analogue of 0x680B70; exact layer selection for non-ground surfaces remains S-301.
+// The layer (review fix, lane PRTRLW): RW 0x794A5C .. 0x794A93 reads the cell on the ground layer (push 1) unless the template is WALL_SEGMENT (+0x11C
+// bit 29, KindOf 189), which asks RW 0x680B70; the type-4 obstacle id (RW 0x794AF4 -> 0x5E3CC9) always asks RW 0x680B70. The port answers RW 0x680B70
+// with the ground everywhere (S-161), so both lookups are the ground layer; the pathfinder's getLayerAt (wall tops, ramps, bridges) is not retail here.
 bool sampleCellRequiresRefusal(GameLogic &logic, AIWorld &ai, float x, float y, float z)
 {
 	Coord3D sample{ x, y, z };
 	Pathfinder &pathfinder = ai.pathfinder();
-	const PathfindLayerEnum layer = pathfinder.getLayerAt(x, y, z);
-	const PathfindCell *cell = pathfinder.getCell(layer, &sample);
+	const PathfindCell *cell = pathfinder.getCell(LAYER_GROUND, &sample);
 	if (!cell || cell->getImpassableToPlayers())
 	{
 		return true;
@@ -681,6 +682,6 @@ const char *BuildPlacement::codeName(LegalBuildCode code)
 std::vector<std::string> BuildPlacement::stopLines()
 {
 	return {
-		"[S-301] building placement: the template Geometry is tested with the existing 2D footprint helper; cliff/water/height checks, positive MinDistFromEdgeOfMapForBuild (boundary 0; equality allowed), and the disassembled missing-cell / bit-18 / type-4 INERT rule (missing object or template +0x113 & 2; HERO +0x113 & 4 does not block) is ported; CANNOT_BUILD_NEAR_SUPPLIES searches the closest SUPPLY_SOURCE and expands its geometry by SupplyBuildBorder. Still not ported: active-boundary script selection (S-921), exact non-ground sample-layer selection (RW 0x680B70 vs getLayerAt), remaining cell-type cases, shroud (VIS-1), the builder's clear-path query, factory exit width / bib checks, cleared-by-build objects, and byte-exact 3D overlap",
+		"[S-301] building placement: the template Geometry is tested with the existing 2D footprint helper; cliff/water/height checks, positive MinDistFromEdgeOfMapForBuild (boundary 0; equality allowed), and the disassembled missing-cell / bit-18 / type-4 INERT rule (missing object or template +0x113 & 2; HERO +0x113 & 4 does not block) is ported; CANNOT_BUILD_NEAR_SUPPLIES searches the closest SUPPLY_SOURCE and expands its geometry by SupplyBuildBorder. Still not ported: active-boundary script selection (S-921), the WALL_SEGMENT / obstacle sample layer (RW 0x680B70, taken as the ground: S-161), remaining cell-type cases, shroud (VIS-1), the builder's clear-path query, factory exit width / bib checks, cleared-by-build objects, and byte-exact 3D overlap",
 	};
 }
