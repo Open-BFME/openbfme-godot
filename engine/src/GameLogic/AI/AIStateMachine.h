@@ -70,7 +70,8 @@ enum AIStateType
 	AI_MOVE_OUT_OF_THE_WAY = 26,
 	AI_MOVE_AND_TIGHTEN = 27,
 	AI_BUSY = 42,
-	AI_FOLLOW_PATH_AS_TEAM = 54, // lane BACKLOG-8 r2: RotWK's state 54 (decomp AIStateMachineCtor.cpp: AIFollowPathAsTeamState, the formation march)
+	AI_FOLLOW_PATH_AS_TEAM = 54,        // lane BACKLOG-8 r2: RotWK's state 54 (RW 0x753B27: AIFollowPathAsTeamState, isAttack = false)
+	AI_FOLLOW_PATH_AS_TEAM_ATTACK = 61, // lane PORT-13: RotWK's state 61 (RW 0x753B4E: AIFollowPathAsTeamState, isAttack = true)
 	AI_NO_STATE = 0xF423F
 };
 static const unsigned INVALID_STATE_ID = 0xFFFFFFFFu;

@@ -195,6 +195,9 @@ struct GameLogicSettings
 	float formationEnemyDistance = 600.0f;
 	float narrowPassageScale = 1.0f;
 	bool waitForOthers = false;
+	// lane PORT-13: AIData AttackMoveUsesFormations (+ 0xBA, row RW 0xC1CE50, parseBool RW 0x42E558; the constructor RW 0x6FFD9E stores 1 and both editions'
+	// default\aidata.ini set Yes): the gate of AIGroup::groupAttackMoveToPosition's formation march (RW 0x774E55). Hashed only when a mod turns it off
+	bool attackMoveUsesFormations = true;
 	// lane STEALTHFLY1: AIData MinFlightHeight (+ 0xB0, row RW 0xC1CE60 parseReal RW 0x42ED00; the constructor's FLT_MAX RW 0xBD1910 = none): the flight ground
 	// height's floor (RW 0x777ED7). No retail aidata.ini sets it; a map's map.ini AIData block does (map wor dol guldur 76, map evil rivendell 300)
 	float minFlightHeight = FLT_MAX;

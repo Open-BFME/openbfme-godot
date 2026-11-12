@@ -320,6 +320,9 @@ const FieldParse kAIDataFields[] = {
 	{ "FormationEnemyDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.formationEnemyDistance) },
 	{ "NarrowPassageScale", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.narrowPassageScale) },
 	{ "WaitForOthers", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.waitForOthers) },
+	// lane PORT-13: AttackMoveUsesFormations (row RW 0xC1CE50, parseBool RW 0x42E558, AIData + 0xBA): the formation gate of the group's attack-move
+	// (AIGroup::groupAttackMoveToPosition, RW 0x774E55)
+	{ "AttackMoveUsesFormations", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.attackMoveUsesFormations) },
 	{ "UseFormations", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.useFormations) },
 	// lane STEALTHFLY1: MinFlightHeight (row RW 0xC1CE60 parseReal RW 0x42ED00, AIData + 0xB0): the aerial path's ground floor (RW 0x777ED7)
 	{ "MinFlightHeight", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.minFlightHeight) },
@@ -691,6 +694,11 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addFloat(formationEnemyDistance);
 	h.addFloat(narrowPassageScale);
 	h.addBool(waitForOthers);
+	if (!attackMoveUsesFormations)
+	{
+		h.addBool(attackMoveUsesFormations); // lane PORT-13: both retail editions' default\aidata.ini set AttackMoveUsesFormations = Yes and the constructor stores 1,
+		                                     // so only a mod that turns the formation attack-move off is hashed and retail games keep their pre-port settings hash
+	}
 	h.addBool(useFormations);
 	if (minFlightHeight != FLT_MAX)
 	{
