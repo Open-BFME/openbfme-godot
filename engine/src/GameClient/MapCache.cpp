@@ -271,11 +271,9 @@ bool addStartWaypoint(MapCacheEntry &map, const std::string &name, const Coord3D
 	for (int i = 1; i <= map.numPlayers && i <= MAX_SLOTS; ++i)
 	{
 		if (name != "Player_" + std::to_string(i) + "_Start") continue;
-		if (!map.startPositions.emplace(i, location).second)
-		{
-			if (error) *error = "duplicate start waypoint '" + name + "'";
-			return false;
-		}
+		// lane EDAINMAPS-3: a used start named twice is no error; the start code's lookup (RW 0x628C29) answers the last one of the map file (see
+		// TerrainLogic::findWaypointByName), so the later waypoint replaces the earlier (callers pass the waypoints in file order)
+		map.startPositions[i] = location;
 		return true;
 	}
 	return true;

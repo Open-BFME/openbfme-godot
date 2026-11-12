@@ -589,6 +589,18 @@ void GarrisonContain::onRemoving(Object *obj)
 // not-stealthed garrison: the logic sets it whatever the viewer, S-1100) and the points are loaded once (RW 0x87C895).
 // Not ported: the hidden byte + 0x9BD's set (RW 0x87C75B .. 0x87C797: the first rider neither RW 0x693BF2 nor status 0x11 and every rider stealthed,
 // slot 0x124; the port only clears it), the indicator colour of the apparent controller (RW 0x87C881 .. 0x87C8B4, client side)
+Team *GarrisonContain::originalTeam() const
+{
+	if (m_originalTeam == 0)
+		return nullptr; // RW 0x87B6A4
+	return getObject()->logic().players().teams().findTeamByID(m_originalTeam); // RW 0x87B6AC
+}
+
+void GarrisonContain::setOriginalTeam(const Team *team)
+{
+	m_originalTeam = team ? team->getID() : 0; // RW 0x87B682 .. 0x87B691
+}
+
 void GarrisonContain::recalcApparentControllingPlayer()
 {
 	Object *container = getObject();
@@ -1459,7 +1471,7 @@ void SlaughterHordeContain::payFor(Object &obj, Player &player)
 	Economy &econ = logic.economy();
 	// RW 0x883B95 -> 0x68DDF1: BountyValue, NOT BuildCost or BuildCostPaid.
 	int value = (int)Economy::templateInt(*obj.getTemplate(), "BountyValue");
-	if (obj.isKindOfName("HERO"))
+	if (obj.isKindOfName("HERO")) // RW 0x68DE33..0x68DE49 (inside 0x68DDF1): a hero's bounty scaled by rank over its last level's rank
 	{
 		const ExperienceTracker *tracker = obj.getExperienceTracker();
 		if (tracker && TheExperienceLevelSystem)
@@ -1480,7 +1492,7 @@ void SlaughterHordeContain::payFor(Object &obj, Player &player)
 		amount = NumericState::fstpDword(NumericState::pc24MulW((double)econ.multiPlayMoneyMult(econ.livePlayableCount(false)), (double)amount));
 	// RW 0x883C44..0x883C92: PRODUCTION of the container; slaughter=true
 	// cost modifier also tests the CONTAINER template, not the victim template.
-	amount = SimMath::mulf32(amount, econ.attributeModifierProduct(*getObject(), Economy::ATTRIBUTE_MODIFIER_PRODUCTION));
+	amount = SimMath::mulf32(amount, econ.productionMoneyProduct(*getObject())); // lane MODS-3: RW 0x883C4E is an Edain Unchained production-split hook
 	const float costChange = player.getProductionCostChangeBasedOnKindOf(*getObject()->getTemplate(), true);
 	const int scaled = player.applyHandicapMoney(ceilInt(NumericState::pc24MulW((double)costChange, (double)amount)));
 	amount = SimMath::sseFromInt32(scaled);
@@ -1525,10 +1537,13 @@ void SlaughterHordeContain::addHordeMember(Object &obj)
 		recordTransferLosses(obj); // RW 0x883E4B, before changing the team's owner
 		Object &container = *getObject();
 		bool changed = false;
-		if (container.getTeam() != obj.getTeam())
+		// RW 0x883E50..0x883E80: the CONTAIN's stored original team (RW 0x87B69A) is compared with the entrant's team and,
+		// when they differ, the container's upgrades are reset (RW 0x68E083) and the original team is set (slot + 0x54 =
+		// RW 0x87B682). The container's own team follows through recalcApparentControllingPlayer (RW 0x87C7D8) when it empties.
+		if (originalTeam() != obj.getTeam())
 		{
 			container.resetUpgrades();
-			container.setTeam(obj.getTeam());
+			setOriginalTeam(obj.getTeam());
 			changed = true;
 		}
 		const UpgradeMaskType before = container.getUpgradeMask();

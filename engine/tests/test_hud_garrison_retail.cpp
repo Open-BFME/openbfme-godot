@@ -794,7 +794,10 @@ TEST_CASE("ring delivery retail: a pending carrier exit survives a whole-game sa
 	}
 }
 
-TEST_CASE("ring delivery retail: fortress refuses ordinary troops and another player's ring carrier")
+// RotWK: the citadel runs the inherited SlaughterHordeContain entry test first (RW 0x88399E -> 0x8838C3 -> 0x87D0E0), so its owner's ordinary infantry
+// may enter and is consumed for cash (#294); another player's ring carrier is refused at admission (AllowEnemiesInside = No). The entry wrapper
+// (RW 0x8836D3) does not recheck admission: that belongs to the command / AI caller, so a refused object is tested through isValidContainerFor only
+TEST_CASE("ring delivery retail: fortress takes its owner's ordinary troops for cash and refuses another player's ring carrier")
 {
 	if (!haveWorld()) return;
 	Arena a(shared());
@@ -805,10 +808,12 @@ TEST_CASE("ring delivery retail: fortress refuses ordinary troops and another pl
 	auto *contain = dynamic_cast<CitadelSlaughterHordeContain *>(fortress->getContain());
 	REQUIRE(contain != nullptr);
 	CHECK(std::string(CitadelSlaughterHordeContain::stopLine()) == "[S-6010] CitadelSlaughterHordeContain: ordinary entry, slaughter, cashback and CanAlwaysEnter follow the shared RotWK SlaughterHordeContain path (RW 0x883B4A); ring delivery is retained; the inherited contain presentation stops (S-1100) and the cash text's random offset, colour and scale (S-283) remain");
-	CHECK_FALSE(contain->isValidContainerFor(*ordinary, true, true));
+	CHECK(contain->isValidContainerFor(*ordinary, true, true));
 	CHECK_FALSE(contain->isValidContainerFor(*enemy, true, true));
-	CHECK_FALSE(contain->addToContain(ordinary));
-	CHECK_FALSE(contain->addToContain(enemy));
+	const unsigned before = a.player(0)->getMoney()->countMoney();
+	CHECK(contain->addToContain(ordinary));
+	CHECK(ordinary->isEffectivelyDead());
+	CHECK(a.player(0)->getMoney()->countMoney() - before == 8); // GONDOR_SOLDIER_BOUNTY_VALUE 4 x CashBackPercent 200%, ceil (RW 0x883BC8..0x883BF4)
 	CHECK_FALSE(a.player(0)->hasUpgradeComplete("Upgrade_RingHero"));
 	CHECK_FALSE(fortress->hasUpgrade("Upgrade_FortressRingHero"));
 }

@@ -281,7 +281,10 @@ TEST_CASE("PORT-55 zero-percent capture keeps transfer accounting through save4 
     Object *builder = w.unit("P55Troop", 'A', 450, 450);
     house->setBuilder(builder);
     REQUIRE(contain(house).addToContain(next));
-    CHECK(house->getControllingPlayer() == w.playerOf('B'));
+    // RW 0x883E50..0x883E80: the CONTAIN's stored original team takes the entrant's team (RW 0x87B69A / 0x87B682);
+    // the container's own team is not set here: it follows when the garrison recalculates (RW 0x87C7D8)
+    CHECK(contain(house).originalTeam() == next->getTeam());
+    CHECK(house->getControllingPlayer() == w.playerOf('A'));
     // RW 0x883E4B..0x883EB7 resets the old upgrades on team change and
     // copies the entrant's mask; RW 0x883F96..0x883FBE kills/unlinks a builder.
     CHECK_FALSE(house->hasUpgrade("Upgrade_Barracks2"));

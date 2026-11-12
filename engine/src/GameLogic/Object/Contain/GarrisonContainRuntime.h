@@ -46,6 +46,7 @@
 #include <vector>
 
 class ModuleFactory;
+class Team;
 class SlaughterHordeContainBehaviorData;
 class CitadelSlaughterHordeContainBehaviorData;
 struct DieMuxData;
@@ -146,11 +147,16 @@ public:
 		unsigned long long rallyExits = 0;             // the exit path's second waypoint was the contain's rally point (RW 0x87CC13, lane BACKLOG-1)
 	};
 	const ExitStats &exitStats() const { return m_exitStats; }
+	// RW 0x87B69A: the stored original team (interface + 0xDC = module + 0xFC) looked up by id, null when unset
+	Team *originalTeam() const;
 
 protected:
 	void onContaining(Object *obj, bool wasSelected) override; // RW 0x87BEC8
 	void onRemoving(Object *obj) override;                     // RW 0x87BFA6
 	const GarrisonContainModuleData &garrison() const { return *m_garrison; }
+	bool hordeMemberInside(const Object &obj, Object **horde) const; // RW 0x990CB9
+	// RW 0x87B682: the interface's slot + 0x54 stores the team's id (0 for none); the container's own team is not touched
+	void setOriginalTeam(const Team *team);
 
 private:
 	friend class GarrisonContainTestAccess;
@@ -165,7 +171,6 @@ private:
 	void putObjectAtGarrisonPoint(Object *obj, ObjectID target, int condition, int index);      // RW 0x87B042
 	void removeObjectFromGarrisonPoint(Object *obj, int index);                                 // RW 0x87B123
 	void exitOneObject(Object *obj, int door);                                                  // RW 0x87CA2B
-	bool hordeMemberInside(const Object &obj, Object **horde) const;                            // RW 0x990CB9
 	void transformPoint(const Coord3D &local, Coord3D &out) const;                              // RW 0x87CEB3
 	bool memberHordeOf(const Object &obj, Object **horde) const;
 	void createInitialRoster();                       // RW 0x87BA4C
