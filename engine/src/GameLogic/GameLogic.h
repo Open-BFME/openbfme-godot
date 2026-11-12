@@ -214,6 +214,10 @@ struct GameLogicSettings
 	// (AIFollowWaypointPathState::update RW 0x755A20, asm RW 0x755B77 .. 0x755C08)
 	float chaseFromBehindLimit = 50.0f;
 	float skirmishGroupFudgeDistance = 0.0f;
+	// lane PORT-40: AIData MaxRecruitRadius + 0x5C (row RW 0xC1CCD0, parseReal RW 0x42ED00; the constructor's 0.0, RW 0x6FFD04 with xmm0 zeroed at
+	// RW 0x6FFC01): the radius a team recruits units within — the script action TEAM_RECRUIT_UNITS (RW 0x7C2BFB -> Team RW 0x7A491C); the AI player
+	// reads it for its own team building too (RW 0x8F8E2C / RW 0x8F9530 -> Team RW 0x7A41D4), which is not ported (S-412)
+	float maxRecruitRadius = 0.0f;
 	// lane AIDATA-1: the pathfinder's AIData rows (before: PathfindConfigLoader's own text scan; now the shared table, so a map.ini / solo.ini AIData block
 	// reaches the pathfinder too: PathfindConfigLoader::applyAIData). Rows and constructor values (RW 0x6FFBEF): WadeWaterDepth + 0x98 (row RW 0xC1CDD0, 5.0 RW
 	// 0xBDAE58), DeepWaterDepth + 0x9C (RW 0xC1CDE0, 50.0 RW 0xBD88C4), MeleeApproachTolerance + 0x90 (RW 0xC1CDB0, 20.0 RW 0xBDBC6C), MeleeApproachDist + 0x94
