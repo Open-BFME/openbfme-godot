@@ -156,6 +156,13 @@ public:
 	// lane CAH-2, RW 0x80AF0B (a Create-a-Hero record's flag 8): the drawable's house colour set (RW 0x80959A: kind 3 and the record's three colours,
 	// RW 0x6727B0 -> every draw module's vslot 0x7C); client only (HouseColor.h)
 	virtual void setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2) { (void)obj; (void)kind; (void)c0; (void)c1; (void)c2; }
+	// lane PORT-46, RW 0x8B11F0 / 0x8B44F0 (the packing fades of ToggleMountedSpecialAbilityUpdate / SpecialDisguiseUpdate) and RW 0x8B1219 /
+	// 0x8B125F (their resets): retail writes the drawable's opacity (+ 0xB0) straight from the ability module. The simulation never holds a drawable
+	// (S-810), so the write is a client event here, applied to Drawable::setDrawableOpacity (the BUILD-5 field): INFERENCE on the delivery, the value is
+	// RW's. Appended at the end of the interface on purpose: a virtual inserted in the middle of this class while port work went on made a retail Create-a-Hero
+	// test crash (stableqa1 cah retail, SIGSEGV after 43 assertions) with no code path of the lane running at all, while the same no-op virtual appended here
+	// leaves it green - the later slots' numbers must not move, whatever reads them
+	virtual void setDrawableOpacity(Object &obj, float opacity) { (void)obj; (void)opacity; }
 };
 
 class StateHasher;
