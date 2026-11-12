@@ -122,6 +122,9 @@ public:
 	Object &owner() const;
 	unsigned successId() const { return m_successId; }
 	unsigned failureId() const { return m_failureId; }
+	// PORT-14 tail, RW State + 0x1C: the terminal flag. BFME2 StateMachine::defineState (0x004D7B0F) stores it when success == failure == the state's own id,
+	// i.e. the state leads nowhere but the end of its machine; the attack parent restarts its inner machine from one (RW 0x75159E .. 0x7515C2).
+	bool isTerminal() const { return m_id == m_successId && m_id == m_failureId; }
 	const std::vector<AIStateCondition> &conditions() const { return m_conditions; }
 
 private:
@@ -182,6 +185,8 @@ public:
 
 	AIState *currentState() const { return m_currentState; }
 	unsigned currentStateId() const { return m_currentState ? m_currentState->id() : (unsigned)AI_NO_STATE; }
+	// RW machine + 0x1C (BFME2 StateMachine::defineState: the first state defined, 999999 while none): the state a reset enters
+	unsigned defaultStateId() const { return m_defaultStateId; }
 	// lane PHYS-1: the temporary state's id (AI_NO_STATE when none; RW machine + 0x50)
 	unsigned temporaryStateId() const { return m_temporaryState ? m_temporaryState->id() : (unsigned)AI_NO_STATE; }
 	unsigned temporaryStateFrameEnd() const { return m_temporaryStateFrameEnd; } // lane FLANK-1 (tests): the frame after which a timed temporary state ends

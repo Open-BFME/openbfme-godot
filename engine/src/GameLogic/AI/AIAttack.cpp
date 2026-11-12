@@ -319,6 +319,13 @@ StateReturnType AIAttackState::onEnter()
 		cur->setMaxShotCount(0x7FFFFFFF);
 	}
 	m_lockedSlotOnEnter = w->isCurWeaponLocked() ? w->curSlot() : -1;
+	// PORT-14 tail: RW 0x74CED6 stores + 0x48 from the current weapon before the machine is made (RW 0x441B59 reads WeaponTemplate + 0x125, MeleeWeapon);
+	// update compares it with the weapon class and enters the state again when it changed (RW 0x75149A .. 0x7514DE). RW fails when there is no current weapon
+	// at all, which chooseWeapon() above has already refused.
+	{
+		const Weapon *cur = w->currentWeapon();
+		m_weaponMeleeOnEnter = cur && cur->getTemplate() && cur->getTemplate()->m_meleeWeapon;
+	}
 	const StateReturnType ret = m_attackMachine->initDefaultState();
 	if (ret == STATE_CONTINUE)
 	{
@@ -338,6 +345,18 @@ StateReturnType AIAttackState::onEnter()
 // unchanged through RW 0x7515D4 jle 0x75122A; a positive sleep is flattened to STATE_CONTINUE by RW 0x7515DA xor eax,eax.
 StateReturnType AIAttackState::updateAttackMachine()
 {
+	// RW 0x75159E .. 0x7515C2: a terminal inner state (State + 0x1C: success and failure are the state itself, BFME2 StateMachine::defineState) - and also no
+	// current state at all (RW 0x7515AD mov al,1) - sends the machine back to its default state (machine + 0x1C, its vslot + 0x20 setState); a refusal that is
+	// STATE_FAILURE fails this state too, anything else (a locked machine's STATE_CONTINUE) goes on to the update.
+	// INFERENCE (S-7184): the port's attack machines define no terminal state, so what is reached here is the cleared-machine half - a machine without a
+	// current state restarts at its default state (Pursue 0x64 / Approach 0xE1) instead of standing still until the next command.
+	{
+		const AIState *cur = m_attackMachine->currentState();
+		if ((!cur || cur->isTerminal()) && m_attackMachine->setState(m_attackMachine->defaultStateId()) == STATE_FAILURE)
+		{
+			return STATE_FAILURE;
+		}
+	}
 	StateReturnType r;
 	{
 		KeptSubMachines<AIStateMachine>::Run run(m_keptMachines); // the shot can end this state inside the update (onExit below)
@@ -449,7 +468,18 @@ StateReturnType AIAttackState::update()
 		}
 	}
 	// PORT-14: the parent update does not repeat the ZH stealth test (lane STEALTH-1 kept it here as an INFERENCE): RW tests a stealthed,
-	// undetected victim in the attack sub-state RW 0x752382 .. 0x7523B2, which the port's aim state carries (AIAttackAimAtTargetState::update).
+	// undetected victim in the attack sub-state RW 0x752382 .. 0x7523B2, which the port's aim state carries (AIAttackAimState::update).
+	// RW 0x7513D1 .. 0x7513F3: the container the owner rides in can veto its shot - Object + 0x27C (the carrier), that carrier's contain, then contain
+	// vslot + 0xC0 isPassengerShotBlocked(owner, goal object) (RW 0x865B33) - and the attack fails. Outside the victim block: it also covers an attack on a
+	// position (a null goal object is never blocked).
+	{
+		const Object *carrier = source.getContainedBy();
+		const ContainModuleInterface *contain = carrier ? carrier->getContain() : nullptr;
+		if (contain && contain->isPassengerShotBlocked(&source, machine().goalObject()))
+		{
+			return STATE_FAILURE; // RW 0x7513F3 jne 0x751227
+		}
+	}
 	if (!chooseWeapon())
 	{
 		return STATE_FAILURE;
@@ -463,6 +493,24 @@ StateReturnType AIAttackState::update()
 	if (!w->currentWeapon() || w->currentWeapon()->maxShotCount() <= 0)
 	{
 		return STATE_FAILURE;
+	}
+	// RW 0x75149A .. 0x7514DE: the weapon the two tests above read is compared with the class onEnter recorded in + 0x48 (the weapon template's
+	// MeleeWeapon, RW 0x441B59). A weapon-set change - a hero whose bow becomes a sword, a rider whose spear becomes a bow - ends this state and enters it
+	// again for the same victim: onExit(EXIT_NORMAL) (RW 0x7514A7 vslot + 0x14), the AI's current victim and goal object (RW 0x7514BC 0x6682B1 and
+	// RW 0x7514C7 0x6627F0, which state + 0x2C and state + 0x30 are made again for), the machine's goal (RW 0x7514D4 vslot + 0x38), then onEnter
+	// (RW 0x7514DB), whose result is returned as this update's. RW keeps the victim in a local (RW 0x7514B6 pushes [ebp - 8]) because onExit has already
+	// cleared the machine's goal.
+	{
+		const Weapon *cur = w->currentWeapon();
+		const bool melee = cur && cur->getTemplate() && cur->getTemplate()->m_meleeWeapon;
+		if (melee != m_weaponMeleeOnEnter)
+		{
+			Object *victim = machine().goalObject(); // the local, before onExit clears the machine's goal
+			onExit(EXIT_NORMAL);
+			a.setCurrentVictim(victim);
+			machine().setGoalObject(victim ? victim->getID() : (ObjectID)INVALID_ID);
+			return onEnter();
+		}
 	}
 	// lane ATKSTATE-1a, RW 0x7514F7 .. 0x751599 (BFME2 0x74FA79 .. 0x74FB2F): with the inner machine in its state 0xE4 the attack model conditions
 	// ATTACKING, ATTACKING_STRUCTURE and ATTACKING_POSITION are cleared; in any other state (or none) ATTACKING is set, ATTACKING_STRUCTURE when the goal
@@ -552,6 +600,7 @@ void AIAttackState::crc(StateHasher &h) const
 	h.addU32(m_shotsFired);
 	h.addBool(m_meleeMachine);
 	h.addBool(m_victimWasEnemyOnEnter);
+	h.addBool(m_weaponMeleeOnEnter); // PORT-14 tail: + 0x48 (the re-enter below compares it with the current weapon's class every update)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------

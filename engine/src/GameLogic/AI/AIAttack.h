@@ -140,6 +140,7 @@ private:
 	unsigned m_shotsFired = 0;
 	bool m_meleeMachine = false;
 	bool m_victimWasEnemyOnEnter = false; ///< ATKSTATE-1a / PORT-14: RW + 0x49 (0x74D066 / 0x74D0B9 / 0x7512C8), the victim was ENEMIES at onEnter
+	bool m_weaponMeleeOnEnter = false; ///< PORT-14 tail: RW + 0x48 (0x441B59, WeaponTemplate + 0x125 MeleeWeapon, stored by onEnter), the weapon class the machine was made for
 	const AttackExitConditions *m_exitConditions = nullptr; ///< ZH m_attackParameters
 };
 
