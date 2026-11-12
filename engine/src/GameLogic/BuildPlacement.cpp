@@ -9,6 +9,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/SimMath.h"
 
 namespace
@@ -17,6 +18,52 @@ const float kCell = 10.0f; // MAP_XY_FACTOR (ZH: the terrain's heightmap cell, t
 const float kMaxWaterLandSampleRatio = 6.0f; // lane BUILD-5: RW 0xDA59A0 (a PORT's samples, either way)
 const float kPortWalkStep = 5.0f;            // lane BUILD-5: RW 0xBDAE58 (getPortTransform's walk from the land centre to the water)
 const float kPortAngleOffset = 1.5707963705062866f; // lane BUILD-5: RW 0xDA599C (pi / 2, added to the shore direction)
+const float kSupplyBuildBorderSearchFactor = 2.0f; // RotWK RW 0xBD889C: closest-supply search radius = 2 * border + build bounding-circle radius
+
+struct PlayableExtent
+{
+	float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+};
+
+bool getActivePlayableExtent(const GameLogic &logic, PlayableExtent &extent)
+{
+	const TerrainLogic *terrain = logic.terrain();
+	return terrain && terrain->getExtent(0, extent.maxX, extent.maxY); // active-boundary selector is not yet ported (S-921)
+}
+
+bool outsidePlayableMargin(const PlayableExtent &extent, float x, float y, float margin)
+{
+	if (!(margin > 0.0f))
+	{
+		return false;
+	}
+	// RotWK's comiss/ja tests (RW 0x794C08..0x794C58) reject strict outside values; equality at the margin is legal.
+	const float minX = SimMath::addf32(extent.minX, margin), minY = SimMath::addf32(extent.minY, margin);
+	const float maxX = SimMath::subf32(extent.maxX, margin), maxY = SimMath::subf32(extent.maxY, margin);
+	return x < minX || x > maxX || y < minY || y > maxY;
+}
+
+// RotWK's checkSampleBuildLocation (0x794A2B -> 0x6EAE05) rejects no cell, bit 18, and a type-4 obstacle whose object is missing or INERT.
+// At RW 0x794B14 the template byte +0x113 is tested with mask 2 (KindOf INERT, index 89); HERO is mask 4 (index 90) and does not trigger this branch.
+// getLayerAt is the current pathfinder analogue of 0x680B70; exact layer selection for non-ground surfaces remains S-301.
+bool sampleCellRequiresRefusal(GameLogic &logic, AIWorld &ai, float x, float y, float z)
+{
+	Coord3D sample{ x, y, z };
+	Pathfinder &pathfinder = ai.pathfinder();
+	const PathfindLayerEnum layer = pathfinder.getLayerAt(x, y, z);
+	const PathfindCell *cell = pathfinder.getCell(layer, &sample);
+	if (!cell || cell->getImpassableToPlayers())
+	{
+		return true;
+	}
+	if (cell->getType() != PathfindCell::CELL_OBSTACLE)
+	{
+		return false;
+	}
+	const PathfindObjectID obstacleId = cell->getObstacleID();
+	Object *obstacle = obstacleId == PATHFIND_INVALID_ID ? nullptr : logic.findObjectByID((ObjectID)obstacleId);
+	return !obstacle || !obstacle->getTemplate() || obstacle->isKindOfName("INERT"); // RW template +0x113 & 2, KindOf INERT 89 (HERO is & 4 / 90)
+}
 
 bool templateKindOf(GameLogic &logic, const ThingTemplate &tt, const char *name)
 {
@@ -40,6 +87,7 @@ void sampleFootprints(std::vector<BuildPlacement::Footprint> &fps, const Coord3D
 		fp.major = fp.minor = 0.0f;
 		fp.x = pos.x;
 		fp.y = pos.y;
+		fp.z = pos.z;
 		fp.angle = angle;
 		fps.assign(1, fp);
 	}
@@ -56,7 +104,7 @@ void sampleFootprints(std::vector<BuildPlacement::Footprint> &fps, const Coord3D
 				{
 					const float x = SimMath::addf32(fp.x, SimMath::subf32(SimMath::mulf32(uu, c), SimMath::mulf32(vv, s)));
 					const float y = SimMath::addf32(fp.y, SimMath::addf32(SimMath::mulf32(uu, s), SimMath::mulf32(vv, c)));
-					if (!visit(x, y))
+					if (!visit(x, y, fp.z))
 					{
 						return;
 					}
@@ -105,6 +153,7 @@ void footprintsOfShapes(const std::vector<PathfindShape> &shapes, const Coord3D 
 		f.minor = s.type == PATHFIND_GEOMETRY_BOX ? s.minorRadius : s.majorRadius;
 		f.x = at.x;
 		f.y = at.y;
+		f.z = at.z;
 		f.angle = angle;
 		out.push_back(f);
 	}
@@ -324,6 +373,51 @@ LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Co
 	{
 		return LBC_OBJECTS_IN_THE_WAY;
 	}
+	if (templateKindOf(logic, build, "CANNOT_BUILD_NEAR_SUPPLIES"))
+	{
+		if (!logic.settings().buildRulesLoaded)
+		{
+			logic.reportError("BuildPlacement: GameData's SupplyBuildBorder was not loaded for a CANNOT_BUILD_NEAR_SUPPLIES template");
+			return LBC_RESTRICTED_TERRAIN;
+		}
+		const float border = logic.settings().supplyBuildBorder;
+		if (border > 0.0f)
+		{
+			if (!ai)
+			{
+				logic.reportError("BuildPlacement: CANNOT_BUILD_NEAR_SUPPLIES requires AIWorld geometry [S-301]");
+				return LBC_RESTRICTED_TERRAIN;
+			}
+			const ObjectMovementInfo &buildInfo = ai->movementInfo(*build.getFinalOverride());
+			const float searchRadius = SimMath::addf32(SimMath::mulf32(border, kSupplyBuildBorderSearchFactor), buildInfo.geometry.boundingCircleRadius());
+			PartitionFilterFn supplySource([](Object &obj) { return obj.isKindOfName("SUPPLY_SOURCE"); });
+			Object *source = logic.partition().getClosestObject(pos, searchRadius, FROM_CENTER_3D, { &supplySource });
+			if (source)
+			{
+				std::vector<Footprint> mine, supply;
+				if (footprintsOf(logic, build, pos, angle, mine) && footprintsOf(logic, *source, supply))
+				{
+					// RotWK ObjectGeometry::expandGeometryBy (RW 0xAD2CA0) adds the raw border to each active radius with x87 PC24 rounding.
+					for (Footprint &shape : supply)
+					{
+						shape.major = SimMath::pc24Add(shape.major, border);
+						shape.minor = SimMath::pc24Add(shape.minor, border);
+					}
+					for (const Footprint &a : mine)
+					{
+						for (const Footprint &b : supply)
+						{
+							if (footprintsCollide(a, b))
+							{
+								// RW's overlap helper returns raw 3; use the port's named semantic code (6), not that incompatible integer.
+								return LBC_TOO_CLOSE_TO_SUPPLIES;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	if ((options & LLF_CLEAR_PATH) && builder && builder->isKindOfName("DOZER"))
 	{
 		// RotWK gates the clear-path query on a DOZER builder (template byte +0x109 bit 0x40, RW 0x796A46..0x796A98; ZH's gate is a non-IMMOBILE builder, BuildAssistant.cpp:997): a
@@ -343,7 +437,14 @@ LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Co
 		}
 		if (!logic.settings().buildRulesLoaded)
 		{
-			logic.reportError("BuildPlacement: GameData's AllowedHeightVariationForBuilding was not loaded (PLAN rule 10)");
+			logic.reportError("BuildPlacement: GameData's build rules (including MinDistFromEdgeOfMapForBuild) were not loaded");
+			return LBC_RESTRICTED_TERRAIN;
+		}
+		const float edgeMargin = logic.settings().minDistFromEdgeOfMapForBuild;
+		PlayableExtent playableExtent;
+		if (edgeMargin > 0.0f && !getActivePlayableExtent(logic, playableExtent))
+		{
+			logic.reportError("BuildPlacement: MinDistFromEdgeOfMapForBuild needs playable boundary 0 [S-921]");
 			return LBC_RESTRICTED_TERRAIN;
 		}
 		// lane BUILD-5 r2: a PORT (KindOf 188, template + 0x11F & 0x10) samples water too: RotWK's checkSampleBuildLocation (RW 0x794A2B, BFME2 decomp
@@ -359,7 +460,12 @@ LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Co
 		{
 			float water = 0.0f, land = 0.0f;
 			bool restricted = false;
-			sampleFootprint(logic, build, pos, angle, step[pass], [&](float x, float y) {
+			sampleFootprint(logic, build, pos, angle, step[pass], [&](float x, float y, float sampleZ) {
+				if (sampleCellRequiresRefusal(logic, *ai, x, y, sampleZ))
+				{
+					restricted = true;
+					return false;
+				}
 				float waterZ = 0.0f, terrainZ = 0.0f;
 				if (terrain->isCliffCell(x, y))
 				{
@@ -374,6 +480,11 @@ LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Co
 						return false;
 					}
 					water = SimMath::addf32(water, 1.0f);
+					if (outsidePlayableMargin(playableExtent, x, y, edgeMargin))
+					{
+						restricted = true;
+						return false;
+					}
 					return true;
 				}
 				land = SimMath::addf32(land, 1.0f);
@@ -387,6 +498,11 @@ LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Co
 					hi = z;
 				}
 				first = false;
+				if (outsidePlayableMargin(playableExtent, x, y, edgeMargin))
+				{
+					restricted = true;
+					return false;
+				}
 				return true;
 			});
 			if (restricted)
@@ -434,6 +550,15 @@ bool BuildPlacement::portSnapView(GameLogic &logic, const ThingTemplate &build, 
 	{
 		return false;
 	}
+	out.buildRulesLoaded = logic.settings().buildRulesLoaded;
+	out.minDistFromEdgeOfMapForBuild = logic.settings().minDistFromEdgeOfMapForBuild;
+	PlayableExtent extent;
+	if (out.minDistFromEdgeOfMapForBuild > 0.0f && getActivePlayableExtent(logic, extent))
+	{
+		out.hasPlayableExtent = true;
+		out.playableMaxX = extent.maxX;
+		out.playableMaxY = extent.maxY;
+	}
 	const ObjectMovementInfo &info = ai->movementInfo(*build.getFinalOverride());
 	out.hasGeometry = info.hasGeometry;
 	for (size_t i = 0; info.hasGeometry && i < info.geometry.shapeCount(); ++i)
@@ -446,10 +571,13 @@ bool BuildPlacement::portSnapView(GameLogic &logic, const ThingTemplate &build, 
 bool BuildPlacement::getPortTransform(const PortSnapView &view, const Coord3D &pos, float angle, float &outAngle, Coord3D &outPos)
 {
 	const PathfindTerrain *terrain = view.terrain;
-	if (!terrain)
+	if (!terrain || !view.buildRulesLoaded || (view.minDistFromEdgeOfMapForBuild > 0.0f && !view.hasPlayableExtent))
 	{
 		return false;
 	}
+	PlayableExtent playableExtent;
+	playableExtent.maxX = view.playableMaxX;
+	playableExtent.maxY = view.playableMaxY;
 	std::vector<Footprint> fps;
 	if (view.hasGeometry)
 	{
@@ -458,7 +586,12 @@ bool BuildPlacement::getPortTransform(const PortSnapView &view, const Coord3D &p
 	float water = 0.0f, land = 0.0f;
 	float wx = 0.0f, wy = 0.0f, wz = 0.0f, lx = 0.0f, ly = 0.0f, lz = 0.0f;
 	bool restricted = false;
-	sampleFootprints(fps, pos, angle, kCell, [&](float x, float y) {
+	sampleFootprints(fps, pos, angle, kCell, [&](float x, float y, float) {
+		if (outsidePlayableMargin(playableExtent, x, y, view.minDistFromEdgeOfMapForBuild))
+		{
+			restricted = true;
+			return false;
+		}
 		if (terrain->isCliffCell(x, y))
 		{
 			restricted = true; // INFERENCE (S-301): the pathfinder's cell types stand for retail's GetCellType classification
@@ -548,8 +681,6 @@ const char *BuildPlacement::codeName(LegalBuildCode code)
 std::vector<std::string> BuildPlacement::stopLines()
 {
 	return {
-		"[S-301] building placement: ZH BuildAssistant::isLocationLegalToBuild is followed (RW 0x797A96 itself was not read): the footprint is the template Geometry tested in 2D, objects without a "
-		"geometry take no ground, the shroud (VIS-1), the supply source border, the clear-path query of the builder's AI, the factory exit width / extra bib checks and the cleared-by-build "
-		"objects are not ported; terrain restrictions sample the footprint grid for cliff cells (the pathfinder's cell classification), water and the ground height spread",
+		"[S-301] building placement: the template Geometry is tested with the existing 2D footprint helper; cliff/water/height checks, positive MinDistFromEdgeOfMapForBuild (boundary 0; equality allowed), and the disassembled missing-cell / bit-18 / type-4 INERT rule (missing object or template +0x113 & 2; HERO +0x113 & 4 does not block) is ported; CANNOT_BUILD_NEAR_SUPPLIES searches the closest SUPPLY_SOURCE and expands its geometry by SupplyBuildBorder. Still not ported: active-boundary script selection (S-921), exact non-ground sample-layer selection (RW 0x680B70 vs getLayerAt), remaining cell-type cases, shroud (VIS-1), the builder's clear-path query, factory exit width / bib checks, cleared-by-build objects, and byte-exact 3D overlap",
 	};
 }

@@ -67,6 +67,7 @@ struct BlockState
 	GameLogicSettings values;
 	unsigned seen = 0;
 	unsigned blocks = 0; ///< bit 0 GameData, 1 AIData, 2 MultiplayerSettings: which blocks were read
+	bool minDistFromEdgeOfMapForBuildSeen = false; // PORT-12: the seen mask already uses all 32 bits
 	std::set<std::string> unapplied; ///< "Block.Field" of the fields no row of this lane reads
 };
 
@@ -83,6 +84,13 @@ void parseNoting(INI *ini, void *instance, void *store, const void *userData)
 {
 	Proc(ini, instance, store, nullptr);
 	static_cast<BlockState *>(instance)->seen |= (unsigned)(std::uintptr_t)userData;
+}
+
+// RotWK's GameData row RW 0xC002B0 calls the real parser RW 0x42ED00 and writes GlobalData +0xA68.
+void parseMinDistFromEdgeOfMapForBuild(INI *ini, void *instance, void *store, const void *)
+{
+	INI::parseReal(ini, instance, store, nullptr);
+	static_cast<BlockState *>(instance)->minDistFromEdgeOfMapForBuildSeen = true;
 }
 
 // the line without its ; or // comment
@@ -227,9 +235,13 @@ const FieldParse kGameDataFields[] = {
 	{ "UnitDamagedThreshold", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_DAMAGED), (int)offsetof(BlockState, values.unitDamagedThreshold) },
 	{ "UnitReallyDamagedThreshold", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_REALLY), (int)offsetof(BlockState, values.unitReallyDamagedThreshold) },
 	{ "DefaultStartingCash", parseNoting<INI::parseUnsignedInt>, SEEN_DATA(SEEN_CASH), (int)offsetof(BlockState, values.defaultStartingCash) },
-	// lane BUILD-1: the building placement rules (BuildAssistant: AllowedHeightVariationForBuilding, SupplyBuildBorder, MaxLineBuildObjects)
+	// lane BUILD-1 / PORT-12: the building placement rules. RW 0xC002C0 (parseReal RW 0x42ED00) writes SupplyBuildBorder to GlobalData +0xA6C;
+	// MinDistFromEdgeOfMapForBuild is row RW 0xC002B0 (parseReal RW 0x42ED00), GlobalData +0xA68; BuildAssistant reads it at RW 0x794BF2.
+	// The row is not an edition difference: clean BFME2 1.06 carries it at BFME2 0x00BE924C (its name pointer at 0x00BE9250, the same +4 slot), and its
+	// data/ini/gamedata.ini (ini.big) reads MinDistFromEdgeOfMapForBuild = 30.0 as RotWK 2.01 does (_patch201ini.big).
 	{ "AllowedHeightVariationForBuilding", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_HEIGHTVAR), (int)offsetof(BlockState, values.allowedHeightVariationForBuilding) },
 	{ "SupplyBuildBorder", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_SUPPLYBORDER), (int)offsetof(BlockState, values.supplyBuildBorder) },
+	{ "MinDistFromEdgeOfMapForBuild", parseMinDistFromEdgeOfMapForBuild, nullptr, (int)offsetof(BlockState, values.minDistFromEdgeOfMapForBuild) },
 	{ "MaxLineBuildObjects", parseNoting<INI::parseInt>, SEEN_DATA(SEEN_LINEBUILD), (int)offsetof(BlockState, values.maxLineBuildObjects) },
 	// lane BUILD-3: BuilderMoveFromNewStructureDistance (row RW 0xC010D0, parseReal, GlobalData + 0x11E4): the walk of a porter out of the structure it built (RW 0x88D6AE)
 	{ "BuilderMoveFromNewStructureDistance", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_BUILDERMOVE), (int)offsetof(BlockState, values.builderMoveFromNewStructureDistance) },
@@ -516,9 +528,10 @@ bool finish(Load &l, unsigned blockBit, const char *blockName, const std::vector
 		return false;
 	}
 	out = l.state().values;
-	if ((l.state().seen & (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD)) == (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD))
+	if (l.state().blocks & 1u) // GameData fields can also be followed by separate AIData / MultiplayerSettings loads into the same settings object
 	{
-		out.buildRulesLoaded = true;
+		out.buildRulesLoaded = (l.state().seen & (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD)) == (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD) &&
+			l.state().minDistFromEdgeOfMapForBuildSeen;
 	}
 	out.builderMoveLoaded = (l.state().seen & SEEN_BUILDERMOVE) != 0; // lane BUILD-3
 	out.builderFadeLoaded = (l.state().seen & (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN)) == (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN); // lane PORTERFOG-1
@@ -723,8 +736,9 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addU32(defaultStartingCash);
 	h.addBool(buildRulesLoaded);
 	h.addFloat(allowedHeightVariationForBuilding);
-	h.addFloat(supplyBuildBorder);
+	h.addFloat(supplyBuildBorder); // PORT-12: always hash the placement rule, including zero
 	h.addI32(maxLineBuildObjects);
+	h.addFloat(minDistFromEdgeOfMapForBuild); // RotWK GameData +0xA68: always hash this simulation input, including zero
 	h.addBool(builderMoveLoaded);
 	h.addFloat(builderMoveFromNewStructureDistance);
 	h.addBool(sellPercentageLoaded); // lane FACT-A

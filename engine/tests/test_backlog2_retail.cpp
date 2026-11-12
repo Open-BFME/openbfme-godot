@@ -743,7 +743,10 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// merge queue q46 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x57D4FF8F (#262 and #270 keep it) -> 0x8ECFDB13 at
 	// #267's merge point -> 0x658900C4 at #269's -> 0x5B377D5A at #271's (each ports a targetless tactic: the hashed unported-tactic counter) -> 0x162264F8 with the
 	// review fix (the team threat walk and the horde soldier's threat, RW 0x66362D / 0x693A1A)
-	CHECK(a.hashes.back() == 0x162264F8U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// pin: PORT-12 hashes MinDistFromEdgeOfMapForBuild in GameLogicSettings::crc (RotWK GlobalData +0xA68; clean BFME2 1.06 has the same row at
+	// 0x00BE924C): 0x162264F8 -> 0x97DB949B, the draws, goals and positions unchanged. Measured once on this tree (upstream/main + PORT-12, Windows
+	// MSVC, ROTWK_INSTALL and BFME2_INSTALL set); perf1 and uber1 moved from frame 0 for the same reason
+	CHECK(a.hashes.back() == 0x97DB949BU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

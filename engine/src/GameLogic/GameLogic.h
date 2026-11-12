@@ -242,12 +242,14 @@ struct GameLogicSettings
 	float unitReallyDamagedThreshold = 0.0f;         ///< GameData UnitReallyDamagedThreshold
 	bool startingCashLoaded = false;                 ///< the three below were read from GameData / MultiplayerSettings
 	unsigned defaultStartingCash = 0;                ///< GameData DefaultStartingCash: a faction without StartMoney starts with it (ZH Player::init)
-	// lane BUILD-1 (BuildAssistant, GameData): AllowedHeightVariationForBuilding (ZH: the footprint's highest minus lowest ground), SupplyBuildBorder, MaxLineBuildObjects;
-	// buildRulesLoaded is true when the loader read all three (the placement code reports its absence)
+	// lane BUILD-1 / PORT-12 (BuildAssistant, GameData): AllowedHeightVariationForBuilding (ZH: the footprint's highest minus lowest ground), SupplyBuildBorder,
+	// MaxLineBuildObjects and MinDistFromEdgeOfMapForBuild (RotWK GlobalData +0xA68; RW 0x794BF2 .. 0x794C5A samples it against the active playable boundary).
+	// GameData loading sets buildRulesLoaded only after all four fields; later separate AIData / multiplayer passes preserve it.
 	bool buildRulesLoaded = false;
 	float allowedHeightVariationForBuilding = 0.0f;
 	float supplyBuildBorder = 0.0f;
 	int maxLineBuildObjects = 0;
+	float minDistFromEdgeOfMapForBuild = 0.0f;
 	// lane BUILD-3 (GameData, RW GlobalData + 0x11E4): BuilderMoveFromNewStructureDistance, the walk of a porter out of the structure it built (RW 0x88D6AE); loaded when a block read it
 	bool builderMoveLoaded = false;
 	float builderMoveFromNewStructureDistance = 0.0f;
