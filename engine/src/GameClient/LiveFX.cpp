@@ -752,12 +752,35 @@ void LiveFX::play(const Pending &pending)
 	{
 	case FXEvent::POSITION_FX:
 	{
+		// Local 22 (#163): the primary's drawable pose (RW 0x70E013 Object::getDrawable). AIGiantBirdAttackState::onEnter skips the call without a
+		// drawable (RW 0x76B85D). Weapon::preFireWeapon (RW 0x6CEA25) and WeaponFireSpecialAbilityUpdate::startUnpacking (RW 0x895FF3) do not test it
+		// (retail would dereference null); INFERENCE: the port skips there too, so a logic-only object without a drawable gets no call.
+		if (e.drawablePosition || e.drawableMatrix)
+		{
+			if (!pending.primary || !pending.primary->drawable || !primaryDrawable)
+			{
+				++m_stats.skipped["PositionFX without a drawable"];
+				return;
+			}
+		}
+		// RW 0x676711 .. 0x67679A (Drawable::getPosition, DONOR BFME2 0x002759A5 DrawableGetPosition.cpp): the drawable's interpolated position.
+		const Coord3D *pos = e.drawablePosition ? primaryDrawable->getPosition() : &e.position;
+		// RW 0x6765B9 .. 0x676706 (Drawable::getTransformMatrix, DONOR BFME2 0x002759A5 DrawableGetPosition.cpp): the drawable's interpolated matrix.
 		Matrix3D m;
-		if (e.hasTransform)
+		const bool hasMtx = e.drawableMatrix || e.hasTransform;
+		if (e.drawableMatrix)
+		{
+			m = thingMatrix(*primaryDrawable->getPosition(), primaryDrawable->getBasis());
+		}
+		else if (e.hasTransform)
 		{
 			m = primaryView.transform();
 		}
-		FXList::doFXPos(fx, m_playback.services(), m_playback.fxLists(), &e.position, e.hasTransform ? &m : nullptr, 0.0f, nullptr);
+		// RW 0x494615 -> RW 0x5E21D8 (DONOR BFME2 0x00094C29 -> 0x001E296E): FXList::doFXPos forwards (pos, mtx, primarySpeed, secondary) to each nugget's
+		// doFXPos (RW 0x5E2257 .. 0x5E2268). When drawablePosition && hasSecondaryPosition (RW 0x6CEA40 .. 0x6CEA50, RW 0x89600E .. 0x89601E), secondary is
+		// also d->getPosition().
+		const Coord3D *secondary = e.hasSecondaryPosition ? (e.drawablePosition ? primaryDrawable->getPosition() : &e.secondaryPosition) : nullptr;
+		FXList::doFXPos(fx, m_playback.services(), m_playback.fxLists(), pos, hasMtx ? &m : nullptr, e.weaponSpeed, secondary);
 		break;
 	}
 	case FXEvent::OBJECT_FX:

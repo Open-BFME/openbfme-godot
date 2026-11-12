@@ -551,7 +551,7 @@ Object *RespawnUpdate::searchForSuitableSpawnAtObject() const
 	};
 	PlayerFilter f1(owner);
 	AutoRespawnObjectFilter f2(logic, obj, m_data->m_autoRespawnAtObjectFilter.get());
-	Object *found = logic.partition().getClosestObject(*obj->getPosition(), 1000000.0f, FROM_CENTER_2D, { &f1, &f2 }); // RW 0x8B30B1 (0x49742400) .. 0x8B30F5
+	Object *found = logic.partition().getClosestObject(*obj->getPosition(), 1000000.0f, FROM_CENTER_2D, { &f1, &f2 }); // RW 0x8B30DB (FLD [0xC6C350] = 0x49742400) .. 0x8B30F5
 	return found ? found : obj; // RW 0x8B30FD .. 0x8B3100
 }
 
@@ -715,27 +715,27 @@ UpdateSleepTime RespawnUpdate::update()
 	}
 	if (m_state == STATE_AUTO_RESPAWN) // RW 0x8B3B08 .. 0x8B3C05 (BFME2 0x8AFA02 .. 0x8AFAFF)
 	{
-		Object *spawnAt = logic.findObjectByID(m_respawnAt); // RW 0x8B3B12 .. 0x8B3B1B
+		Object *spawnAt = logic.findObjectByID(m_respawnAt); // RW 0x8B3B08 .. 0x8B3B11
 		if (!spawnAt)
 		{
-			spawnAt = searchForSuitableSpawnAtObject(); // RW 0x8B3B24 .. 0x8B3B27 -> 0x8B307E
+			spawnAt = searchForSuitableSpawnAtObject(); // RW 0x8B3B1A .. 0x8B3B1D -> 0x8B307E
 		}
-		Coord3D pos = *obj->getPosition(); // RW 0x8B3B33 .. 0x8B3B46
+		Coord3D pos = *obj->getPosition(); // RW 0x8B3B24 .. 0x8B3B3D
 		if (spawnAt)
 		{
-			pos = *spawnAt->getPosition(); // RW 0x8B3B4D .. 0x8B3B64
-			if (ExitInterface *exit = spawnAt->getObjectExitInterface()) // RW 0x68BB14 at RW 0x8B3B67
+			pos = *spawnAt->getPosition(); // RW 0x8B3B44 .. 0x8B3B4E
+			if (ExitInterface *exit = spawnAt->getObjectExitInterface()) // RW 0x68BB14 at RW 0x8B3B4F
 			{
-				(void)exit->getNaturalRallyPoint(&pos, true); // RW 0x8B3B72 .. 0x8B3B7A (slot 9 / +0x24)
+				(void)exit->getNaturalRallyPoint(&pos, true); // RW 0x8B3B58 .. 0x8B3B62 (slot 9 / +0x24)
 			}
 		}
-		obj->setPosition(&pos); // RW 0x697F0F at RW 0x8B3B83
+		obj->setPosition(&pos); // RW 0x697F0F at RW 0x8B3B71
 		const Object::ModelConditionBits none{};
-		obj->clearAndSetModelConditionFlags(none, m_data->m_respawnAnim); // RW 0x5E3BA5 at RW 0x8B3B91
-		emitFX(logic, "RespawnUpdate RespawnFX", m_data->m_respawnFX, *obj); // RW 0x4B1B5A at RW 0x8B3BAA
-		obj->setDisabled(kDisabledParalyzed, logic.getFrame() + m_data->m_respawnAnimationTime); // RW 0x6907F1 at RW 0x8B3BC8
-		m_state = STATE_SPAWN_ANIMATION; // RW 0x8B3BD8
-		if (ActiveBody *body = dynamic_cast<ActiveBody *>(obj->getBodyModule())) // RW 0x8B3BCD .. 0x8B3BEE -> body vslot 0x58 (RW 0x8C47DE)
+		obj->clearAndSetModelConditionFlags(none, m_data->m_respawnAnim); // RW 0x5E3BA5 at RW 0x8B3B7C
+		emitFX(logic, "RespawnUpdate RespawnFX", m_data->m_respawnFX, *obj); // RW 0x4B1B5A at RW 0x8B3B8A
+		obj->setDisabled(kDisabledParalyzed, logic.getFrame() + m_data->m_respawnAnimationTime); // RW 0x6907F1 at RW 0x8B3BA5
+		m_state = STATE_SPAWN_ANIMATION; // RW 0x8B3BB7
+		if (ActiveBody *body = dynamic_cast<ActiveBody *>(obj->getBodyModule())) // RW 0x8B3BAA .. 0x8B3BCE -> body vslot 0x58 (RW 0x8C47DE)
 		{
 			const float percent = SimMath::mulf32(m_health, 100.0f);
 			if (percent > 100.0f)
@@ -745,9 +745,9 @@ UpdateSleepTime RespawnUpdate::update()
 			const float fraction = SimMath::mulf32(percent, 0.01f); // [0xBE5600]
 			body->internalChangeHealth(SimMath::subf32(SimMath::mulf32(fraction, body->getReviveReference()), body->getHealth()));
 		}
-		m_34 = -1;   // RW 0x8B3BF1
-		m_time = -1; // RW 0x8B3BF5
-		return (UpdateSleepTime)m_data->m_respawnAnimationTime; // RW 0x8B3BF9
+		m_34 = -1;   // RW 0x8B3BD1
+		m_time = -1; // RW 0x8B3BD5 (RW 0x8B3BD9 .. 0x8B3BF1: a client flag set when the hero is the local player's, not ported)
+		return (UpdateSleepTime)m_data->m_respawnAnimationTime; // RW 0x8B3BFC .. 0x8B3C02
 	}
 	return UPDATE_SLEEP_FOREVER;
 }

@@ -1236,6 +1236,10 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	m_audio.reset(); // AUDIO-2: the audio side reads the game
 	m_cahCameraOffsetValid = false;
 	m_game.reset(new LiveGame(*m_world, *m_fs->archive_fs(), *m_assets, *m_options));
+	// Pause and playback speed belong to this node and can survive a failed Watch or an abandoned game.
+	// Start the new game independently; replay and pause controls may override these after loading.
+	m_paused = false;
+	m_timeScale = 1.0;
 	// lane WORKERFAIL-1: game.gd stops the game with this text (logic_failure); printed at once, on the worker, so the session log has it whatever happens next
 	m_game->setLogicFailureHandler([](const std::string &text) { UtilityFunctions::printerr(toGodot("GAME logic worker stopped " + text)); });
 	m_game->setRenderInterpolation(m_renderInterpolation);
@@ -2095,10 +2099,12 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 					dyn->set_instance_transform(ev.instance, entryXf);
 				}
 				const ModelConditionInfo *shadowState = e.draw->currentModelState();
-				if (ev.shadowInstance != ev.instance || ev.shadowState != shadowState || ev.shadowData != e.data) // S-3304: not every frame
+				if (ev.shadowInstance != ev.instance || ev.shadowState != shadowState || ev.shadowData != e.data || ev.shadowOn != d->shadowsEnabled()) // S-3304: not every frame
 				{
-					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR &&
+					// TOP20 #24: a drawable whose shadows were switched off (RW 0x672D28, ShadowWhenDead No) casts none
+					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() &&
 						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState));
+					ev.shadowOn = d->shadowsEnabled();
 					ev.shadowState = shadowState;
 					ev.shadowData = e.data;
 					ev.shadowInstance = ev.instance;
@@ -2234,7 +2240,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 					ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
 					ev.model = model;
 					ev.opacity = 1.0f; // a new instance starts opaque
-					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR &&
+					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() &&
 						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr));
 				}
 			}

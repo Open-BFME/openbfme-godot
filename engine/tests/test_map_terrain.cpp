@@ -639,6 +639,35 @@ TEST_CASE("TerrainLogic: the SW-NE split, clip height, normal, extents, waypoint
 	CHECK(problems[0].find("9 -> 77") != std::string::npos);
 }
 
+// lane EDAINMAPS-3: the Waypoint constructor (RW 0x6829B0) prepends each waypoint to the list head (RW 0xDE4694) and loadMap adds them in map object order, so
+// the name lookups that walk from the head (RW 0x628C29 of the start code; getWaypointByName) answer the LAST waypoint of the file with that name
+TEST_CASE("TerrainLogic: a waypoint name used twice answers the later waypoint of the map file (retail's prepended list, RW 0x6829B0 / 0x628C29)")
+{
+	WorldHeightMap m = makeMap(8, 8, 1);
+	MapChunks chunks;
+	auto wp = [](int id, const char *name, float x) {
+		MapObject a;
+		a.m_objectName = "*Waypoints/Waypoint";
+		a.m_location = { x, 20.0f, 0.0f };
+		a.m_properties.setInt("waypointID", id);
+		a.m_properties.setAsciiString("waypointName", name);
+		a.m_isWaypoint = true;
+		return a;
+	};
+	chunks.objects = { wp(1, "Player_1_Start", 10.0f), wp(2, "Other", 20.0f), wp(3, "Player_1_Start", 30.0f), wp(4, "Player_1_Start", 40.0f) };
+	TerrainLogic t;
+	std::vector<std::string> problems;
+	t.init(m, chunks, &problems);
+	CHECK(problems.empty());
+	REQUIRE(t.waypoints().size() == 4);
+	const Waypoint *w = t.findWaypointByName("Player_1_Start");
+	REQUIRE(w != nullptr);
+	CHECK(w->id == 4);
+	CHECK(w->location.x == 40.0f);
+	CHECK(t.findWaypointByName("Other")->id == 2);
+	CHECK(t.findWaypointById(1)->location.x == 10.0f);      // every copy stays in the list
+}
+
 TEST_CASE("TerrainLogic: standing water queries use a non-convex polygon (even-odd) and the water height")
 {
 	WorldHeightMap m = makeMap(4, 4);
