@@ -19,8 +19,7 @@
 //   without an image logs "is looking for Portrait ... but can't find it" and yields no image).
 // DONOR: Create-a-Hero portraits come from the first draw module supplying a model-state PortraitImageName (BFME2 RVA 0x4087E0, 0x272709, 0x2946AB).
 // NOT PORTED (stop S-760): the two other branches of 0x694F06 (a draw module's template override, 0x694BF8 -> vfunc 0x54; a template with the kind-of bit at
-// +0x11F & 0x40 checked against the local player through 0x68FBD3 / 0x6ADBEB), the rank and the cost modifier interfaces (ShowRankInterface,
-// SetRankProgressBar, ShowCostModifierUpgradeInterface), and a context drawable without an object (the null-object branch 0x92FE53).
+// +0x11F & 0x40 checked against the local player through 0x68FBD3 / 0x6ADBEB), the rank interface (ShowRankInterface, SetRankProgressBar), and a context drawable without an object (the null-object branch 0x92FE53).
 // INFERENCE: image names stand for the Image pointers retail compares (two names that resolve to no image compare unequal here and equal there; a name
 // without an image draws nothing and is reported by the device).
 
@@ -60,6 +59,17 @@ RankInfo rankInfo(const HudContext &ctx, const Object &obj);
 // lane UI-4: RW 0x9D2437 on its own (the hero bar's rank and rank bar, InGameHeroSelect): false when the object has no rank; `progress` -1 at the last level
 bool objectRankAndProgress(const Object &obj, int &rank, float &progress);
 RankInfo rankInfoFor(const HudContext &ctx, ObjectID contextObject, const std::vector<ObjectID> &selected);
+
+// RW 0x92FBAB: the context structure's first CostModifierUpgrade, gated by local-player visibility.
+// The label belongs to module data, not a player record (RW 0x92FC84 -> 0x92F6F2).
+struct CostModifierInfo
+{
+	bool visible = false;
+	bool upgradeDiscount = false;
+	int amount = 0;
+	std::string label;
+};
+CostModifierInfo costModifierInfo(const HudContext &ctx, ObjectID contextObject);
 
 std::vector<std::string> acceptanceStops();
 } // namespace PalantirCommandUI

@@ -896,8 +896,14 @@ public:
 				const WeaponTemplate &wt = *w->currentWeapon()->getTemplate();
 				if (wt.m_hasGrabNugget && !wt.m_fireFXs[0].empty())
 				{
+					// Local 22 (#163), RW 0x76B84C .. 0x76B894 (DONOR BFME2 0x00368DE2 AIGiantBirdAttackStateOnEnter.cpp:431): when o has a drawable
+					// (RW 0x76B856), fireFX->doFXPos(&victim->m_position, o.getDrawable()->getTransformMatrix(), wt.m_weaponSpeed, &victim->m_position).
 					FXEvent e = FXEventLog::objectEvent(FXEvent::POSITION_FX, "GiantBirdGrabFX", o.logic().getFrame(), wt.m_fireFXs[0], o);
 					e.position = *victim->getPosition();
+					e.drawableMatrix = true;
+					e.weaponSpeed = wt.m_weaponSpeed;
+					e.secondaryPosition = e.position;
+					e.hasSecondaryPosition = true;
 					o.logic().fxEvents().emit(e);
 				}
 				ai.flight().flags |= 0x40u;

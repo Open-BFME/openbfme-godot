@@ -1900,6 +1900,20 @@ void Object::removeUpgrade(const UpgradeTemplate *upgrade)
 	}
 }
 
+// RW 0x68E083 / BFME2 0x0028DA28: the whole mask clears, then every upgrade module drops its upgrade (RW 0x8D2688).
+// The citadel's zero-percent capture (S-6010) takes the entering object's team this way.
+void Object::resetUpgrades()
+{
+	m_upgradeMask.words.fill(0);
+	for (std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (UpgradeMux *mux = m->getUpgrade())
+		{
+			mux->removeUpgrade(); // RW 0x8D2688
+		}
+	}
+}
+
 void Object::updateUpgradeModules()
 {
 	const Player *player = getControllingPlayer(); // RW 0x68B678
