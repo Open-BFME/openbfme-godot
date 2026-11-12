@@ -251,6 +251,10 @@ public:
 	// lane CHAT-1: this client's own hiding (ZH Drawable::setDrawableHidden from BeaconClientUpdate::hideBeacon, RW 0x6718FB + 0x43D): an enemy's beacon
 	void setClientHidden(bool hidden) { m_clientHidden = hidden; }
 	bool clientHidden() const { return m_clientHidden; }
+	// RW 0x672D28 Drawable::setShadowsEnabled: status bit 2 (+ 0x114) set when on, cleared when off; every draw module's vslot 0x30 takes the same answer
+	// (the renderer reads shadowsEnabled() for each module's instance)
+	void setShadowsEnabled(bool on) { m_shadowsEnabled = on; }
+	bool shadowsEnabled() const { return m_shadowsEnabled; }
 	const ObjectSnapshot *syncedRecord(const LogicSnapshot &snapshot, bool &found) const
 	{
 		found = m_syncSnapshot == &snapshot && m_syncFrame == snapshot.frame;
@@ -328,6 +332,7 @@ private:
 	std::vector<DrawEntry> m_entries;
 	std::vector<std::unique_ptr<DrawableModule>> m_clientModules;
 	bool m_clientHidden = false; ///< lane CHAT-1
+	bool m_shadowsEnabled = true; ///< RW Drawable +0x114 bit 2 (RW 0x672D28)
 	bool m_phantomLook = false;  ///< lane FBSIM-1: drawn as a dozer's phantom structure (0.4 opacity)
 	Fade m_fade; ///< lane PROJ-2
 	StealthLook::State m_stealth;            ///< lane STEALTHLOOK-1: RW Drawable +0xB4 .. +0xD4, +0x164, +0x358, +0x43E

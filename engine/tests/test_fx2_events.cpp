@@ -8,6 +8,7 @@
 
 #include "GameClient/FXPlayback.h"
 #include "GameClient/LiveFX.h"
+#include "GameClient/ClientEvents.h"
 #include "GameLogic/DamageFX.h"
 #include "GameLogic/FXEvents.h"
 
@@ -825,3 +826,85 @@ TEST_CASE("fx2 retail: a level-up in a live game plays the level's LevelUpFx thr
 	CHECK(fx.stats().missingFXLists.count("GenericLevelUp2FX") == 0);
 	MESSAGE("fx2 retail level-up: " << sites.at("LevelUpFx") << " LevelUpFx calls played");
 }
+
+// RW 0x860F44 .. 0x860F58 (SlowDeathBehavior::beginSlowDeath): with a drawable and ShadowWhenDead (+ 0x18D) No, the drawable's shadows are switched off
+// (RW 0x672D28(false): status bit 2 of + 0x114, every draw module's vslot 0x30); with Yes nothing is asked. The data constructor leaves + 0x18D zero, so No is
+// the default.
+TEST_CASE("fx2 events: a slow death switches the corpse's shadows off unless ShadowWhenDead is Yes (RW 0x860F44 -> 0x672D28)")
+{
+	static const char kCorpses[] =
+		"Object FxShadowlessCorpse\n"
+		"  KindOf = INFANTRY SELECTABLE\n"
+		"  Geometry = CYLINDER\n"
+		"  GeometryMajorRadius = 8\n"
+		"  GeometryMinorRadius = 8\n"
+		"  GeometryHeight = 20\n"
+		"  ArmorSet\n"
+		"    Conditions = None\n"
+		"    Armor = NoArmor\n"
+		"  End\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 100\n"
+		"  End\n"
+		"  Behavior = SlowDeathBehavior ModuleTag_Death\n"
+		"    DeathTypes = ALL\n"
+		"    DestructionDelay = 10000\n"
+		"  End\n"
+		"End\n"
+		"Object FxShadowedCorpse\n"
+		"  KindOf = INFANTRY SELECTABLE\n"
+		"  Geometry = CYLINDER\n"
+		"  GeometryMajorRadius = 8\n"
+		"  GeometryMinorRadius = 8\n"
+		"  GeometryHeight = 20\n"
+		"  ArmorSet\n"
+		"    Conditions = None\n"
+		"    Armor = NoArmor\n"
+		"  End\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 100\n"
+		"  End\n"
+		"  Behavior = SlowDeathBehavior ModuleTag_Death\n"
+		"    DeathTypes = ALL\n"
+		"    DestructionDelay = 10000\n"
+		"    ShadowWhenDead = Yes\n"
+		"  End\n"
+		"End\n";
+	CombatWorld w((std::string(kFxObjects) + kCorpses).c_str());
+	ClientEventRecorder events(*w.logic);
+	w.logic->setClientHooks(&events);
+	struct Unhook
+	{
+		GameLogic &logic;
+		~Unhook() { logic.setClientHooks(nullptr); }
+	} unhook{ *w.logic };
+	Object *a = w.unit("Swordsman", 'A', 300, 300);
+	Object *off = w.unit("FxShadowlessCorpse", 'B', 340, 300);
+	Object *on = w.unit("FxShadowedCorpse", 'B', 340, 340);
+	w.frames(3);
+	const ObjectID offId = off->getID(), onId = on->getID();
+	events.take();
+	DamageInfo k1 = hit(a, 1000.0f);
+	off->attemptDamage(k1);
+	DamageInfo k2 = hit(a, 1000.0f);
+	on->attemptDamage(k2);
+	REQUIRE(off->isEffectivelyDead());
+	REQUIRE(on->isEffectivelyDead());
+	std::vector<std::pair<ObjectID, bool>> shadows;
+	for (int i = 0; i < 5; ++i)
+	{
+		for (const ClientEvent &e : events.take())
+		{
+			if (e.kind == ClientEvent::SET_SHADOWS)
+			{
+				shadows.push_back({ e.object, e.shadowsOn });
+			}
+		}
+		w.frames(1);
+	}
+	REQUIRE(shadows.size() == 1);
+	CHECK(shadows[0].first == offId);
+	CHECK(shadows[0].second == false);
+	CHECK(onId != offId);
+}
+

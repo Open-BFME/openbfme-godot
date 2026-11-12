@@ -764,6 +764,7 @@ private:
 		const void *shadowState = nullptr;  ///< S-3304: the model condition state and module data the shadow eligibility was made from
 		const void *shadowData = nullptr;
 		int64_t shadowInstance = -1;        ///< the instance it was handed to
+		bool shadowOn = true;               ///< the drawable's shadowsEnabled() the shadow eligibility was made with (RW 0x672D28)
 		std::uint32_t colorsRevision = 0;   ///< lane CAH-2: Drawable::customColorRevision the model choice saw
 		// lane HCKEY-1: a static entry's model key (lowered name + floor swap suffix + palette) and the inputs it was made from, rebuilt only
 		// when one of them changes (community PR #60 made it every frame for every coloured static drawable)

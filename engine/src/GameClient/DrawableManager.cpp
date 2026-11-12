@@ -305,6 +305,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				d->fadeOut((double)ev.fadeFrames);
 			}
 			break;
+		case ClientEvent::SET_SHADOWS: // RW 0x672D28 (SlowDeathBehavior's ShadowWhenDead, RW 0x860F44)
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->setShadowsEnabled(ev.shadowsOn);
+			}
+			break;
 		case ClientEvent::SHOW_MODULE:
 			if (Drawable *d = findByObject(ev.object))
 			{
