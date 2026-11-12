@@ -49,6 +49,40 @@ const RoadType *RoadTypeIndex::find(const std::string &name) const
 	return it == byName.end() ? nullptr : &it->second;
 }
 
+bool TerrainRoads::parseRGBColor(const std::string &val, float outRgb[3])
+{
+	int r = -1, g = -1, b = -1;
+	size_t posR = std::string::npos, posG = std::string::npos, posB = std::string::npos;
+	for (size_t i = 0; i < val.size(); ++i)
+	{
+		char c = (char)std::toupper((unsigned char)val[i]);
+		if (c == 'R' && i + 1 < val.size() && val[i + 1] == ':') { posR = i + 2; }
+		else if (c == 'G' && i + 1 < val.size() && val[i + 1] == ':') { posG = i + 2; }
+		else if (c == 'B' && i + 1 < val.size() && val[i + 1] == ':') { posB = i + 2; }
+	}
+	if (posR != std::string::npos && posG != std::string::npos && posB != std::string::npos)
+	{
+		r = std::atoi(val.c_str() + posR);
+		g = std::atoi(val.c_str() + posG);
+		b = std::atoi(val.c_str() + posB);
+	}
+	else
+	{
+		if (std::sscanf(val.c_str(), "%d %d %d", &r, &g, &b) != 3)
+		{
+			std::sscanf(val.c_str(), "%d, %d, %d", &r, &g, &b);
+		}
+	}
+	if (r >= 0 && g >= 0 && b >= 0)
+	{
+		outRgb[0] = std::clamp((float)r / 255.0f, 0.0f, 1.0f);
+		outRgb[1] = std::clamp((float)g / 255.0f, 0.0f, 1.0f);
+		outRgb[2] = std::clamp((float)b / 255.0f, 0.0f, 1.0f);
+		return true;
+	}
+	return false;
+}
+
 void TerrainRoads::scanText(const std::string &text, RoadTypeIndex &out)
 {
 	size_t pos = 0;
@@ -81,6 +115,16 @@ void TerrainRoads::scanText(const std::string &text, RoadTypeIndex &out)
 			{
 				cur = RoadType();
 				cur.isBridge = bridge;
+				if (bridge)
+				{
+					// Retail TerrainRoadCollection::newBridge (RW 0x006DC794 / BFME2 0x003290AE): copy defaults from DefaultBridge
+					const RoadType *def = out.find("DefaultBridge");
+					if (def)
+					{
+						cur = *def;
+						cur.isBridge = true;
+					}
+				}
 				cur.name = trim(line.substr(road ? 4 : 6));
 				size_t sp = cur.name.find_first_of(" \t");
 				if (sp != std::string::npos)
@@ -115,6 +159,82 @@ void TerrainRoads::scanText(const std::string &text, RoadTypeIndex &out)
 		else if (key == "roadwidthintexture")
 		{
 			cur.roadWidthInTexture = (float)std::atof(val.c_str());
+		}
+		else if (key == "bridgescale")
+		{
+			cur.bridgeScale = (float)std::atof(val.c_str());
+		}
+		else if (key == "scaffoldobjectname")
+		{
+			cur.scaffoldObjectName = val;
+		}
+		else if (key == "scaffoldsupportobjectname")
+		{
+			cur.scaffoldSupportObjectName = val;
+		}
+		else if (key == "radarcolor")
+		{
+			parseRGBColor(val, cur.radarColor);
+		}
+		else if (key == "bridgemodelname")
+		{
+			cur.bridgeModelName = val;
+		}
+		else if (key == "bridgemodelnamedamaged")
+		{
+			cur.bridgeModelNameDamaged = val;
+		}
+		else if (key == "texturedamaged")
+		{
+			cur.textureDamaged = val;
+		}
+		else if (key == "bridgemodelnamereallydamaged")
+		{
+			cur.bridgeModelNameReallyDamaged = val;
+		}
+		else if (key == "texturereallydamaged")
+		{
+			cur.textureReallyDamaged = val;
+		}
+		else if (key == "bridgemodelnamebroken")
+		{
+			cur.bridgeModelNameBroken = val;
+		}
+		else if (key == "texturebroken")
+		{
+			cur.textureBroken = val;
+		}
+		else if (key == "towerobjectnamefromleft")
+		{
+			cur.towerObjectNameFromLeft = val;
+		}
+		else if (key == "towerobjectnamefromright")
+		{
+			cur.towerObjectNameFromRight = val;
+		}
+		else if (key == "towerobjectnametoleft")
+		{
+			cur.towerObjectNameToLeft = val;
+		}
+		else if (key == "towerobjectnametoright")
+		{
+			cur.towerObjectNameToRight = val;
+		}
+		else if (key == "transitioneffectsheight")
+		{
+			cur.transitionEffectsHeight = (float)std::atof(val.c_str());
+		}
+		else if (key == "numfxpertype")
+		{
+			cur.numFXPerType = std::atoi(val.c_str());
+		}
+		else if (key == "damagedtosound")
+		{
+			cur.damagedToSound = val;
+		}
+		else if (key == "repairedtosound")
+		{
+			cur.repairedToSound = val;
 		}
 	}
 }
@@ -593,4 +713,150 @@ void TerrainRoads::buildStrips(const std::vector<MapObject> &objects, const Road
 	}
 
 	report.strips = out.size();
+}
+
+std::string RoadType::modelForDamage(int state) const
+{
+	switch (state)
+	{
+	case 0: return bridgeModelName;
+	case 1: return bridgeModelNameDamaged.empty() ? bridgeModelName : bridgeModelNameDamaged;
+	case 2: return bridgeModelNameReallyDamaged.empty() ? bridgeModelName : bridgeModelNameReallyDamaged;
+	case 3: return bridgeModelNameBroken.empty() ? bridgeModelName : bridgeModelNameBroken;
+	default: return bridgeModelName;
+	}
+}
+
+std::string RoadType::textureForDamage(int state) const
+{
+	switch (state)
+	{
+	case 0: return texture;
+	case 1: return textureDamaged.empty() ? texture : textureDamaged;
+	case 2: return textureReallyDamaged.empty() ? texture : textureReallyDamaged;
+	case 3: return textureBroken.empty() ? texture : textureBroken;
+	default: return texture;
+	}
+}
+
+std::string RoadType::towerObjectName(BridgeTowerType tower) const
+{
+	switch (tower)
+	{
+	case BRIDGE_TOWER_FROM_LEFT: return towerObjectNameFromLeft;
+	case BRIDGE_TOWER_FROM_RIGHT: return towerObjectNameFromRight;
+	case BRIDGE_TOWER_TO_LEFT: return towerObjectNameToLeft;
+	case BRIDGE_TOWER_TO_RIGHT: return towerObjectNameToRight;
+	default: return "";
+	}
+}
+
+const std::string &RoadType::getScaffoldObjectName() const
+{
+	return scaffoldObjectName;
+}
+
+const std::string &RoadType::getScaffoldSupportObjectName() const
+{
+	return scaffoldSupportObjectName;
+}
+
+void TerrainRoads::buildBridges(const std::vector<MapObject> &objects, const RoadTypeIndex &types,
+	const WorldHeightMap &map, std::vector<BridgeSegment> &out, RoadBuildReport &report)
+{
+	out.clear();
+	for (size_t i = 0; i < objects.size(); ++i)
+	{
+		const MapObject &a = objects[i];
+		if (!a.getFlag(FLAG_BRIDGE_POINT1))
+		{
+			if (a.getFlag(FLAG_BRIDGE_POINT2))
+			{
+				++report.orphanPoints;
+			}
+			continue;
+		}
+		if (i + 1 >= objects.size() || !objects[i + 1].getFlag(FLAG_BRIDGE_POINT2))
+		{
+			++report.orphanPoints;
+			continue;
+		}
+		const MapObject &b = objects[i + 1];
+		++i;
+		++report.bridgePairs;
+
+		const RoadType *road = types.find(a.m_objectName);
+		if (!road || !road->isBridge)
+		{
+			++report.unknownBridgeTypes;
+			continue;
+		}
+
+		BridgeSegment seg;
+		seg.bridgeName = a.m_objectName;
+		seg.type = a.m_objectName;
+		seg.scale = road->bridgeScale;
+		seg.scaffoldTemplate = road->getScaffoldObjectName();
+		seg.scaffoldSupportTemplate = road->getScaffoldSupportObjectName();
+		seg.radarColor[0] = road->radarColor[0];
+		seg.radarColor[1] = road->radarColor[1];
+		seg.radarColor[2] = road->radarColor[2];
+		seg.transitionEffectsHeight = road->transitionEffectsHeight;
+		seg.numFXPerType = road->numFXPerType;
+		seg.damagedToSound = road->damagedToSound;
+		seg.repairedToSound = road->repairedToSound;
+		seg.roadType = road;
+
+		seg.from = a.m_location;
+		seg.to = b.m_location;
+		if (map.m_width > 0 && map.m_height > 0)
+		{
+			seg.from.z += getMaxCellHeight(map, seg.from.x, seg.from.y);
+			seg.to.z += getMaxCellHeight(map, seg.to.x, seg.to.y);
+		}
+
+		seg.center.x = (seg.from.x + seg.to.x) * 0.5f;
+		seg.center.y = (seg.from.y + seg.to.y) * 0.5f;
+		seg.center.z = (seg.from.z + seg.to.z) * 0.5f;
+
+		const float dx = seg.to.x - seg.from.x;
+		const float dy = seg.to.y - seg.from.y;
+		seg.angle = std::atan2(dy, dx);
+
+		const float len = std::hypot(dx, dy);
+		V2 dir = len > 0.0f ? V2{ dx / len, dy / len } : V2{ 1.0f, 0.0f };
+		V2 norm = { -dir.y, dir.x };
+
+		if (road->roadWidth <= 0.0f)
+		{
+			// Retail RotWK 2.01 computes bridgeWidth from model mesh Y-extents:
+			// bridgeWidth = (m_maxY - m_minY) * m_scale (RW 0x004DD43F, W3DBridge::getBridgeInfo;
+			// vertices scanned in RW 0x004DDEBD, W3DBridge::load from BridgeModelName).
+			// The Bridge INI parse table (RW 0x00C19DC0) does not include RoadWidth.
+			// Without loaded mesh vertex data, a bridge without positive roadWidth cannot be sized;
+			// this is reported as an error in report rather than silently defaulting to 34.0f.
+			++report.invalidBridgeWidth;
+			continue;
+		}
+
+		const float width = road->roadWidth * road->bridgeScale;
+		const float halfWidth = width * 0.5f;
+
+		seg.fromLeft = { seg.from.x + norm.x * halfWidth, seg.from.y + norm.y * halfWidth, seg.from.z };
+		seg.fromRight = { seg.from.x - norm.x * halfWidth, seg.from.y - norm.y * halfWidth, seg.from.z };
+		seg.toLeft = { seg.to.x + norm.x * halfWidth, seg.to.y + norm.y * halfWidth, seg.to.z };
+		seg.toRight = { seg.to.x - norm.x * halfWidth, seg.to.y - norm.y * halfWidth, seg.to.z };
+
+		seg.towerPositions[BRIDGE_TOWER_FROM_LEFT] = seg.fromLeft;
+		seg.towerPositions[BRIDGE_TOWER_FROM_RIGHT] = seg.fromRight;
+		seg.towerPositions[BRIDGE_TOWER_TO_LEFT] = seg.toLeft;
+		seg.towerPositions[BRIDGE_TOWER_TO_RIGHT] = seg.toRight;
+
+		for (int t = 0; t < BRIDGE_MAX_TOWERS; ++t)
+		{
+			seg.towerTemplates[t] = road->towerObjectName((BridgeTowerType)t);
+		}
+
+		out.push_back(std::move(seg));
+	}
 }

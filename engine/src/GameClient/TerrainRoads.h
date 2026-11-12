@@ -26,6 +26,16 @@
 #include <string>
 #include <vector>
 
+// Retail BridgeTowerType: BFME2 0x00280BE6 / RW 0x006813E2 (Bridge::Bridge RW 0x00681420)
+enum BridgeTowerType
+{
+	BRIDGE_TOWER_FROM_LEFT = 0,
+	BRIDGE_TOWER_FROM_RIGHT = 1,
+	BRIDGE_TOWER_TO_LEFT = 2,
+	BRIDGE_TOWER_TO_RIGHT = 3,
+	BRIDGE_MAX_TOWERS = 4
+};
+
 struct RoadType
 {
 	std::string name;
@@ -33,6 +43,39 @@ struct RoadType
 	float roadWidth = 0.0f;        // RoadWidth (world units)
 	float roadWidthInTexture = 0.0f; // RoadWidthInTexture (fraction of the texture height the road covers)
 	bool isBridge = false;
+
+	// Bridge fields: retail table RW 0x00C19DC0 / BFME2 0x00803A28
+	float bridgeScale = 1.0f;                       // BridgeScale (+0x1C, RW 0x0042ED00)
+	std::string scaffoldObjectName;                 // ScaffoldObjectName (+0x20, RW 0x0042EE5E, getter RW 0x008DA9C6)
+	std::string scaffoldSupportObjectName;          // ScaffoldSupportObjectName (+0x24, RW 0x0042EE5E, getter RW 0x0096589F)
+	float radarColor[3] = { 0.0f, 0.0f, 0.0f };     // RadarColor (+0x28, RW 0x0042EF99, reader RW 0x0044F790)
+	float transitionEffectsHeight = 0.0f;           // TransitionEffectsHeight (+0x144, RW 0x0042ED00)
+	int numFXPerType = 0;                           // NumFXPerType (+0x148, RW 0x0042EC5E)
+	std::string bridgeModelName;                    // BridgeModelName (+0x34, RW 0x0042EE5E)
+	std::string bridgeModelNameDamaged;             // BridgeModelNameDamaged (+0x3C, RW 0x0042EE5E)
+	std::string textureDamaged;                     // TextureDamaged (+0x40, RW 0x0042EE5E)
+	std::string bridgeModelNameReallyDamaged;       // BridgeModelNameReallyDamaged (+0x44, RW 0x0042EE5E)
+	std::string textureReallyDamaged;               // TextureReallyDamaged (+0x48, RW 0x0042EE5E)
+	std::string bridgeModelNameBroken;              // BridgeModelNameBroken (+0x4C, RW 0x0042EE5E)
+	std::string textureBroken;                      // TextureBroken (+0x50, RW 0x0042EE5E)
+	std::string towerObjectNameFromLeft;            // TowerObjectNameFromLeft (+0x54, RW 0x0042EE5E)
+	std::string towerObjectNameFromRight;           // TowerObjectNameFromRight (+0x58, RW 0x0042EE5E)
+	std::string towerObjectNameToLeft;              // TowerObjectNameToLeft (+0x5C, RW 0x0042EE5E)
+	std::string towerObjectNameToRight;             // TowerObjectNameToRight (+0x60, RW 0x0042EE5E)
+	std::string damagedToSound;                     // DamagedToSound (+0x68, RW 0x0073B217)
+	std::string repairedToSound;                    // RepairedToSound (+0xD8, RW 0x0073B217)
+
+	// Retail W3DBridge::load (RW 0x004DDF7C / BFME2 0x000DE6B5): model and texture by damage state
+	// (0 = BODY_PRISTINE, 1 = BODY_DAMAGED, 2 = BODY_REALLYDAMAGED, 3 = BODY_RUBBLE)
+	std::string modelForDamage(int state) const;
+	std::string textureForDamage(int state) const;
+
+	// Retail TerrainRoadType::getTowerObjectName (RW 0x006813E2 / BFME2 0x00280BE6)
+	std::string towerObjectName(BridgeTowerType tower) const;
+
+	// Retail TerrainRoadType getters: RW 0x008DA9C6 / BFME2 0x002D9BC1 and RW 0x0096589F / BFME2 0x0056394A
+	const std::string &getScaffoldObjectName() const;
+	const std::string &getScaffoldSupportObjectName() const;
 };
 
 struct RoadTypeIndex
@@ -48,6 +91,55 @@ struct RoadStrip
 	std::vector<float> position; // xyz SAGE, 2 vertices (bottom, top) per column
 	std::vector<float> uv;
 	std::vector<std::uint32_t> index;
+};
+
+// Retail BridgeSegment: constructed from FLAG_BRIDGE_POINT1 and FLAG_BRIDGE_POINT2 map objects
+// (W3DBridgeBuffer::loadBridges RW 0x00681420..0x006819B0 / BFME2 0x000DFB3C; W3DBridge::getBridgeInfo BFME2 0x000DDB94)
+struct BridgeSegment
+{
+	std::string bridgeName;
+	std::string type;
+	Coord3D from;
+	Coord3D to;
+	Coord3D center;
+	float angle = 0.0f;
+	float scale = 1.0f;
+	float radarColor[3] = { 0.0f, 0.0f, 0.0f };
+	Coord3D fromLeft;
+	Coord3D fromRight;
+	Coord3D toLeft;
+	Coord3D toRight;
+	Coord3D towerPositions[BRIDGE_MAX_TOWERS];
+	std::string towerTemplates[BRIDGE_MAX_TOWERS];
+	std::string scaffoldTemplate;
+	std::string scaffoldSupportTemplate;
+	float transitionEffectsHeight = 0.0f;
+	int numFXPerType = 0;
+	std::string damagedToSound;
+	std::string repairedToSound;
+
+	const RoadType *roadType = nullptr;
+
+	std::string modelForDamage(int state) const
+	{
+		return roadType ? roadType->modelForDamage(state) : "";
+	}
+	std::string textureForDamage(int state) const
+	{
+		return roadType ? roadType->textureForDamage(state) : "";
+	}
+	std::string towerObjectName(BridgeTowerType tower) const
+	{
+		return roadType ? roadType->towerObjectName(tower) : "";
+	}
+	const std::string &getScaffoldObjectName() const
+	{
+		return roadType ? roadType->getScaffoldObjectName() : scaffoldTemplate;
+	}
+	const std::string &getScaffoldSupportObjectName() const
+	{
+		return roadType ? roadType->getScaffoldSupportObjectName() : scaffoldSupportTemplate;
+	}
 };
 
 struct RoadBuildReport
@@ -67,6 +159,9 @@ struct RoadBuildReport
 	size_t strips = 0;
 	size_t vertices = 0;
 	size_t triangles = 0;
+	int bridgePairs = 0;
+	int unknownBridgeTypes = 0;
+	int invalidBridgeWidth = 0;
 };
 
 namespace TerrainRoads
@@ -74,10 +169,17 @@ namespace TerrainRoads
 void scanText(const std::string &text, RoadTypeIndex &out);
 bool load(ArchiveFileSystem &fs, RoadTypeIndex &out, std::string *error);
 
+// Retail parseRGBColor: RW 0x0042EF99 / BFME2 0x0002F259 (R: G: B: ints 0..255 normalized to [0, 1])
+bool parseRGBColor(const std::string &val, float outRgb[3]);
+
 // liftWorldUnits: presentation-only raise above the terrain (ZH uses MAP_HEIGHT_SCALE/8 = 0.005, which
 // z-fights in Godot's depth buffer; named choice, reported by the caller).
 void buildStrips(const std::vector<MapObject> &objects, const RoadTypeIndex &types, const WorldHeightMap &map,
 	float liftWorldUnits, std::vector<RoadStrip> &out, RoadBuildReport &report);
+
+// Retail W3DBridgeBuffer::loadBridges: builds bridge segments from FLAG_BRIDGE_POINT1/2 map objects
+void buildBridges(const std::vector<MapObject> &objects, const RoadTypeIndex &types, const WorldHeightMap &map,
+	std::vector<BridgeSegment> &out, RoadBuildReport &report);
 
 // ZH getMaxCellHeight: the maximum of the four corner heights of the cell containing (x,y), in world units.
 float getMaxCellHeight(const WorldHeightMap &map, float x, float y);
