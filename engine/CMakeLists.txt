@@ -185,6 +185,7 @@ include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPE
 include(cmake/Port15.cmake) # PORT-15: LockWeaponCreate/Object::setWeaponLock (OPENBFME_PORT15_TESTS)
 include(cmake/Port18.cmake) # PORT-18: hold fire
 include(cmake/Port20.cmake) # PORT-20: GarrisonContain/onSelling (OPENBFME_PORT20_TESTS)
+include(cmake/Port22.cmake) # PORT-22: the siege deploy's approach offset, Pathfinder::adjustMeleeOffset (OPENBFME_PORT22_TESTS)
 include(cmake/Port24.cmake) # PORT-24: Object/ForceLuaRegistration (OPENBFME_PORT24_TESTS)
 include(cmake/Port6.cmake) # PORT-6: StealthDetectorUpdate/CanDetectWhileGarrisoned (OPENBFME_PORT6_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
@@ -735,6 +736,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT15_TESTS}
     ${OPENBFME_PORT18_TESTS}
     ${OPENBFME_PORT20_TESTS}
+    ${OPENBFME_PORT22_TESTS}
     ${OPENBFME_PORT24_TESTS}
     ${OPENBFME_PORT6_TESTS}
     ${OPENBFME_PLAY4_TESTS}
