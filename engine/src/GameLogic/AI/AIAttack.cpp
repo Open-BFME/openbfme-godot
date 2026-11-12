@@ -413,9 +413,21 @@ StateReturnType AIAttackState::update()
 			{
 				return STATE_SUCCESS;
 			}
-			// RW 0x751450 je 0x7515C8: otherwise keep the inner attack machine alive (STOPS S-583: the charge state keeps its goal
-			// and a wind-up's shot leaves).
-			return updateAttackMachine();
+			// INFERENCE (S-7184): RotWK moves a lone attacker on to the horde's next member through Object::adjustVictim (RW 0x68D30E),
+			// reached from onEnter and the target searches, which the port has not ported. Until it is, the port keeps its own hand-over
+			// to the next living member here; without it a mounted hero crushing into a horde strikes once and stops (attack1 heroes
+			// retail, play4 heroes retail). A victim with no living horde mate goes on as RW does.
+			if (Object *next = a.replacementVictim())
+			{
+				notifyNewVictimChosen(next);
+				victim = next;
+			}
+			else
+			{
+				// RW 0x751450 je 0x7515C8: otherwise keep the inner attack machine alive (STOPS S-583: the charge state keeps its
+				// goal and a wind-up's shot leaves).
+				return updateAttackMachine();
+			}
 		}
 
 		// RW 0x751294 .. 0x7512C6: the relationship, the AI's lastCommandSource (AI + 0x48) and IS_MELEE_ATTACKING (status 0x1C).
@@ -623,11 +635,15 @@ StateReturnType AIAttackApproachState::onEnter()
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
 	Object *victim = victimOf(machine());
-	m_waiting = false; // RW 0x74E6CE clears + 0x71 before its first return
-	if (m_att->isAttackingObject() && victimGone(victim))
+	// RW 0x74E711 .. 0x74E718: a destroyed goal object (RW 0x8DBDFF: gone, or the dead bit) fails at once (RW 0x74E9D5 push -2), before + 0x71 is
+	// cleared; a goal that is no object (an attack on a position) goes on. The ZH donor's "already killed the victim" success is not RotWK's: in the
+	// ranged horde machine (RW 0x744D73) it led to the fire state, whose failure sent the machine back here, so a horde whose victim died never left
+	// the attack (its failure goes to MACHINE_DONE_FAILURE and AIAttackState fails).
+	if (machine().isGoalObjectDestroyed())
 	{
-		return STATE_SUCCESS; // already killed the victim
+		return STATE_FAILURE;
 	}
+	m_waiting = false; // RW 0x74E725 clears + 0x71 (the byte the test above left in al)
 	m_prevVictimPos = Coord3D{ 0.0f, 0.0f, 0.0f };
 	m_approachFrame = a.frame() >= kMinRecomputeFrames ? a.frame() - kMinRecomputeFrames : 0u;
 	ObjectWeapons *w = source.getWeapons();

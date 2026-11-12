@@ -318,7 +318,7 @@ std::uint32_t wasEnemyWord(AIAttackState *state)
 }
 } // namespace
 
-TEST_CASE("PORT-14 dead victim: RW 0x751438 .. 0x7515DA keeps the inner attack machine alive, so the wind-up's shot leaves")
+TEST_CASE("PORT-14 FLEE_OFF_MAP victim: RW 0x751438 .. 0x7515DA keeps the inner attack machine alive, so the wind-up's shot leaves")
 {
 	Port14World w;
 	Object *archer = w.unit("Port14Archer", 'A', 300, 300);
@@ -331,6 +331,22 @@ TEST_CASE("PORT-14 dead victim: RW 0x751438 .. 0x7515DA keeps the inner attack m
 	foe->setStatus((unsigned)kFleeOffMap, true);
 	w.runUntil([&] { return bow->lastFireFrame() != 0; }, 200);
 	CHECK(bow->lastFireFrame() == windUpEnd);
+}
+
+// Review of the upstream PR: the FLEE_OFF_MAP case above keeps a living victim. A victim that really dies during the wind-up: the inner machine still
+// runs (RW 0x751450 -> 0x7515C8), but its Fire state fails on the dead victim before the pending shot is released, so no shot leaves.
+TEST_CASE("PORT-14 dead victim: a victim that dies during the wind-up gets no shot (the inner Fire fails first)")
+{
+	Port14World w;
+	Object *archer = w.unit("Port14Archer", 'A', 300, 300);
+	Object *foe = w.unit("Dummy", 'B', 400, 300);
+	w.frames(2);
+	w.windUp(archer, foe, CMD_FROM_PLAYER);
+	Weapon *bow = w.bow(archer);
+	REQUIRE(bow->lastFireFrame() == 0);
+	foe->kill(DAMAGE_UNRESISTABLE, 0);
+	w.frames(60);
+	CHECK(bow->lastFireFrame() == 0);
 }
 
 TEST_CASE("PORT-14 ARMY_OF_DEAD: RW 0x751446 .. 0x751456 returns STATE_SUCCESS at once and cancels the wind-up")
@@ -579,4 +595,20 @@ TEST_CASE("PORT-14 tail terminal state: RW 0x75159E .. 0x7515C2 sends the inner 
 	machine->unlock();
 	CHECK(state->update() != STATE_FAILURE);
 	CHECK(machine->currentStateId() != (unsigned)AI_NO_STATE); // RW 0x7515B3 setState(machine + 0x1C) entered the default state again
+}
+
+// Review of the upstream PR: a ranged horde whose victim dies must leave the attack and go idle, so idle acquisition can resume.
+TEST_CASE("PORT-14 ranged horde: the victim dies, the horde goes idle (the inner machine's target-loss exit ends the attack)")
+{
+	CombatWorld w;
+	w.combat().setAutoAcquireEnabled(false);
+	Object *a = w.unit("ArcherHorde", 'A', 100, 100);
+	Object *v = w.unit("Dummy", 'B', 220, 100);
+	w.frames(12);
+	const ObjectID id = v->getID();
+	REQUIRE(a->getAIUpdateInterface()->aiAttackObject(v, CMD_FROM_PLAYER));
+	w.runUntil([&] { return w.byId(id) == nullptr; }, 400);
+	REQUIRE(w.byId(id) == nullptr);
+	w.frames(60);
+	CHECK(a->getAIUpdateInterface()->isIdle());
 }

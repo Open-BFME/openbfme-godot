@@ -210,6 +210,8 @@ public:
 	void clearGoalAngle() { m_haveGoalAngle = false; m_goalAngle = 0.0f; }
 	void setGoalObject(ObjectID id) { m_goalObjectID = id; }
 	Object *goalObject() const;
+	// RW 0x8DBDFF StateMachine::isGoalObjectDestroyed: goal id 0 -> false; an id that no longer resolves -> true; else the object's dead bit (+ 0x458 bit 0)
+	bool isGoalObjectDestroyed() const;
 	const std::vector<Coord3D> &goalPath() const { return m_goalPath; }
 	// lane BFME2CAMP1: RotWK AIStateMachine + 0x4C (ZH AIStateMachine::m_goalSquad): the squad privateAttackTeam sets (RW 0x751E97: made when there is none,
 	// then filled from the team, emptied first), deleted by the machine's clear (RW 0x75464E) and by nothing else; null when there is none
