@@ -52,6 +52,8 @@ struct Kind
 	int aircraft = kindOf("AIRCRAFT");
 	int mine = kindOf("MINE");
 	int hero = kindOf("HERO");
+	int tree = kindOf("TREE");                 // PORT-14: RW 0x7512E0 victim template + 0x113 bit 0x40
+	int armyOfDead = kindOf("ARMY_OF_DEAD");   // PORT-14: RW 0x751449 owner template + 0x11A bit 0x80
 };
 const Kind &kinds();
 } // namespace CombatNames

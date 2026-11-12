@@ -4,7 +4,8 @@
 // The attack states' part of the obfme:AIWorld block (lane SAVE-4c, docs/SAVES.md section 8). OpenBFME native layouts (stop S-4220). Retail:
 // AIAttackState::xfer RW 0x74CD94 ((1, 3): a bool, the original victim position, raw bytes, then the attack machine as a BLOK), AIAttackApproachTargetState
 // RW 0x741E38 ((1, 1)), AIAttackAimAtTargetState RW 0x742BE8 ((1, 1): three bools), the fire state's (docs/SAVES-RETAIL.md section 6). This port's states keep
-// other fields (crc's), so each gets its own version 1. The attack sub machine is made again by its kind (AttackMachineMade) and then loaded by
+// other fields (crc's), so each starts at version 1. ATKSTATE-1a / PORT-14 carries AIAttackState's + 0x49 flag (RW 0x74D0B9 / 0x7512C8) as
+// version 2: a version 1 snapshot loads it as false. The attack sub machine is made again by its kind (AttackMachineMade) and then loaded by
 // AIStateMachine::xfer (its states' ids must agree).
 
 #include "GameLogic/AI/AIAttack.h"
@@ -15,7 +16,7 @@
 
 void AIAttackState::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 2 }; // 2: lane ATKSTATE-1a's + 0x49 (m_victimWasEnemyOnEnter); a version-1 save loads it as false
+	XferVersion v{ 1, 2 }; // 2: ATKSTATE-1a / PORT-14's + 0x49 (RW 0x74D0B9 / 0x7512C8); a version-1 save loads it as false
 	x.xferVersion(v);
 	AIXfer::coord(x, m_originalVictimPos);
 	x.xferUnsignedInt(&m_victimTeam);
@@ -25,6 +26,11 @@ void AIAttackState::xfer(Xfer &x)
 	if (v.current >= 2)
 	{
 		x.xferBool(&m_victimWasEnemyOnEnter);
+	}
+	else if (x.isLoading())
+	{
+		// version 1 has no + 0x49 flag: a load of an older snapshot leaves the new field clear (Common/Player.cpp / AIDock.cpp's pattern)
+		m_victimWasEnemyOnEnter = false;
 	}
 	std::int32_t made = m_attackMachine ? m_machineMade : MADE_NONE;
 	x.xferInt(&made);

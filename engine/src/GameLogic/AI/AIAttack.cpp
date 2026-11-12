@@ -61,6 +61,14 @@ bool victimGone(const Object *victim)
 	return !victim || !CombatQueries::isAlive(*victim);
 }
 
+// PORT-14 / RW 0x75126D .. 0x75128E: the victim block's own "no victim" test. It is not victimGone(): RW checks the dead flag
+// (+ 0x458 bit 0, port Object::isEffectivelyDead) and status 0x32 FLEE_OFF_MAP, but does not call CombatQueries::isAlive.
+bool rwVictimGone(const Object *victim)
+{
+	static const int kFleeOffMap = CombatNames::status("FLEE_OFF_MAP");
+	return !victim || victim->isEffectivelyDead() || victim->testStatus((unsigned)kFleeOffMap);
+}
+
 // RW 0x644FD0 (two SSE loops, the same as the movers use)
 float normalizeAngle(float a)
 {
@@ -326,6 +334,18 @@ StateReturnType AIAttackState::onEnter()
 	return ret;
 }
 
+// RW 0x7515C8 .. 0x7515DA (also the dead victim's path RW 0x751450 -> 0x7515C8): run the inner attack machine. A result <= 0 is returned
+// unchanged through RW 0x7515D4 jle 0x75122A; a positive sleep is flattened to STATE_CONTINUE by RW 0x7515DA xor eax,eax.
+StateReturnType AIAttackState::updateAttackMachine()
+{
+	StateReturnType r;
+	{
+		KeptSubMachines<AIStateMachine>::Run run(m_keptMachines); // the shot can end this state inside the update (onExit below)
+		r = m_attackMachine->updateStateMachine(); // RW 0x7515CF: machine vslot + 0x10
+	}
+	return IS_STATE_SLEEP(r) ? STATE_CONTINUE : r;
+}
+
 StateReturnType AIAttackState::update()
 {
 	// ZH AIStates.cpp:5582 (lane PLAY-4): the exit conditions met count as a success
@@ -359,73 +379,77 @@ StateReturnType AIAttackState::update()
 	{
 		return STATE_FAILURE;
 	}
-	if (m_isAttackingObject)
+	if (m_isAttackingObject) // RW 0x751263: cmp byte [edi + 0x41], 0; je 0x7513D1
 	{
 		Object *victim = machine().goalObject();
-		// RW 0x751285 (BFME2 0x74F81B): a victim that is FLEE_OFF_MAP (status 0x32) counts as gone. What retail does with a gone victim (AI vslot 0x240, then
-		// the inner machine runs on unless ARMY_OF_DEAD) is stop S-583; the port's ZH handling below is kept
-		static const int kFleeOffMap = CombatNames::status("FLEE_OFF_MAP");
-		if (victimGone(victim) || victim->testStatus((unsigned)kFleeOffMap))
+		// RW 0x75126D .. 0x75128E: no victim, a dead one (+ 0x458 bit 0) or status 0x32 FLEE_OFF_MAP -> RW 0x751438. The ZH donor's
+		// replacementVictim() / notifyNewVictimChosen() branch is not in RW's victim block: horde-member selection happens in
+		// Object::adjustVictim (RW 0x68D30E) from onEnter / the target searches, not here (STOPS S-583).
+		if (rwVictimGone(victim))
 		{
-			// a lone unit fighting a horde moves on to the next member while the horde lives
-			if (Object *next = a.replacementVictim())
+			// RW 0x751438 .. 0x751440: AI vslot + 0x240 notifyVictimIsDead (RW 0x63F3BF plain ret). RW does not clear
+			// currentVictim here, and the port must not call its state-clearing notifyVictimIsDead() either.
+			// RW 0x751446 .. 0x751456: KindOf ARMY_OF_DEAD (owner template + 0x11A bit 0x80) -> STATE_SUCCESS.
+			if (source.isKindOf((unsigned)CombatNames::kinds().armyOfDead))
 			{
-				notifyNewVictimChosen(next);
-				victim = next;
+				return STATE_SUCCESS;
 			}
-			else
-			{
-				a.notifyVictimIsDead();
-				return STATE_SUCCESS; // my, that was easy
-			}
+			// RW 0x751450 je 0x7515C8: otherwise keep the inner attack machine alive (STOPS S-583: the charge state keeps its goal
+			// and a wind-up's shot leaves).
+			return updateAttackMachine();
 		}
-		// lane ATKSTATE-1a, RW 0x7512C6 (BFME2 0x74F82A .. 0x74F8A7): a victim that is no enemy now, that was an enemy at onEnter (+ 0x49), on an attack whose AI's
-		// last command source (AI vslot 0x23C) has bit 2 (CMD_FROM_AI), from an attacker that is not IS_MELEE_ATTACKING (status 0x1C), and that is no TREE (KindOf
-		// + 0x113 bit 6): the AI's goal object is cleared, the team's target too when it is this victim (RW 0x7A3E36), the AI hears the victim is dead
-		// (vslot 0x240) and the attack fails
-		{
-			static const int kTree = CombatNames::kindOf("TREE");
-			const bool isEnemy = source.getRelationship(*victim) == ENEMIES;
-			if (!isEnemy && m_victimWasEnemyOnEnter && ((unsigned)a.lastCommandSource() & 2u) != 0 &&
-				!source.testStatus((unsigned)CombatNames::statuses().isMeleeAttacking) && !victim->isKindOf((unsigned)kTree))
+
+		// RW 0x751294 .. 0x7512C6: the relationship, the AI's lastCommandSource (AI + 0x48) and IS_MELEE_ATTACKING (status 0x1C).
+		const Relationship relationship = source.getRelationship(*victim);
+		const bool isEnemy = relationship == ENEMIES;
+		const bool fromAI = (static_cast<unsigned>(a.lastCommandSource()) & static_cast<unsigned>(CMD_FROM_AI)) != 0;
+		const bool meleeAttacking = source.testStatus((unsigned)CombatNames::statuses().isMeleeAttacking);
+		// RW 0x6627F0(0) friend_setGoalObject(nullptr), RW 0x7A3E36 getTeamTargetObject, RW 0x79FDEA(0) clears it when the victim is
+		// the team's target. AIHuntState::teamTarget is the port's resolve / validate of RW 0x7A3E36 (a stale, stealthed, dead or
+		// contained target is cleared there), so the special path and the team-change path share that body.
+		auto clearGoalAndTeamTarget = [&]() {
+			machine().setGoalObject(INVALID_ID);
+			if (Team *team = source.getTeam())
 			{
-				machine().setGoalObject(INVALID_ID);
-				if (Team *team = source.getTeam())
+				if (AIHuntState::teamTarget(*team, source.logic()) == victim)
 				{
-					if (AIHuntState::teamTarget(*team, source.logic()) == victim)
-					{
-						team->setTeamTargetId(0);
-					}
+					team->setTeamTargetId(0);
 				}
-				a.notifyVictimIsDead();
-				return STATE_FAILURE;
 			}
-		}
-		// lane STEALTH-1 (RW 0x75232F, the attack sub-state: RW 0x752382 .. 0x7523B2): a victim that is stealthed and undetected for the attacker's player (RW 0x694C0D) ends
-		// the attack (STATE_FAILURE); INFERENCE (S-1040): checked here every update of the attack state, the sub-state RW reads it in is not identified
-		static const int kIgnoringStealth = CombatNames::status("IGNORING_STEALTH");
-		if (!source.testStatus((unsigned)kIgnoringStealth) && InvisibilityManager::isStealthedAndUndetected(*victim, source.getControllingPlayer()))
+		};
+
+		// RW 0x7512C8 .. 0x7512E7 and 0x7512E9 .. 0x7513B7: the special non-enemy path. state + 0x49 was set onEnter from the original
+		// relationship (RW 0x74D0B9); the command source must carry CMD_FROM_AI, the owner must not be melee attacking, and the victim
+		// must not be KindOf TREE (template + 0x113 bit 0x40).
+		if (!isEnemy && m_victimWasEnemyOnEnter && fromAI && !meleeAttacking && !victim->isKindOf((unsigned)CombatNames::kinds().tree))
 		{
-			return STATE_FAILURE;
+			clearGoalAndTeamTarget();
+			// RW 0x7513B1 calls AI vslot + 0x240 (a plain ret); no setCurrentVictim(nullptr) here.
+			return STATE_FAILURE; // RW 0x7513B7 -> 0x751227 push -2
 		}
-		a.setCurrentVictim(victim);
-		// the victim's team changed while we fought it (a capture, a defection): keep attacking only while it is an enemy (ZH AIAttackState::update)
-		const ObjectID team = victim->getTeam() ? victim->getTeam()->getID() : 0u;
-		if (team != m_victimTeam)
+
+		a.setCurrentVictim(victim); // RW 0x751316 .. 0x751320: 0x6682B1(victim)
+		const ObjectID team = victim->getTeam() ? victim->getTeam()->getID() : TEAM_ID_INVALID;
+		if (team != m_victimTeam) // RW 0x751325 .. 0x75132E: the victim's Team* against state + 0x2C
 		{
-			if (source.getRelationship(*victim) != ENEMIES)
+			// RW 0x751334 .. 0x75136C probes an empty, non-CAN_ATTACK garrisoned victim before 0x75136E, but that probe and
+			// 0x75136E .. 0x751385 both end at 0x751387 for every relationship other than ENEMIES, so the port tests the
+			// relationship alone (the contain probe is not observable). RW never rewrites state + 0x2C in update().
+			if (relationship != ENEMIES)
 			{
-				machine().setGoalObject(INVALID_ID);
-				a.notifyVictimIsDead();
-				return STATE_FAILURE;
+				clearGoalAndTeamTarget(); // RW 0x751387 .. 0x7513AE
+				// RW 0x7513B1 vslot + 0x240 is a no-op; do not call the port's notifyVictimIsDead() here.
+				return STATE_FAILURE; // RW 0x7513B7 -> 0x751227 push -2
 			}
-			m_victimTeam = team;
 		}
+		// RW 0x7513BC .. 0x7513CE: keep the inner attack machine's goal object in step with the victim.
 		if (victim->getID() != m_attackMachine->goalObjectID())
 		{
-			m_attackMachine->setGoalObject(victim->getID());
+			m_attackMachine->setGoalObject(victim->getID()); // machine vslot + 0x38
 		}
 	}
+	// PORT-14: the parent update does not repeat the ZH stealth test (lane STEALTH-1 kept it here as an INFERENCE): RW tests a stealthed,
+	// undetected victim in the attack sub-state RW 0x752382 .. 0x7523B2, which the port's aim state carries (AIAttackAimAtTargetState::update).
 	if (!chooseWeapon())
 	{
 		return STATE_FAILURE;
@@ -468,16 +492,7 @@ StateReturnType AIAttackState::update()
 			}
 		}
 	}
-	StateReturnType r;
-	{
-		KeptSubMachines<AIStateMachine>::Run run(m_keptMachines); // the shot can end this state inside the update (onExit below)
-		r = m_attackMachine->updateStateMachine();
-	}
-	if (IS_STATE_SLEEP(r))
-	{
-		r = STATE_CONTINUE; // ZH CONVERT_SLEEP_TO_CONTINUE
-	}
-	return r;
+	return updateAttackMachine(); // RW 0x7515C8 .. 0x7515DA
 }
 
 void AIAttackState::onExit(StateExitType)
