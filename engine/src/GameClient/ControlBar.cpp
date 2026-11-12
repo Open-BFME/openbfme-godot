@@ -10,6 +10,7 @@
 #include "Common/BuildAssistant.h"
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameClient/GUI/Image.h"
 #include "GameClient/HudObjects.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/GameMessage.h"
@@ -462,11 +463,18 @@ const SpecialPowerTemplate *ControlBar::specialPowerOf(const CommandButton &b)
 	return TheSpecialPowerStore && !b.m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(b.m_specialPowerName) : nullptr;
 }
 
-// lane HERO-1 (S-850): RW 0x7810BC, the button image of a hero record: Gandalf (GondorGandalf) without SCIENCE_GandalftheWhite shows HIGandalTheGrey; a
-// Create-A-Hero (template + 0x11F & 0x40) its chosen subclass's image (custom screenshots remain unported); otherwise the template's ButtonImage (RW 0x73CFEF)
+// lane HERO-1 (S-850): RW 0x7810BC (BFME2 0x77DDAC), the button image of a hero record: a dead record (+ 0xB0, RW 0x7810CA .. 0x7810D5) returns its stored
+// deadImage (+ 0x00, from RespawnUpdate::getDeadImage RW 0x8B33E4 / BFME2 0x8AF2DE or the Living World RW 0x6E2F9A; when MappedImageCollection is attached and
+// does not have m_buttonImage, RW 0x8B348F .. 0x8B34B1 falls back to the template's ButtonImage); for a purchase record (!dead), Gandalf (GondorGandalf)
+// without SCIENCE_GandalftheWhite shows HIGandalTheGrey, a Create-A-Hero (template + 0x11F & 0x40) its chosen subclass's image (custom screenshots remain
+// unported), and otherwise the template's ButtonImage (RW 0x73CFEF)
 std::string ControlBar::heroRecordImage(const HeroRecord &r, const Player &player)
 {
-	if (r.templateName == "GondorGandalf" && TheScienceStore)
+	if (r.dead && !r.deadImage.empty() && (!m_ctx.images || m_ctx.images->findImageByName(r.deadImage)))
+	{
+		return r.deadImage;
+	}
+	if (!r.dead && r.templateName == "GondorGandalf" && TheScienceStore)
 	{
 		const ScienceType st = TheScienceStore->getScienceFromInternalName("SCIENCE_GandalftheWhite");
 		if (st != SCIENCE_INVALID && !player.hasScience(st))
