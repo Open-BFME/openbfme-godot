@@ -187,6 +187,7 @@ include(cmake/Port18.cmake) # PORT-18: hold fire
 include(cmake/Port20.cmake) # PORT-20: GarrisonContain/onSelling (OPENBFME_PORT20_TESTS)
 include(cmake/Port24.cmake) # PORT-24: Object/ForceLuaRegistration (OPENBFME_PORT24_TESTS)
 include(cmake/Port6.cmake) # PORT-6: StealthDetectorUpdate/CanDetectWhileGarrisoned (OPENBFME_PORT6_TESTS)
+include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the collide pickup (OPENBFME_PORT9_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
 include(cmake/Fx2.cmake)        # FX-2: effects in the live game (appends to OPENBFME_SIM_SOURCES; OPENBFME_FX2_SOURCES / OPENBFME_FX2_TESTS)
@@ -737,6 +738,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT20_TESTS}
     ${OPENBFME_PORT24_TESTS}
     ${OPENBFME_PORT6_TESTS}
+    ${OPENBFME_PORT9_TESTS}
     ${OPENBFME_PLAY4_TESTS}
     ${OPENBFME_MAPRESET1_TESTS}
     ${OPENBFME_APT_TESTS}

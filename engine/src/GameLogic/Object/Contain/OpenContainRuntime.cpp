@@ -22,9 +22,11 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Module/MoneyEventModules.h"
 #include "GameLogic/Module/OpenContain.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
+#include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/SimMath.h"
@@ -919,6 +921,86 @@ void OpenContain::eatPassengerAfter(const Object &victim, int frames, const Obje
 	m_eatFrames = frames < 2 ? 1 : frames;
 	m_eatVictim = victim.getID();
 	m_eatKiller = eater.getID();
+}
+
+// lane PORT-9, RW 0x867C40 (module vslot 0x4C, the C++ name is INFERENCE): the STEALTH_GARRISON occupants that belong to another player than the object
+// that collided into this container are revealed and ordered out. RW copies m_contained first (RW 0x867C58 .. 0x867C65) because the walk removes from it.
+bool OpenContain::tryToEvacuate(Object *entering)
+{
+	const std::vector<Object *> copy(m_contained.begin(), m_contained.end()); // RW 0x867C58 the copy, RW 0x867C63 its head
+	const Player *pEntering = entering ? entering->getControllingPlayer() : nullptr; // RW 0x867C85 (RW 0x68B678)
+	static const int stealthGarrison = CombatNames::kindOf("STEALTH_GARRISON"); // RW 0x867C9A: template + 0x10C bit 0x02
+	for (Object *rider : copy)
+	{
+		if (rider && rider->getControllingPlayer() == pEntering) // RW 0x867C8E .. 0x867C99
+		{
+			continue;
+		}
+		if (!rider || !rider->isKindOf((unsigned)stealthGarrison)) // RW 0x867C9A .. 0x867CA5
+		{
+			continue;
+		}
+		if (AIUpdateInterface *ai = rider->getAIUpdateInterface()) // RW 0x867CAC
+		{
+			// RW 0x867CA6 .. 0x867CB2: StealthUpdate::of (RW 0x68FBD3) and markAsDetected(0, 1, null, horde) (RW 0x7767A9);
+			// RW 0x867CB7 .. 0x867CC7: then TheInvisibilityManager->markDetected(rider, null, 0, 1) (RW 0x81C32C)
+			if (StealthUpdate *su = StealthUpdate::of(*rider))
+			{
+				su->markAsDetected(0, 1, nullptr, true);
+			}
+			rider->logic().invisibility().markDetected(rider, nullptr, 0, 1);
+			ai->aiExit(getObject(), CMD_FROM_AI); // RW 0x867CCC .. 0x867CDB (RW 0x7716C1(obj, 2))
+			continue;
+		}
+		// RW 0x867CE2 .. 0x867CEA: no AI: removeFromContain(rider, true), whose own exposure (RW 0x865EF5 .. 0x865F22) reveals the STEALTH_GARRISON
+		// rider the same way before the removal
+		if (StealthUpdate *su = StealthUpdate::of(*rider))
+		{
+			su->markAsDetected(0, 1, nullptr, true); // RW 0x865F0E
+		}
+		rider->logic().invisibility().markDetected(rider, nullptr, 0, 1); // RW 0x865F1B .. 0x865F22
+		removeFromContain(rider); // RW 0x867CEA (contain vslot 0xA4)
+	}
+	return true; // RW 0x867D0F
+}
+
+// lane PORT-9, RW 0x8659D8 (CollideModuleInterface slot 0x00, vtable RW 0xC5D650): the gates in RW's order. A container that is a SHIP never picks up; the
+// touching object's AI must be entering THIS container (AI vslot 0x1FC, RW 0x664D12); the enemy stealth occupants are evacuated first; the container must
+// accept the object; an object already inside is left alone; and CollidePickup No (data + 0x81, default 1 at RW 0x867ECF) refuses the pickup itself
+void OpenContain::onCollide(Object *other, const Coord3D *, const Coord3D *)
+{
+	if (!other) // RW 0x8659DD .. 0x8659E2
+	{
+		return;
+	}
+	Object *container = getObject(); // RW 0x8659E5 (module + 0x08)
+	static const int ship = CombatNames::kindOf("SHIP"); // RW 0x8659EB: template + 0x11F bit 0x80
+	if (container->isKindOf((unsigned)ship))
+	{
+		return;
+	}
+	const AIUpdateInterface *otherAI = other->getAIUpdateInterface(); // RW 0x8659F4 (Object + 0x260)
+	if (!otherAI || otherAI->enterTarget() != container) // RW 0x8659FA .. 0x865A08
+	{
+		return;
+	}
+	if (!tryToEvacuate(other)) // RW 0x865A0A .. 0x865A16 (module vslot 0x4C)
+	{
+		return;
+	}
+	if (!isValidContainerFor(*other, true, false)) // RW 0x865A18 .. 0x865A2B (contain vslot 0x98)
+	{
+		return;
+	}
+	if (other->getContainedBy() == container) // RW 0x865A2D .. 0x865A33 (Object + 0x27C)
+	{
+		return;
+	}
+	if (!m_open->m_collidePickup) // RW 0x865A38 .. 0x865A3F (module data + 0x81)
+	{
+		return;
+	}
+	addToContain(other); // RW 0x865A41 .. 0x865A48 (contain vslot 0x9C)
 }
 
 // RW 0x8682D9 OpenContain::exitObjectViaDoor

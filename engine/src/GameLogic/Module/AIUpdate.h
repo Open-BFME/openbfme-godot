@@ -450,6 +450,8 @@ public:
 	int pathPriority() const override;
 	PathfindObjectID attackTargetOf(const PathfindObject &o) const override;
 	PathfindObjectID enterTargetOf(const PathfindObject &o) const override; // AI vslot 0x1FC, RW 0x664D12
+	// lane PORT-9: AI vslot 0x1FC itself (RW 0x664D12), the object this AI is entering or null; enterTargetOf and OpenContain::onCollide (RW 0x865A00) both call it
+	const Object *enterTarget() const;
 	bool crushOrSquishPolicy(const PathfindObject &other) const override; // lane ATTACK-1: RW 0x69519A(other, 2)
 	float wanderFactor() const override;
 	float closeEnoughDist() const override;
