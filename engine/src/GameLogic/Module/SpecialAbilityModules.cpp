@@ -1104,7 +1104,7 @@ void SpecialAbilityUpdate::approachTarget()
 	m_lastTargetPos = *t->getPosition();
 	if (bird)
 	{
-		bird->aiAbilityMoveTo(*t->getPosition(), CMD_FROM_AI); // RW 0x852DC5(target, 2): AI command 0x48 -> RW 0x76A04A with the object's position
+		bird->aiAbilityMoveToObject(t, CMD_FROM_AI); // RW 0x852DC5(target, 2): command 0x48 keeps the ID until RW 0x76DAEE executes it
 		return;
 	}
 	// RW 0x853AEE: a structure target, a target on another layer or StartAbilityRange <= 50 (RW 0xBD88C4) moves to the object (AI command 0x48);

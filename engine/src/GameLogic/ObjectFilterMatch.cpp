@@ -73,13 +73,10 @@ const std::vector<std::string> *listField(const ThingTemplate &tt, ListField whi
 	};
 	thread_local Slots slots;
 	const std::vector<std::string> *table = tt.fieldNameTable();
-	bool valid = table && slots.table == table;
-	for (int k = 0; valid && k < kListFieldCount; ++k)
-	{
-		// a row the table lacks is looked for again on every use: a cached absence could outlive its table (another factory's table at the same
-		// address); the supported tables have both rows
-		valid = slots.index[k] < table->size() && (*table)[slots.index[k]] == names[k];
-	}
+	// a row the table lacks is looked for again on every use: a cached absence could outlive its table (another factory's table at the same
+	// address); the supported tables have both rows. Only the row asked for is checked by name (lane EDAINMAPS-3: the other's check was repeated
+	// work; it is checked when it is asked for)
+	const bool valid = table && slots.table == table && slots.index[which] < table->size() && (*table)[slots.index[which]] == names[which];
 	if (!valid)
 	{
 		slots.table = table;
@@ -206,7 +203,12 @@ void ObjectFilterMatch::xfer(Xfer &x, std::shared_ptr<const ObjectFilter> &filte
 	}
 }
 
-bool ObjectFilterMatch::isEquivalentTo(const ThingTemplate *a, const ThingTemplate *b)
+namespace
+{
+// RW 0x73D5C2 with the two lists of each template looked up by the caller (lane EDAINMAPS-3: allows asks it about one template against every name of a
+// filter, whose templates' lists it keeps per template state; the lookups only read, so reading them once gives the same answer)
+bool equivalentWithLists(const ThingTemplate *a, const std::vector<std::string> *aEq, const std::vector<std::string> *aBuildVariations, const ThingTemplate *b,
+                         const std::vector<std::string> *bEq, const std::vector<std::string> *bBuildVariations)
 {
 	if (!a || !b)
 	{
@@ -216,8 +218,6 @@ bool ObjectFilterMatch::isEquivalentTo(const ThingTemplate *a, const ThingTempla
 	{
 		return true;
 	}
-	const std::vector<std::string> *aEq = listField(*a, kEquivalentTo);
-	const std::vector<std::string> *bEq = listField(*b, kEquivalentTo);
 	if (listHas(aEq, b->getName()))
 	{
 		return true;
@@ -232,12 +232,69 @@ bool ObjectFilterMatch::isEquivalentTo(const ThingTemplate *a, const ThingTempla
 			}
 		}
 	}
-	if (listHas(listField(*a, kBuildVariations), b->getName()))
+	if (listHas(aBuildVariations, b->getName()))
 	{
 		return true;
 	}
-	return listHas(listField(*b, kBuildVariations), a->getName());
+	return listHas(bBuildVariations, a->getName());
 }
+} // namespace
+
+bool ObjectFilterMatch::isEquivalentTo(const ThingTemplate *a, const ThingTemplate *b)
+{
+	if (!a || !b)
+	{
+		return false;
+	}
+	return equivalentWithLists(a, listField(*a, kEquivalentTo), listField(*a, kBuildVariations), b, listField(*b, kEquivalentTo), listField(*b, kBuildVariations));
+}
+
+namespace
+{
+// lane EDAINMAPS-3: the non-"S:" include / exclude names of `f`, each as things.findTemplate answers it (null: no template), in list order; kept in the filter
+// for the factory's current name table (double-checked: a reader that sees the generation published sees the lists written before it)
+const ObjectFilter::ResolvedNames &resolve(const ThingFactory &things, const ObjectFilter &f)
+{
+	const ObjectFilter::ResolvedNames &r = f.resolved;
+	const std::uint64_t generation = things.nameGeneration();
+	if (r.generation.load(std::memory_order_acquire) == generation)
+	{
+		return r;
+	}
+	std::lock_guard<std::mutex> hold(r.lock);
+	if (r.generation.load(std::memory_order_relaxed) != generation)
+	{
+		r.include.clear();
+		r.exclude.clear();
+		auto entry = [&](const std::string &n) {
+			ObjectFilter::ResolvedNames::Entry e;
+			e.tmpl = things.findTemplate(n);
+			if (e.tmpl)
+			{
+				e.equivalentTo = listField(*e.tmpl, kEquivalentTo);
+				e.buildVariations = listField(*e.tmpl, kBuildVariations);
+			}
+			return e;
+		};
+		for (const std::string &n : f.includeNames)
+		{
+			if (!isSName(n))
+			{
+				r.include.push_back(entry(n));
+			}
+		}
+		for (const std::string &n : f.excludeNames)
+		{
+			if (!isSName(n))
+			{
+				r.exclude.push_back(entry(n));
+			}
+		}
+		r.generation.store(generation, std::memory_order_release);
+	}
+	return r;
+}
+} // namespace
 
 bool ObjectFilterMatch::allows(GameLogic &logic, const ObjectFilter &f, const ThingTemplate *tmpl, const Player *a, const Player *b)
 {
@@ -293,6 +350,7 @@ bool ObjectFilterMatch::allows(GameLogic &logic, const ObjectFilter &f, const Th
 		}
 	}
 	const ThingFactory &things = logic.things();
+	const ObjectFilter::ResolvedNames &resolved = resolve(things, f);
 	// 3. the S: names
 	for (const std::string &n : f.includeNames)
 	{
@@ -308,19 +366,25 @@ bool ObjectFilterMatch::allows(GameLogic &logic, const ObjectFilter &f, const Th
 			return false;
 		}
 	}
-	// 4. the other names (templates, equivalence)
-	for (const std::string &n : f.includeNames)
+	// 4. the other names (templates, equivalence): the templates findTemplate answers for them, resolved once per name table, and the template's own two
+	// lists read once for all of them (lane EDAINMAPS-3)
+	if (!resolved.include.empty() || !resolved.exclude.empty())
 	{
-		if (!isSName(n) && isEquivalentTo(tmpl, things.findTemplate(n)))
+		const std::vector<std::string> *eq = listField(*tmpl, kEquivalentTo);
+		const std::vector<std::string> *variations = listField(*tmpl, kBuildVariations);
+		for (const ObjectFilter::ResolvedNames::Entry &e : resolved.include)
 		{
-			return true;
+			if (equivalentWithLists(tmpl, eq, variations, e.tmpl, e.equivalentTo, e.buildVariations))
+			{
+				return true;
+			}
 		}
-	}
-	for (const std::string &n : f.excludeNames)
-	{
-		if (!isSName(n) && isEquivalentTo(tmpl, things.findTemplate(n)))
+		for (const ObjectFilter::ResolvedNames::Entry &e : resolved.exclude)
 		{
-			return false;
+			if (equivalentWithLists(tmpl, eq, variations, e.tmpl, e.equivalentTo, e.buildVariations))
+			{
+				return false;
+			}
 		}
 	}
 	// 5. the exclude mask

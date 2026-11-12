@@ -57,8 +57,8 @@ bool validateStartPositions(const MapCacheEntry &map, std::string *error);
 
 // One map waypoint, read the way BFME2's start code reads them (placeNetworkBuildingsForPlayer, open-bfme-2 GameLogic.cpp, WB VA 0x00CFABB0;
 // the start-spot distances, GameLogicInit.cpp): only "Player_%d_Start" for 1..map.numPlayers is looked up, so any other name (Edain's
-// "Player_y_Start", a Player_2_Start on a map whose shipped mapcache.ini lists one player) is skipped. A second copy of a used start is an
-// error (which copy retail's Rva00506CC3 lookup finds needs a Ghidra check).
+// "Player_y_Start", a Player_2_Start on a map whose shipped mapcache.ini lists one player) is skipped. A second copy of a used start replaces
+// the first (lane EDAINMAPS-3: RW 0x628C29 answers the last such waypoint of the map file; pass the waypoints in file order).
 bool addStartWaypoint(MapCacheEntry &map, const std::string &name, const Coord3D &location, std::string *error);
 
 // "maps_5Ccamera_5Fdemo_5Ccamera_5Fdemo_2Emap" -> bytes with every "_XX" replaced by the byte XX.
