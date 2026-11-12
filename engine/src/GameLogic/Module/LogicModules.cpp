@@ -55,6 +55,7 @@
 #include "GameLogic/Module/EconomyModules.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
+#include "GameLogic/Module/ProductionQueueHordeContain.h"
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
 #include "GameLogic/Module/SiegeModules.h"
 #include "GameLogic/Module/PickupStuffUpdate.h"
@@ -118,6 +119,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	PhysicsBehavior::registerClass(modules); // lane PHYS-1: the fling flight
 	InvisibilityModules::registerAll(modules); // lane STEALTH-1: InvisibilityUpdate, StealthDetectorUpdate, StealthUpdate (data)
 	GarrisonContain::registerClasses(modules); // lane GARRISON-1: GarrisonContain, HordeGarrisonContain
+	ProductionQueueHordeContain::registerClass(modules); // issue #178: ProductionQueueHordeContain
 	TransportContain::registerClasses(modules); // lane GARRISON-2: TransportContain, HordeTransportContain, SiegeEngineContain, HordeSiegeEngineContain
 	AttachUpdate::registerClass(modules); // lane CAMP-1: the carried objects (MAP ANG Dark Eye's palantir shards)
 	AISpecialPowerUpdate::registerClass(modules); // lane MOD-4: the units' own use of their powers (computer players)

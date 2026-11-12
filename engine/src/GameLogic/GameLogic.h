@@ -145,6 +145,9 @@ public:
 	// lane PORTERFOG-1, RW 0x670A50 Drawable::fadeOut(frames) called by the simulation (a porter starting its work, RW 0x88DDC1): the drawable fades out over
 	// `frames` client frames (0: at once) and is hidden once its opacity * 255 is below 1 (RW 0x675B7E)
 	virtual void fadeOut(Object &obj, UnsignedInt frames) { (void)obj; (void)frames; }
+	// TOP20 #24, RW 0x672D28 Drawable::setShadowsEnabled called by the simulation (SlowDeathBehavior's beginSlowDeath with ShadowWhenDead No, RW 0x860F44 ..
+	// 0x860F58): the drawable's status bit 2 (+ 0x114) and every draw module's vslot 0x30; client only
+	virtual void setShadowsEnabled(Object &obj, bool enabled) { (void)obj; (void)enabled; }
 	// RW 0x67B78C -> 0x6D4789: a qualifying hit on a local hero, independently of the EVA gate.
 	// RW 0x69560B: profile statistics are recorded before the normal kill-score gates.
 	virtual void createAHeroKill(Object &, Object &) {}
@@ -242,12 +245,14 @@ struct GameLogicSettings
 	float unitReallyDamagedThreshold = 0.0f;         ///< GameData UnitReallyDamagedThreshold
 	bool startingCashLoaded = false;                 ///< the three below were read from GameData / MultiplayerSettings
 	unsigned defaultStartingCash = 0;                ///< GameData DefaultStartingCash: a faction without StartMoney starts with it (ZH Player::init)
-	// lane BUILD-1 (BuildAssistant, GameData): AllowedHeightVariationForBuilding (ZH: the footprint's highest minus lowest ground), SupplyBuildBorder, MaxLineBuildObjects;
-	// buildRulesLoaded is true when the loader read all three (the placement code reports its absence)
+	// lane BUILD-1 / PORT-12 (BuildAssistant, GameData): AllowedHeightVariationForBuilding (ZH: the footprint's highest minus lowest ground), SupplyBuildBorder,
+	// MaxLineBuildObjects and MinDistFromEdgeOfMapForBuild (RotWK GlobalData +0xA68; RW 0x794BF2 .. 0x794C5A samples it against the active playable boundary).
+	// GameData loading sets buildRulesLoaded only after all four fields; later separate AIData / multiplayer passes preserve it.
 	bool buildRulesLoaded = false;
 	float allowedHeightVariationForBuilding = 0.0f;
 	float supplyBuildBorder = 0.0f;
 	int maxLineBuildObjects = 0;
+	float minDistFromEdgeOfMapForBuild = 0.0f;
 	// lane BUILD-3 (GameData, RW GlobalData + 0x11E4): BuilderMoveFromNewStructureDistance, the walk of a porter out of the structure it built (RW 0x88D6AE); loaded when a block read it
 	bool builderMoveLoaded = false;
 	float builderMoveFromNewStructureDistance = 0.0f;
@@ -945,6 +950,7 @@ public:
 		unsigned long long weaponStatusPooledFrames = 0;      ///< lane PERF-WS: frames whose pre-pass filled at least one entry on the pool for the pass to apply
 		std::vector<std::string> errors;                      ///< problems nothing explains (a bad KindOf line, ...), never dropped
 		std::vector<std::string> stops;                       ///< the stop lines that apply to this run
+		std::map<std::string, unsigned, std::less<>> stopHits; ///< per-stop runtime counts (diagnostics, not simulation state)
 	};
 	Report report() const;
 

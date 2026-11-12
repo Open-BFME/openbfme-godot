@@ -526,6 +526,50 @@ TEST_CASE("object filter match: rules, KindOf masks, names, S: names, equivalenc
 	(void)structure;
 }
 
+// lane EDAINMAPS-3: allows keeps a filter's include / exclude names resolved to templates (and their two lists) for one state of the factory's templates
+// (ThingFactory::nameGeneration); a template defined later, an override, a reset, a copy or an assignment of the filter resolve again, so the answers are
+// those of a fresh lookup
+TEST_CASE("object filter match: the names resolved once follow the factory's templates; a copy or an assignment resolves again (lane EDAINMAPS-3)")
+{
+	Fx fx(kObjects);
+	GameLogic &logic = *fx.logic;
+	Object *soldier = fx.make("Soldier", fx.teamOf("Alice"));
+	Object *hero = fx.make("Hero", fx.teamOf("Alice"));
+	ObjectFilter late;
+	late.rule = ObjectFilter::RULE_ANY;
+	late.includeNames = { "LateSoldier" };
+	CHECK_FALSE(ObjectFilterMatch::allows(logic, late, *soldier, nullptr)); // no template carries the name yet: resolved to none
+	std::uint64_t generation = fx.w.things.nameGeneration();
+	REQUIRE(fx.w.load("Object LateSoldier\n  KindOf = SELECTABLE INFANTRY\n  EquivalentTo = Soldier\nEnd\n").empty());
+	CHECK(fx.w.things.nameGeneration() != generation);
+	CHECK(ObjectFilterMatch::allows(logic, late, *soldier, nullptr)); // LateSoldier's EquivalentTo names Soldier (RW 0x73D5C2)
+	CHECK_FALSE(ObjectFilterMatch::allows(logic, late, *hero, nullptr));
+	// excluded names are resolved the same way
+	ObjectFilter notLate;
+	notLate.excludeNames = { "LateSoldier", "S:Hero" };
+	CHECK_FALSE(ObjectFilterMatch::allows(logic, notLate, *soldier, nullptr));
+	CHECK_FALSE(ObjectFilterMatch::allows(logic, notLate, *hero, nullptr));
+	// a copy starts unresolved; an assignment gives the filter other names and resolves them
+	ObjectFilter copy = late;
+	CHECK(ObjectFilterMatch::allows(logic, copy, *soldier, nullptr));
+	ObjectFilter heroOnly;
+	heroOnly.rule = ObjectFilter::RULE_ANY;
+	heroOnly.includeNames = { "Hero" };
+	CHECK(ObjectFilterMatch::allows(logic, heroOnly, *hero, nullptr));
+	copy = heroOnly;
+	CHECK(copy == heroOnly);
+	CHECK_FALSE(ObjectFilterMatch::allows(logic, copy, *soldier, nullptr));
+	CHECK(ObjectFilterMatch::allows(logic, copy, *hero, nullptr));
+	CHECK(ObjectFilterMatch::allows(logic, late, *soldier, nullptr)); // the original keeps its own names
+	// an override and a reset are new states too
+	generation = fx.w.things.nameGeneration();
+	fx.w.things.newOverride(const_cast<ThingTemplate *>(fx.w.get("LateSoldier")));
+	CHECK(fx.w.things.nameGeneration() != generation);
+	generation = fx.w.things.nameGeneration();
+	fx.w.things.reset();
+	CHECK(fx.w.things.nameGeneration() != generation);
+}
+
 namespace
 {
 // the retail value of 1.0f + percentage as a 24-bit x87 add stored as float: one rounding of the exact sum (the operands are exact in double)
