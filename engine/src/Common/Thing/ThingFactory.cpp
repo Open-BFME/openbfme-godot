@@ -6,6 +6,7 @@
 #include "GameLogic/ThingCombatSets.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <set>
 #include <stdexcept>
@@ -92,6 +93,13 @@ ThingFactory::ThingFactory(NameKeyGenerator &keys, ModuleFactory &modules, const
 }
 
 ThingFactory::~ThingFactory() = default;
+
+// lane EDAINMAPS-3: a process-wide counter, so two factories (or one destroyed and another made at its address) never share a generation
+void ThingFactory::bumpNameGeneration()
+{
+	static std::atomic<std::uint64_t> counter{ 0 };
+	m_nameGeneration = ++counter;
+}
 
 void ThingFactory::buildTables(bool bfme1)
 {
@@ -230,6 +238,7 @@ ThingTemplate *ThingFactory::newTemplate(const std::string &name)
 	tt->friend_setTemplateID(m_nextTemplateID++); // RW 0x6D2848: the id is the value BEFORE the increment
 	tt->friend_setTemplateName(name);
 	m_byName[name] = tt;
+	bumpNameGeneration();
 	m_list.push_back(tt);
 	return tt;
 }
@@ -252,12 +261,14 @@ ThingTemplate *ThingFactory::newOverride(ThingTemplate *thingTemplate)
 	tt->setCopiedFromDefault();
 	tt->markAsOverride();
 	child->setNextOverride(tt);
+	bumpNameGeneration(); // lane EDAINMAPS-3: the final override of `thingTemplate` changed
 	return tt; // not in the master list
 }
 
 void ThingFactory::reset()
 {
 	// ZH ThingFactory.cpp:209-238: drop override chains and templates that exist only for the last map
+	bumpNameGeneration(); // lane EDAINMAPS-3: names, override chains and templates go away
 	std::vector<ThingTemplate *> keep;
 	for (ThingTemplate *t : m_list)
 	{
@@ -289,6 +300,14 @@ void ThingFactory::reset()
 // ---------------------------------------------------------------------------------------------
 void ThingFactory::parseObjectDefinition(INI *ini, const std::string &name, const std::string &reskinFrom, const std::string &childOf)
 {
+	// lane EDAINMAPS-3: a definition writes template fields (a new template, an override, or load type 1 into the existing one): a new generation
+	// before and after it (also when the parse throws)
+	struct Bump
+	{
+		ThingFactory &f;
+		explicit Bump(ThingFactory &factory) : f(factory) { f.bumpNameGeneration(); }
+		~Bump() { f.bumpNameGeneration(); }
+	} bump(*this);
 	{
 		DefinitionRecord rec;
 		rec.name = name;

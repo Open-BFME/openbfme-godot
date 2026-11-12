@@ -16,7 +16,9 @@
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/LiveGame.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
+#include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/NewGame/StartingBase.h"
 #include "GameLogic/Object/Object.h"
@@ -367,5 +369,101 @@ TEST_CASE("starting base retail: an unknown StartingBuilding places nothing and 
 		CHECK(count() == before + 1 + units);
 		REQUIRE(result.notes.size() == 1);
 		CHECK(result.notes[0] == "placeObjectAtPosition: no template 'None' (retail places nothing)");
+	});
+}
+
+// lane EDAINMAPS-3: RW 0x62AC17's base point of a starting unit with a ZERO offset (findPositionAround between r and 1.4 r of it, lane MODS-3): the start
+// waypoint moved half the structure's bounding sphere radius south (RW 0x62ADC4 .. 0x62ADFA), or the Player_<n>_Rally waypoint when the map has one
+// (RW 0x62AC75 lookup, RW 0x62AE09 .. 0x62AE34); each at its ground height. BFME2 0x641C75 is the same code (tier A). No retail faction has a zero
+// offset and no retail map a Player_<n>_Rally waypoint (the map corpus test lists them), so retail starts are unchanged; Edain's FreeBuildPorterEgg uses it
+TEST_CASE("starting base retail: a starting unit with no offset is placed around Player_<n>_Rally when the map has one, else south of the structure (RW 0x62AE09)")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::vector<std::string> zeroOffsetUnits; // "<faction> <index>"
+	for (int i = 0; i < (int)s->world->playerTemplates().getPlayerTemplateCount(); ++i)
+	{
+		const PlayerTemplate *pt = s->world->playerTemplates().getNthPlayerTemplate(i);
+		for (int u = 0; pt && u < PlayerTemplate::NUM_STARTING_UNITS; ++u)
+		{
+			const Coord3D &off = pt->m_startingUnitOffset[u];
+			if (!pt->m_startingUnit[u].empty() && off.x == 0.0f && off.y == 0.0f && off.z == 0.0f)
+			{
+				zeroOffsetUnits.push_back(pt->getName() + " " + std::to_string(u));
+			}
+		}
+	}
+	CHECK(zeroOffsetUnits == std::vector<std::string>{});
+	runGame(*s, fortressMessage(*s, "maps/map mp evendim/map mp evendim.map", { 0, 1 }), [&](LiveGame &game, const NewGameStart &start, const LiveGame::Report &report) {
+		CHECK(report.startErrors.empty());
+		Player *p = game.players().findPlayerWithName(report.startSlotPlayers[1]);
+		REQUIRE(p);
+		REQUIRE(p->getPlayerTemplate());
+		const SkirmishGameSlot &slot = start.message.game.slots[1];
+		const std::string n = std::to_string(slot.startPos + 1);
+		const TerrainLogic *mapTerrain = game.logic().terrain();
+		REQUIRE(mapTerrain);
+		CHECK(mapTerrain->findWaypointByName("Player_" + n + "_Rally") == nullptr);
+		const Waypoint *startWp = mapTerrain->findWaypointByName("Player_" + n + "_Start");
+		REQUIRE(startWp);
+		PlayerTemplate pt = *p->getPlayerTemplate();
+		REQUIRE_FALSE(pt.m_startingBuilding.empty());
+		const std::string unitName = pt.m_startingUnit[0];
+		REQUIRE_FALSE(unitName.empty());
+		for (std::string &u : pt.m_startingUnit) u.clear();
+		pt.m_startingUnit[0] = unitName;
+		pt.m_startingUnitOffset[0] = Coord3D{ 0.0f, 0.0f, 0.0f };
+		// r: the structure's CastleBehavior MaxCastleRadius, else its bounding circle (RW 0x62AD57 / 0x797ED7)
+		auto radiusOf = [](Object &yard) {
+			float r = CombatQueries::boundingCircleRadius(yard);
+			if (const CastleBehavior *castle = dynamic_cast<const CastleBehavior *>(yard.findModule("CastleBehavior")))
+			{
+				r = castle->data()->m_maxCastleRadius;
+			}
+			return r;
+		};
+		auto dist2D = [](const Coord3D &a, const Coord3D &b) { return std::hypot((double)a.x - b.x, (double)a.y - b.y); };
+
+		// no rally waypoint: around the start waypoint moved half the structure's bounding sphere south
+		StartingBase::Result a;
+		StartingBase::placeForPlayer(game.logic(), 1, slot, *p, pt, a);
+		CHECK(a.errors.empty());
+		REQUIRE(a.placed.size() == 2);
+		Object *yard = game.logic().findObjectByID(a.placed[0].id);
+		REQUIRE(yard);
+		const float r = radiusOf(*yard);
+		REQUIRE(r > 0.0f); // tolerance: any positive radius; its value is the template's (MaxCastleRadius or the bounding circle)
+		const Coord3D south{ startWp->location.x, startWp->location.y - CombatQueries::boundingSphereRadius(*yard) * 0.5f, 0.0f };
+		CHECK(dist2D(a.placed[1].position, south) >= r - 0.5); // tolerance: findPositionAround places at a random angle between r and 1.4 r (RW 0x62B074); 0.5 covers the float32 position
+		CHECK(dist2D(a.placed[1].position, south) <= r * 1.4 + 0.5); // tolerance: findPositionAround places at a random angle between r and 1.4 r (RW 0x62B074); 0.5 covers the float32 position
+
+		// a Player_<n>_Rally waypoint (added to a copy of the map's waypoints) halfway to the map's other start: the unit is placed around it instead
+		const Waypoint *other = mapTerrain->findWaypointByName("Player_" + std::to_string(start.message.game.slots[0].startPos + 1) + "_Start");
+		REQUIRE(other);
+		MapChunks chunks = game.map().chunks;
+		MapObject rallyObject;
+		rallyObject.m_objectName = "*Waypoints/Waypoint";
+		rallyObject.m_location = { (startWp->location.x + other->location.x) * 0.5f, (startWp->location.y + other->location.y) * 0.5f, 0.0f };
+		int maxId = 0;
+		for (const Waypoint &w : mapTerrain->waypoints()) maxId = std::max(maxId, w.id);
+		rallyObject.m_properties.setInt("waypointID", maxId + 1);
+		rallyObject.m_properties.setAsciiString("waypointName", "Player_" + n + "_Rally");
+		rallyObject.m_isWaypoint = true;
+		chunks.objects.push_back(rallyObject);
+		TerrainLogic withRally;
+		std::vector<std::string> problems;
+		withRally.init(game.map().heightMap, chunks, &problems);
+		const Waypoint *rally = withRally.findWaypointByName("Player_" + n + "_Rally");
+		REQUIRE(rally);
+		game.logic().setTerrain(&withRally);
+		StartingBase::Result b;
+		StartingBase::placeForPlayer(game.logic(), 1, slot, *p, pt, b);
+		game.logic().setTerrain(mapTerrain);
+		CHECK(b.errors.empty());
+		REQUIRE(b.placed.size() == 2);
+		CHECK(b.placed[0].position.x == a.placed[0].position.x); // the structure still stands on the start waypoint
+		CHECK(b.placed[0].position.y == a.placed[0].position.y);
+		CHECK(dist2D(b.placed[1].position, rally->location) >= r - 0.5); // tolerance: findPositionAround places at a random angle between r and 1.4 r (RW 0x62B074); 0.5 covers the float32 position
+		CHECK(dist2D(b.placed[1].position, rally->location) <= r * 1.4 + 0.5); // tolerance: findPositionAround places at a random angle between r and 1.4 r (RW 0x62B074); 0.5 covers the float32 position
+		CHECK(dist2D(b.placed[1].position, south) > r * 1.4 + 0.5); // tolerance: outside the ring around the old base point, so the rally waypoint decided it
 	});
 }
