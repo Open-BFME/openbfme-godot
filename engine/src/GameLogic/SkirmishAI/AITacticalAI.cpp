@@ -1200,18 +1200,12 @@ void defensiveTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 	++b.tacticsStarted;
 }
 
-// RW 0x8F17EE: the team attack-moves to the target (AIGroup::groupAttackMoveToPosition(pos, 0x7FFFFFFF, CMD_FROM_PLAYER), lane COMBAT-1's attack-move)
+// RW 0x8F17EE: the team attack-moves to the target (AIGroup::groupAttackMoveToPosition(pos, 0x7FFFFFFF, CMD_FROM_PLAYER), lane PORT-13: a formation
+// attack-move for a player's group of more than one unit when AIData AttackMoveUsesFormations and UseFormations allow it)
 void attackMove(GameLogic &logic, const std::vector<ObjectID> &members, const Coord3D &pos, CommandSourceType source = CMD_FROM_PLAYER)
 {
 	AIGroup group(logic, members);
-	group.groupMoveToPosition(pos, false, source, false, 0.0f, true); // lane BACKLOG-8 r2: no formation march for an attack-move (its attack march is S-4463)
-	for (Object *o : group.members())
-	{
-		if (AIUpdateInterface *u = o->getAIUpdateInterface())
-		{
-			u->armAttackMove(u->stateMachine().goalPosition(), source);
-		}
-	}
+	group.groupAttackMoveToPosition(pos, 0x7FFFFFFF, source);
 }
 
 bool teamAlive(GameLogic &logic, const AITacticTeam &team)
