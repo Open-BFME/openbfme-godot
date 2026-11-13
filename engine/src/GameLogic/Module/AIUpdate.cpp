@@ -657,7 +657,8 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_MOVE_TO, std::make_unique<AIMoveToMachineState>(*m), AI_GOING_IDLE, AI_GOING_IDLE);
 	m->defineState(AI_FOLLOW_PATH, std::make_unique<AIFollowPathState>(*m, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_EXITPRODUCTION_PATH, std::make_unique<AIFollowPathState>(*m, true), AI_IDLE, AI_IDLE);
-	m->defineState(AI_FOLLOW_PATH_AS_TEAM, std::make_unique<AIFollowPathAsTeamState>(*m), AI_IDLE, AI_IDLE); // lane BACKLOG-8 r2: RW state 54
+	m->defineState(AI_FOLLOW_PATH_AS_TEAM, std::make_unique<AIFollowPathAsTeamState>(*m, false), AI_IDLE, AI_IDLE);       // lane BACKLOG-8 r2: RW state 54
+	m->defineState(AI_FOLLOW_PATH_AS_TEAM_ATTACK, std::make_unique<AIFollowPathAsTeamState>(*m, true), AI_IDLE, AI_IDLE); // lane PORT-13: RW state 61
 	m->defineState(AI_WAIT, std::make_unique<AIWaitState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_BUSY, std::make_unique<AIBusyState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_MOVE_OUT_OF_THE_WAY, makeMoveOutOfTheWayState(*m), AI_GOING_IDLE, AI_GOING_IDLE); // lane PHYS-1: state 26 (AIUpdateAllies.cpp); PLAY-4: -> 0x4E
@@ -1318,12 +1319,45 @@ void AIUpdateInterface::aiFollowPathAsTeam(const std::vector<Coord3D> &path, Obj
 	{
 		return;
 	}
+	if (source != CMD_FROM_AI)
+	{
+		m_attackMoveActive = false;
+	}
 	m_machine->setGoalPosition(path.back());
 	m_machine->setGoalPath(path);
 	setLastCommandSource(source);
 	m_mover->ignoreObstacle(ignoreObject ? ignoreObject->getID() : PATHFIND_INVALID_ID);
 	m_teamPathAngle = angle;
 	m_machine->setState(AI_FOLLOW_PATH_AS_TEAM);
+	wakeUpNow();
+}
+
+void AIUpdateInterface::aiFollowPathAsTeamAttack(const std::vector<Coord3D> &path, Object *ignoreObject, float angle, CommandSourceType source)
+{
+	// RW 0x66BC68 (AI command 0x25, RW 0x66ABAF -> AI vslot 0x80): identical to RW 0x66BB9D except it enters state 61 (0x3D), the attack march
+	if (!acceptCommand(source, 0x25))
+	{
+		return;
+	}
+	if (hasKind(*getObject(), kindBits().immobile))
+	{
+		return;
+	}
+	m_machine->clear();
+	if (path.empty())
+	{
+		return;
+	}
+	if (source != CMD_FROM_AI)
+	{
+		m_attackMoveActive = false;
+	}
+	m_machine->setGoalPosition(path.back());
+	m_machine->setGoalPath(path);
+	setLastCommandSource(source);
+	m_mover->ignoreObstacle(ignoreObject ? ignoreObject->getID() : PATHFIND_INVALID_ID);
+	m_teamPathAngle = angle;
+	m_machine->setState(AI_FOLLOW_PATH_AS_TEAM_ATTACK);
 	wakeUpNow();
 }
 

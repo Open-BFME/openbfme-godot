@@ -271,12 +271,12 @@ bool OpenContain::addToContain(Object *obj)
 }
 
 // RW 0x8674C2 OpenContain::addToContain
-void OpenContain::openContainAdd(Object *obj)
+bool OpenContain::openContainAdd(Object *obj)
 {
 	// RW 0x8674D3: wasSelected (the drawable's selection, client side: false in the logic)
 	if (obj->getContainedBy())
 	{
-		return;
+		return false;
 	}
 	addToContainList(obj);
 	if (const Player *p = obj->getControllingPlayer())
@@ -284,6 +284,24 @@ void OpenContain::openContainAdd(Object *obj)
 		m_playerEnteredMask = 1u << ((unsigned)p->getPlayerIndex() & 31u); // RW 0x8674FA: interface + 0x58
 	}
 	onContaining(obj, false); // the container's contain slot 0x58
+	// onContaining can kill: TransportContain's GrabWeapon fire (RW 0x86AA8A) may destroy the rider, the container, or both. RotWK links the rider only
+	// below (RW 0x867543 -> Object::onContainedBy RW 0x6901AE sets + 0x27C), but GameLogic::destroyObject (RW 0x62BBAB) runs Object::onDestroy
+	// (RW 0x62BC1E -> RW 0x6902FA) at once, and its leave-the-container step reads + 0x27C, still null here. In retail the destroyed rider therefore stays in
+	// the list and the next frame reads freed memory (the game's pool allocator hides it); the port cannot read a freed object, so it finishes the entry
+	// and then runs the exit that Object::onDestroy would have run:
+	// - the rider is no longer listed: the container's own death path took it out (OpenContain::onDie with EjectPassengersOnDeath -> removeAllContained)
+	//   and ran the exit already; linking it now would point it at a dead container;
+	// - the rider or the container is destroyed: link it, then the container's own removal (contain slot 0xA4), as onDestroy's step would with + 0x27C set.
+	if (!isContainedHere(*obj))
+	{
+		return false;
+	}
+	if (obj->isDestroyed() || getObject()->isDestroyed())
+	{
+		objectOnContainedBy(obj);
+		removeFromContain(obj);
+		return false;
+	}
 	redeployOccupants();      // main slot 0x48
 	objectOnContainedBy(obj); // RW 0x6901AE
 	recalcApparentControllingPlayer(); // main slot 0x54 (OpenContain RW 0x8658A3: the sound once per frame, client side)
@@ -293,6 +311,7 @@ void OpenContain::openContainAdd(Object *obj)
 		addOrRemoveObjFromWorld(obj, false); // RW 0x867566: main slot 0x60(obj, false)
 	}
 	++m_openStats.entered;
+	return true;
 }
 
 // RW 0x866987
