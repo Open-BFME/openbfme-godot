@@ -244,6 +244,7 @@ public:
 	// lane STARTRANGE-1: tests only
 	bool withinStartAbilityRangeForTest() { return withinStartAbilityRange(); }
 	bool withinAbortRangeForTest() const { return withinAbortRange(); }
+	bool approachPointForTest(Coord3D &pos, float range) const { return approachPoint(pos, range); } // lane APPROACH-859
 
 	// RW 0x8530BA (slot 0x34): the ability ends (aborted: the abort paralysis; ownerDying: the special objects die with the owner)
 	virtual void finishAbility(bool ownerDying, bool aborted);
@@ -265,6 +266,10 @@ protected:
 	// false when the horde has fewer members than the cost (the caller ends the ability)
 	bool payUnitCost();
 	bool withinStartAbilityRange();                // RW 0x85207A
+	// lane APPROACH-859: RW 0x851607 (BFME2 1.06 0x44E85E): the approach point. From `pos` (the target's position) steps of 10 back toward the caster
+	// (count trunc(range * -0.1f) negated, minus 1) until a point on the ground layer the caster has a quick path to; true with `pos` moved to it,
+	// true unchanged when the caster stands above the ground layer, false (pos unchanged) when no point qualifies or the caster has no AI
+	bool approachPoint(Coord3D &pos, float range) const;
 	bool withinAbortRange() const;                 // RW 0x8522E3
 	bool captureTarget(SpecialPowerModule *spm);   // RW 0x8544F2 (lane HERO-2)
 	void grabTrigger(int type);                    // RW 0x8540A1 .. 0x8544C8 (lane MODCOMPAT-MOD1)
@@ -349,6 +354,7 @@ public:
 	CreateModuleInterface *getCreate() override { return this; }
 	void onCreate() override {}
 	void onBuildComplete() override; // RW 0x8B11FE (create interface slot 1): TriggerInstantlyOnCreate triggers at once
+	bool handlePackingProcessing() override; // RW 0x8B1142 (vtable 0xC6BDA0 slot 0x50): the drawable fade, no new simulation state
 	// RW 0x8B1FDA (slot 0 of the special power update interface RW 0xC6BCB8, shared with SummonReplacement; lane SUMMON-1)
 	void initiateIntentToDoSpecialPower(const SpecialPowerTemplate *t, Object *target, const Coord3D *loc, unsigned options, int extra) override;
 	void finishAbility(bool ownerDying, bool aborted) override; // RW 0x8B1219

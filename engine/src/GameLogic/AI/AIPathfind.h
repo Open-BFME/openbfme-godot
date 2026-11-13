@@ -975,6 +975,10 @@ public:
 	bool meleeFootprintFree(const PathfindObject &obj, int x, int y, PathfindLayerEnum layer, int radius, bool center) const;
 	// lane PHYS-1: RW 0x6EE6DD: the footprint around the unit's own cell holds no blocking cell and no other unit's goal (a LARGE_RECTANGLE_PATHFIND unit: no other such unit's)
 	bool meleeOwnFootprintFree(const PathfindObject &obj);
+	// lane PORT-22: RW 0x6EA0EC (AIPathfindMelee.cpp): `v` = the target's labelled contact point (RW 0x667C76, found through the unit's AI), else `v` scaled by
+	// the first of i = 0 .. 19 steps along it whose cell is not an obstacle. Its two callers: the melee engagement's structure branch (RW 0x6F3905) and the siege
+	// deploy's approach point (RW 0x8C9E7A, SiegeModules.cpp)
+	void adjustMeleeOffset(const PathfindObject &unit, const PathfindObject &target, Coord3D &v);
 	// lane PHYS-1: RW 0x6F37B3 (AIPathfindMelee.cpp), the member engagement destination of the melee engage state (0xE2): true with `dest` = the unit's position when
 	// `range` reaches the target from there and RW 0x6EE6DD passes; else the circular search RW 0x6EFE9F (budget MaxCellsFindMeleeEngagementLocation) around the
 	// target's cell moved 10 toward the point 10 ahead of the unit, then around the target's own cell: the cell nearest the unit, in its zone, from which `range`

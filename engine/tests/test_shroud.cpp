@@ -777,7 +777,7 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 		"[S-563] shroud numerics: the look polygon's x87 extended-precision vertices are computed in binary64 with SimMath's sin / cos (RW fsin / fcos); "
 		"a horizontal first left edge (uninitialised slope in RW 0xB501A0) starts at the top vertex with slope 0",
 		"[S-564] object look: the SHROUD_CLEARING modifier (RW 0x804F39 type 0x14) and the object's own range (Object + 0x1B4) are read since lane DECOMP-1; the spied mask (player + 0x3C8), object + 0x30 / + 0x3F4 (radii "
-		"0.1), DynamicShroudClearingRangeUpdate and the HordeContain VisionSide / VisionRearOverride are not read; object + 0x480 (hide when fogged) is taken as set",
+		"0.1) and DynamicShroudClearingRangeUpdate are not read; object + 0x480 (hide when fogged) is taken as set",
 		"[S-565] fogged targets: a human player's units cannot attack an object FOGGED or SHROUDED for that player unless the order comes from a script (RW "
 		"0x82C167, the action helper: human and not script, as ZH ActionManager isObjectShroudedForAction); its other callers and the other action types were not read",
 		"[S-566] stealth and detection: RotWK's invisibility (InvisibilityUpdate, StealthDetectorUpdate, the InvisibilityManager, the INVISIBLE_STEALTH / CAMOUFLAGE "

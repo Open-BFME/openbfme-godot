@@ -161,6 +161,11 @@ public:
 	virtual void attackPositionNow(const Coord3D &pos) = 0;
 	// slot 0x238 (RW 0x86BD54, lane MECH-D): the horde's current locomotor has ScalesWalls and it keeps a wall to scale
 	virtual bool isScalingWall() const = 0;
+	// HordeContainInterface vslots 0x258 / 0x25C (RW 0x872B9E / 0x872BAB): module data + 0x274 / + 0x278, the `fld` of the two getters, returned on ST0 as f32.
+	// The only reader is the object's look (RW 0x694B9B / 0x694B79, ShroudManager::retailObjectSource), which replaces the template's VisionRear /
+	// VisionSide with them when they are above 0. Declared LAST so no earlier slot of the interface moves.
+	virtual float getVisionRearOverride() const = 0;
+	virtual float getVisionSideOverride() const = 0;
 };
 
 class HordeContain : public UpdateModule, public ContainModuleInterface, public CreateModuleInterface, public HordeContainInterface
@@ -365,6 +370,9 @@ public:
 	ObjectID wallToScale() const { return m_wallToScale; }
 	// contain slot 0x238 (RW 0x86BD54); the interface's
 	bool isScalingWall() const override;
+	// RW 0x872B9E / 0x872BAB: the parsed module data straight through (the object's look replaces the template's rear / side factors with them when above 0)
+	float getVisionRearOverride() const override;
+	float getVisionSideOverride() const override;
 	// the collide entry (RW 0x86C61E)
 	void collideWithWall(Object *other);
 	// RW 0x86D170, at the end of the member pass

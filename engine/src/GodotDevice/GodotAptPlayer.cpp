@@ -3397,14 +3397,27 @@ Dictionary AptMenuPlayer::strategic_setup(const Dictionary &request)
 	{
 		return out;
 	}
+	// OpenBFME presentation (both editions): the setup's viewport is drawn above
+	// the APT canvas. Yield it to covering screens and lobby message boxes so
+	// Start's refusal remains visible and receives clicks instead of the map.
+	auto boxOpen = [](AptMessageBox *box) { return box && box->type() != AptMessageBox::TYPE_NONE; };
+	bool covered = m->shell->shell->inputTop() != screen || boxOpen(screen->ruleBox());
+	if (auto *lan = dynamic_cast<AptLanLobby *>(screen))
+	{
+		covered = covered || boxOpen(lan->messageBox());
+	}
+	if (auto *online = dynamic_cast<AptOnlineShell *>(screen))
+	{
+		covered = covered || boxOpen(online->messageBox());
+	}
 	const std::string kind = toNative(String(request.get("kind", "state")));
 	if (kind == "hover")
 	{
-		screen->hoverRegion((int)(int64_t)request.get("region", (int64_t)-1));
+		screen->hoverRegion(covered ? -1 : (int)(int64_t)request.get("region", (int64_t)-1));
 	}
 	else if (kind == "click")
 	{
-		out["taken"] = screen->clickRegion((int)(int64_t)request.get("region", (int64_t)-1), !(bool)request.get("right", false));
+		out["taken"] = !covered && screen->clickRegion((int)(int64_t)request.get("region", (int64_t)-1), !(bool)request.get("right", false));
 	}
 	const LivingWorldSetupCampaign *c = screen->strategicCampaign();
 	GameWindow *w = screen->livingWorldWindow();
@@ -3425,7 +3438,7 @@ Dictionary AptMenuPlayer::strategic_setup(const Dictionary &request)
 		{
 			visible = visible && !p->winIsHidden();
 		}
-		out["visible"] = visible;
+		out["visible"] = visible && !covered;
 	}
 	out["region_campaign"] = c ? toGodot(c->name) : String();
 	// the slot's MultiplayerColor index (-1: random): the device fills the region with that colour's LivingWorldColor (RW 0x975E04 -> RW 0x78385B)

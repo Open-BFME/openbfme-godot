@@ -378,6 +378,8 @@ public:
 	// none; + 0x430 / + 0x434 the offset); every writer and reader goes through an object with an AI, and the port's Object keeps its size (see m_legendaryFactor)
 	// lane BACKLOG-8 r2: AI command 0x24 (RW 0x66AB94 -> vslot 0x7C, RW 0x66BB9D): the formation march along `path`, facing `angle` at its end (state 54)
 	void aiFollowPathAsTeam(const std::vector<Coord3D> &path, Object *ignoreObject, float angle, CommandSourceType source);
+	// lane PORT-13: AI command 0x25 (RW 0x66ABAF -> vslot 0x80, RW 0x66BC68): the formation attack march along `path`, facing `angle` at its end (state 61)
+	void aiFollowPathAsTeamAttack(const std::vector<Coord3D> &path, Object *ignoreObject, float angle, CommandSourceType source);
 	// AI vslot 0x224 (RW 0x667144): a unit whose current locomotor set is not air-only, that has a locomotor not flying (template surfaces without AIR) and
 	// is not held (Object + 0x1C8 bit 3) marches along a path (command 0x24 / 0x25); any other takes a plain move
 	bool canFollowTeamPath() const;
@@ -450,6 +452,8 @@ public:
 	int pathPriority() const override;
 	PathfindObjectID attackTargetOf(const PathfindObject &o) const override;
 	PathfindObjectID enterTargetOf(const PathfindObject &o) const override; // AI vslot 0x1FC, RW 0x664D12
+	// lane PORT-9: AI vslot 0x1FC itself (RW 0x664D12), the object this AI is entering or null; enterTargetOf and OpenContain::onCollide (RW 0x865A00) both call it
+	const Object *enterTarget() const;
 	bool crushOrSquishPolicy(const PathfindObject &other) const override; // lane ATTACK-1: RW 0x69519A(other, 2)
 	float wanderFactor() const override;
 	float closeEnoughDist() const override;
