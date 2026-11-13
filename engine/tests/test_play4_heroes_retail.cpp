@@ -431,9 +431,13 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// RW 0x871536); the damage and the kills are the same
 				// lane PATH-REBUILD: 3 strikes (4 before): the found paths are rebuilt from their optimised nodes (RW 0x767B0E), so the scene's units walk other
 				// lines; the damage and the kills are the same
-				CHECK(ord.shots == (drogoth ? 3u : 0u));
-				CHECK(ord.lost == (drogoth ? 1500.0f : 450.0f));
-				CHECK(ord.membersKilled == (drogoth ? 20u : 5u));
+				// merge queue q53 (measured at each merge point, from #287's on): the fell beasts' TransportContain fires its GrabWeapon (FellbeastGrabWeapon)
+				// at the horde member it picks up (RW 0x86AA4B .. 0x86AAA2): Khamul and Morgomir 5 strikes, 1425 health, 19 of 20 killed; the Witch-king 6
+				// strikes, 1350 health, 17 killed (before: no strike, 450 health, 5 killed); Drogoth has no GrabWeapon and is unchanged
+				const bool witchKing = hero == "MordorWitchKingOnFellBeast";
+				CHECK(ord.shots == (drogoth ? 3u : witchKing ? 6u : 5u));
+				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1350.0f : 1425.0f));
+				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 17u : 19u));
 				continue;
 			}
 			CHECK(own.walked > 600.0f);

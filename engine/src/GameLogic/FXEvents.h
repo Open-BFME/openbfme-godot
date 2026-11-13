@@ -36,7 +36,7 @@ struct FXEvent
 	enum Kind : std::uint8_t
 	{
 		OBJECT_FX,      ///< FXList::doFXObj(fx, primary, secondary) (RW 0x4B1B5A -> 0x5E2282)
-		POSITION_FX,    ///< FXList::doFXPos(fx, position, transform or null, 0, null) (RW 0x494615)
+		POSITION_FX,    ///< FXList::doFXPos(fx, position, transform or null, weaponSpeed, secondaryPosition or null) (RW 0x494615 -> 0x5E21D8)
 		WEAPON_FIRE_FX, ///< the fire FX block of RW 0x6CC915: the client applies the visibility tests, then handleWeaponFireFX / doFXObj
 		OBJECT_SOUND,   ///< an audio event played on the primary object (`fxList` holds the audio event name): SlowDeathBehavior's Sound (RW 0x8609A8)
 		// lane FX-4, TransitionDamageFX (RW 0x8BE077): `fxList` holds the FXParticleSystem template name. ATTACH: createParticleSystem (RW 0x5F526A), the
@@ -58,9 +58,12 @@ struct FXEvent
 	bool hasTransform = false;      ///< transform holds the primary's 3x4 matrix (rows: basis row r, then the translation) at the call
 	float transform[12] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 };
 	std::array<std::uint32_t, 19> conditions{}; ///< the primary's model condition bits at the call (Object + 0x10C)
-	Coord3D secondaryPosition{ 0.0f, 0.0f, 0.0f }; ///< WEAPON_FIRE_FX: the victim position handed to handleWeaponFireFX
+	Coord3D secondaryPosition{ 0.0f, 0.0f, 0.0f }; ///< WEAPON_FIRE_FX: the victim position handed to handleWeaponFireFX; POSITION_FX: secondary when hasSecondaryPosition (RW 0x494615 arg 5)
+	bool hasSecondaryPosition = false; ///< POSITION_FX: pass &secondaryPosition as the secondary position of FXList::doFXPos (RW 0x494615 -> 0x5E21D8)
+	bool drawablePosition = false;  ///< POSITION_FX: pass primary's Drawable::getPosition (RW 0x676711) as pos (and as secondary when hasSecondaryPosition)
+	bool drawableMatrix = false;    ///< POSITION_FX: pass primary's Drawable::getTransformMatrix (RW 0x6765B9) as primaryMtx
 	int weaponSlot = 0, barrel = 0; ///< WEAPON_FIRE_FX
-	float weaponSpeed = 0.0f;       ///< WEAPON_FIRE_FX: WeaponTemplate + 0x68
+	float weaponSpeed = 0.0f;       ///< WEAPON_FIRE_FX, POSITION_FX: WeaponTemplate + 0x68 (primarySpeed in FXList::doFXPos RW 0x494615 arg 4)
 	bool playWhenStealthed = false; ///< WEAPON_FIRE_FX: WeaponTemplate + 0x135
 	const std::string *bone = nullptr; ///< OBJECT_FX of a LevelUpFx entry with a bone (lane INTEG-1, RW 0x8211EC): doFXPos at the bone; template data
 	std::uint32_t slot = 0;         ///< ATTACH / DESTROY_PARTICLE_SYSTEM: the key of the system among the primary's (lane FX-4)
@@ -86,6 +89,9 @@ public:
 
 	// fills an event for `obj` (position, transform, model conditions) at `frame`
 	static FXEvent objectEvent(FXEvent::Kind kind, const char *site, UnsignedInt frame, const std::string &fxList, const Object &obj);
+	// fills a POSITION_FX event whose primary position, transform matrix, weaponSpeed and secondary position come from `obj`'s drawable and `weaponSpeed`
+	// as retail's PreAttackFX calls do (Weapon::preFireWeapon RW 0x6CEA25 .. 0x6CEA58, WeaponFireSpecialAbilityUpdate::startUnpacking RW 0x895FC4 .. 0x896026)
+	static FXEvent drawablePositionEvent(const char *site, UnsignedInt frame, const std::string &fxList, const Object &obj, float weaponSpeed);
 	// records and forwards one event; an empty name or "None" (any case: RW parseFXList stores NULL for it) is not a call and is dropped
 	void emit(const FXEvent &event);
 

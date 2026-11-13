@@ -936,7 +936,13 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q49 (DECOMPFIX-1109's FLEECHASE-1, the chase of a fleeing target goes on; measured once on the merged tree, the only item): seed 2 ends with
 	// Mordor's defeat at 4607 (5832) with a new table from the first window on, seed 7 with Mordor's defeat at 3249 (2715); seed 1234 stays open at 9000.
 	// Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 4607 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 3249 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Merge queue q52 (measured once on the merged tree and at each merge point; #294's SlaughterHordeContain under the citadels moves them, #297 and #298
+	// keep them): seed 2 ends with Mordor's defeat at 4267 (4607) with a new table from the first window on, seed 7 with Mordor's defeat at 3121 (3249);
+	// seed 1234 stays open at 9000. Engine pins, not retail values.
+	// Merge queue q53 (measured once on the merged tree and at each merge point; #303's formation attack march for the AI's attack teams moves them, #299 /
+	// #287 / #301 / #302 / #305 keep them): seed 2 ends with Mordor's defeat at 4297 (4267), its table unchanged up to the 4000 window, seed 7 with Mordor's
+	// defeat at 2667 (3121); seed 1234 stays open at 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 4297 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 2667 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -991,11 +997,14 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// at 9000
 			// merge queue q47 (measured once on the merged tree; see above): a new table from the 2000 window on; the game ends with Mordor's defeat at 5832
 			// merge queue q49 (measured once on the merged tree; see above): a new table from the first window on; the game ends with Mordor's defeat at 4607
+			// merge queue q52 (measured once on the merged tree and at each merge point; see above): a new table from the first window on; the game ends
+			// with Mordor's defeat at 4267
+			// merge queue q53 (measured once on the merged tree and at each merge point; see above): the same table; the game ends with Mordor's defeat at 4297
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 71u/7s destroyed 19u/1s] [1 attacks 0 built 92u/8s destroyed 39u/2s]\n"
-		"frame 2000: [0 attacks 2 built 201u/9s destroyed 99u/2s] [1 attacks 2 built 186u/10s destroyed 149u/6s]\n"
-		"frame 3000: [0 attacks 2 built 222u/11s destroyed 159u/3s] [1 attacks 4 built 246u/14s destroyed 188u/10s]\n"
-		"frame 4000: [0 attacks 2 built 269u/14s destroyed 203u/4s] [1 attacks 5 built 318u/19s destroyed 223u/12s]\n");
+		"frame 1000: [0 attacks 0 built 71u/7s destroyed 19u/1s] [1 attacks 1 built 91u/8s destroyed 43u/2s]\n"
+		"frame 2000: [0 attacks 1 built 191u/9s destroyed 83u/1s] [1 attacks 1 built 167u/11s destroyed 157u/6s]\n"
+		"frame 3000: [0 attacks 1 built 212u/13s destroyed 190u/1s] [1 attacks 2 built 300u/13s destroyed 214u/11s]\n"
+		"frame 4000: [0 attacks 1 built 213u/14s destroyed 227u/1s] [1 attacks 3 built 386u/18s destroyed 238u/16s]\n");
 		}
 	}
 }
