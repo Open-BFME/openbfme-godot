@@ -4002,6 +4002,11 @@ int AptMenuPlayer::tick(double delta)
 		// WindowManager::update (retail 0x0046E850): pending pop / loads, focus, the movies, the gadget layer, the screens' updates, the tooltip.  Gadgets change
 		// with input between movie steps, so the canvas is rebuilt on every tick in shell mode.
 		m->shell->wm->update(ms);
+		if (m->shell->strategicHud)
+		{
+			const Vector2 window = windowSize();
+			m->shell->strategicHud->setViewportSize((int)window.x, (int)window.y, m_fit);
+		}
 		stepped = 1;
 		if (m->shell->cursorTooltip && m->shell->metrics)
 		{
@@ -4172,6 +4177,10 @@ void AptMenuPlayer::render(bool force)
 	m->mapping.windowW = window.x;
 	m->mapping.windowH = window.y;
 	m->mapping.mode = m_fit ? AptStageMapping::Mode::Fit : AptStageMapping::Mode::Stretch;
+	if (m->shell && m->shell->strategicHud)
+	{
+		m->shell->strategicHud->setViewportSize((int)window.x, (int)window.y, m_fit);
+	}
 
 	Time *time = Time::get_singleton();
 	std::uint64_t t0 = time->get_ticks_usec();
@@ -6136,6 +6145,10 @@ Vector2 AptMenuPlayer::window_to_stage(const Vector2 &w) const
 	const Vector2 window = windowSize(); // the mapping follows the window between renders (events may come first)
 	m->mapping.windowW = window.x;
 	m->mapping.windowH = window.y;
+	if (m->shell && m->shell->strategicHud)
+	{
+		m->shell->strategicHud->setViewportSize((int)window.x, (int)window.y, m_fit);
+	}
 	float x, y;
 	m->mapping.windowToStage(w.x, w.y, x, y);
 	return Vector2(x, y);
