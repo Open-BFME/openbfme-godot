@@ -11,10 +11,14 @@
 
 #include "Common/AsciiString.h"
 #include "Common/INIException.h"
+#include "Common/Player.h"
+#include "Common/PlayerList.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AI/AICommandSink.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/ContainParseHooks.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -26,8 +30,10 @@
 #include "GameLogic/SimMath.h"
 #include "GameClient/FXList.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <vector>
 
 namespace
 {
@@ -232,6 +238,122 @@ bool FlammableUpdate::isUnderwater() const
 	return terrain->isUnderwater(p->x, p->y, nullptr, nullptr);
 }
 
+// RW 0x890782: a RunToWater object whose burning anim ended looks for the water point nearest to it, above RunToWaterDepth and reachable, then runs there
+// (RW 0x8909BE; the module returns 1 either way, RW 0x890A1A: the burning goes on unchanged from here). Without water: the rage is forced (RW 0x890A15).
+void FlammableUpdate::runToWaterSearch()
+{
+	Object *obj = getObject();
+	// RW 0x890782 .. 0x8907A7: the object's AI is required; without one the search cannot run (RW 0x890A1A, return 1)
+	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (!ai)
+	{
+		return;
+	}
+	AIWorld *world = obj->logic().aiWorld();
+	const PathfindTerrain *terrain = world && world->mapReady() ? world->pathfinder().terrainView() : nullptr;
+	if (!terrain)
+	{
+		// without a map there is no water to find (the port cannot answer RW 0x89096A's slot 0x4C): today's behavior, RW 0x890A15's no-water branch, reported
+		noteStop(*obj, "FlammableUpdate: RunToWater's water search (RW 0x890782) needs a map; without one the burning object takes RW 0x890A15's no-water branch");
+		// RW 0x890A15 forces the ent's rage; EntEnragedUpdate is not ported in this tree (the module's stop line names it), so the branch only reports
+		return;
+	}
+	const Coord3D *pos = obj->getPosition();
+	const float posX = pos->x;
+	const float posY = pos->y;
+	const float posZ = pos->z;
+	const float radius = m_data->m_runToWaterSearchRadius;        // RW data + 0x40
+	const float increment = m_data->m_runToWaterSearchIncrement; // RW data + 0x44
+	// RW 0x89078A .. 0x8907A4: best starts at (1e7f, 1e7f, 1e7f) (RW 0xBDE694 = 10000000.0f)
+	const float kBestStart = 10000000.0f;
+	float bestX = kBestStart;
+	float bestY = kBestStart;
+	float bestZ = kBestStart;
+	// RW 0x8907BA .. 0x8907E4: the current x starts at trunc(posX - radius); an empty column or row skips it
+	float xCur = SimMath::sseFromInt32(SimMath::truncToInt32(SimMath::subf32(posX, radius)));
+	const float xHi = SimMath::addf32(posX, radius);
+	if (xHi >= xCur) // RW 0x8907D7: comiss + jb
+	{
+		// the x loop is outer, the y loop inner (RW 0x8907EA .. 0x89092A)
+		for (;;)
+		{
+			float yCur = SimMath::sseFromInt32(SimMath::truncToInt32(SimMath::subf32(posY, radius)));
+			const float yHi = SimMath::addf32(posY, radius);
+			if (yHi >= yCur) // RW 0x890804: comiss + jb
+			{
+				for (;;)
+				{
+					// the depth test first (RW 0x890812): the point counts only above RunToWaterDepth (an x87 compare in RW; the port's subf32, as AIPathfind.cpp:457)
+					float waterZ = 0.0f;
+					float terrainZ = 0.0f;
+					const bool underwater = terrain->isUnderwater(xCur, yCur, &waterZ, &terrainZ);
+					const float depth = underwater ? SimMath::subf32(waterZ, terrainZ) : 0.0f;
+					if (depth > m_data->m_runToWaterDepth) // RW 0x89083A: jbe skips
+					{
+						// the candidate point (RW 0x89086A .. 0x890886): its y part is subtracted before its x part (RW 0x89089E .. 0x8908A6)
+						const float dy = SimMath::subf32(posY, yCur);
+						const float dx = SimMath::subf32(posX, xCur);
+						const float candDist2 = SimMath::sumSquares2(dy, dx);
+						const float bestDy = SimMath::subf32(posY, bestY);
+						const float bestDx = SimMath::subf32(posX, bestX);
+						const float bestDist2 = SimMath::sumSquares2(bestDy, bestDx);
+						if (candDist2 < bestDist2) // RW 0x8908AA: comiss + jbe skips (equal keeps the old best)
+						{
+							const Coord3D cand{ xCur, yCur, posZ }; // RW 0x89085D: the candidate's z is the object's z
+							// RW 0x8908AF .. 0x8908C6: the quick path test (RW 0x6F5BB0) with no set: the AI's own locomotor set; nullptr 4th arg (RW 0x8908B7)
+							if (world->pathfinder().quickDoesPathExist(ai->adapter(), pos, &cand, nullptr))
+							{
+								bestX = xCur; // RW 0x8908CE .. 0x8908D1: the three moves copy the point whole
+								bestY = yCur;
+								bestZ = posZ;
+							}
+						}
+					}
+					yCur = SimMath::sseFromInt32(SimMath::truncToInt32(SimMath::addf32(yCur, increment)));
+					if (!(yHi >= yCur)) // RW 0x8908F8: comiss + jae
+					{
+						break;
+					}
+				}
+			}
+			xCur = SimMath::sseFromInt32(SimMath::truncToInt32(SimMath::addf32(xCur, increment)));
+			if (!(xHi >= xCur)) // RW 0x890926: comiss + jae
+			{
+				break;
+			}
+		}
+	}
+	// the final test (RW 0x89096A .. 0x890989): the point found must be under water (TerrainLogic slot 0x4C)
+	if (!terrain->isUnderwater(bestX, bestY, nullptr, nullptr))
+	{
+		// RW 0x890A0B .. 0x890A1A: the no-water branch: the rage is forced (RW 0x890A15, once 0), the burning goes on unchanged; EntEnragedUpdate is not
+		// ported in this tree (the module's stop line names it), so the branch only reports
+		return;
+	}
+	// the RunToWater branch (RW 0x89098C .. 0x890A1A)
+	if (m_data->m_panicLocomotorWhileAflame) // RW 0x890993: data + 0x48
+	{
+		ai->chooseLocomotorSet(LOCOMOTORSET_PANIC); // RW 0x890A7: AI vslot 0x238(4)
+		m_panicLocomotorWhileAflameActive = true;  // RW 0x8909BA: module + 0x4C (the AI + 0x3C9 byte is write-only in RotWK 2.01, not carried)
+	}
+	const Coord3D best{ bestX, bestY, bestZ };
+	ai->aiMoveToPosition(best, CMD_FROM_SCRIPT); // RW 0x8909CA: RW 0x66C4CA, source 1
+	m_runningToWater = true;                    // RW 0x8909CF: module + 0x40
+	// RW 0x8909E3: RW 0x625759(TheGameLogic, obj, 0xFFFFF, 1) drops it from every player's selection; the selection is the logic's lists here (the
+	// same loop as BuildAssistantSell.cpp; the client's deselectDrawable follows the UNSELECTABLE status)
+	for (int i = 0; i < obj->logic().players().getPlayerCount(); ++i)
+	{
+		if (Player *p = obj->logic().players().getNthPlayer(i))
+		{
+			std::vector<ObjectID> &sel = p->selection();
+			sel.erase(std::remove(sel.begin(), sel.end(), obj->getID()), sel.end());
+		}
+	}
+	obj->setStatus(3, true);                     // RW 0x8909ED: UNSELECTABLE (TheObjectStatusNames[3])
+	obj->setStatus(5, true);                     // RW 0x8909F7: NO_ATTACK (TheObjectStatusNames[5])
+	// RW 0x890A04 tells the ent's EntEnragedUpdate to stay calm (RW 0x8B64B8(1)); the module is not ported in this tree, so there is nothing to tell
+}
+
 // RW 0x8904B8
 void FlammableUpdate::onDamage(const DamageInfo &info)
 {
@@ -373,7 +495,16 @@ void FlammableUpdate::stopBurning()
 	obj->setStatus(kStatusAflame, false);
 	static const int kAflame = CombatNames::modelCondition("AFLAME");
 	obj->setModelConditionState(kAflame, false);
-	noteStop(*obj, "FlammableUpdate: the quench's RW 0x68F2F1(0), script event 11, EntEnragedUpdate, sound stop, panic locomotor end and body slot 0x2C are not run");
+	// RW 0x8900F0 .. 0x890119: the panic locomotor ends (only the one started while aflame, only with PanicLocomotorWhileAflame and an AI)
+	if (m_data->m_panicLocomotorWhileAflame && m_panicLocomotorWhileAflameActive)
+	{
+		if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
+		{
+			ai->chooseLocomotorSet(LOCOMOTORSET_NORMAL); // RW 0x890113: RW vslot 0x238(0)
+			m_panicLocomotorWhileAflameActive = false;   // RW 0x890119 (the AI + 0x3C9 byte is write-only in RotWK 2.01, not carried)
+		}
+	}
+	noteStop(*obj, "FlammableUpdate: the quench's RW 0x68F2F1(0), script event 11, sound stop and body slot 0x2C are not run");
 }
 
 // RW 0x88FB79
@@ -414,13 +545,25 @@ UpdateSleepTime FlammableUpdate::update()
 		m_customAnimEndFrame = 0;
 		if (m_data->m_runToWater)
 		{
-			noteStop(*obj, "FlammableUpdate: RunToWater's water search and move (RW 0x890782) is not ported");
+			runToWaterSearch(); // RW 0x890782
 		}
 		return UPDATE_SLEEP_NONE;
 	}
-	if (isUnderwater() && obj->getAIUpdateInterface())
+	// RW 0x890A22 .. 0x890A88: an object under water (not SHIP) with an AI that is not moving: the burning ends early and the run to water ends
+	if (isUnderwater())
 	{
-		noteStop(*obj, "FlammableUpdate: an object under water with an AI is not tested with RW 0x664485; its aflame end is not shortened");
+		if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
+		{
+			if (!ai->isMoving()) // RW 0x890A59: RW 0x664485
+			{
+				const unsigned shorten = now + 3 * kLogicFramesPerSecond; // RW 0x890A62 .. 0x890A70: 3 * [0xD9F608] (5) frames from TheGameLogic + 0x40
+				if (m_aflameEndFrame > shorten)
+				{
+					m_aflameEndFrame = shorten; // RW 0x890A82 .. 0x890A84: unsigned min
+				}
+				m_runningToWater = false; // RW 0x890A86
+			}
+		}
 	}
 	if (m_damageEndFrame != 0 && now >= m_damageEndFrame)
 	{
@@ -453,6 +596,7 @@ void FlammableUpdate::crc(StateHasher &hasher) const
 	hasher.addU32(m_customAnimEndFrame);
 	hasher.addU32(m_lastFlameDamager);
 	hasher.addU32(m_aflameDamageTicks);
+	hasher.addBool(m_panicLocomotorWhileAflameActive);
 }
 
 // ---- FireSpreadUpdate ---------------------------------------------------------------------------------------------------------------
@@ -545,6 +689,7 @@ void FlammableUpdate::xfer(Xfer &x)
 	x.xferUnsignedInt(&m_customAnimEndFrame);
 	x.xferObjectID(&m_lastFlameDamager);
 	x.xferUnsignedInt(&m_aflameDamageTicks);
+	x.xferBool(&m_panicLocomotorWhileAflameActive); // appended (the 2026-11-06 save layouts are sealed by the engine id)
 }
 
 void FireSpreadUpdate::xfer(Xfer &x)
