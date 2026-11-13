@@ -2,4 +2,5 @@
 # Included from engine/CMakeLists.txt so the lane's file lists stay out of the shared list.
 
 set(OPENBFME_ANIM1_TESTS
-    tests/test_anim1.cpp)
+    tests/test_anim1.cpp
+    tests/test_missing_movement_animation.cpp)
