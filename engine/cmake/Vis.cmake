@@ -6,4 +6,5 @@ set(OPENBFME_VIS_SOURCES
     src/GameLogic/System/VisionSettings.cpp)
 
 set(OPENBFME_VIS_TESTS
-    tests/test_shroud.cpp)
+    tests/test_shroud.cpp
+    tests/test_shroud_horde.cpp)

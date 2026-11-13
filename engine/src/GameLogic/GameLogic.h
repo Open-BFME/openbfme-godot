@@ -159,6 +159,13 @@ public:
 	// lane CAH-2, RW 0x80AF0B (a Create-a-Hero record's flag 8): the drawable's house colour set (RW 0x80959A: kind 3 and the record's three colours,
 	// RW 0x6727B0 -> every draw module's vslot 0x7C); client only (HouseColor.h)
 	virtual void setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2) { (void)obj; (void)kind; (void)c0; (void)c1; (void)c2; }
+	// lane PORT-46, RW 0x8B11F0 / 0x8B44F0 (the packing fades of ToggleMountedSpecialAbilityUpdate / SpecialDisguiseUpdate) and RW 0x8B1219 /
+	// 0x8B125F (their resets): retail writes the drawable's opacity (+ 0xB0) straight from the ability module. The simulation never holds a drawable
+	// (S-810), so the write is a client event here, applied to Drawable::setDrawableOpacity (the BUILD-5 field): INFERENCE on the delivery, the value is
+	// RW's. Appended at the end of the interface on purpose: a virtual inserted in the middle of this class while port work went on made a retail Create-a-Hero
+	// test crash (stableqa1 cah retail, SIGSEGV after 43 assertions) with no code path of the lane running at all, while the same no-op virtual appended here
+	// leaves it green - the later slots' numbers must not move, whatever reads them
+	virtual void setDrawableOpacity(Object &obj, float opacity) { (void)obj; (void)opacity; }
 };
 
 class StateHasher;
@@ -198,6 +205,9 @@ struct GameLogicSettings
 	float formationEnemyDistance = 600.0f;
 	float narrowPassageScale = 1.0f;
 	bool waitForOthers = false;
+	// lane PORT-13: AIData AttackMoveUsesFormations (+ 0xBA, row RW 0xC1CE50, parseBool RW 0x42E558; the constructor RW 0x6FFD9E stores 1 and both editions'
+	// default\aidata.ini set Yes): the gate of AIGroup::groupAttackMoveToPosition's formation march (RW 0x774E6B). Hashed only when a mod turns it off
+	bool attackMoveUsesFormations = true;
 	// lane STEALTHFLY1: AIData MinFlightHeight (+ 0xB0, row RW 0xC1CE60 parseReal RW 0x42ED00; the constructor's FLT_MAX RW 0xBD1910 = none): the flight ground
 	// height's floor (RW 0x777ED7). No retail aidata.ini sets it; a map's map.ini AIData block does (map wor dol guldur 76, map evil rivendell 300)
 	float minFlightHeight = FLT_MAX;
@@ -217,6 +227,10 @@ struct GameLogicSettings
 	// (AIFollowWaypointPathState::update RW 0x755A20, asm RW 0x755B77 .. 0x755C08)
 	float chaseFromBehindLimit = 50.0f;
 	float skirmishGroupFudgeDistance = 0.0f;
+	// lane PORT-40: AIData MaxRecruitRadius + 0x5C (row RW 0xC1CCD0, parseReal RW 0x42ED00; the constructor's 0.0, RW 0x6FFD04 with xmm0 zeroed at
+	// RW 0x6FFC01): the radius a team recruits units within — the script action TEAM_RECRUIT_UNITS (RW 0x7C2BFB -> Team RW 0x7A491C); the AI player
+	// reads it for its own team building too (RW 0x8F8E2C / RW 0x8F9530 -> Team RW 0x7A41D4), which is not ported (S-412)
+	float maxRecruitRadius = 0.0f;
 	// lane AIDATA-1: the pathfinder's AIData rows (before: PathfindConfigLoader's own text scan; now the shared table, so a map.ini / solo.ini AIData block
 	// reaches the pathfinder too: PathfindConfigLoader::applyAIData). Rows and constructor values (RW 0x6FFBEF): WadeWaterDepth + 0x98 (row RW 0xC1CDD0, 5.0 RW
 	// 0xBDAE58), DeepWaterDepth + 0x9C (RW 0xC1CDE0, 50.0 RW 0xBD88C4), MeleeApproachTolerance + 0x90 (RW 0xC1CDB0, 20.0 RW 0xBDBC6C), MeleeApproachDist + 0x94
