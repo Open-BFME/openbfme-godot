@@ -604,7 +604,11 @@ TEST_CASE("skirmish ai pending attack: recruitment survives a brain update and l
 		const Object *unit = fx.logic->findObjectByID(id);
 		REQUIRE(unit);
 		REQUIRE(unit->getAIUpdateInterface());
-		CHECK(unit->getAIUpdateInterface()->attackMoveActive());
+		// lane PORT-13: AIData's constructor sets AttackMoveUsesFormations = true (RW 0x6FFD9E) and UseFormations = true (RW 0x6FFDE5); SimpleAttack (RW 0x8F18A3)
+		// calls AIGroup::groupAttackMoveToPosition(pos, INT_MAX, CMD_FROM_PLAYER) (RW 0x774E2F -> gatherAndMoveInFormation mode 1 -> moveFormationToPos RW 0x773D4D),
+		// so the CAN_ATTACK members (Object::isAbleToAttack RW 0x691269 == true) march in the formation attack state 61 (command 0x25) instead of armAttackMove
+		CHECK(unit->getAIUpdateInterface()->currentStateId() == (unsigned)AI_FOLLOW_PATH_AS_TEAM_ATTACK);
+		CHECK(unit->getAIUpdateInterface()->formationId() == 1);
 	}
 }
 

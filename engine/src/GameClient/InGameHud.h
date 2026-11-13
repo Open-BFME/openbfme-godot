@@ -226,7 +226,7 @@ public:
 	const HelpBoxSettings &helpBoxSettings() const { return m_helpSettings; }
 	// the device's mapped images (the overlays' and icons' sizes) and font metrics (the help's text); without metrics the help measures with the
 	// headless stand-in (S-176)
-	void setMappedImages(const MappedImageCollection *images) { m_hud6Images = images; }
+	void setMappedImages(const MappedImageCollection *images) { m_hud6Images = images; m_input->context().images = images; }
 	void setFontMetrics(FontMetricsSource *metrics) { m_hud6Metrics = metrics; }
 	// the device draws the help box's content clip (its `_type` is helpBox().renderName()) at (x, y, w, h) window pixels: RW 0x92E2AC
 	void helpBoxRender(float x, float y, float w, float h, std::vector<HelpDrawOp> &out);
