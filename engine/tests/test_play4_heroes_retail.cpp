@@ -431,9 +431,13 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// RW 0x871536); the damage and the kills are the same
 				// lane PATH-REBUILD: 3 strikes (4 before): the found paths are rebuilt from their optimised nodes (RW 0x767B0E), so the scene's units walk other
 				// lines; the damage and the kills are the same
-				CHECK(ord.shots == (drogoth ? 3u : 0u));
-				CHECK(ord.lost == (drogoth ? 1500.0f : 450.0f));
-				CHECK(ord.membersKilled == (drogoth ? 20u : 5u));
+				// merge queue q53 (measured at each merge point, from #287's on): the fell beasts' TransportContain fires its GrabWeapon (FellbeastGrabWeapon)
+				// at the horde member it picks up (RW 0x86AA4B .. 0x86AAA2): Khamul and Morgomir 5 strikes, 1425 health, 19 of 20 killed; the Witch-king 6
+				// strikes, 1350 health, 17 killed (before: no strike, 450 health, 5 killed); Drogoth has no GrabWeapon and is unchanged
+				const bool witchKing = hero == "MordorWitchKingOnFellBeast";
+				CHECK(ord.shots == (drogoth ? 3u : witchKing ? 6u : 5u));
+				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1350.0f : 1425.0f));
+				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 17u : 19u));
 				continue;
 			}
 			CHECK(own.walked > 600.0f);
@@ -462,7 +466,8 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			{
 				// Merge queue q41 (DECOMPFIX-1104B's aim and give-way rules move the scene's creeps and computer opponent; measured once on the merged tree and at
 				// its merge point, NECRODIE-1 keeps it): Haldir's 3 strikes on his own take 50 from the horde, none killed
-				CHECK(own.lost == 50.0f);
+				// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): Haldir's strikes on his own take 525 (50) from the horde
+				CHECK(own.lost == 525.0f);
 			}
 			else
 			{

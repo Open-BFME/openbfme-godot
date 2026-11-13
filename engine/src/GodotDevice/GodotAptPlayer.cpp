@@ -3279,7 +3279,8 @@ Dictionary AptMenuPlayer::set_load_screen_from_game(const Dictionary &resolved)
 	}
 	ShellMode *sm = m->shell.get();
 	LoadScreenInfo next = makeLoadScreenInfo(message.game, m->shell->setup, m->shell->text.get(),
-		[sm](const std::string &name) { return sm->skins.images.findImageByName(name) != nullptr; });
+		[sm](const std::string &name) { return sm->skins.images.findImageByName(name) != nullptr; }, sm->profiles.get(),
+		(bool)resolved.get("online_game", false)); // lane RANKICON-1: an online game reads no local stats (makeLoadScreenInfo)
 	if (!next.error.empty())
 	{
 		out["error"] = toGodot(next.error);
@@ -3306,6 +3307,7 @@ Dictionary AptMenuPlayer::set_load_screen_from_game(const Dictionary &resolved)
 	out["loading_type"] = info.gameLoadingType;
 	if (info.mapStartCount > LEGACY_MAX_SLOTS) out["map_start_count"] = info.mapStartCount;
 	out["rules_summary"] = toGodot(loadScreenU16ToUtf8(info.rulesSummary)); // lane RULES-1
+	if (!info.rankStatsError.empty()) out["rank_stats_error"] = toGodot(info.rankStatsError); // lane RANKICON-1: reported, the game still loads
 	return out;
 }
 

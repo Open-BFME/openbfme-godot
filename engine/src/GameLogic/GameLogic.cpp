@@ -1658,6 +1658,7 @@ size_t GameLogic::listHashObjects() const
 GameLogic::Report GameLogic::report() const
 {
 	Report r;
+	r.stopHits = m_notedStopHits; // QA-1: each runtime occurrence, including PORT-5's missing bird target
 	r.frame = m_frame;
 	r.objects = m_objectCount;
 	r.destroyed = m_destroyedTotal;

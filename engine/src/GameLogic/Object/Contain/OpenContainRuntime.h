@@ -25,6 +25,7 @@
 #pragma once
 
 #include "Common/INIDataTypes.h"
+#include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/DieModule.h"
 #include "GameLogic/Module/UpdateModule.h"
 
@@ -37,7 +38,7 @@ class AIUpdateInterface;
 struct DieMuxData;
 struct OpenContainModuleData;
 
-class OpenContain : public UpdateModule, public ContainModuleInterface, public DieModuleInterface
+class OpenContain : public UpdateModule, public ContainModuleInterface, public DieModuleInterface, public CollideModuleInterface
 {
 public:
 	OBFME_MODULE_XFER(OpenContain) // lane SAVE-4b
@@ -47,7 +48,19 @@ public:
 	// ---- BehaviorModule ----
 	ContainModuleInterface *getContain() override { return this; }
 	DieModuleInterface *getDie() override { return this; }
+	CollideModuleInterface *getCollide() override { return this; }
 	void onDelete() override; // main slot 0x20 RW 0x86708F
+	// ---- CollideModuleInterface (the subobject at module + 0x24, vtable RW 0xC5D650, getCollide RW 0x64F3EA) ----
+	// lane PORT-9, RW 0x8659D8: an object that touches this container while its AI is entering it (AI vslot 0x1FC) is picked up when CollidePickup is set,
+	// after the enemy STEALTH_GARRISON occupants it collides with are revealed (RW 0x867C40). Retail installs this slot in OpenContain (RW 0x867FC1),
+	// TransportContain (RW 0x86B6CF), HordeTransportContain (RW 0x87A2CF), SiegeEngineContain (RW 0x87F525), HordeSiegeEngineContain (RW 0x88051C),
+	// GarrisonContain (RW 0x87B1FA), HordeGarrisonContain (RW 0x87D30F) and TunnelContain (RW 0x880EBB); every class that derives from this one inherits it
+	// here, and HordeContain - not an OpenContain in this port - keeps the empty RW 0x46E918 slot it installs at RW 0x872800
+	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override;
+	bool wouldLikeToCollideWith(const Object &other) const override { (void)other; return false; } // RW 0x7FEAC1
+	// RW 0x867C40, module vslot 0x4C (the C++ name is INFERENCE): the STEALTH_GARRISON occupants an entering object collides with are revealed and ordered out.
+	// No RotWK contain class replaces the slot, so it is not virtual here
+	bool tryToEvacuate(Object *entering);
 	void crc(StateHasher &hasher) const override;
 	// ---- UpdateModule (RW 0x86702D: every frame) ----
 	UpdateSleepTime update() override;
