@@ -125,6 +125,7 @@ CI_GATES = scripts("""
 DENYLIST = {
     "tutorial_builders_test.gd": "manual: installed tutorial construction and dozer pathfinding",
     "mission_script_presentation_test.gd": "manual: mounted retail tutorials and GPU/rendered marker checks",
+    "wotr_setup_dialog_test.gd": "manual: needs private RotWK/BFME2 assets and the built extension; checks retail setup dialog coverage and picks with a synthetic preview",
     "options_open_test.gd": "manual: needs a private BFME1 installation and/or private RotWK/BFME2 assets, the built GDExtension and audio setup; optional screenshots require a window/GPU",
     "w3d_shader_reuse_test.gd": "manual: requires the isolated native test extension built by w3d_shader_reuse_test.py; no retail assets",
     "harlindon_creep_combat_test.gd": "manual: requires private retail assets and a live skirmish",

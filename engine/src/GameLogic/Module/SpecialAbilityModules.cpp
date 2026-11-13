@@ -8,6 +8,8 @@
 
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Combat/CombatLineOfSight.h"
+#include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/EmotionModules.h"
@@ -808,8 +810,7 @@ bool SpecialAbilityUpdate::withinStartAbilityRange()
 			m_targetID = INVALID_ID; // RW 0x852175
 			return false;
 		}
-		// RW 0x852127: ContactPointOverride (RW 0x690BD2, the bone position: S-860) falls back to the edge distance; a source HORDE with
-		// ApproachUntilMembersInRange uses its formation radius (S-860).
+		// RW 0x852127: ContactPointOverride (RW 0x690BD2, the bone position: S-860) falls back to the edge distance below.
 		// lane STARTRANGE-1: RW 0x85212D tests the TARGET's template + 0x118 bit 4, KindOf CHUNK_VENDOR (132; not a structure test): that target answers
 		// with its box distance to the source (RW 0x852137 -> RW 0x8513FD -> RW 0x68F430, thiscall on the target). BFME2 1.06: the same (m_kindof[4] bit 4,
 		// retail 0x44F28E)
@@ -817,6 +818,19 @@ bool SpecialAbilityUpdate::withinStartAbilityRange()
 		if (kChunkVendor >= 0 && t->isKindOf((unsigned)kChunkVendor))
 		{
 			dist2 = CombatQueries::boxDistanceSquared2D(*t, *obj);
+		}
+		else if (isHorde(*obj) && m_data->m_approachUntilMembersInRange)
+		{
+			// PORT-58: RW 0x85213E .. 0x852171 (tier A to BFME2 1.06 SpecialAbilityUpdateIsWithinStartAbilityRange.cpp, retail 0x44F28E):
+			// a HORDE caster (+ 0x115 bit 5) with ApproachUntilMembersInRange (+ 0xC5) takes its 2D center distance squared to the target (RW 0x66137C,
+			// x87 PC24 in register) plus its own bounding circle radius (Object + 0xB8 = GeometryInfo::m_boundingCircleRadius, un-squared, RW 0x852168 fadd
+			// -> RW 0x85216E fstp dword), NOT edge distance and NOT subtracting target radius.
+			const Coord3D &tp = *t->getPosition();
+			const Coord3D &op = *obj->getPosition();
+			const double dx = SimMath::pc24SubW((double)tp.x, (double)op.x);
+			const double dy = SimMath::pc24SubW((double)tp.y, (double)op.y);
+			const double sumSq = SimMath::pc24AddW(SimMath::pc24MulW(dy, dy), SimMath::pc24MulW(dx, dx));
+			dist2 = SimMath::fstpDword(SimMath::pc24AddW(sumSq, (double)CombatQueries::boundingCircleRadius(*obj)));
 		}
 		else
 		{
@@ -1127,14 +1141,93 @@ void SpecialAbilityUpdate::approachTarget()
 		return;
 	}
 	m_lastTargetPos = *t->getPosition();
+	// lane APPROACH-859, RW 0x853AEE .. 0x853B58 (BFME2 1.06: the same body, SpecialAbilityUpdate::rva00450AE9 / retail 0x450AE9 in Open-BFME-2).
+	// RW 0x853AF3: retail makes the AI ignore the target as an obstacle (RW 0x66831A, AI + 0x164) before the move. NOT PORTED (S-859): retail's commands
+	// 0x47 / 0x48 run their own move state (BFME2 AIMoveToStateSA, vtable 0xC11F00, onEnter 0x34C8C5 / update 0x347A51: a frame limit and an AI slot 136
+	// call the port's AI_MOVE_TO lacks), and with only the ignore the port's plain move goes to the target's centre unadjusted: the BFME2 tutorial's
+	// outpost capture and skirmish AI attacks stall (test_bfme2camp1 Beginner Tutorial objective 5, test_skirmish_ai_attack Isengard arrival)
+	++m_unported;
+	// RW 0x853AFB .. 0x853B15: a STRUCTURE target (template + 0x108 bit 7), a target on the ground layer (RW 0x68BBE0 == 1) or StartAbilityRange (+ 0x4C)
+	// not above 50 (RW 0xBD88C4, comiss / ja, read at RW 0x853A2E) moves to the object (RW 0x852DC5(target, 2): AI command 0x48)
+	static const int kStructure = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE");
+	const bool structure = kStructure >= 0 && t->isKindOf((unsigned)kStructure);
+	const float range = m_data->m_startAbilityRange;
+	if (!structure && AIWorld::objectLayer(*t) != LAYER_GROUND && range > 50.0f)
+	{
+		// RW 0x853B17 .. 0x853B49: the target's position, moved to the approach point (RW 0x851607; its answer is not read), then RW 0x853ADB:
+		// RW 0x852D59(point, 2), AI command 0x47
+		Coord3D pos = *t->getPosition();
+		(void)approachPoint(pos, range);
+		if (bird)
+		{
+			bird->aiAbilityMoveTo(pos, CMD_FROM_AI); // lane FLY-1: the bird takes command 0x47 itself (RW 0x76D995)
+			return;
+		}
+		ai->aiMoveToPosition(pos, CMD_FROM_AI);
+		return;
+	}
 	if (bird)
 	{
 		bird->aiAbilityMoveToObject(t, CMD_FROM_AI); // RW 0x852DC5(target, 2): command 0x48 keeps the ID until RW 0x76DAEE executes it
 		return;
 	}
-	// RW 0x853AEE: a structure target, a target on another layer or StartAbilityRange <= 50 (RW 0xBD88C4) moves to the object (AI command 0x48);
-	// otherwise the approach point at StartAbilityRange (RW 0x851607, a pathfinder cell walk: S-859) is also the object here
-	ai->aiMoveToObject(t, CMD_FROM_AI);
+	ai->aiMoveToObject(t, CMD_FROM_AI); // RW 0x853B53: RW 0x852DC5(target, 2)
+}
+
+// lane APPROACH-859: RW 0x851607 (thiscall, ret 8; BFME2 1.06 retail 0x44E85E, Open-BFME-2 SpecialAbilityUpdate::rva0044E85E, the same body).
+// TARGET facts: the caster's layer (RW 0x68BBE0) above 1 answers true with `pos` unchanged; no AI (+ 0x260) answers false. dir = pos - caster (SSE subss,
+// z = 0), the step count = -1 - cvttss2si(range mulss -0.1f) (RW 0xBDBC70), dir normalised by RW 0x405553 (x87 length (z*z + y*y) + x*x, CRT sqrt, then
+// 1.0f divss the stored length and mulss each component), times 10.0f (RW 0xBD83D8). Each step subtracts dir from the point (SSE); the first point
+// whose layer for the caster (TerrainLogic::getLayerForDestination RW 0x680A75) is the ground (1) and that the pathfinder reaches quickly from the
+// caster's position (RW 0x6F5BB0(caster, its position, point, 0)) is written back (true). None: false, `pos` unchanged.
+bool SpecialAbilityUpdate::approachPoint(Coord3D &pos, float range) const
+{
+	const Object *obj = getObject();
+	if (AIWorld::objectLayer(*obj) > LAYER_GROUND)
+	{
+		return true; // RW 0x85161B
+	}
+	const AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	AIWorld *world = obj->logic().aiWorld();
+	if (!ai || !world)
+	{
+		return false; // RW 0x851627 (the port's AI world exists whenever an AI does)
+	}
+	const Coord3D &from = *obj->getPosition();
+	Coord3D dir = { SimMath::subf32(pos.x, from.x), SimMath::subf32(pos.y, from.y), 0.0f };
+	// RW 0x85168C .. 0x8516A3: or edi, -1; sub edi, eax (32-bit: -1 - 0x80000000 wraps to 0x7FFFFFFF, the value the 64-bit difference gives)
+	const long long steps = -1LL - (long long)SimMath::cvttss2si(SimMath::mulf32(range, -0.1f));
+	// RW 0x405553
+	const double sumSq = SimMath::pc24AddW(SimMath::pc24AddW(SimMath::pc24MulW(dir.z, dir.z), SimMath::pc24MulW(dir.y, dir.y)), SimMath::pc24MulW(dir.x, dir.x));
+	const float length = SimMath::fstpDword(SimMath::sqrtPC24(sumSq));
+	if (!(length > 0.0f))
+	{
+		// INFERENCE: retail has no zero test (1 / 0 makes every step NaN and no NaN point passes the layer / path tests in retail's cell lookups); the
+		// port's cell lookup is not specified for NaN, so a caster standing on the target's position finds no point
+		return false;
+	}
+	const float inv = SimMath::divf32(1.0f, length);
+	dir.x = SimMath::mulf32(SimMath::mulf32(dir.x, inv), 10.0f); // RW 0x8516C9 .. 0x8516D1
+	dir.y = SimMath::mulf32(SimMath::mulf32(dir.y, inv), 10.0f);
+	dir.z = SimMath::mulf32(SimMath::mulf32(dir.z, inv), 10.0f);
+	Coord3D point = pos;
+	const Pathfinder &pf = world->pathfinder();
+	for (long long i = 0; i < steps; ++i)
+	{
+		point.x = SimMath::subf32(point.x, dir.x); // RW 0x851702 .. 0x851725
+		point.y = SimMath::subf32(point.y, dir.y);
+		point.z = SimMath::subf32(point.z, dir.z);
+		if (pf.getLayerAt(ai->adapter(), point) != LAYER_GROUND) // RW 0x85172E
+		{
+			continue;
+		}
+		if (world->pathfinder().quickDoesPathExist(ai->adapter(), &from, &point, nullptr)) // RW 0x85174A
+		{
+			pos = point; // RW 0x85175F
+			return true;
+		}
+	}
+	return false;
 }
 
 // RW 0x85241F (lane MODCOMPAT-MOD1): SPECIAL_GRAB_PASSENGER (0x27) with a target that is neither SHRUBBERY (template + 0x108 bit 6) nor GRAB_AND_KILL
@@ -2782,7 +2875,8 @@ void SpecialAbilityModules::registerAll(ModuleFactory &modules)
 std::vector<std::string> SpecialAbilityModules::stopLines()
 {
 	return {
-		"[S-859] SpecialAbilityUpdate details not ported: the approach point RW 0x851607 (the move goes to the object), "
+		"[S-859] SpecialAbilityUpdate details not ported (the approach point RW 0x851607 runs since lane APPROACH-859): the target ignored as an obstacle "
+		"before the approach move (RW 0x853AF3: needs retail's ability move state, BFME2 AIMoveToStateSA), "
 		"Object + 0xA0 bit 6 in the command source test, PreTriggerUnstealthTime (DisableWhenWearingTheRing and LoseStealthOnTrigger: lane STEALTH-2), the paralysis "
 		"commands, FlipOwnerAfterPacking / Unpacking, FleeRangeAfterCompletion, ChainedButton, a horde's SPECIAL_WEAPON condition to its members, the power "
 		"module's finish notice (vslot 0x4C), sounds and voices (client): each counted (unported())",
@@ -2792,7 +2886,7 @@ std::vector<std::string> SpecialAbilityModules::stopLines()
 		"disguise cancels 0x84 / 0x85: lane HERO-2; the grab enums SPECIAL_GRAB_PASSENGER / SPECIAL_GRAB_CHUNK 0x27 / 0x28 run since lane MODCOMPAT-MOD1: the "
 		"object grab, its hold, release and eat), the grab of a tree (RW 0x68449B makes it an object) and of a ROCK_VENDOR / CHUNK_VENDOR (its GrabObject, RW "
 		"0x85415C), the 0x28 unpack model condition (RW 0x85384C), the special objects (SpecialObject: no retail use), ContactPointOverride: counted (the "
-		"unit cost + 0x80 is paid since lane NECRODIE-1, RW 0x85521F)",
+		"unit cost + 0x80 is paid since lane NECRODIE-1, RW 0x85521F; ApproachUntilMembersInRange + 0xC5 runs since PORT-58, RW 0x85213E .. 0x852171)",
 		"[S-861] ToggleMountedSpecialAbilityUpdate: the toggle, CancelDisguiseWhenDismounting and MountedTemplate (the replacement RW 0x8B140D: Construction::"
 		"buildObjectNow, name, experience, health, team, SynchronizeTimerOnSpecialPower; the old object destroyed after its packing, RW 0x8B1E9A) run (lane "
 		"HERO-2); lane SUMMON-1: the initiate RW 0x8B1FDA (a current locomotor of speed 0 refuses, else IGNORE_AI_COMMAND) and SummonReplacementSpecialAbilityUpdate "
