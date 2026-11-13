@@ -19,6 +19,7 @@
 #include "GameLogic/AI/AIAttack.h"
 #include "GameLogic/Armor.h"
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameMessage.h"
@@ -430,9 +431,13 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// RW 0x871536); the damage and the kills are the same
 				// lane PATH-REBUILD: 3 strikes (4 before): the found paths are rebuilt from their optimised nodes (RW 0x767B0E), so the scene's units walk other
 				// lines; the damage and the kills are the same
-				CHECK(ord.shots == (drogoth ? 3u : 0u));
-				CHECK(ord.lost == (drogoth ? 1500.0f : 450.0f));
-				CHECK(ord.membersKilled == (drogoth ? 20u : 5u));
+				// merge queue q53 (measured at each merge point, from #287's on): the fell beasts' TransportContain fires its GrabWeapon (FellbeastGrabWeapon)
+				// at the horde member it picks up (RW 0x86AA4B .. 0x86AAA2): Khamul and Morgomir 5 strikes, 1425 health, 19 of 20 killed; the Witch-king 6
+				// strikes, 1350 health, 17 killed (before: no strike, 450 health, 5 killed); Drogoth has no GrabWeapon and is unchanged
+				const bool witchKing = hero == "MordorWitchKingOnFellBeast";
+				CHECK(ord.shots == (drogoth ? 3u : witchKing ? 6u : 5u));
+				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1350.0f : 1425.0f));
+				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 17u : 19u));
 				continue;
 			}
 			CHECK(own.walked > 600.0f);
@@ -461,7 +466,8 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			{
 				// Merge queue q41 (DECOMPFIX-1104B's aim and give-way rules move the scene's creeps and computer opponent; measured once on the merged tree and at
 				// its merge point, NECRODIE-1 keeps it): Haldir's 3 strikes on his own take 50 from the horde, none killed
-				CHECK(own.lost == 50.0f);
+				// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): Haldir's strikes on his own take 525 (50) from the horde
+				CHECK(own.lost == 525.0f);
 			}
 			else
 			{
@@ -706,4 +712,54 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 		CHECK(ord.lostInCrush == c.lostInCrush);
 		CHECK(ord.heroAlive);
 	}
+}
+
+// lane MECH-D (review prtrlo): a melee weapon reaches a CAN_CLIMB_WALLS victim that is on a wall (RW 0x696057: no horde and CLIMBING) only when RW 0x66352C's
+// squared edge distance of the two objects' bounding circles is below 5.0 (RW 0xC1B678, RW 0x6EDAD4 .. 0x6EDB07), without the footprint test, from where both
+// objects stand. Aragorn (radius 8) and Shelob (radius 25), 4 cells and more apart: the footprint test alone reaches a 10 gap (as when Shelob is not climbing)
+TEST_CASE("mechd melee retail: a climbing CAN_CLIMB_WALLS victim is in melee reach only within an edge gap whose square is below 5 (RW 0x6EDAD4)")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::string error;
+	buildtest::Game g;
+	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 4242, g, &error), error);
+	LiveGame &live = *g.live;
+	GameLogic &logic = live.logic();
+	Player *player = live.players().findPlayerWithName(live.report().startSlotPlayers[0]);
+	Player *enemy = live.players().findPlayerWithName(live.report().startSlotPlayers[1]);
+	REQUIRE(player);
+	REQUIRE(enemy);
+	const float y = 4500.0f;
+	Object *hero = live.createObject("GondorAragornMP", player->getPlayerIndex(), Coord3D{ 1500.0f, y, 0.0f }, 0.0f, &error);
+	REQUIRE_MESSAGE(hero, error);
+	Object *victim = live.createObject("MordorShelob", enemy->getPlayerIndex(), Coord3D{ 1600.0f, y, 0.0f }, 0.0f, &error);
+	REQUIRE_MESSAGE(victim, error);
+	REQUIRE(victim->isKindOfName("CAN_CLIMB_WALLS"));
+	REQUIRE(victim->getContainedBy() == nullptr);
+	const float radii = CombatQueries::boundingCircleRadius(*hero) + CombatQueries::boundingCircleRadius(*victim);
+	REQUIRE(radii == 33.0f);
+	ObjectWeapons *w = hero->getWeapons();
+	REQUIRE(w);
+	REQUIRE(w->currentWeapon());
+	REQUIRE(w->currentWeapon()->getTemplate()->m_meleeWeapon);
+	auto put = [&](Object *o, float x) {
+		Coord3D p{ x, y, logic.getGroundHeight(x, y) };
+		o->setPosition(&p);
+	};
+	put(hero, 1500.0f);
+	put(victim, 1500.0f + radii + 10.0f);
+	CHECK(w->isWithinAttackRange(*victim, 0.0f, false)); // not on a wall: the footprint test, the boxes 4 cells apart
+	victim->setModelConditionState(CombatNames::modelCondition("CLIMBING"), true);
+	CHECK_FALSE(w->isWithinAttackRange(*victim, 0.0f, false)); // on a wall: 10 * 10 = 100 is not below 5
+	put(victim, 1500.0f + radii + 2.5f);
+	CHECK_FALSE(w->isWithinAttackRange(*victim, 0.0f, false)); // 6.25
+	put(victim, 1500.0f + radii + 2.0f);
+	CHECK(w->isWithinAttackRange(*victim, 0.0f, false)); // 4.0
+	put(victim, 1500.0f + radii - 5.0f);
+	CHECK(w->isWithinAttackRange(*victim, 0.0f, false)); // overlapping circles: 0
+	// asked from another position (an engagement candidate beside the victim, the circles overlapping from there): RW 0x66352C reads where the hero stands
+	put(victim, 1500.0f + radii + 10.0f);
+	const float cx = 1500.0f + radii;
+	const Coord3D candidate{ cx, y, logic.getGroundHeight(cx, y) };
+	CHECK_FALSE(w->isWithinAttackRangeFrom(candidate, victim, *victim->getPosition(), 0.0f, false));
 }

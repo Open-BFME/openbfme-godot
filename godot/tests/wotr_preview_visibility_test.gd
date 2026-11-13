@@ -51,9 +51,11 @@ func _initialize() -> void:
 	# builder's initially-disabled mode or the reveal implementation below.
 	preview.view.visible = true
 	preview.vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	preview.pressed_button = MOUSE_BUTTON_LEFT
 	game._shell.state = {"found": true, "visible": false}
 	preview.tick()
 	_check(not preview.view.visible, "already-visible setup hides its image")
+	_check(preview.pressed_button == -1, "covering or leaving the setup cancels an unfinished map click")
 	_check(preview.vp.render_target_update_mode == SubViewport.UPDATE_DISABLED, "already-rendering preview stops when setup becomes hidden")
 	_check(preview.vp.process_mode == process_mode, "already-rendering preview preserves its animation processing mode")
 	# Reset the synthetic viewport to test the full unopened/open/close/reopen path.

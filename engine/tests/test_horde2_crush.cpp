@@ -206,6 +206,8 @@ TEST_CASE("horde2 melee: the current-melee edge cutoff is an edge gap below 100 
 	w.frames(2);
 	auto *ai = dynamic_cast<HordeAIUpdate *>(self->getAIUpdateInterface());
 	REQUIRE(ai != nullptr);
+	ai->setMeleeTargetId(target->getID()); // lane FLEECHASE-1: the wait state's slot 0x168 and the refresh (slot 0x164) fill the cache; the ready test does not
+	ai->refreshMeleeReadiness(*target);
 	REQUIRE(ai->isMeleeTargetReady(*target));
 	REQUIRE(ai->meleeTargetId() == target->getID());
 	const float radii = SimMath::addf32(CombatQueries::boundingCircleRadius(*self), CombatQueries::boundingCircleRadius(*probe));

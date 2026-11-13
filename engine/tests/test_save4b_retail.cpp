@@ -381,11 +381,15 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 	// HordeNotifyTargetsOfImminentProbableCrushingUpdate or HorseHordeContain object (110)
 	// Merge queue q43 (#231's DEFENSIVE tactic moves the AIs' play; measured once on the merged tree, the census moves from #231's merge point on): a CommandButtonHuntUpdate
 	// object again; no AutoHealBehavior or RepairSpecialPower object (109)
+	// Merge queue q49 (DECOMPFIX-1109's FLEECHASE-1, the chase of a fleeing target goes on, moves the AIs' play; measured once on the merged tree, the only
+	// item): no CommandButtonHuntUpdate or HordeDispatchSpecialPower object; an AutoHealBehavior and RepairSpecialPower object (109)
+	// Merge queue q52 (#294's SlaughterHordeContain under the citadels moves the 4-AI play; measured once on the merged tree and at #294 / #295's merge
+	// point, #297 and #298 keep it): a HordeDispatchSpecialPower object again; no AutoHealBehavior object (109)
 	CHECK(classes == std::set<std::string>{
 		"AISpecialPowerUpdate", "ActiveBody", "ArmorUpgrade", "ArrowStormUpdate", "AttributeModifierAuraUpdate", "AttributeModifierPoolUpdate",
 		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoPickUpUpdate",
 		"BannerCarrierUpdate", "BezierProjectileBehavior", "BloodthirstyUpdate", "BoredUpdate", "BuildableHeroListUpgrade", "BuildingBehavior",
-		"CastleBehavior", "CastleMemberBehavior", "CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower", "CommandButtonHuntUpdate",
+		"CastleBehavior", "CastleMemberBehavior", "CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower",
 		"CommandPointsUpgrade", "CommandSetUpgrade", "CostModifierUpgrade", "CreateObjectDie", "CritterEmitterUpdate", "DamageFilteredCreateObjectDie",
 		"DarknessSpecialPower", "DefectionHelper", "DelayedDeathBody", "DestroyDie", "DevastateSpecialPower", "DoCommandUpgrade", "DualWeaponBehavior",
 		"ElvenWoodSpecialPower", "EmotionTrackerUpdate", "FXListDie", "FiringTrackerHelper", "FoundationAIUpdate", "FreezingRainSpecialPower",
@@ -395,7 +399,7 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 		"LargeGroupAudioUpdate", "LargeGroupBonusUpdate", "LevelUpUpgrade", "LifetimeUpdate", "ModelConditionUpgrade", "MonitorConditionUpdate",
 		"OCLSpecialPower", "ObjectCreationUpgrade", "PassiveAreaEffectBehavior", "PhysicsBehavior", "PickupStuffUpdate", "PlayerHealSpecialPower",
 		"PlayerUpgradeSpecialPower", "PorcupineFormationBodyModule", "ProductionSpeedBonus", "ProductionUpdate", "QueueProductionExitUpdate",
-		"RebuildHoleExposeDie", "RecoveryHelper", "RefundDie", "SMCHelper", "ScavengerSpecialPower", "ShareExperienceBehavior",
+		"RebuildHoleExposeDie", "RecoveryHelper", "RefundDie", "RepairSpecialPower", "SMCHelper", "ScavengerSpecialPower", "ShareExperienceBehavior",
 		"SiegeDeployHordeSpecialPower", "SlaughterHordeContain", "SlaveWatcherBehavior", "SlavedUpdate", "SlowDeathBehavior", "SpawnBehavior",
 		"SpawnPointProductionExitUpdate", "SpawnUnitBehavior", "SpecialAbilityUpdate", "SpecialPowerModule", "SpellRechargeModifierUpgrade",
 		"SquishCollide", "StancesBehavior", "StatusBitsUpgrade", "StealthDetectorUpdate", "StructureBody", "StructureCollapseUpdate", "SubObjectsUpgrade",

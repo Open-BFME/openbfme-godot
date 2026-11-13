@@ -245,6 +245,15 @@ public:
 	void processCrateContacts();
 	unsigned long long crateContacts() const { return m_crateContacts; } ///< the overlapping crate pairs met so far (statistics)
 	size_t crateCount() const { return m_crates.size(); }
+	// lane GATECOLLIDE-1 (S-1940 / S-581): RotWK's collision manager also holds the gates (STRUCTURE IMMOBILE, no NO_COLLIDE: RW 0x68E31F), and a gate's
+	// collide interface (RW 0x89C6F5) repels the units that touch its CLOSED geometry. The overlap pass above skips the immobile AIs, so the gates of the
+	// skirmish AI manager's gate list (RW 0x89C04B -> 0x8EDA39) get their own pass after the crates', as the crates do: each gate in id order meets the
+	// AI objects (registered as RW 0x68E31F: no INERT or NO_COLLIDE, a HORDE only with AIData HordesWaitForHordes; no IMMOBILE: RW 0xB6D730's group test)
+	// whose shapes overlap its active shapes (RW 0xAD2CE0), in id order, both ways, the lower id first (RW 0xB6D060; the order across the pairs is the
+	// port's, S-780). INFERENCE: the objects with an AI only. The gate list is derived (the modules register themselves), not saved. BFME2 1.06 twins:
+	// 0x68DCC4 / 0xB59490 / 0xABEB80 / 0xB58DE0, the gate's collide interface 0x898F46
+	void processGateContacts();
+	unsigned long long gateContacts() const { return m_gateContacts; } ///< the overlapping gate pairs met so far (statistics)
 	// lane PHYS-1: RW moveAllies 0x6F503B (AIUpdateAllies.cpp): every stationary ally on the cells along `path` is asked to step away; false when not done
 	bool moveAllies(AIUpdateInterface &mover, Path &path, bool force);
 	// lane MOVE-3 r2: RW 0x6F85A6 moveAlliesAwayFromDestination (RW 0x6F7F3E -> the Bresenham line RW 0x6F57C3 -> each cell RW 0x6F53AF): every cell of the line
@@ -349,6 +358,8 @@ private:
 	std::vector<PathfindObjectID> m_crates, m_crateScratch, m_crateHits;
 	bool m_cratesValid = false;
 	unsigned long long m_crateContacts = 0;
+	std::vector<PathfindObjectID> m_gateScratch, m_gateHits; ///< lane GATECOLLIDE-1: processGateContacts' scratch lists (not state)
+	unsigned long long m_gateContacts = 0;
 	PathfindWallMeshSource *m_wallMeshes = nullptr; // lane WALL-1
 	int m_moveAlliesDepth = 0; // lane PHYS-1: RW pathfinder + 0x1C1BC, the recursion guard of moveAllies
 	int m_peakTickCells = 0;

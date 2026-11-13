@@ -145,8 +145,16 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // and ATKRESET-1 (attack orders end the FiringDuration lock) moves it again.
 // pin: merge queue q44 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: AIRBORNE-1 alone (AIRBORNE_TARGET
 // from the locomotor height, RW 0x66A472) moves it from frame 0.
+// pin: lane UBER-3P (third step) re-measured the pin vector (OPENBFME_UBER1_REGEN=1, 1 thread, Windows MSVC): the stall no longer ends a search whose
+// goal footprint alone fails (no unit blocks the goal, the same terrain and strict zone, a valid goal position), which now runs until its goal cell is
+// reached or closed, from frame 21.
 // pin: merge queue q46 re-measured it once on the merged tree (OPENBFME_UBER1_REGEN=1), compared at each merge point: #270 (the team threat orders,
 // Team + 0x13C) moves it from frame 12, and the review fix (the threat walk newest first, RW 0x66362D; a horde soldier counts nothing, RW 0x693A1A) from frame 13.
+// pin: merge queue q47 re-measured it once on the merged tree with q46 (OPENBFME_UBER1_REGEN=1), compared at each merge point: #261 (the approach state
+// hashes the wait of an owner that cannot move) moves it from frame 0; #254's, #263's and q46's changes are in the same vector.
+// pin: PORT-12 hashes MinDistFromEdgeOfMapForBuild in GameLogicSettings::crc (RotWK GlobalData +0xA68; BFME2 1.06's data/ini/gamedata.ini carries the
+// same 30.0 row), so the vector moves from frame 0; the Uber battle never places a building, so the margin check itself cannot move it. Re-measured
+// once (OPENBFME_UBER1_REGEN=1, Windows MSVC) on this tree with the other open ports merged.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

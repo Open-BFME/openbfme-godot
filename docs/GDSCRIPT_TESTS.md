@@ -9,6 +9,13 @@ python -m pytest -n 6 --dist worksteal -q -p no:cacheprovider tools --durations=
 python -m pytest -q -rs tools/test_gdscript.py
 ```
 
+## Mission-script manual checks
+
+| Script | Scheduling | Coverage |
+|---|---|---|
+| `godot/tests/mission_script_presentation_test.gd` | Manual: mounted retail data; rendered capture optional | Opening reveal reaches terrain shroud; additive marker lifecycle |
+| `godot/tests/tutorial_builders_test.gd` | Manual: mounted retail data | Both authored porters create and complete tower construction |
+
 ## Scheduling policy
 
 The manual native HUD grayscale fixture is separate from the GDScript runner:
@@ -300,6 +307,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/terrain_lighting_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/timeline_markers_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: score timeline markers against a stub shell; headless, 20 s timeout. |
 | `godot/tests/wotr_preview_visibility_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: hidden War of the Ring preview rendering and reveal; synthetic shell, no retail assets or readback; headless, 20 s timeout. |
+| `godot/tests/wotr_setup_dialog_test.gd` | Manual | Retail RotWK and BFME2 presentation: historical versus freeform selection, Start refusal, modal preview hiding/input blocking and restoration; synthetic preview, private installs and built extension required; no GPU readback. |
 | `godot/tests/save_failure_menu_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: late save refusals resume the shell and replace the loading canvas; synthetic world and shell; headless, 20 s timeout. |
 | `godot/tests/uberjoin1_lan_test.gd` | `godot/tests/start_test.gd` | CI gate's helper/child; not scheduled separately by pytest. |
 | `godot/tests/uberjoin1_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |

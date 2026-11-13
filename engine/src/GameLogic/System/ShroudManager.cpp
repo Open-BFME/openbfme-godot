@@ -14,9 +14,12 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/SimMath.h"
 #include "Common/JobSystem.h"
+#include "GameClient/MapChunks.h"
+#include "GameLogic/ScriptEngine/ScriptConditions.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -547,6 +550,45 @@ void ShroudManager::shape(int cx, int cy, const Radii &r, float facing, std::uin
 		ys[15 - i] = ftolLow(py);
 	}
 	polygon(xs, ys, 16, mask, add);
+}
+
+// RW 0xB4DBE0 (look) / 0xB4DD90 (unlook): ceil(radius * inverse), floor((p - lo) * inverse), then the circle shape RW 0xB50C90 (BFME2 donor
+// Rva00739BE0.cpp, 0x739A30 / 0x739BE0, the same shape)
+void ShroudManager::revealCircle(float x, float y, float radius, std::uint32_t mask, bool add)
+{
+	int cx, cy;
+	worldToCell(x, y, cx, cy); // an off-map centre may still have an on-map radius
+	const int r = SimMath::ceilToInt(SimMath::pc24Mul(radius, m_cellSizeInv));
+	shape(cx, cy, Radii{r, r, r}, 0.0f, mask, add);
+}
+
+void ShroudManager::revealTrigger(const TriggerArea &area, std::uint32_t mask, bool add)
+{
+	// RW 0xB4DCA0 (look) / 0xB4DE50 (unlook): the trigger's bounds (RW 0x70CE4A) to cells, floor((p - lo) * inverse), then every row of that
+	// rectangle (RW 0xB50510) with a per-cell test (BFME2 donor ScriptEngineNamedMapReveal.cpp, Rva00739AF0Siblings.cpp).
+	// INFERENCE (S-6102): the test is taken as pointInTrigger; the polygon object at trigger + 0x38 that retail asks was not read.
+	if (area.points.empty()) return;
+	float minX = area.points[0].x, maxX = minX, minY = area.points[0].y, maxY = minY;
+	for (const Point2F &p : area.points)
+	{
+		minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+		minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+	}
+	int x1, y1, x2, y2;
+	worldToCell(minX, minY, x1, y1);
+	worldToCell(maxX, maxY, x2, y2);
+	for (int y = std::max(0, y1); y <= std::min(m_countY - 1, y2); ++y)
+	{
+		for (int x = std::max(0, x1); x <= std::min(m_countX - 1, x2); ++x)
+		{
+			// RW 0xB4FFF0 (the cell test of RW 0xB4DCA0 -> 0xB50E00 -> 0xB50510): fild; fmul cell; fadd lo; + cell * 0.5 (RW 0xBD86A0); _ftol2, so
+			// the polygon sees the centre in whole world units
+			const float half = SimMath::pc24Mul(m_cellSize, 0.5f);
+			const float wx = (float)ftolLow(SimMath::pc24Add(SimMath::pc24Add(SimMath::pc24MulD((double)x, m_cellSize), m_loX), half));
+			const float wy = (float)ftolLow(SimMath::pc24Add(SimMath::pc24Add(SimMath::pc24MulD((double)y, m_cellSize), m_loY), half));
+			if (ScriptConditions::pointInTrigger(area, wx, wy)) hline(x, x, y, mask & kPlayerBits, add);
+		}
+	}
 }
 
 void ShroudManager::lookAt(int cellX, int cellY, const Radii &r, float facing, std::uint32_t mask)
@@ -1524,7 +1566,7 @@ std::vector<std::string> ShroudManager::stopLines()
 		"[S-563] shroud numerics: the look polygon's x87 extended-precision vertices are computed in binary64 with SimMath's sin / cos (RW fsin / fcos); "
 		"a horizontal first left edge (uninitialised slope in RW 0xB501A0) starts at the top vertex with slope 0",
 		"[S-564] object look: the SHROUD_CLEARING modifier (RW 0x804F39 type 0x14) and the object's own range (Object + 0x1B4) are read since lane DECOMP-1; the spied mask (player + 0x3C8), object + 0x30 / + 0x3F4 (radii "
-		"0.1), DynamicShroudClearingRangeUpdate and the HordeContain VisionSide / VisionRearOverride are not read; object + 0x480 (hide when fogged) is taken as set",
+		"0.1) and DynamicShroudClearingRangeUpdate are not read; object + 0x480 (hide when fogged) is taken as set",
 		"[S-565] fogged targets: a human player's units cannot attack an object FOGGED or SHROUDED for that player unless the order comes from a script (RW "
 		"0x82C167, the action helper: human and not script, as ZH ActionManager isObjectShroudedForAction); its other callers and the other action types were not read",
 		"[S-566] stealth and detection: RotWK's invisibility (InvisibilityUpdate, StealthDetectorUpdate, the InvisibilityManager, the INVISIBLE_STEALTH / CAMOUFLAGE "
@@ -1686,9 +1728,33 @@ ShroudManager::ObjectSource ShroudManager::retailObjectSource()
 			}
 			in.mask = mask;
 		}
+		// RW 0x694B6A `call 0x68C866` and RW 0x694B71 `test esi, esi; je 0x694BB4`: the object's own contain, asked for its horde interface; no contain (or a
+		// contain that is not a horde) keeps the template's factors. The horde's two factors are the interface vslots 0x25C / 0x258 (RW 0x872BAB / 0x872B9E,
+		// module data + 0x278 / + 0x274) and replace the template's VisionSide / VisionRear only when they are strictly above 0: RW 0x694B82 `fldz;
+		// fcompi; jbe` keeps RW 0x694B65's template side, RW 0x694BB2 `ja` keeps RW 0x694BA4's override and RW 0x694BB4 falls back to the template rear.
+		// 0.0 is what an omitted INI row leaves (HordeContainModuleData::HordeContainModuleData).
+		float sideFactor = tv.visionSide;
+		float rearFactor = tv.visionRear;
+		if (ContainModuleInterface *contain = obj.getContain())
+		{
+			if (HordeContainInterface *asHorde = contain->getHordeContainInterface())
+			{
+				const float sideOverride = asHorde->getVisionSideOverride();
+				const float rearOverride = asHorde->getVisionRearOverride();
+				if (sideOverride > 0.0f)
+				{
+					sideFactor = sideOverride;
+				}
+				if (rearOverride > 0.0f)
+				{
+					rearFactor = rearOverride;
+				}
+			}
+		}
 		in.forward = in.side = in.rear = range;
-		in.side = SimMath::pc24Mul(in.side, tv.visionSide);
-		in.rear = SimMath::pc24Mul(in.rear, tv.visionRear);
+		// RW 0x694BBD / 0x694BCA: `mulss`, one round binary32 product of the radius and the factor (the port multiplied with pc24Mul here)
+		in.side = SimMath::sseMul(in.side, sideFactor);
+		in.rear = SimMath::sseMul(in.rear, rearFactor);
 	};
 	s.hidesWhenFogged = [](const Object &obj, int player) {
 		// RW 0x68EDD0

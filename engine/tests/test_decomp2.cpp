@@ -493,7 +493,7 @@ TEST_CASE("decomp2 S-415: the skirmish AI builds heroes of its HeroBuildOrder af
 		INFO(std::string(faction));
 		std::string error;
 		buildtest::Game g;
-		REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", faction, 52, g, &error), error);
+		REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", faction, 58, g, &error), error);
 		GameLogic &logic = g.live->logic();
 		Player *cpu = g.live->players().findPlayerWithName(g.live->report().startSlotPlayers[1]);
 		REQUIRE(cpu);
@@ -579,6 +579,12 @@ TEST_CASE("decomp2 S-415: the skirmish AI builds heroes of its HeroBuildOrder af
 	// pin: review R269 corrects roaming membership/destinations and direct orders (RW 0x9B8412 / 0x9B8160 / 0x696266),
 	// changing Easy-AI combat and economy. Original PR seed 51 makes Sharku; fixed seed 51 makes no hero.
 	// Seed 52 retains this path assertion: WildGoblinKing requested at frame 2220, produced at frame 2602.
+	// Merge queue q47 (bisected on top of q46: item 1, #253 and #261 keep seed 52; #263's group speed matching, RW 0x77005F, moves the Easy AIs' fights and
+	// economy): with seed 52 Mordor requests MorgomirFellBeast at 3907 (Gothmog at 1342 before) with 26 command points free of its 350; the hero costs 50
+	// (CommandPoints, MordorFellBeastInterface), so its citadel holds the entry at 68% as retail does (RW 0x8A1E02 .. 0x8A1E82: no progress without the
+	// command points) and no hero comes out. Seeds 53..67 measured on the merged tree (a CI host): 2 / 1 / 2 / 4 / 2 / 4 / 0 / 1 / 1 / 2 / 0 / 3 / 3 / 3 / 2 requests and 2 / 1 / 2 / 3 / 1 / 3 / 0 /
+	// 1 / 1 / 0 / 0 / 2 / 2 / 2 / 1 heroes out; seed 58: 4 requests and 3 heroes (Dwarves DwarvenGloin out at 5152, Wild WildGoblinKing 2502, Angmar AngmarKarsh
+	// 7477; Men GondorAragornMP requested at 8906)
 	CHECK(requests >= 1);
 	CHECK(heroesOut >= 1);
 }

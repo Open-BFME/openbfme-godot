@@ -4,6 +4,7 @@
 // The AI move path: see AIMove.h for the anchors and the list of what is not ported.
 
 #include "GameLogic/AI/AIMove.h"
+#include "Common/GameCommon.h"
 #include "Common/StateHash.h"
 #include "GameLogic/SimMath.h"
 
@@ -303,16 +304,24 @@ void AIMover::requestAttackPath(PathfindObjectID victim, const Coord3D &pos)
 	m_safeRequest = false; // lane MODULES-3: RW 0x663880
 	m_meleeApproachRequest = false;
 	m_requestedDest = pos;
-	m_isFinalGoal = false;
-	if ((int)m_pathTimestamp > (int)m_host.frame() - 2)
+	// lane REQTHROTTLE-1 (RW 0x663887 .. 0x6638DB; BFME2 0x663A39, decomp AIUpdateInterface_requestAttackPath.cpp:68-79, both editions): no write to isFinalGoal
+	// (+ 0x3B3: the last request's value stays). A path asked within 2 frames of the last one (+ 0x160 > frame - 2, unsigned): with a path (+ 0x140) and blocked
+	// frames (+ 0x16C > 0) the request waits LOGICFRAMES_PER_SECOND frames; else it waits 2 * LOGICFRAMES_PER_SECOND, the path is destroyed (RW 0x66276B) and the
+	// locomotor goal is none (AI vslot 0x220). The port set isFinalGoal false, waited 5 frames and kept the path
+	if (m_pathTimestamp > m_host.frame() - 2u)
 	{
-		setQueueForPathTime(5);
+		if (m_path && m_blockedFrames > 0)
+		{
+			setQueueForPathTime((unsigned)LOGICFRAMES_PER_SECOND); // RW 0x6638AC
+			return;
+		}
+		setQueueForPathTime(2u * (unsigned)LOGICFRAMES_PER_SECOND); // RW 0x6638BB
+		destroyPath();
+		setGoalNone();
+		return;
 	}
-	else
-	{
-		m_waitingForPath = true;
-		m_pf.queueForPath(id());
-	}
+	m_waitingForPath = true;
+	m_pf.queueForPath(id());
 }
 
 namespace
@@ -343,7 +352,7 @@ bool AIMover::requestMeleeApproachPath(const Coord3D &target, bool bypassOffset)
 	static const std::string kStopMeleeApproach =
 		"[S-786] melee approach: requestMeleeApproachPath (RW 0x6639CF: MeleeApproachDist offset, the height fallback, the melee destination check RW 0x6EEBC1 = "
 		"Pathfinder::adjustToMeleeDestination (spiral, closer-only, RW 0x6EBE89, MaxCellsAdjustToMeleeDestination), reservation before the 20 test, the + 0x3B3 / + 0x3B4 "
-		"request, refusal returned as false) is ported and called by AIAttackMeleeApproachState (0xE1, computePath RW 0x746DB6, S-787); INFERENCE: doPathfind serves the "
+		"request (+ 0x3B3 isFinalGoal, + 0x3B4 the approach), refusal returned as false) is ported and called by AIAttackMeleeApproachState (0xE1, computePath RW 0x746DB6, S-787); INFERENCE: doPathfind serves the "
 		"request with an ordinary "
 		"path (RW 0x668E94's + 0x224 gate and retry rules not read); RW 0x938939's obstacle-zone mapping is not ported; the siege-deploy contact search (RW 0x863EB3 / "
 		"0x6EA857) and RW 0x69519A's direct path are not ported";
@@ -391,19 +400,21 @@ bool AIMover::requestMeleeApproachPath(const Coord3D &target, bool bypassOffset)
 	m_attackVictim = PATHFIND_INVALID_ID;
 	m_attackPos = dest;
 	m_requestedDest = dest;
-	m_meleeApproachRequest = true; // + 0x3B3 / + 0x3B4
+	m_isFinalGoal = true;          // + 0x3B3 (lane REQTHROTTLE-1: RW 0x663BFE; requestPath RW 0x667F57 writes its isFinalGoal there)
+	m_meleeApproachRequest = true; // + 0x3B4
 	m_safeRequest = false;         // lane MODULES-3: RW 0x663C13
 	m_attackRequest = false;       // + 0x3B2
-	m_isFinalGoal = false;
-	if ((int)m_pathTimestamp > (int)m_host.frame() - 2)
+	// lane REQTHROTTLE-1 (RW 0x663C1A .. 0x663C42; BFME2 0x663C06, decomp AIUpdateInterface_requestMeleeApproachPath.cpp, both editions): a path asked within 2 frames
+	// of the last one (unsigned) waits 2 * LOGICFRAMES_PER_SECOND frames and the path is destroyed (no blocked case, the locomotor goal kept); the request still
+	// answers true. The port waited 5 frames and kept the path
+	if (m_pathTimestamp > m_host.frame() - 2u)
 	{
-		setQueueForPathTime(5);
+		setQueueForPathTime(2u * (unsigned)LOGICFRAMES_PER_SECOND);
+		destroyPath();
+		return true;
 	}
-	else
-	{
-		m_waitingForPath = true;
-		m_pf.queueForPath(id());
-	}
+	m_waitingForPath = true;
+	m_pf.queueForPath(id());
 	return true;
 }
 

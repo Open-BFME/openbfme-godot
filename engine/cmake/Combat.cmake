@@ -25,12 +25,14 @@ set(OPENBFME_COMBAT_TESTS
     tests/test_siegefall1.cpp
     tests/test_siegefall1_retail.cpp
     tests/test_startrange1.cpp # lane STARTRANGE-1: CHUNK_VENDOR box distance, the grab's -400 (RW 0x85207A)
+    tests/test_approach859.cpp # lane APPROACH-859: the special ability approach point (RW 0x851607) and ignored obstacle (RW 0x853AF3)
     tests/test_locopick1.cpp # lane LOCOPICK-1: the locomotor fallback (RW 0x663D70)
     tests/test_aimaim1.cpp # lane AIMAIM-1: the attack aim (RW 0x75232F)
     tests/test_killsrc1.cpp
     tests/test_invul1.cpp
     tests/test_kindfix1.cpp
     tests/test_combat_ai.cpp
+    tests/test_attack_approach_retail.cpp
     tests/test_attack_aim_turn.cpp
     tests/test_target1_acquire.cpp
     tests/test_los1_terrain.cpp

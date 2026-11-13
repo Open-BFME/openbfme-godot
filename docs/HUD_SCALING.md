@@ -46,3 +46,21 @@ Regression coverage:
 - `play1 spell store by the mouse:*`: all seven factions at 4:3, 16:9 and
   21:9; full-width backdrop coverage, opening, buying, Reset and Accept
   through actual mouse input.
+
+War of the Ring uses the same presentation correction in
+`AptStrategicHUD::setViewportSize`, for both RotWK and BFME2 data. The
+Palantir, stats and attached selection details tray stay on the left;
+END PHASE stays on the right; the checklist, dialog frame (battle prompts
+and army transfers) and new-turn indicator stay centred. The correction is
+applied to the loaded HUD parts after movie updates and before rendering
+or pointer-coordinate conversion, including when parts load late. Resizing
+does not alter their authored animation matrices. The viewer's Fit mode
+already scales uniformly and removes the correction. BFME1 has no strategic
+HUD and is unaffected; simulation rules are unchanged in every edition.
+
+As in the battle HUD, the dynamically positioned help and radial stages
+retain their existing coordinate mapping.
+
+- `retail strategic HUD widescreen:*`: installed RotWK and BFME2 panels at
+  4:3, 16:9, 21:9, 8K and a narrower viewport, repeated resizing, Fit mode,
+  authored matrices and END PHASE mouse input.

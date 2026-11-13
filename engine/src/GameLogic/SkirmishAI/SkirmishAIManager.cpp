@@ -891,8 +891,9 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"twice in the total, RW 0x7EDB72) and the counter table RW 0x7EDC2F / 0x7ED963 are ported; object + 0x4B8 is taken as its constructor value 1 (its writer "
 		"RW 0x691A2F is not ported); an InactiveBody's health ratio is taken as 0; the ThreatBreakdown block is read from the template's raw lines (S-071): an "
 		"unknown AIKindOf (a load error in retail) leaves the category -1",
-		"[S-1301] skirmish ai team group step (lane AI-3): RW 0x774F2B's idle helpers (RW 0x7728E8) are ported; the group's speed matching RW 0x77005F(1) is "
-		"not (fast members lead); Object::isAbleToAttack (RW 0x691269) is ported in full (lane DECOMP-3)",
+		"[S-1301] skirmish ai team group step (lane AI-3): RW 0x774F2B's idle helpers (RW 0x7728E8) and the group's speed matching "
+		"RW 0x77005F(1) (AIGroup::cohereMoveSpeed: the leader bands, the slowest member's speed, x0.7 ahead, x0.769 behind) are ported; Object::isAbleToAttack "
+		"(RW 0x691269) is ported in full (lane DECOMP-3)",
 		"[S-1302] skirmish ai best target threat gate inference (lane AI-3): RW 0x90B2A0 (the attacked-at records RW 0x6C7344 / 0x6C720A / 0x6C6F01, RW 0x6C6743, "
 		"the idle army record RW 0x99E63B, the counter table RW 0x7EDC2F, the draw AITargetChooser.cpp 0xF7) is ported; inference: RW 0x6C7344 walks the "
 		"player's teams in its team list order (the port: the tactics in list order, offensive before targetless, each by team index); the target finder's "

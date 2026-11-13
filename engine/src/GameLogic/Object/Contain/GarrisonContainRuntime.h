@@ -46,6 +46,8 @@
 #include <vector>
 
 class ModuleFactory;
+class Team;
+class SlaughterHordeContainBehaviorData;
 class CitadelSlaughterHordeContainBehaviorData;
 struct DieMuxData;
 struct GarrisonContainModuleData;
@@ -145,11 +147,16 @@ public:
 		unsigned long long rallyExits = 0;             // the exit path's second waypoint was the contain's rally point (RW 0x87CC13, lane BACKLOG-1)
 	};
 	const ExitStats &exitStats() const { return m_exitStats; }
+	// RW 0x87B69A: the stored original team (interface + 0xDC = module + 0xFC) looked up by id, null when unset
+	Team *originalTeam() const;
 
 protected:
 	void onContaining(Object *obj, bool wasSelected) override; // RW 0x87BEC8
 	void onRemoving(Object *obj) override;                     // RW 0x87BFA6
 	const GarrisonContainModuleData &garrison() const { return *m_garrison; }
+	bool hordeMemberInside(const Object &obj, Object **horde) const; // RW 0x990CB9
+	// RW 0x87B682: the interface's slot + 0x54 stores the team's id (0 for none); the container's own team is not touched
+	void setOriginalTeam(const Team *team);
 
 private:
 	friend class GarrisonContainTestAccess;
@@ -164,7 +171,6 @@ private:
 	void putObjectAtGarrisonPoint(Object *obj, ObjectID target, int condition, int index);      // RW 0x87B042
 	void removeObjectFromGarrisonPoint(Object *obj, int index);                                 // RW 0x87B123
 	void exitOneObject(Object *obj, int door);                                                  // RW 0x87CA2B
-	bool hordeMemberInside(const Object &obj, Object **horde) const;                            // RW 0x990CB9
 	void transformPoint(const Coord3D &local, Coord3D &out) const;                              // RW 0x87CEB3
 	bool memberHordeOf(const Object &obj, Object **horde) const;
 	void createInitialRoster();                       // RW 0x87BA4C
@@ -192,19 +198,45 @@ private:
 	ExitStats m_exitStats;
 };
 
-// Ring-entry branch of the citadel contain. The unrelated troop-slaughter branch
-// remains an explicit stop; ordinary units must not become fortress garrisons.
-class CitadelSlaughterHordeContain : public GarrisonContain
+// PORT-55: RW 0xC5F258 / 0xC5F470 share main slot +0x78 (0x883B4A).
+// The citadel overrides only the consume predicate (+0x84) and callback (+0x80).
+class SlaughterHordeContain : public GarrisonContain
+{
+public:
+	OBFME_MODULE_XFER(SlaughterHordeContain)
+	SlaughterHordeContain(Thing *thing, const SlaughterHordeContainBehaviorData *data);
+	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override;
+	bool addToContain(Object *obj) override;
+	bool isSlaughterContain() const override { return true; }
+protected:
+	virtual bool shouldSlaughter(const Object &obj) const { (void)obj; return true; } // RW 0x9B501B
+	virtual void onNonSlaughtered(Object &obj) { (void)obj; } // RW 0x9F3A3C
+	void onRemoving(Object *obj) override;
+	void crc(StateHasher &h) const override;
+private:
+	void addHordeMember(Object &obj); // RW 0x883B4A
+	void payFor(Object &obj, Player &player);
+	void recordTransferLosses(Object &obj);
+	const SlaughterHordeContainBehaviorData *m_slaughter;
+	unsigned m_transferredCount = 0; // RW +0x9E4
+	std::string m_transferredTemplate; // RW +0x9E8, saved with count
+};
+
+// Existing ring delivery remains the non-slaughter callback of the shared path.
+class CitadelSlaughterHordeContain : public SlaughterHordeContain
 {
 public:
 	OBFME_MODULE_XFER(CitadelSlaughterHordeContain)
 	CitadelSlaughterHordeContain(Thing *thing, const CitadelSlaughterHordeContainBehaviorData *data);
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override;
-	bool addToContain(Object *obj) override;
+	bool isSlaughterContain() const override { return true; } // PR 284: contain table RW 0xC5F2E8 + 0x30 = RW 0x8BD372
 	UpdateSleepTime update() override;
 	void crc(StateHasher &h) const override;
 	static const char *stopLine();
 	ObjectID pendingRingExit() const { return m_ringExit; } // the carrier the next update sends out (RW 0x884244)
+protected:
+	bool shouldSlaughter(const Object &obj) const override;
+	void onNonSlaughtered(Object &obj) override { deliverRing(obj); }
 private:
 	bool hasRingStatus(const Object &obj) const;
 	void deliverRing(Object &obj);

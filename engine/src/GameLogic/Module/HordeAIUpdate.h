@@ -72,11 +72,13 @@ public:
 	// expiry here: RW +0x16C / +0x170 are the cache this class keeps as m_cacheTarget / m_cacheExpiry) ----
 	// slot 0x16C: the melee target id (0 when none)
 	ObjectID meleeTargetId() const { return m_cacheTarget; }
+	// slot 0x168 RW 0x7BB0B2: + 0x16C = id (lane FLEECHASE-1: the writers are the melee wait state's onEnter / onExit and the approach state's update)
+	void setMeleeTargetId(ObjectID id) { m_cacheTarget = id; }
 	// slot 0x164 RW 0x86BE9A: `obj` or its horde (RW 0x693A1A(0)) is the melee target -> the readiness holds for 3 * LOGICFRAMES_PER_SECOND more frames
 	void refreshMeleeReadiness(Object &obj);
 	// slot 0x160 RW 0x870180: the readiness holds and `t` has the melee target's horde (RW 0x693A1A(0), null outside a horde: two nulls agree) or stands within
 	// 100 (edge distance) of this horde. The cache lives on the horde object in both: RW in its contain (+ 0x16C / + 0x170), the port in its HordeAIUpdate, with
-	// the same writers (the ready test RW 0x98FA8E, the refresh, the end of the melee RW 0x86C0F9); lane DECOMP-1 closed S-586
+	// the same writers (setMeleeTargetID, the refresh, the end of the melee RW 0x86C0F9; lane FLEECHASE-1: the ready test RW 0x98FA8E writes none); lane DECOMP-1 closed S-586
 	bool isInCurrentMelee(Object *t);
 	// slot 0x15C RW 0x86D614: a member is attacking (AI slot 0x1BC) with IS_MELEE_ATTACKING
 	bool hasMeleeAttackingMember() const;

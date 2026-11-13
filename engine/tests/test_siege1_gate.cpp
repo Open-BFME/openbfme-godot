@@ -11,6 +11,7 @@
 #include "Siege1TestUtil.h"
 
 #include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Module/GateModules.h"
 
 #include <cstdio>
 
@@ -30,10 +31,13 @@ struct GateRun
 	float healthAfter = 0.0f;
 	float distAtHit = -1.0f;             // the unit's 2D distance from the gate at its first damage
 	std::string otherDamaged;            // the other objects that lost health, in object list order
+	int gateContacts = 0;                // lane GATECOLLIDE-1: the gate pairs whose shapes overlapped (AIWorld::gateContacts) over the attack
+	int gatePushOuts = 0;                // and the gate's move-away requests (push-out scan and repel; GateOpenAndCloseBehavior::pushOutRequests)
 };
 
-// `unit` made `d` in front of the gate named `gateName` (along the gate's own facing, on the side of Player_2_Start), ordered to attack it for `frames` frames
-GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateName, const char *unit, float d, int frames)
+// `unit` made `d` in front of the gate named `gateName` (along the gate's own facing, on the side of Player_2_Start), ordered to attack it for `frames` frames;
+// `closeFirst`: the gate is closed (GateOpenAndCloseBehavior::close, its CLOSED state reached) before the unit is made
+GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateName, const char *unit, float d, int frames, bool closeFirst = false)
 {
 	GateRun r;
 	FortressGame g(s, map, false);
@@ -56,6 +60,18 @@ GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateN
 	g.frames(2);
 	Object *gate = g.named(gateName);
 	REQUIRE(gate);
+	if (closeFirst)
+	{
+		GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+		REQUIRE(b);
+		b->close();
+		for (int i = 0; i < 200 && b->state() != GateOpenAndCloseBehavior::CLOSED; ++i)
+		{
+			g.frames(1);
+		}
+		REQUIRE(b->state() == GateOpenAndCloseBehavior::CLOSED);
+		REQUIRE(b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED);
+	}
 	Player *me = g.ofFaction("FactionMordor");
 	REQUIRE(me);
 	g.game->shroud().revealMapForPlayerPermanently(me->getPlayerIndex());
@@ -83,6 +99,9 @@ GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateN
 	r.ordered = ai && ai->aiAttackObject(gate, CMD_FROM_PLAYER);
 	const ObjectID gid = gate->getID();
 	const float before = healthOf(gate);
+	GateOpenAndCloseBehavior *gb = GateOpenAndCloseBehavior::findGate(*gate);
+	const unsigned long long contactsBefore = g.game->ai().gateContacts();
+	const unsigned pushOutsBefore = gb ? gb->pushOutRequests() : 0u;
 	for (int f = 1; f <= frames; ++f)
 	{
 		g.frames(1);
@@ -103,6 +122,8 @@ GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateN
 	}
 	Object *t = g.game->logic().findObjectByID(gid);
 	r.healthAfter = t ? healthOf(t) : 0.0f;
+	r.gateContacts = (int)(g.game->ai().gateContacts() - contactsBefore);
+	r.gatePushOuts = t && gb ? (int)(gb->pushOutRequests() - pushOutsBefore) : -1;
 	r.shots = (int)(c.projectilesLaunched - launched);
 	r.contacts = (int)(c.projectileContactHits - hits);
 	for (const std::pair<ObjectID, float> &h : health)
@@ -114,14 +135,15 @@ GateRun attackFromFront(starttest::Shared &s, const char *map, const char *gateN
 		}
 	}
 	MESSAGE(std::string(unit) << " in front of " << std::string(gateName) << " from " << d << ": ordered " << r.ordered << ", shots " << r.shots << ", contacts " << r.contacts << " (" << r.contactsWhileStanding << " while it stood), first damage "
-				  << r.firstHit << " from " << r.distAtHit << ", death " << r.deathFrame << ", health at the end " << r.healthAfter << ", others damaged: " << r.otherDamaged);
+				  << r.firstHit << " from " << r.distAtHit << ", death " << r.deathFrame << ", health at the end " << r.healthAfter << ", others damaged: " << r.otherDamaged
+				  << ", gate contacts " << r.gateContacts << ", gate move-away requests " << r.gatePushOuts);
 	return r;
 }
 // a pinned run made twice: the two runs must agree (the port is deterministic; a difference is a bug, not a re-pin)
-GateRun pinnedRun(starttest::Shared &s, const char *map, const char *gateName, const char *unit, float d, int frames)
+GateRun pinnedRun(starttest::Shared &s, const char *map, const char *gateName, const char *unit, float d, int frames, bool closeFirst = false)
 {
-	const GateRun a = attackFromFront(s, map, gateName, unit, d, frames);
-	const GateRun b = attackFromFront(s, map, gateName, unit, d, frames);
+	const GateRun a = attackFromFront(s, map, gateName, unit, d, frames, closeFirst);
+	const GateRun b = attackFromFront(s, map, gateName, unit, d, frames, closeFirst);
 	CHECK(a.shots == b.shots);
 	CHECK(a.contacts == b.contacts);
 	CHECK(a.contactsWhileStanding == b.contactsWhileStanding);
@@ -129,6 +151,9 @@ GateRun pinnedRun(starttest::Shared &s, const char *map, const char *gateName, c
 	CHECK(a.deathFrame == b.deathFrame);
 	CHECK(a.distAtHit == b.distAtHit);
 	CHECK(a.otherDamaged == b.otherDamaged);
+	CHECK(a.healthAfter == b.healthAfter);
+	CHECK(a.gateContacts == b.gateContacts);
+	CHECK(a.gatePushOuts == b.gatePushOuts);
 	return a;
 }
 } // namespace
@@ -181,11 +206,13 @@ TEST_CASE("siege1 gate: #64's catapult made inside its MinimumAttackRange of Hel
 	// lane MODCOMPAT-MOD1 (GeometryUpgrade: every object reads its own GeometryInfo, RW Object + 0xA8, for its combat circle and sphere (+ 0xB8 / + 0xBC), partition cells and pathfinder footprint, and the gate's open / closed switch runs the full refresh RW 0x68B244; measured at its commit, a CI host):
 	// first hit 49 -> 48, the gate's death 287 -> 252
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first hit 53 -> 52
-	CHECK(r.firstHit == 52);
+	// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): first hit 52 -> 43
+	CHECK(r.firstHit == 43);
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the Mordor catapult from 120: death 427 -> 393
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 393 -> 222
 	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): death 222 -> 324
-	CHECK(r.deathFrame == 324); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 393 -> 223
+	// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): death 324 -> 316
+	CHECK(r.deathFrame == 316); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 393 -> 223
 }
 
 TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's gate break it; the arch takes no stone meant for the gate")
@@ -273,4 +300,26 @@ TEST_CASE("siege1 gate: the rams, Grond and the mumak in front of the gates (no 
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 90 -> 94
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 94);
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "MordorGrond", 250.0f, 600).deathFrame == 83);
+}
+
+// lane GATECOLLIDE-1: the gates' contact pass (AIWorld::processGateContacts) lets a CLOSED gate repel the objects touching its closed box unless the gate is
+// their goal or victim (RW 0x89C6F5; that exemption: `gatepush1 gates retail: ...`, test_hud5_gates.cpp). An orc horde and a ram ordered to attack the CLOSED
+// main gate stop short of the closed box (the orcs' first blow from 71, the ram's from 29): no gate pair overlaps, so the pass changes nothing in their
+// attack. The ram's three move-away requests are the gate's push-out scans as it dies and opens (RW 0x89C759), not contacts
+TEST_CASE("siege1 gate: an orc horde and a ram attacking Helm's Deep's CLOSED main gate never touch its closed box (no gate contact)")
+{
+	OPENBFME_REQUIRE_START(s);
+	const GateRun r = pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorFighterHorde", 250.0f, 600, true);
+	REQUIRE(r.ordered);
+	CHECK(r.gateContacts == 0);
+	CHECK(r.gatePushOuts == 0);
+	CHECK(r.firstHit == 41);
+	CHECK(r.deathFrame == -1); // the orcs do not break it in 600 frames
+	CHECK(r.healthAfter == 3552.0f);
+	const GateRun ram = pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600, true);
+	REQUIRE(ram.ordered);
+	CHECK(ram.gateContacts == 0);
+	CHECK(ram.gatePushOuts == 3);
+	CHECK(ram.firstHit == 57);
+	CHECK(ram.deathFrame == 123);
 }

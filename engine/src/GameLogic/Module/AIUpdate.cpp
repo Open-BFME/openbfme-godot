@@ -11,6 +11,8 @@
 #include "GameLogic/AI/TurretAI.h"
 #include "Common/Thing/RawModuleData.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Weapon.h"
@@ -274,6 +276,222 @@ public:
 	}
 	void notifyWheelsStopped() override { m_ai.setLocomotorGoalNone(); }
 
+	// lane MECH-D: RW 0x5E8956 .. 0x5E8FF8, the dispatcher's ScalesWalls look-ahead. The retail code (BFME2 decomp LocomotorMoveTowardsPositionHorde.cpp
+	// Locomotor::rva001E9083 lines 1335-1470; RotWK 0x5E8956 .. 0x5E8FF8 statement for statement): no HORDE_MEMBER status, not contained, its producer is no
+	// HORDE, the object is no HORDE but KindOf CAN_CLIMB_WALLS; the point one step ahead (the unit direction x min(desired speed, 7)) has a SCALEABLE_WALL in
+	// its pathfinder cell within the wall's major radius and below its top: climb (already CLIMBING: rise by desired speed x 0.6, else turn to the wall and
+	// clamp the local x, hug the face). No wall under the step but above the ground + bias: rappel (already RAPPELLING: sink by desired speed x 0.6, land at
+	// the ground and drop the path). The climb and rappel set the position and CLIMBING / RAPPELLING and reveal a stealthed object; a landed object clears
+	// both and the movers run. True: the position was set and the appearance movers do not run. The local player's EVA event 15 on an enemy wall is client
+	// presentation and not ported (S-4461).
+	bool wallScalingLookAhead(float desiredSpeed) override
+	{
+		Object &o = obj();
+		static const int kHordeMember = CombatNames::status("HORDE_MEMBER");
+		static const int kHorde = CombatNames::kindOf("HORDE");
+		static const int kClimb = CombatNames::kindOf("CAN_CLIMB_WALLS");
+		static const int kScaleableWall = CombatNames::kindOf("SCALEABLE_WALL");
+		static const int kClimbing = CombatNames::modelCondition("CLIMBING");
+		static const int kRappelling = CombatNames::modelCondition("RAPPELLING");
+		static const int kMoving = CombatNames::modelCondition("MOVING");
+		if (o.testStatus((unsigned)kHordeMember) || o.getContainedBy() != nullptr)
+		{
+			return false;
+		}
+		if (Object *producer = o.logic().findObjectByID(o.getProducerID()); producer && producer->isKindOf((unsigned)kHorde))
+		{
+			return false;
+		}
+		if (o.isKindOf((unsigned)kHorde) || !o.isKindOf((unsigned)kClimb))
+		{
+			return false;
+		}
+		Pathfinder &pf = m_ai.world().pathfinder();
+		const PathfindLayerEnum layer = m_ai.adapter().getLayer();
+		const Coord3D start = *o.getPosition();
+		const float height = pf.getLayerHeight(start.x, start.y, layer); // RW 0x5E89E2-0x5E8A00
+		const float *basis = o.getBasis();
+		const float step = desiredSpeed < 7.0f ? desiredSpeed : 7.0f; // RW 0xBE4AD4
+		// RW 0x5E8A30-0x5E8A55: the unit direction RW 0x70B9E0 is (cos, sin, 0), horizontal even when the basis is pitched (review prtrlo)
+		const Coord3D dir{ SimMath::mulf32(basis[0], step), SimMath::mulf32(basis[3], step), SimMath::mulf32(0.0f, step) };
+		Coord3D ahead{ SimMath::addf32(start.x, dir.x), SimMath::addf32(start.y, dir.y), SimMath::addf32(start.z, dir.z) };
+		const float nextHeight = pf.getLayerHeight(ahead.x, ahead.y, layer); // RW 0x5E8A8C
+		float bias = SimMath::addf32(SimMath::subf32(height, nextHeight), 0.1f); // RW 0x5E8A97-0x5E8AB1
+		if (bias < 0.0f)
+		{
+			bias = 0.0f;
+		}
+		const PathfindLayerEnum aheadLayer = pf.getLayerAt(ahead.x, ahead.y, ahead.z); // RW 0x680A75 (INFERENCE: the object's gate flag is not read by the port's getLayerAt)
+		const PathfindCell *cell = pf.getCell(aheadLayer, &ahead);                       // RW 0x5E3CC9
+		Object *wall = nullptr;
+		if (cell && cell->getObstacleID() != PATHFIND_INVALID_ID)
+		{
+			wall = o.logic().findObjectByID((ObjectID)cell->getObstacleID()); // RW 0x5E8AD4-0x5E8AE7
+		}
+		bool climbing = false, descending = false, landed = false;
+		if (wall && wall->isKindOf((unsigned)kScaleableWall)) // RW 0x5E8AFA: KindOf SCALEABLE_WALL
+		{
+			const float c = SimMath::cosf32(wall->getOrientation()), s = SimMath::sinf32(wall->getOrientation());
+			const Coord3D &wpos = *wall->getPosition();
+			const auto toLocal = [&](const Coord3D &p) {
+				const float dx = SimMath::subf32(p.x, wpos.x), dy = SimMath::subf32(p.y, wpos.y);
+				return Coord3D{ SimMath::addf32(SimMath::mulf32(c, dx), SimMath::mulf32(s, dy)), SimMath::subf32(SimMath::mulf32(c, dy), SimMath::mulf32(s, dx)),
+					SimMath::subf32(p.z, wpos.z) };
+			};
+			const auto toWorld = [&](const Coord3D &p) {
+				return Coord3D{ SimMath::addf32(SimMath::subf32(SimMath::mulf32(c, p.x), SimMath::mulf32(s, p.y)), wpos.x),
+					SimMath::addf32(SimMath::addf32(SimMath::mulf32(s, p.x), SimMath::mulf32(c, p.y)), wpos.y), SimMath::addf32(p.z, wpos.z) };
+			};
+			const float major = m_ai.world().movementInfo(*wall->getTemplate()).geometry.majorRadius; // RW 0xAD1920 on the geometry
+			const float maxH = ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::cachedShapesOf(*wall->getTemplate()));
+			const Coord3D local = toLocal(ahead);
+			if (SimMath::absD((double)local.x) <= (double)major && local.z <= maxH) // RW 0x5E8B33-0x5E8BD8
+			{
+				const float top = SimMath::addf32(wpos.z, maxH);
+				if (ahead.z < top) // RW 0x5E8BEA
+				{
+					ahead.x = SimMath::subf32(ahead.x, dir.x);
+					ahead.y = SimMath::subf32(ahead.y, dir.y);
+					ahead.z = SimMath::subf32(ahead.z, dir.z);
+					climbing = true;
+					if (o.testModelCondition(kClimbing)) // RW 0x5E8C1B: already on the face, rise
+					{
+						ahead.z = SimMath::addf32(ahead.z, SimMath::mulf32(desiredSpeed, 0.6f)); // RW 0xBDAD70
+						if (ahead.z > top)
+						{
+							ahead.z = top;
+						}
+					}
+					else // RW 0x5E8CDC: turn to the wall's facing, clamp the local x, and hug the face
+					{
+						const float *wb = wall->getBasis();
+						const float myx = basis[0], myy = basis[3]; // RW 0x70B9E0 of both objects: z 0
+						const float dot = SimMath::addf32(SimMath::mulf32(myx, wb[0]), SimMath::mulf32(myy, wb[3]));
+						float angle = wall->getOrientation();
+						if (!(dot >= 0.0f))
+						{
+							angle = SimMath::addf32(angle, 3.14159274f);
+							while (angle > 3.14159274f)
+							{
+								angle = SimMath::subf32(angle, 6.28318548f);
+							}
+							while (-3.14159274f >= angle)
+							{
+								angle = SimMath::addf32(angle, 6.28318548f);
+							}
+						}
+						o.setOrientation(angle);
+						Coord3D moved = toLocal(ahead);
+						if (moved.x > major)
+						{
+							moved.x = major;
+						}
+						else if (SimMath::subf32(0.0f, major) > moved.x)
+						{
+							moved.x = SimMath::subf32(0.0f, major);
+						}
+						ahead = toWorld(moved);
+					}
+				}
+				else
+				{
+					landed = true; // RW 0x5E8E8D: at the top
+				}
+			}
+		}
+		else // RW 0x5E8EC2: no SCALEABLE_WALL under the step
+		{
+			const float ground = pf.getLayerHeight(ahead.x, ahead.y, layer);
+			if (ahead.z > SimMath::addf32(ground, bias)) // RW 0x5E8EF0
+			{
+				ahead.x = SimMath::subf32(ahead.x, dir.x);
+				ahead.y = SimMath::subf32(ahead.y, dir.y);
+				ahead.z = SimMath::subf32(ahead.z, dir.z);
+				descending = true;
+				if (o.testModelCondition(kRappelling)) // RW 0x5E8F28
+				{
+					ahead.z = SimMath::subf32(ahead.z, SimMath::mulf32(desiredSpeed, 0.6f));
+					if (SimMath::addf32(ground, 1.0f) >= ahead.z) // RW 0x5E8F5D
+					{
+						ahead.z = ground;
+						m_ai.mover().destroyPath(); // RW 0x5E8F85 -> AI vslot 0x220
+						if (!o.testModelCondition(kMoving))
+						{
+							o.setModelConditionState(kMoving, true); // RW 0x5E8F8A: the MOVING condition
+						}
+						landed = true;
+					}
+				}
+			}
+		}
+		if (!(descending || climbing || landed))
+		{
+			// RW 0x5E8FAD: no climb this frame: both conditions go and the appearance movers run
+			if (o.testModelCondition(kClimbing))
+			{
+				o.setModelConditionState(kClimbing, false);
+			}
+			if (o.testModelCondition(kRappelling))
+			{
+				o.setModelConditionState(kRappelling, false);
+			}
+			return false;
+		}
+		o.setPosition(&ahead); // RW 0x5E8C5C-0x5E8C62: Thing::setPosition RW 0x70C201
+		const auto reveal = [&] {
+			// RW 0x5E8CB2-0x5E8CD7: a stealthed climber is revealed (RW 0x7767A9 markAsDetected(0, 1, null, true))
+			StealthUpdate *st = StealthUpdate::of(o);
+			if (st && st->isEnabled())
+			{
+				st->markAsDetected(0, 1, nullptr, true);
+			}
+		};
+		if (descending) // RW 0x5E8C71: RAPPELLING
+		{
+			if (o.testModelCondition(kClimbing))
+			{
+				o.setModelConditionState(kClimbing, false);
+			}
+			if (!o.testModelCondition(kRappelling))
+			{
+				o.setModelConditionState(kRappelling, true);
+			}
+			reveal();
+		}
+		else if (climbing) // RW 0x5E9011: CLIMBING
+		{
+			if (o.testModelCondition(kRappelling))
+			{
+				o.setModelConditionState(kRappelling, false);
+			}
+			if (!o.testModelCondition(kClimbing))
+			{
+				o.setModelConditionState(kClimbing, true);
+			}
+			reveal();
+		}
+		else // RW 0x5E9058: landed; both conditions go
+		{
+			if (o.testModelCondition(kClimbing))
+			{
+				o.setModelConditionState(kClimbing, false);
+			}
+			if (o.testModelCondition(kRappelling))
+			{
+				o.setModelConditionState(kRappelling, false);
+			}
+		}
+		return true;
+	}
+	bool isScalingWall() const override
+	{
+		// RW 0x694BF8 (getHorde) + AI vslot 0x7C + HordeContain interface vslot 0x238 (RW 0x86BD54): the horde's locomotor has ScalesWalls and it keeps a wall
+		Object *horde = obj().getHordeObject(false); // RW 0x693A1A: the object itself when HORDE, else its container; not the producer
+		ContainModuleInterface *contain = horde ? horde->getContain() : nullptr;
+		HordeContainInterface *hc = contain ? contain->getHordeContainInterface() : nullptr;
+		return hc && hc->isScalingWall();
+	}
+
 	bool hasHordeContain() const override { return hordeInterface() != nullptr; }
 	void hordeBeginReform() override
 	{
@@ -439,7 +657,8 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_MOVE_TO, std::make_unique<AIMoveToMachineState>(*m), AI_GOING_IDLE, AI_GOING_IDLE);
 	m->defineState(AI_FOLLOW_PATH, std::make_unique<AIFollowPathState>(*m, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_EXITPRODUCTION_PATH, std::make_unique<AIFollowPathState>(*m, true), AI_IDLE, AI_IDLE);
-	m->defineState(AI_FOLLOW_PATH_AS_TEAM, std::make_unique<AIFollowPathAsTeamState>(*m), AI_IDLE, AI_IDLE); // lane BACKLOG-8 r2: RW state 54
+	m->defineState(AI_FOLLOW_PATH_AS_TEAM, std::make_unique<AIFollowPathAsTeamState>(*m, false), AI_IDLE, AI_IDLE);       // lane BACKLOG-8 r2: RW state 54
+	m->defineState(AI_FOLLOW_PATH_AS_TEAM_ATTACK, std::make_unique<AIFollowPathAsTeamState>(*m, true), AI_IDLE, AI_IDLE); // lane PORT-13: RW state 61
 	m->defineState(AI_WAIT, std::make_unique<AIWaitState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_BUSY, std::make_unique<AIBusyState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_MOVE_OUT_OF_THE_WAY, makeMoveOutOfTheWayState(*m), AI_GOING_IDLE, AI_GOING_IDLE); // lane PHYS-1: state 26 (AIUpdateAllies.cpp); PLAY-4: -> 0x4E
@@ -1100,12 +1319,45 @@ void AIUpdateInterface::aiFollowPathAsTeam(const std::vector<Coord3D> &path, Obj
 	{
 		return;
 	}
+	if (source != CMD_FROM_AI)
+	{
+		m_attackMoveActive = false;
+	}
 	m_machine->setGoalPosition(path.back());
 	m_machine->setGoalPath(path);
 	setLastCommandSource(source);
 	m_mover->ignoreObstacle(ignoreObject ? ignoreObject->getID() : PATHFIND_INVALID_ID);
 	m_teamPathAngle = angle;
 	m_machine->setState(AI_FOLLOW_PATH_AS_TEAM);
+	wakeUpNow();
+}
+
+void AIUpdateInterface::aiFollowPathAsTeamAttack(const std::vector<Coord3D> &path, Object *ignoreObject, float angle, CommandSourceType source)
+{
+	// RW 0x66BC68 (AI command 0x25, RW 0x66ABAF -> AI vslot 0x80): identical to RW 0x66BB9D except it enters state 61 (0x3D), the attack march
+	if (!acceptCommand(source, 0x25))
+	{
+		return;
+	}
+	if (hasKind(*getObject(), kindBits().immobile))
+	{
+		return;
+	}
+	m_machine->clear();
+	if (path.empty())
+	{
+		return;
+	}
+	if (source != CMD_FROM_AI)
+	{
+		m_attackMoveActive = false;
+	}
+	m_machine->setGoalPosition(path.back());
+	m_machine->setGoalPath(path);
+	setLastCommandSource(source);
+	m_mover->ignoreObstacle(ignoreObject ? ignoreObject->getID() : PATHFIND_INVALID_ID);
+	m_teamPathAngle = angle;
+	m_machine->setState(AI_FOLLOW_PATH_AS_TEAM_ATTACK);
 	wakeUpNow();
 }
 
@@ -1737,16 +1989,25 @@ PathfindObjectID AIUpdateInterface::enterTargetOf(const PathfindObject &o) const
 {
 	Object *obj = getObject()->logic().findObjectByID((ObjectID)o.getID());
 	const AIUpdateInterface *ai = obj ? obj->getAIUpdateInterface() : nullptr;
-	const AIStateMachine *m = ai ? ai->stateMachineOrNull() : nullptr;
+	const Object *target = ai ? ai->enterTarget() : nullptr;
+	return target ? (PathfindObjectID)target->getID() : PATHFIND_INVALID_ID;
+}
+
+// lane PORT-9: RW 0x664D12 itself, without the PathfindObject wrapper the pathfinder's two queries take. OpenContain::onCollide (RW 0x865A00) calls the
+// slot with the object it touched and compares the answer with the container
+const Object *AIUpdateInterface::enterTarget() const
+{
+	// RW 0x664D16 the state type (RW 0x662D70), RW 0x664D20 the machine's goal object (RW 0x8DBACE); RW 0x664D29 .. 0x664D45 the entering states
+	const AIStateMachine *m = stateMachineOrNull();
 	const Object *goal = m ? m->goalObject() : nullptr;
 	if (goal == nullptr)
 	{
-		return PATHFIND_INVALID_ID;
+		return nullptr;
 	}
 	static const int kShip = ObjectTemplateInfoBuilder::kindOfIndex("SHIP");
-	const unsigned t = ai->aiStateType();
+	const unsigned t = aiStateType();
 	const bool entering = t == 15 || t == 0x31 || t == 0x18 || t == 0x2B || t == 0x19 || t == 52 || (t == 56 && hasKind(*goal, kShip));
-	return entering ? (PathfindObjectID)goal->getID() : PATHFIND_INVALID_ID;
+	return entering ? goal : nullptr;
 }
 
 bool AIUpdateInterface::crushOrSquishPolicy(const PathfindObject &other) const

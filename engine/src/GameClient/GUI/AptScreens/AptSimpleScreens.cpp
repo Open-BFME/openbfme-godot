@@ -945,6 +945,11 @@ void AptLoadScreen::populate()
 		windows().note("loadscreen-invalid", m_env.loadScreen->error);
 		return;
 	}
+	if (!m_env.loadScreen->rankStatsError.empty())
+	{
+		// lane RANKICON-1: a stats file that cannot be read is reported (the cards show 0 points), never a silent default
+		windows().note("loadscreen-stats", m_env.loadScreen->rankStatsError);
+	}
 	for (int c = 0; c < m_env.loadScreen->cardCapacity(); ++c)
 	{
 		const std::string n = std::to_string(c);
@@ -958,10 +963,16 @@ void AptLoadScreen::populate()
 		{
 			windows().note("loadscreen-level", "[S-3506] card " + n + ": no rank icon (no mapped image lookup, or none for its army and level)");
 		}
-		else if (card.occupied && card.human)
+		else if (card.occupied && card.human && !m_env.loadScreen->rankStatsRead)
 		{
 			windows().note("loadscreen-level", "[S-3506] card " + n + ": the player's rank icon " + card.levelImage +
-				" is level 1: the profile's <army>Points are not read (the stats files are not ported)");
+				" is for 0 points: no profile store was given, so no stats file was read");
+		}
+		else if (card.occupied && card.human)
+		{
+			// lane RANKICON-1: the local rank table (RW 0x96054C) of the current profile's stats (RW 0x93E6F2 / 0x93E72F)
+			windows().note("loadscreen-level", "card " + n + ": the player's rank icon " + card.levelImage + " for " + std::to_string(card.rankPoints) +
+				" points (" + (m_env.loadScreen->rankStatsPath.empty() ? std::string("no current profile") : m_env.loadScreen->rankStatsPath) + ")");
 		}
 		if (card.occupied)
 		{

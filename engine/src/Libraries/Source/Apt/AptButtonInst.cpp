@@ -213,12 +213,16 @@ bool AptButtonInst::hitTest(float stageX, float stageY) const
 
 bool AptButtonInst::hitBounds(float out[4]) const
 {
+	return hitBounds(out, globalMatrix());
+}
+
+bool AptButtonInst::hitBounds(float out[4], const AptMatrix &transform) const
+{
 	if (!m_info)
 	{
 		return false;
 	}
 	bool any = false;
-	const AptMatrix global = globalMatrix();
 	auto add = [&](const AptMatrix &m, float x, float y) {
 		float gx, gy;
 		m.apply(x, y, gx, gy);
@@ -243,7 +247,7 @@ bool AptButtonInst::hitBounds(float out[4]) const
 		recM.d = rec.matrix[3];
 		recM.tx = rec.translation[0];
 		recM.ty = rec.translation[1];
-		const AptMatrix m = global.concat(recM);
+		const AptMatrix m = transform.concat(recM);
 		AptCharRef ref;
 		std::string error;
 		if (!m_apt.resolveCharacter(m_char.file, rec.characterId, ref, &error))
