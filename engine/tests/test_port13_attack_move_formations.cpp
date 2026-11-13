@@ -162,7 +162,7 @@ TEST_CASE("PORT-13-ini-and-crc: AIData AttackMoveUsesFormations defaults to true
 	GameLogicSettings defaults;
 	CHECK(defaults.attackMoveUsesFormations); // RW 0x6FFD9E: mov byte ptr [esi+0xBA], 1
 
-	// both retail editions' default\aidata.ini set AttackMoveUsesFormations = Yes (scan_attack_move_uses_formations.py), so only a mod that turns it off
+	// both retail editions' default\aidata.ini set AttackMoveUsesFormations = Yes (line 83 of both mounts), so only a mod that turns it off
 	// reaches the extra hashed byte; the retail value hashes as the pre-PORT-13 sequence did
 	std::string error;
 	GameLogicSettings modNo;

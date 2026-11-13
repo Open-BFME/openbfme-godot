@@ -72,8 +72,8 @@ private:
 	bool m_adjustFinal = true; ///< + 0x54
 	bool m_atPoint = false;    ///< + 0x56
 	bool m_steppedBack = false; ///< + 0x57
-	CommandSourceType m_savedCommandSource = CMD_FROM_AI; ///< + 0x58 (RW 0x74FCC3 / 0x74FD73)
-	std::unique_ptr<AIStateMachine> m_attackMachine;      ///< + 0x5C (RW 0x74E083, lazy on first onEnter so HuntIdleState draws no RNG at unit creation)
+	CommandSourceType m_savedCommandSource = CMD_FROM_AI; ///< + 0x58 (onEnter RW 0x74FD6D .. 0x74FD73 overwrites it before any read; INFERENCE: the ctor RW 0x74FC9B stores 0, the port keeps CMD_FROM_AI: state 61 hashes it only while current)
+	std::unique_ptr<AIStateMachine> m_attackMachine;      ///< + 0x5C (RW 0x74E083; retail builds it in the ctor RW 0x74FC9B, INFERENCE: the port builds it on the first onEnter, each entry draws once either way)
 	float m_angle = 0.0f;      ///< + 0x60
 	bool m_turning = false;    ///< + 0x64
 	Coord3D m_goal{ 0.0f, 0.0f, 0.0f }; ///< the internal move's goal (+ 0x20)

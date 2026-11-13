@@ -467,6 +467,11 @@ void Team::crc(StateHasher &h) const
 			h.addU32(o.target);
 		}
 	}
+	if (m_aiRecruitableOverrideSet) // lane PORT-40: + 0x110 / + 0x111, hashed once a script action set them (RW 0x7C199C / RW 0x7C0C3E)
+	{
+		h.addU32(0x110u);
+		h.addBool(m_aiRecruitableOverride);
+	}
 }
 
 // ---- TeamFactory ------------------------------------------------------------------------------------------------------
@@ -661,13 +666,15 @@ void TeamFactory::crc(StateHasher &h) const
 
 // ---- lane SAVE-4a: the teams' snapshot --------------------------------------------------------------------------------------------------------
 // OpenBFME native layout: retail's TeamFactory::xfer (RW 0x7A634B, tier B, (1, 3)) and TeamPrototype::xfer (RW 0x7A7184, tier D, (1, 2)) transfer RotWK's
-// team instances with their AI and script fields; this Team is the port's subset (no recruitment, no AI attack state), so the blocks are native. The
+// team instances with their AI and script fields; this Team is the port's subset (no AI recruit pool, no AI attack state), so the blocks are native. The
 // relation maps are retail's sub-records (xferRelationMaps). Members are ids (ZH Team::xfer saves the member ids and Team::loadPostProcess finds them).
 void Team::xfer(Xfer &x)
 {
-	// version 2 (lane RAI-POW): the special-power registry (+ 0x140); version 3 (lane RAI-POW-4): the threat-order list (+ 0x13C). Each is
-	// written only once it has an entry, so a game whose teams never cast / fought keeps version 1's (or 2's) block
-	XferVersion v{ 1, (std::uint8_t)(x.isLoading() ? 3 : (!m_orders.empty() ? 3 : (!m_specialPowers.empty() ? 2 : 1))) };
+	// version 2 (lane RAI-POW): the special-power registry (+ 0x140); version 3 (lane RAI-POW-4): the threat-order list (+ 0x13C); version 4
+	// (lane PORT-40): the AI-recruitable override (+ 0x110 / + 0x111). Each is written only once it has an entry, so a game whose teams never cast /
+	// fought / were flagged keeps version 1's (or 2's / 3's) block
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() ? 4
+		: (m_aiRecruitableOverrideSet ? 4 : (!m_orders.empty() ? 3 : (!m_specialPowers.empty() ? 2 : 1)))) };
 	x.xferVersion(v);
 	xferRelationMaps(x, m_teamRelations, m_playerRelations);
 	x.xferAsciiString(&m_state);
@@ -757,6 +764,8 @@ void Team::xfer(Xfer &x)
 		if (x.isLoading())
 		{
 			m_orders.clear(); // a version 1 / 2 snapshot has no order list
+			m_aiRecruitableOverrideSet = false; // nor the override (version 4's block)
+			m_aiRecruitableOverride = false;
 		}
 		return;
 	}
@@ -788,6 +797,17 @@ void Team::xfer(Xfer &x)
 	{
 		m_orders = std::move(loaded);
 	}
+	if (v.current < 4)
+	{
+		if (x.isLoading())
+		{
+			m_aiRecruitableOverrideSet = false; // a version 3 snapshot has no override
+			m_aiRecruitableOverride = false;
+		}
+		return;
+	}
+	x.xferBool(&m_aiRecruitableOverrideSet); // lane PORT-40: + 0x110 / + 0x111
+	x.xferBool(&m_aiRecruitableOverride);
 }
 
 void TeamFactory::xfer(Xfer &x)

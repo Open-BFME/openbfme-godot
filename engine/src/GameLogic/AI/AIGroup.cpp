@@ -562,6 +562,8 @@ void AIGroup::groupAttackMoveToPosition(const Coord3D &pos, int maxShots, Comman
 			return; // the group marched; RW 0x774E2F's tail does not run
 		}
 	}
+	// NOT PORTED (follow-up): RW 0x774E96 .. 0x774ED8 gives each member with an AI aiAttackMoveToPosition(pos, maxShots, source) (RW 0x696266) when
+	// Object::isAbleToAttack (RW 0x691269), else aiMoveToPosition(pos, source) (RW 0x66C4CA); the port keeps lane COMBAT-1's group attack-move here
 	groupMoveToPosition(pos, false, source, false, 0.0f, true);
 	for (Object *o : m_members)
 	{

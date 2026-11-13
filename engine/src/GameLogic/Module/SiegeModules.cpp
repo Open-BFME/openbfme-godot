@@ -44,9 +44,6 @@ const char *const kStopPortal =
 	"SiegePortalInterface (RW 0x863EB3 IsEndPortalAboveWall, the waypoints RW 0x86404D / 0x8639EF, RW 0x863D77 / 0x863D30 the top attack point); INFERENCE: "
 	"RW 0x863D77's arithmetic order is lane SIEGE-1's reading; a DynamicPortalBehaviour that does not implement the interface (none in the port) would keep "
 	"the deploy in phase 1";
-const char *const kStopAdjust =
-	"[S-4941] siege deploy (lane SIEGE-1): Pathfinder::adjustMeleeOffset (RW 0x6EA0EC) is not ported: a SiegeDeploySpecialPower with SkipAdjustPosition No (no "
-	"retail object) keeps the unadjusted offset";
 const char *const kStopSiege =
 	"[S-4942] siege deploy (lane SIEGE-1): ported from RotWK: SiegeDockingBehavior (RW 0x85D216 / 0x85CE65 / 0x85CBC8 / 0x85CA8A / 0x85CD20 / 0x85CCB8), "
 	"SiegeDeploySpecialPower (RW 0x8CA5C2 / 0x8CA30F / 0x8CA072 / 0x8C9D06 / 0x8CA2D0 over the base RW 0x991660), SiegeDeployHordeSpecialPower (RW 0x8CAA12 / "
@@ -299,7 +296,7 @@ bool siegeTowerTopReach(Object &tower, const Coord3D &sourcePos, float sourceRad
 
 std::vector<std::string> SiegeModules::stopLines()
 {
-	return { kStopPortal, kStopAdjust, kStopSiege, DeployStyleAIUpdate::stopLine() };
+	return { kStopPortal, kStopSiege, DeployStyleAIUpdate::stopLine() }; // S-4941 (the approach offset's RW 0x6EA0EC) is ported: Pathfinder::adjustMeleeOffset
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -954,15 +951,22 @@ Coord3D SiegeDeploySpecialPower::computeApproachPoint(Object &dock, Coord3D &dir
 		return position;
 	}
 	offset = Coord3D{ SimMath::mulf32(offset.x, 0.1f), SimMath::mulf32(offset.y, 0.1f), SimMath::mulf32(offset.z, 0.1f) }; // RW 0xBD83D4
+	// ThePathfinder (RW 0xDE4B40, read at RW 0x8C9E6E) through the logic's AI world; a logic built without one has no grid to ask, and neither has RW's
+	// wall query RW 0x6EA857 below
+	AIWorld *world = obj->logic().aiWorld();
 	if (!m_data->m_skipAdjustPosition)
 	{
-		// RW 0x6EA0EC (Pathfinder::adjustMeleeOffset) is not ported (S-4941): the offset stays as it is; the position then restarts from the wall
-		obj->logic().noteStop(kStopAdjust);
+		// RW 0x8C9E6A .. 0x8C9E7F (after the test of data + 0x22 at RW 0x8C9E64): Pathfinder::adjustMeleeOffset (RW 0x6EA0EC) with the deploying object
+		// (module + 0x08, RW 0x8C9E77), the dock (the first argument, EDI) and the offset scaled by 0.1 (EBP - 0x2C); the approach point restarts from the
+		// dock's position with the bent offset (RW 0x8C9E7F .. 0x8C9EAD)
+		if (world)
+		{
+			world->pathfinder().adjustMeleeOffset(world->adapterFor(*obj), world->adapterFor(dock), offset);
+		}
 		position = Coord3D{ SimMath::addf32(offset.x, target.x), SimMath::addf32(offset.y, target.y), SimMath::addf32(offset.z, target.z) };
 	}
 	const Coord3D dir = normalized(offset); // Coord3D::Normalize
 	const Coord3D step{ SimMath::mulf32(dir.x, 5.0f), SimMath::mulf32(dir.y, 5.0f), SimMath::mulf32(dir.z, 5.0f) }; // RW 0xBDAE58
-	AIWorld *world = obj->logic().aiWorld();
 	for (int i = 0; i < 10 && world; ++i)
 	{
 		if (!world->pathfinder().isPointOnWall(position, false)) // RW 0x6EA857

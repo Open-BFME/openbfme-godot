@@ -54,6 +54,31 @@
 #include <initializer_list>
 #include <stdexcept>
 
+// lane PORT-46: RW 0x8B1142 (ToggleMountedSpecialAbilityUpdate vtable 0xC6BDA0 slot 0x50) and its twin RW 0x8B4455 (SpecialDisguiseUpdate vtable
+// 0xC6CF88 slot 0x50): while the base handler RW 0x851E9F still has packing frames, UNPACKING (state 2) goes 1.0 -> OpacityTarget over UnpackTime
+// (data + 0x88) and PACKING goes OpacityTarget -> 1.0 over PackTime (data + 0x84). The fraction is 1 - framesLeft / total under x87 PC24
+// (RW 0x8B119F .. 0x8B11D7 / RW 0x8B44B2 .. 0x8B44EA), then (to - from) * fraction + from, rounded by fstp dword. Only the drawable's opacity is
+// written (RW 0x8B11F0 / RW 0x8B4513: drawable + 0xB0); no module-side float state belongs to RW 0x8B1142
+static float packingFadeOpacity(float opacityTarget, int packingState, unsigned framesLeft, unsigned unpackFrames, unsigned packFrames)
+{
+	float from, to;
+	unsigned total;
+	if (packingState == 2) // RW 0x8B115B / 0x8B4461: state 2 = UNPACKING
+	{
+		from = 1.0f;          // RW 0x8B1164 / 0x8B4477: DAT 0xBD1908
+		to = opacityTarget;   // RW 0x8B1177 / 0x8B448A: data + 0xD0 / + 0xD4
+		total = unpackFrames; // RW 0x8B116C / 0x8B447F: data + 0x88
+	}
+	else // RW 0x8B1181 / 0x8B4494: PACKING
+	{
+		from = opacityTarget; // RW 0x8B1181 / 0x8B4494
+		to = 1.0f;            // RW 0x8B1194 / 0x8B44A7
+		total = packFrames;   // RW 0x8B1189 / 0x8B449C: data + 0x84
+	}
+	const double q = SimMath::pc24SubW(1.0, SimMath::pc24DivW(SimMath::fildU32(framesLeft), SimMath::fildU32(total)));
+	return SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW(SimMath::pc24SubW((double)to, (double)from), q), (double)from));
+}
+
 namespace
 {
 // the indices the binary pushes (names: GameLogic/BitFlagNames.cpp)
@@ -1104,7 +1129,7 @@ void SpecialAbilityUpdate::approachTarget()
 	m_lastTargetPos = *t->getPosition();
 	if (bird)
 	{
-		bird->aiAbilityMoveTo(*t->getPosition(), CMD_FROM_AI); // RW 0x852DC5(target, 2): AI command 0x48 -> RW 0x76A04A with the object's position
+		bird->aiAbilityMoveToObject(t, CMD_FROM_AI); // RW 0x852DC5(target, 2): command 0x48 keeps the ID until RW 0x76DAEE executes it
 		return;
 	}
 	// RW 0x853AEE: a structure target, a target on another layer or StartAbilityRange <= 50 (RW 0xBD88C4) moves to the object (AI command 0x48);
@@ -2106,6 +2131,24 @@ ToggleMountedSpecialAbilityUpdate::ToggleMountedSpecialAbilityUpdate(Thing *thin
 {
 }
 
+// lane PORT-46: RW 0x8B1142 (vtable 0xC6BDA0 slot 0x50, called by SpecialAbilityUpdate::update at RW 0x854F7E): while the base handler RW 0x851E9F
+// still has packing frames, the drawable + 0xB0 is set to the PC24 interpolation between 1.0 and OpacityTarget (data + 0xD0). RW 0x8B1155: on the last
+// unpacking frame the base returns false and there is no opacity write. RW 0x8B11E3 / 0x8B11F0: the value goes straight to the object's drawable
+bool ToggleMountedSpecialAbilityUpdate::handlePackingProcessing()
+{
+	const bool busy = SpecialAbilityUpdate::handlePackingProcessing();
+	if (!busy)
+	{
+		return busy; // RW 0x8B1153 .. 0x8B1155
+	}
+	const float opacity = packingFadeOpacity(m_tm->m_opacityTarget, m_packingState, m_packFramesLeft, m_tm->m_unpackFrames, m_tm->m_packFrames);
+	if (ObjectClientHooks *client = getObject()->clientHooks())
+	{
+		client->setDrawableOpacity(*getObject(), opacity); // RW 0x8B11F0
+	}
+	return busy; // RW 0x8B11F8: the base busy flag is returned unchanged
+}
+
 // RW 0x8B11FE
 void ToggleMountedSpecialAbilityUpdate::onBuildComplete()
 {
@@ -2175,7 +2218,10 @@ void ToggleMountedSpecialAbilityUpdate::initiateIntentToDoSpecialPower(const Spe
 void ToggleMountedSpecialAbilityUpdate::finishAfterPacking()
 {
 	SpecialAbilityUpdate::finishAfterPacking();
-	// RW 0x8B126B: the drawable's opacity back to 1.0 (client)
+	if (ObjectClientHooks *client = getObject()->clientHooks())
+	{
+		client->setDrawableOpacity(*getObject(), 1.0f); // lane PORT-46, RW 0x8B126B .. 0x8B1287: drawable + 0xB0 = 1.0
+	}
 	getObject()->setStatus(kStatusIgnoreAI, false); // RW 0x62684D(0x4A, 0)
 	if (m_replaceAfterPacking && !m_tm->m_mountedTemplate.empty())
 	{
@@ -2189,9 +2235,12 @@ void ToggleMountedSpecialAbilityUpdate::finishAfterPacking()
 // RW 0x8B1219
 void ToggleMountedSpecialAbilityUpdate::finishAbility(bool ownerDying, bool aborted)
 {
-	// RW 0x8B121C: the drawable's opacity back to 1.0 (client)
+	if (ObjectClientHooks *client = getObject()->clientHooks())
+	{
+		client->setDrawableOpacity(*getObject(), 1.0f); // lane PORT-46, RW 0x8B121C .. 0x8B1238: drawable + 0xB0 = 1.0
+	}
 	getObject()->setStatus(kStatusIgnoreAI, false);
-	SpecialAbilityUpdate::finishAbility(ownerDying, aborted);
+	SpecialAbilityUpdate::finishAbility(ownerDying, aborted); // RW 0x8B1240: base 0x8530BA
 }
 
 void ToggleMountedSpecialAbilityUpdate::crc(StateHasher &h) const
@@ -2499,7 +2548,10 @@ void SummonReplacementSpecialAbilityUpdate::triggerAbilityEffect()
 void SummonReplacementSpecialAbilityUpdate::finishAfterPacking()
 {
 	SpecialAbilityUpdate::finishAfterPacking();
-	// RW 0x8B2036: the drawable's opacity back to 1.0 (client)
+	if (ObjectClientHooks *client = getObject()->clientHooks())
+	{
+		client->setDrawableOpacity(*getObject(), 1.0f); // lane PORT-46, RW 0x8B2036 .. 0x8B2052: drawable + 0xB0 = 1.0 (0xBD1908)
+	}
 	getObject()->setStatus(kStatusIgnoreAI, false); // RW 0x62684D(0x4A, 0)
 	if (m_replaceAfterPacking && !m_sr->m_mountedTemplate.empty())
 	{
@@ -2511,7 +2563,10 @@ void SummonReplacementSpecialAbilityUpdate::finishAfterPacking()
 // RW 0x8B208A: ToggleMounted's (RW 0x8B1219) then ModelCondition's WhichSpecialPower condition off (RW 0x8945C1's)
 void SummonReplacementSpecialAbilityUpdate::finishAbility(bool ownerDying, bool aborted)
 {
-	// RW 0x8B208D: the drawable's opacity back to 1.0 (client)
+	if (ObjectClientHooks *client = getObject()->clientHooks())
+	{
+		client->setDrawableOpacity(*getObject(), 1.0f); // lane PORT-46, RW 0x8B208D .. 0x8B20A9: drawable + 0xB0 = 1.0
+	}
 	getObject()->setStatus(kStatusIgnoreAI, false);
 	SpecialAbilityUpdate::finishAbility(ownerDying, aborted);
 	setCondition(*getObject(), whichSpecialPowerCondition(m_sr->m_whichSpecialPower), false);
@@ -2660,23 +2715,8 @@ bool SpecialDisguiseUpdate::handlePackingProcessing()
 	{
 		return busy;
 	}
-	float from, to;
-	unsigned total;
-	if (m_packingState == 2)
-	{
-		from = 1.0f;
-		to = m_sd->m_opacityTarget;
-		total = m_sd->m_unpackFrames; // data + 0x88
-	}
-	else
-	{
-		from = m_sd->m_opacityTarget;
-		to = 1.0f;
-		total = m_sd->m_packFrames; // data + 0x84
-	}
-	const double q = SimMath::pc24SubW(1.0, SimMath::pc24DivW(SimMath::fildU32(m_packFramesLeft), SimMath::fildU32(total)));
-	m_opacity = SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW(SimMath::pc24SubW((double)to, (double)from), q), (double)from));
-	// RW 0x8B44F0: the drawable's opacity (+ 0xB0) follows (client)
+	m_opacity = packingFadeOpacity(m_sd->m_opacityTarget, m_packingState, m_packFramesLeft, m_sd->m_unpackFrames, m_sd->m_packFrames);
+	// RW 0x8B44F0: the drawable's opacity (+ 0xB0) follows (client): the delivery is its own lane, not this one
 	return busy;
 }
 
@@ -2684,7 +2724,7 @@ bool SpecialDisguiseUpdate::handlePackingProcessing()
 void SpecialDisguiseUpdate::finishAbility(bool ownerDying, bool aborted)
 {
 	SpecialAbilityUpdate::finishAbility(ownerDying, aborted);
-	m_opacity = 1.0f; // RW 0x8B4545: the drawable's opacity back to 1.0 (client)
+	m_opacity = 1.0f; // RW 0x8B4545: the drawable's opacity back to 1.0 (client: its own lane)
 }
 
 void SpecialDisguiseUpdate::crc(StateHasher &h) const
