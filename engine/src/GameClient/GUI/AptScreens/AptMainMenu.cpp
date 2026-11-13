@@ -18,6 +18,7 @@
 #include "GameClient/OptionPreferences.h"
 #include "Libraries/Source/Apt/Apt.h"
 #include "Libraries/Source/Apt/AptActionInterpreter.h"
+#include "Libraries/Source/Apt/AptButtonInst.h"
 #include "Libraries/Source/Apt/AptCharacterInst.h"
 #include "Libraries/Source/Apt/AptObject.h"
 
@@ -270,15 +271,37 @@ bool isRow(AptCharacterInst *c)
 	return s && (s->childByName("bttn") != nullptr || s->childByName("bttnDisabled") != nullptr);
 }
 
-// a piece of the list's frame: BFME2's NavFrameFive, RotWK's unnamed clips
+// MOVIE FACTS (BFME2 1.06 and RotWK 2.01 MainMenu.apt): the unnamed direct button with only a release action is the panel's hit area; the
+// stage-wide surround instead closes on rollover (transition 1). Both styles need the panel stretched with their added campaign rows.
+bool isPanelButton(AptCharacterInst *c)
+{
+	AptButtonInst *b = c ? c->asButton() : nullptr;
+	const AptButtonInfo *info = b ? b->info() : nullptr;
+	return info && !info->actions.empty() && std::all_of(info->actions.begin(), info->actions.end(), [](const AptButtonAction &a) {
+		return a.transitionMask == 8 && a.keyCode == 0;
+	});
+}
+
+// a piece of the list's frame: BFME2's NavFrameFive, RotWK's unnamed clips, and the unnamed panel button (never the closing surround)
 bool isFramePiece(AptCharacterInst *c)
 {
-	return c && c->asSprite() && !isRow(c) && (c->instName().empty() || c->instName().rfind("NavFrame", 0) == 0);
+	return c && (c->asSprite() || isPanelButton(c)) && !isRow(c) && (c->instName().empty() || c->instName().rfind("NavFrame", 0) == 0);
 }
 
 // the clip's content bounds (its own space) through `m` into the parent's space: y0 (top), y1 (bottom)
-bool parentYBounds(const AptCharacterInst &c, const AptMatrix &m, float &y0, float &y1)
+bool parentYBounds(AptCharacterInst &c, const AptMatrix &m, float &y0, float &y1)
 {
+	if (const AptButtonInst *button = c.asButton())
+	{
+		float bounds[4];
+		if (!button->hitBounds(bounds, m))
+		{
+			return false;
+		}
+		y0 = bounds[1];
+		y1 = bounds[3];
+		return y1 > y0;
+	}
 	float lx0 = 0, ly0 = 0, lx1 = 0, ly1 = 0;
 	if (!c.contentBounds(lx0, ly0, lx1, ly1))
 	{
@@ -483,7 +506,7 @@ void AptMainMenu::updateExtraRows()
 			b->setMember("openbfmeDisabled", AptValue::boolean(true));
 		}
 	}
-	// the frame pieces (every other clip with art, not a button and not the list's OpenButton): each stretched about its bottom edge so its part
+	// the frame pieces and the panel's hit area (not the closing surround or the list's OpenButton): each stretched about its bottom edge so its part
 	// above the rows' top moves up by the two rows (one with War of the Ring hidden); a piece lying mostly above the rows' top moves up instead
 	if (!haveRowsTop)
 	{
