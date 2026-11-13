@@ -49,8 +49,8 @@ func same_artwork(reference: Image, actual: Image, area: Rect2i, offset: Vector2
 				break
 	# tolerance: a nonempty retail artwork reference must exercise more than a blank canvas.
 	check(painted > 1000, message + " reference contains artwork")
-	# tolerance: fractional-height scaling changes glyph/triangle edge rasterization (720px END PHASE: 216/9600 pixels on Metal);
-	# at least 97% of pixels must still agree within 2/255. Widened artwork changes the interior as well as those thin edges.
+	# Fractional-height scaling changes glyph/triangle edge rasterization (720px END PHASE: 216/9600 pixels on Metal).
+	# tolerance: at least 97% of pixels must agree within 2/255; GPU edge rasterization may differ, while widened artwork changes the interior too.
 	check(changed <= area.get_area() * 3 / 100, message + " retains 4:3 pixels (%d changed)" % changed)
 
 func mouse(shell: Node, position: Vector2) -> void:
