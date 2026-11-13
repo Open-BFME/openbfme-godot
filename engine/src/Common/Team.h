@@ -140,6 +140,17 @@ public:
 	}
 	bool isActive() const { return m_script.active; }
 
+	// lane PORT-40: team + 0x110 / + 0x111, written by TEAM_SET_AI_RECRUITABLE_FLAG (RW 0x7C199C) and TEAM_AVAILABLE_FOR_RECRUITMENT (RW 0x7C0C3E):
+	// the per-team AI-recruitable override. The recruit gate RW 0x7A491C (RW 0x7A4A13 .. 0x7A4A22) reads the override when set, else the member
+	// counts as recruitable when it belongs to its player's default team or its team's prototype is teamIsAIRecruitable
+	void setAIRecruitableOverride(bool recruitable)
+	{
+		m_aiRecruitableOverrideSet = true;
+		m_aiRecruitableOverride = recruitable;
+	}
+	bool hasAIRecruitableOverride() const { return m_aiRecruitableOverrideSet; }
+	bool aiRecruitableOverride() const { return m_aiRecruitableOverride; }
+
 	// lane RAI-POW: the team's special-power registry (Team + 0x140). Retail keeps a circular list of five-word records (the power template, the
 	// frame, two zeros and the caster's object id; RW 0x7A5582 appends one, RW 0x7A3EF5 looks one up and answers the caster the id resolves to).
 	// AIPOW-1's SOUL_FREEZE decision writes it, and RW 0x9E6941 (ATTACK_HEAL_AOE) reads it.
@@ -208,6 +219,8 @@ private:
 	int m_currentWaypoint = -1;             ///< lane SCRIPT-3: + 0x6C
 	bool m_hadMembers = false;              ///< lane CAMP-1: + 0x128
 	ScriptState m_script;                   ///< lane CAMP-1H
+	bool m_aiRecruitableOverrideSet = false; ///< lane PORT-40: + 0x110
+	bool m_aiRecruitableOverride = false;    ///< lane PORT-40: + 0x111
 	std::vector<SpecialPowerRecord> m_specialPowers; ///< lane RAI-POW: + 0x140, in insertion order (never cleared in a game)
 	std::vector<Order> m_orders;                    ///< lane RAI-POW-4: + 0x13C, in insertion order (RW 0x7A59CB inserts, RW 0x7A2004 expires)
 };
@@ -260,6 +273,12 @@ public:
 	Team *getNewestTeam() const { return m_teams.empty() ? nullptr : m_teams.back(); }
 	// lane CAMP-1H: the TeamTemplateInfo's scripts (read from the dict once)
 	const TeamTemplateScripts &templateScripts() const;
+
+	// lane PORT-40: the TeamTemplateInfo's recruit fields (prototype + 0x210 / + 0x21C): teamIsAIRecruitable (RW 0x7A35EA reads the key,
+	// RW 0x7A35F6 a missing one = false) and teamProductionPriority (RW 0x7A383A; the getter RW 0x714A98 answers 0 for a missing key). The recruit
+	// gate RW 0x7A491C (RW 0x7A49F1 .. 0x7A4A22) reads them
+	bool teamIsAIRecruitable() const { return m_dict.getBool("teamIsAIRecruitable"); }
+	int teamProductionPriority() const { return m_dict.getInt("teamProductionPriority"); }
 
 private:
 	friend class TeamFactory;
