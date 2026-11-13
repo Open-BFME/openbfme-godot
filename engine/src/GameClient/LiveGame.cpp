@@ -600,6 +600,9 @@ bool LiveGame::load(const Options &options, std::string *error)
 			return false;
 		}
 	}
+	// PORT-43: RW 0x631420 .. 0x631436 (inside GameLogic::startNewGame's tail helper RW 0x6311ED, called at RW 0x6315A7 after RW 0x6313A6 and before
+	// RW 0x6315E8): GameLogic + 0x118 = PowerLimit when Economy::isMultiplayerGame (RW 0x625456), else 1000 (RW 0x62A20D)
+	m_logic->initRankLevelLimit();
 	// lane BFME2CAMP1: RW 0x6315E8 -> RW 0x626423 (a campaign game, not a save's load) -> RW 0x5EC0C7 -> addCarryoverStuffToMap RW 0x5EBD76: after the
 	// computer players' AI (RW 0x6313A6), before the Create-a-Hero install (RW 0x6315F5)
 	if (options.campaign && options.campaignCarryover)

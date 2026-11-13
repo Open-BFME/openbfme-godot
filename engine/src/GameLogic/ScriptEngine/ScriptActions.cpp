@@ -426,6 +426,11 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		radarEventAction(engine, a, name);
 		return;
 	}
+	if (name == "PLAYER_SET_RANKLEVELLIMIT") // PORT-43: case 279, RW 0x7CE020 -> RW 0x7BD1A8 -> RW 0x7BB04E(param 0 int)
+	{
+		logic.setRankLevelLimit(param(a, 0).intValue);
+		return;
+	}
 	if (name == "PLAYER_GRANT_SCIENCE" || name == "PLAYER_PURCHASE_SCIENCE") // RW 0x7CE037 / 0x7CE05C -> RW 0x7BD1BA / 0x7BD210(param 0 player, param 1 science)
 	{
 		// TheScienceStore by name (RW 0x5FEF8F; an unknown name does nothing), then every player of the parameter: grantScience (RW 0x6AE3A7) or

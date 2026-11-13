@@ -1081,6 +1081,8 @@ void GameLogic::reset()
 	m_buildableOverrides.clear(); // lane BFME2CAMP1 (review): a new game starts without the script's overrides (ZH GameLogic::reset clears its map; donor)
 	m_campaignCarryover.reset();  // lane BFME2CAMP1: the mission's start sets it again
 	m_showBehindBuildingMarkers = true; // lane OCCLUDE-1: GameLogic::reset RW 0x62D3D6 (+ 0x99 = 1)
+	m_rankLevelLimit = kDefaultRankLevelLimit; // PORT-43: RW 0x62A20D (startNewGame's init helper RW 0x62A11A; GameLogic::reset RW 0x62D232 leaves +0x118 untouched)
+	m_rankLevelLimitScripted = false;
 	m_nextObjectID = 1;
 	m_sharedProductionID = 0;
 	m_objectCount = 0;
@@ -1318,6 +1320,12 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		{
 			x.addU32(0xCA4401u);
 			m_campaignCarryover->crc(x);
+		}
+		// PORT-43: GameLogic + 0x118 (m_rankLevelLimit) when scripted by PLAYER_SET_RANKLEVELLIMIT (RW 0x7BB04E); an unscripted game derives +0x118 from
+		// EconomySettings::powerLimit / EconomyContext::gameMode (already hashed by Economy::crc) and keeps its existing hashes (retail's XferCRC skips +0x118 at RW 0x630ADF)
+		if (m_rankLevelLimitScripted)
+		{
+			x.addI32(m_rankLevelLimit);
 		}
 		x.addU32(m_nextObjectID);
 		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedUniqueProductionId))
@@ -1849,3 +1857,33 @@ GameLogic::Report GameLogic::report() const
 	}
 	return r;
 }
+
+void GameLogic::initRankLevelLimit()
+{
+	// PORT-43: RW 0x62A20D (startNewGame's init helper RW 0x62A11A, called at RW 0x631555) sets GameLogic + 0x118 = 1000 (0x3E8);
+	// RW 0x631420 .. 0x631436 (startNewGame's tail helper RW 0x6311ED, called at RW 0x6315A7) tests RW 0x625456 (isInSkirmishOrMultiplayerGame,
+	// Economy::isMultiplayerGame) and on true copies GlobalData + 0xE94 (PowerLimit, row RW 0xC00C00, EconomySettings::powerLimit) into GameLogic + 0x118.
+	const EconomySettings &s = m_economy->settings();
+	if (!s.loaded)
+	{
+		throw std::logic_error("GameLogic::initRankLevelLimit: GameData's economy values are not loaded (EconomySettings::load)");
+	}
+	m_rankLevelLimit = m_economy->isMultiplayerGame() ? s.powerLimit : kDefaultRankLevelLimit;
+	m_rankLevelLimitScripted = false;
+}
+
+void GameLogic::setRankLevelLimit(int limit)
+{
+	// PORT-43: RW 0x7BB04E .. 0x7BB060 (called via RW 0x7BD1A8 from script action 279 PLAYER_SET_RANKLEVELLIMIT at RW 0x7CE020):
+	// cmp eax, 1; jge; mov eax, 1; mov [ecx + 0x118], eax.
+	m_rankLevelLimit = limit < 1 ? 1 : limit;
+	m_rankLevelLimitScripted = true;
+}
+
+void GameLogic::resetRankLevelLimitFromEconomy()
+{
+	const EconomySettings &s = m_economy->settings();
+	m_rankLevelLimit = (s.loaded && m_economy->isMultiplayerGame()) ? s.powerLimit : kDefaultRankLevelLimit;
+	m_rankLevelLimitScripted = false;
+}
+
