@@ -356,6 +356,7 @@ void W3DScriptedModelDraw::apply(const AnimationStateInfo *prevState, float frac
 	if (n <= 0 && !hasScript)
 	{
 		m_movementRepairInfo = nullptr;
+		m_movementRepairAnimation = nullptr;
 		// RW 0x4BE602-0x4BE62C
 		if (renderObject)
 		{
@@ -368,6 +369,7 @@ void W3DScriptedModelDraw::apply(const AnimationStateInfo *prevState, float frac
 	if (renderObject && n == 0)
 	{
 		m_movementRepairInfo = nullptr;
+		m_movementRepairAnimation = nullptr;
 		clearTrack(0);
 		clearTrack(1);
 	}
@@ -501,6 +503,7 @@ void W3DScriptedModelDraw::apply(const AnimationStateInfo *prevState, float frac
 	std::string resolved;
 	std::string err;
 	m_movementRepairInfo = nullptr;
+	m_movementRepairAnimation = nullptr;
 	const HAnimClass *handle = resolveAnimation(requestedInfo, &resolved, &err);
 	if (!handle)
 	{
@@ -715,6 +718,7 @@ const HAnimClass *W3DScriptedModelDraw::repairMissingMovementAnimation(const Ani
 	auto accept = [&](const W3DAnimationInfo &info, const HAnimClass *animation, const std::string &reason)
 	{
 		m_movementRepairInfo = &info;
+		m_movementRepairAnimation = animation;
 		stop("S-5920", "missing movement animation for " + ModelCondition::describe(state.conditions) + " on model " +
 			m_curModelInfo->modelName() + "; using declared movement cycle " + *resolved + qualification + reason +
 			" (presentation repair, not retail animation parity)");
@@ -1042,7 +1046,10 @@ void W3DScriptedModelDraw::syncSpeedToMovement()
 {
 	m_speedSync = 1.0f;
 	const W3DAnimationInfo *playing = playbackAnimationInfo();
-	if (!playing || !m_options.objectSpeed || !m_tracks[0].anim)
+	// S-5920 adaptation only: pair the replacement's Distance with its own handle while it blends in
+	// or waits in track 2. Ordinary playback retains RW 0x4B67D4's track-0 duration rule.
+	const HAnimClass *animation = m_movementRepairAnimation ? m_movementRepairAnimation : m_tracks[0].anim;
+	if (!playing || !m_options.objectSpeed || !animation)
 	{
 		return;
 	}
@@ -1057,7 +1064,7 @@ void W3DScriptedModelDraw::syncSpeedToMovement()
 		return;
 	}
 	const float desiredMs = distance / speed * 200.0f; // RW 0xD9F614
-	const float naturalMs = (float)m_tracks[0].anim->Get_Num_Frames() * 1000.0f / m_tracks[0].anim->Get_Frame_Rate();
+	const float naturalMs = (float)animation->Get_Num_Frames() * 1000.0f / animation->Get_Frame_Rate();
 	if (naturalMs > 0.0f && desiredMs > 0.0f)
 	{
 		m_speedSync = naturalMs / desiredMs;

@@ -380,6 +380,7 @@ private:
 	int m_whichAnim = -1;                   // RW +0x44
 	int m_lastAnim = 0;                     // RW +0x88
 	const W3DAnimationInfo *m_movementRepairInfo = nullptr; // S-5920: playback metadata; requested state / index stay retail's.
+	const HAnimClass *m_movementRepairAnimation = nullptr; // Pair Distance with this cycle's duration, including incoming / queued tracks.
 
 	const RenderObjPrototype *m_model = nullptr;
 	std::string m_modelName; // lower case, the render object identity
