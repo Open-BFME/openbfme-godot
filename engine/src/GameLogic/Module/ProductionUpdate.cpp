@@ -41,6 +41,7 @@
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -1278,6 +1279,9 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 				}
 			}
 			newObj->updateUpgradeModules();
+			// BFME1 AIPlayer::onUnitProduced (Open-BFME-1): the producer's
+			// completed unit joins its queued team before the team's scripts run.
+			if (auto *ai = logic.skirmishAI().bfme1()) ai->unitProduced(*us, *newObj, entry->productionID);
 			// RW 0x8A294D .. 0x8A29EC: voice / EVA events (audio), the player's unit created hook, then CreateModule::onBuildComplete on every create module
 			for (const std::unique_ptr<BehaviorModule> &m : newObj->modules())
 			{

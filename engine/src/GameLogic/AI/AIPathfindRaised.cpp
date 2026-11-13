@@ -128,7 +128,7 @@ PathfindLayerEnum Pathfinder::raisedLayerAtPoint(float x, float y, float z) cons
 	for (int l = (int)LAYER_TOP; l <= (int)LAYER_RAISED_LAST; ++l)
 	{
 		const PathfindCell *rc = raisedCellAt((PathfindLayerEnum)l, cx, cy);
-		if (rc && rc->getType() != PathfindCell::CELL_BRIDGE_IMPASSABLE && SimMath::subf32(raisedLayerHeight((PathfindLayerEnum)l), z) < 25.0f)
+		if (!m_raised[(size_t)l].bridge && rc && rc->getType() != PathfindCell::CELL_BRIDGE_IMPASSABLE && SimMath::subf32(raisedLayerHeight((PathfindLayerEnum)l), z) < 25.0f)
 		{
 			return (PathfindLayerEnum)l;
 		}
@@ -228,6 +228,7 @@ void Pathfinder::rebuildRaisedLayer(PathfindLayerEnum layer)
 void Pathfinder::rebuildRaisedCells(PathfindLayerEnum layer)
 {
 	RaisedLayer &r = m_raised[(size_t)layer];
+	if(r.bridge){rebuildBfme1Bridge(layer);return;}
 	// ClassifyWallCells RW 0x768832 first resets the wall connect cells; the ramps' classification adds them again (RW 0x9356DF -> 0x76879E)
 	r.connect[0] = r.connect[1] = ICoord2D{ -1, -1 };
 	// RW 0x76848F: the cells go (their records released)
@@ -354,6 +355,10 @@ void Pathfinder::crcRaised(StateHasher &h) const
 			continue;
 		}
 		h.addI32(l);
+		if(r.bridge){
+			h.addU32(0x42314252u);h.addU32(r.bridge->objectID);
+			for(const auto &p:{r.bridge->from,r.bridge->to,r.bridge->fromLeft,r.bridge->fromRight,r.bridge->toLeft,r.bridge->toRight}){h.addFloat(p.x);h.addFloat(p.y);h.addFloat(p.z);}
+		}
 		h.addI32(r.height);
 		h.addU32((std::uint32_t)r.areas.size());
 		h.addI32(r.origin.x);

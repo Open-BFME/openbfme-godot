@@ -1124,6 +1124,22 @@ void SkirmishAIManager::checkLoaded() const
 
 void SkirmishAIManager::xfer(Xfer &x)
 {
+	if (m_bfme1)
+	{
+		// Version 8 adds native recruitment overrides and the reinforcement / ready queues.
+		// Version 7 cannot recover those rules and is deliberately refused.
+		XferVersion v{ 8, 8 };
+		x.xferVersion(v);
+		if (x.isLoading())
+		{
+			auto loaded = std::make_unique<Bfme1SkirmishAI>(m_logic);
+			loaded->xfer(x);
+			AIXfer::blockReadToEnd(x, "BFME1 skirmish AI");
+			m_bfme1 = std::move(loaded);
+		}
+		else m_bfme1->xfer(x);
+		return;
+	}
 	if (!x.isLoading())
 	{
 		xferState(x, m_worldHooks != 0);

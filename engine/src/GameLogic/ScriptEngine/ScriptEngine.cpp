@@ -25,6 +25,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/System/ShroudManager.h"
 #include "GameLogic/Map/TerrainLogic.h"
 
@@ -200,7 +201,7 @@ bool ScriptEngine::didPlayerAcquireScience(const Player &p, ScienceType st, bool
 
 // RW 0x60A377 / 0x60BCE5 want a list's scripts and its groups apart (ScriptList + 0x10 / + 0xC; a group's + 8 / + 4): the file's interleaved
 // items are split, each kind keeping its file order
-void ScriptEngine::buildGroup(const std::vector<ScriptItem> &items, const std::string &side, RGroup &out)
+void ScriptEngine::buildGroup(const std::vector<ScriptItem> &items, const std::string &side, RGroup &out, const std::string &path)
 {
 	for (const ScriptItem &it : items)
 	{
@@ -209,6 +210,7 @@ void ScriptEngine::buildGroup(const std::vector<ScriptItem> &items, const std::s
 			std::unique_ptr<RScript> s = std::make_unique<RScript>();
 			s->def = it.script.get();
 			s->sideName = side;
+			s->cacheIdentity = path + "/script/" + std::to_string(out.scripts.size());
 			s->active = it.script->isActive; // RW 0x7B83CC: + 0x40 = + 0x28 = the stored active flag
 			out.scripts.push_back(std::move(s));
 			++m_stats.scripts;
@@ -219,7 +221,7 @@ void ScriptEngine::buildGroup(const std::vector<ScriptItem> &items, const std::s
 			g->name = it.group->name;
 			g->active = it.group->isActive;
 			g->subroutine = it.group->isSubroutine;
-			buildGroup(it.group->items, side, *g);
+			buildGroup(it.group->items, side, *g, path + "/group/" + std::to_string(out.groups.size()));
 			out.groups.push_back(std::move(g));
 			++m_stats.groups;
 		}
@@ -241,7 +243,7 @@ void ScriptEngine::newGame(const std::vector<SideScripts> &sides, const std::vec
 		{
 			if (list)
 			{
-				buildGroup(list->items, sides[i].sideName, m_sides[i].root);
+				buildGroup(list->items, sides[i].sideName, m_sides[i].root, "side/" + std::to_string(i));
 			}
 		}
 	}
@@ -287,6 +289,63 @@ bool ScriptEngine::runTeamCreateActions(TeamPrototype &proto)
 	m_currentSide = savedSide;
 	++m_stats.teamCreateActionsRun;
 	return true;
+}
+
+bool ScriptEngine::runTeamProductionActions(Team &team)
+{
+	const auto *proto = team.getPrototype();
+	const std::string side = m_currentSide;
+	m_currentSide = proto->getControllingPlayer()->getPlayerName();
+	RScript *script = findScript(proto->templateScripts().productionCondition);
+	Team *savedTeam = m_thisTeam;
+	Player *savedPlayer = m_currentPlayer;
+	m_thisTeam = &team;
+	m_currentPlayer = nullptr;
+	const bool hasActions = script && !script->def->actions.empty();
+	if (hasActions) executeActions(script->def->actions, *script);
+	m_thisTeam = savedTeam;
+	m_currentPlayer = savedPlayer;
+	m_currentSide = side;
+	return hasActions;
+}
+
+bool ScriptEngine::evaluateProductionScript(const std::string &name, Player &owner)
+{
+	const std::string side = m_currentSide;
+	m_currentSide = owner.getPlayerName();
+	RScript *s = findScript(name);
+	const int difficulty = owner.getSkirmishDifficulty();
+	const bool allowed = s && (difficulty == 0 ? s->def->easy : difficulty == 1 ? s->def->normal : s->def->hard);
+	Player *savedPlayer = m_currentPlayer;
+	Team *savedTeam = m_thisTeam;
+	m_currentPlayer = &owner;
+	m_thisTeam = nullptr;
+	const RScript *savedScript = m_currentScript;
+	m_currentScript = s;
+	const bool result = allowed && evaluateConditionsNoContext(*s->def);
+	m_currentScript = savedScript;
+	m_thisTeam = savedTeam;
+	m_currentPlayer = savedPlayer;
+	m_currentSide = side;
+	return result;
+}
+
+std::string ScriptEngine::conditionIdentity(const ScriptCondition &condition) const
+{
+	// BFME1's special-power readiness condition mutates its own parameter.
+	// Identify that parameter by its stable script position, never an address
+	// or the power name (two conditions for the same power cache separately).
+	if (!m_currentScript || !m_currentScript->def || m_currentScript->cacheIdentity.empty()) return {};
+	const auto &groups = m_currentScript->def->orConditions;
+	for (size_t i = 0; i < groups.size(); ++i)
+	{
+		for (size_t j = 0; j < groups[i].conditions.size(); ++j)
+		{
+			if (&groups[i].conditions[j] == &condition)
+				return m_currentScript->cacheIdentity + "/or/" + std::to_string(i) + "/condition/" + std::to_string(j);
+		}
+	}
+	return {};
 }
 
 // ---- names ------------------------------------------------------------------------------------------------------------------------------------
@@ -960,7 +1019,9 @@ bool ScriptEngine::evaluateCondition(const ScriptCondition &c)
 	{
 		// lane CAMP-1: TheScriptConditions vslot 0x38 is RW 0x7ED72C (vtable RW 0xC4BE78 + 0x38), which runs RW 0x7EB7CD and inverts the answer when the
 		// condition's + 0x4D (the v5 second flag, the editor's NOT) is set; the ordinals 0 .. 4 above are the engine's own and never inverted
-		const bool result = ScriptConditions::evaluate(*this, c);
+		bool result = false;
+		auto *ai = m_logic.skirmishAI().bfme1();
+		if (!ai || !ai->evaluateCondition(*this, c, result)) result = ScriptConditions::evaluate(*this, c);
 		return c.flagB4D ? !result : result;
 	}
 	}
@@ -1327,6 +1388,7 @@ void ScriptEngine::updateSequentialScripts()
 // the actions RW 0x60C1C9 runs itself; false: not one of them
 bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 {
+	if (auto *ai = m_logic.skirmishAI().bfme1(); ai && ai->executeAction(*this, a)) return true;
 	switch (a.resolved)
 	{
 	case ACT_SET_FLAG: // RW 0x608FCC(a, 0)
@@ -1745,6 +1807,7 @@ void ScriptEngine::updateTeamStates()
 			{
 				updateTeamState(*t);
 			}
+			if (auto *ai = m_logic.skirmishAI().bfme1()) ai->retireEmptyTeams(*proto);
 		}
 	}
 }
@@ -1946,6 +2009,7 @@ void ScriptEngine::updateTeamState(Team &t)
 // HORDE member's horde has members and is complete (horde slots 0xA4 / 0x9C)
 bool ScriptEngine::teamReady(const Team &t) const
 {
+	if (auto *ai = m_logic.skirmishAI().bfme1()) return ai->teamReady(t);
 	return !t.scriptState().wasBuilt;
 }
 
@@ -2045,7 +2109,14 @@ void ScriptEngine::updateGenericScripts(Team &t)
 		}
 		const std::string savedSide = m_currentSide;
 		m_currentSide = g.side; // RW 0x609D97 / 0x60D053: RW 0x604243 with the hook's side
-		if (evaluateConditions(*g.def, &t)) // RW 0x609D97(side, script, team, 0)
+		RScript conditionScript;
+		conditionScript.def = g.def;
+		conditionScript.cacheIdentity = "team/" + std::to_string(t.getID()) + "/hook/" + std::to_string(i);
+		const RScript *savedScript = m_currentScript;
+		if (m_logic.skirmishAI().bfme1()) m_currentScript = &conditionScript;
+		const bool conditionsMet = evaluateConditions(*g.def, &t);
+		m_currentScript = savedScript;
+		if (conditionsMet) // RW 0x609D97(side, script, team, 0)
 		{
 			if (g.def->isOneShot) // + 0x29
 			{

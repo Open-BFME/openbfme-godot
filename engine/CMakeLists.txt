@@ -455,6 +455,10 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/Common/System/NumericState.cpp
     src/GameLogic/Map/SidesList.cpp
     src/GameLogic/Map/TerrainLogic.cpp
+    src/GameLogic/AI/Bfme1Charge.cpp
+    src/GameLogic/AI/Bfme1PathfindBridges.cpp
+    src/GameClient/Bfme1MapBridges.cpp
+    src/GameLogic/Map/Bfme1BridgeGeometry.cpp
     src/GameLogic/Object/ObjectNameIndex.cpp
     src/GameLogic/ScriptEngine/Scripts.cpp)
 # ---- data loaders that feed the simulation (INI parsers, object / module templates, map chunks, the retail object world): their numbers are simulation inputs ----
@@ -529,6 +533,11 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/Module/ActiveBody.cpp
     src/GameLogic/Module/LogicModules.cpp
     src/GameLogic/Object/Contain/HordeContainRuntime.cpp
+    src/GameLogic/Object/Contain/Bfme1HordeVariants.cpp
+    src/GameLogic/Object/Contain/Bfme1HordeRuntime.cpp
+    src/GameLogic/Object/Contain/Bfme1HordeEmotion.cpp
+    src/GameLogic/Module/Bfme1AIMood.cpp
+    src/GameLogic/Object/Contain/Bfme1MeleeRuntime.cpp
     src/GameLogic/GameLogicSettings.cpp
     src/GameLogic/MapObjectLoop.cpp
     src/GameClient/Drawable.cpp

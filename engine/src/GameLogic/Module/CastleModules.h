@@ -210,6 +210,9 @@ public:
 	// lane MODCOMPAT-AI: RW 0x79A5EC(template, -2, 0) for BUILD_BASE_BUILDING (RW 0x7BEEA4): the first pad of that list that takes the template, built
 	// in the timed form; null when none does
 	Object *buildAtBase(const ThingTemplate &tt) { return preBuild(tt, -2, false); }
+	// BFME1 RVA 0x00373090: free foundation nearest (0) / farthest (1)
+	// from a tactical marker. Nearest ties select the later foundation.
+	Object *buildAtBaseNear(const ThingTemplate &tt, const Coord3D &position, int comparison);
 	// ---- lane BACKLOG2: a player's unpack and pack (S-951) ----
 	// RW 0x7983E3 canUnpack (BFME2 decomp Rva00395F57CanUnpack.cpp, tier A): no instant build pending, state 0 and, with checkTimer, the timer run out
 	bool canUnpack(bool checkTimer) const;

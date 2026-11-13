@@ -34,6 +34,10 @@
 
 namespace
 {
+// One client fade policy: BFME1 starts even a zero-frame fade; the
+// later games complete it immediately (their existing runtime is retained).
+bool startZeroFrameFade(const ThingTemplate *tt) { return tt && tt->bfme1Data(); }
+
 const float kMsToClientFrames = 0.03f;      // DAT 0xD9F624
 const double kClientFramesPerLogicFrame = 6.0; // RW 0x63CF0F .. 0x63CF27: 30 / 5 (constants 0xD9F60C / 0xD9F608)
 const double kClientFramesPerMs = 0.03;     // retail's client runs 30 frames per second
@@ -66,10 +70,11 @@ void Drawable::setFadeHidden(bool hidden)
 	}
 }
 
-// RW 0x670AA2
+// BFME1 0x00410D80 always starts mode 1, including zero frames.
+// RW 0x670AA2 completes a zero-frame request immediately.
 void Drawable::fadeIn(double frames)
 {
-	if (frames == 0.0)
+	if (frames == 0.0 && !startZeroFrameFade(getTemplate()))
 	{
 		m_fade.opacity = 1.0f;
 		m_fade.mode = 0;
@@ -83,10 +88,11 @@ void Drawable::fadeIn(double frames)
 	m_fade.target = frames;
 }
 
-// RW 0x670A50
+// BFME1 0x00410D30 always starts mode 2, including zero frames.
+// RW 0x670A50 completes a zero-frame request immediately.
 void Drawable::fadeOut(double frames)
 {
-	if (frames == 0.0)
+	if (frames == 0.0 && !startZeroFrameFade(getTemplate()))
 	{
 		m_fade.opacity = 0.0f;
 		m_fade.mode = 0;
@@ -153,6 +159,16 @@ void Drawable::startProjectileFade(const ObjectSnapshot &rec, const LogicSnapsho
 // RW 0x675AB7 .. 0x675BBF
 void Drawable::updateFade(double elapsedMs)
 {
+	if (m_containerHadPose && elapsedMs > 0.0) m_containerAimFrames += elapsedMs * 0.03;
+	if (m_containerRelease < 1.0f)
+	{
+		m_containerClientFrames += elapsedMs * 0.03;
+		while (m_containerClientFrames >= 1.0)
+		{
+			m_containerRelease = std::min(1.0f, m_containerRelease + 1.0f / 30.0f);
+			m_containerClientFrames -= 1.0;
+		}
+	}
 	if (m_fade.mode == 0)
 	{
 		return;

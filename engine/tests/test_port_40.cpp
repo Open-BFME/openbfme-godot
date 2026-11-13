@@ -85,9 +85,11 @@ TEST_CASE("PORT-40 settings: MaxRecruitRadius (row RW 0xC1CCD0, parseReal RW 0x4
 	GameLogicSettings g;
 	REQUIRE_MESSAGE(GameLogicSettingsLoader::scanAIData("AIData\n  MaxRecruitRadius = 400.0\nEnd\n", g, &err), err); // the mod's value
 	CHECK(g.maxRecruitRadius == 400.0f);
+	CHECK(g.legacyAI.maxRecruitRadius == 400.0f); // the BFME1 variant consumes the same parsed value
 	CHECK(g.unappliedFields.count("AIData.MaxRecruitRadius") == 0);
 	GameLogicSettings fresh;
 	REQUIRE_MESSAGE(GameLogicSettingsLoader::scanAIData("AIData\n  EnableRepulsors = Yes\nEnd\n", fresh, &err), err);
+	CHECK(fresh.legacyAI.maxRecruitRadius == 0.0f);
 	CHECK(fresh.maxRecruitRadius == 0.0f); // the AIData constructor's (RW 0x6FFD04: xmm0 zeroed at RW 0x6FFC01)
 }
 

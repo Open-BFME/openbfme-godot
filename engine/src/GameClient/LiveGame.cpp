@@ -2,6 +2,7 @@
 // See GameClient/LiveGame.h.
 
 #include "GameClient/LiveGame.h"
+#include "GameClient/Bfme1MapBridges.h"
 #include "GameClient/LinearCampaign.h"
 #include "GameLogic/Sdk/SdkScriptHost.h"
 
@@ -387,6 +388,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_logic->setSimulationProfile(options.start ? options.start->message.game.simulationProfile : options.simulationProfile);
 	// lane BFME2MODE-0: the edition is the mounted data's (BFME2 1.06 alone under OPENBFME_EDITION=bfme2), never an option
 	m_logic->setEdition(isBfme2Data(m_fs) ? GameEdition::BFME2_106 : GameEdition::RotWK201);
+	if (isBfme1Data(m_fs)) m_logic->skirmishAI().useBfme1();
 	m_logic->economy().initAllCommandPoints();
 	{
 		PathfinderResourceTerrain resourceTerrain;
@@ -412,6 +414,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_ai->attach();
 	// RW 0x62FDA6 (in 0x62F91A, called at 0x63157B): the pathfinder's map exists BEFORE the map's objects and the starting bases; every object that is placed registers its own
 	// footprint when it is placed (RW 0x62E192 for a map object, RW 0x629EC9 -> 0x6E85E9 for a base object; lane BUILD-1)
+	if(isBfme1Data(m_fs) && !Bfme1MapBridges::create(m_fs,m_assets,*m_logic,m_terrain,m_map.chunks.objects,m_report.stops,error))return false;
 	m_ai->newMap(*m_pathTerrain);
 	// lane AUDIO-4: RW 0x62FD90 (in 0x62F91A, between load progress 0x13 and 0x14, before the map's objects): TheLargeGroupAudio is enabled with the current
 	// frame as its gate (RW 0x60D4D3): the joins made while the map's objects are created in this frame are dropped, the members notify at their first wake

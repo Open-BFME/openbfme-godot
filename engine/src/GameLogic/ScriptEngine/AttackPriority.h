@@ -48,6 +48,8 @@ public:
 	int getDefaultPriority() const { return m_defaultPriority; }
 	// RW 0x7597E9 (the caller stores the answer as a float: fstp dword)
 	float getPriority(const Object &hunter, const Object &target, bool adjust) const;
+	// BFME1 1.03 0x34C9B0: integer template priority, no combat chain.
+	int templatePriority(const ThingTemplate *t) const;
 	// RW 0x759E24
 	void setPriority(const ThingTemplate *tmpl, int priority);
 	bool hasTable() const { return !m_priorities.empty(); }

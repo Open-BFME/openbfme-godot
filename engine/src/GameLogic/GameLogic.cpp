@@ -700,6 +700,11 @@ void GameLogic::update(int phase)
 		for (int i = 0; i < m_players.getPlayerCount(); ++i)
 		{
 			Player *p = m_players.getNthPlayer(i);
+			// BFME1 Player::update RVA 0x000D9A80 first calls its AI's
+			// slot 5 (AISkirmishPlayer 0x001688D0 -> AIPlayer 0x001682F0),
+			// before the team generic-script pass. BFME2/RotWK keep the
+			// manager update in phase 5. The player-row phase is S-1061.
+			if (auto *ai = m_skirmishAI->bfme1()) ai->update(p);
 			// lane CAMP-1H: RW 0x6AF2FA .. 0x6AF32B, before the score: the player's teams run their generic scripts (Team::updateGenericScripts RW 0x7A267D;
 			// a game without map scripts has none)
 			if (m_scriptEngine->loaded())

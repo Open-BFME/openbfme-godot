@@ -304,3 +304,246 @@ BFME1_INSTALL="$PWD/games/BFME1" godot --headless --path godot -- --game=bfme1 -
 ```
 
 `godot/tests/bfme1_quit_test.gd` checks the camp-floor material and all six pause-menu buttons with real movie clicks, including confirmations.
+
+## Skirmish AI
+
+BFME1 uses its own `AIPlayer` variant, selected once when BFME1 data is
+mounted. Its `PlayerAITypes.ini` faction libraries supply the opening build
+orders, economy decisions, team compositions and attack scripts. It does not
+require RotWK's `SkirmishAIData` or `ArmyDefinition` tables. The change affects
+BFME1 only; BFME2 and RotWK retain their current AI and library ordering.
+
+The port preserves the castle flag's script name (`BASE_FLAG_n`), imports a
+BFME1 library before its dependencies, resolves named script/group overrides
+before difficulty filtering, and implements tactical-marker plot
+selection. Production evaluates the library's team conditions, chooses the
+highest eligible priority with the logic RNG, trains required and optional
+members through real production queues, and activates finished teams for their
+scripted orders. Lost or cancelled production is retried; expired builds use
+the original minimum-size rule. Threat queries sum BFME1 `ThreatLevel` values
+and retain the original 25-frame cache.
+
+The BFME1 variant also recruits eligible existing units before paying for
+production, observes explicit team and per-unit recruitment overrides, and
+replenishes automatically reinforced teams one missing unit at a time. A
+reinforcement joins its existing team; it does not create another instance.
+Ready teams wait for idle members or strictly more than 60 seconds from the
+original request. Building sets both native flags (`0x000EC960`); activation
+uses the separate `0x000F4E20` readiness gate, including the nonempty-horde
+check. The shared horde runtime's moving indexed-member flag (`Object +0x114`,
+native slot `0x0023C4D0`) is still a reported S-5017 dependency. `RECRUIT_TEAM` / `RECRUIT_TEAM_AT_TEAM` use the same native
+ready queue. Hero requests select the first matching revival-list record and
+its REVIVE button index; an unavailable first record is not skipped for a
+later record. The BFME1 producer gate scans 20 command slots, and preserves
+its mixed auto-build queue rule and `TOGGLE_AUTO_BUILD` override. BFME1
+team references resolve before prototype lookup and copy the referenced
+team ID, so recruitment/attack scripts retain their original target.
+Empty active non-singleton teams are retired after their prototype update,
+freeing the original instance limit after a merge. The BFME1 player pass runs
+AI before that player's generic team scripts. Spell readiness uses the native
+per-condition retry cache, allowing faction scripts such as Rohan's Draft to
+cast after purchasing the science.
+
+BFME1 `HordeWorkerAIUpdate` retains its inherited `HordeAIUpdate` combat
+runtime rather than using the generic unit AI. The original constructor
+(`0x002C4A70`) calls the horde constructor (`0x002C43A0`) and schedules its
+first wake five frames later. Its command dispatcher (`0x002C5240`) delegates
+non-worker orders to the horde dispatcher (`0x002C45E0`). Rohan peasants use
+this class: routing them to generic AI left their soldiers armed but without
+the horde combat handoff. The same error affected the Rohan opponent in the
+Mordor retail check. Worker-specific repair/task overrides are still explicitly
+reported under S-5017; this fix does not claim those operations are ported.
+
+The source is the BFME1 1.03 unpacked baseline identified above, with
+Open-BFME-1 as a reading aid. All addresses below are RVAs:
+
+- Library merge order: `GameLogic/Map/Rva0019F890FillHelper.cpp`,
+  `0x0019F890`, with list transfer at `0x0035E510` / `0x0035E5A0`.
+  Named version stacks: `0x0035CE60`; automatic traversal accepts only
+  the current version at `0x003412E0` / `0x00343370`, checked by
+  `0x00355950` / `0x003558C0`. Shadowed groups retain named subroutines
+  without running their children automatically.
+- Castle names: unpack at `0x00376590`; unlike RotWK `RW 0x79BE6A` /
+  `RW 0x79C0FD` and BFME2 `CastleBehaviorRegisterOwnedObject.cpp`, BFME1
+  retains the flag name. Plot selection: `Rva002FE590CastleBuild.cpp`,
+  `0x002FE590`, and castle selectors `0x0036FE10` / `0x00373090`.
+- Team selection and production: `GameLogic/AI/AIPlayer.cpp`,
+  `AIPlayerSelectTeamToBuild.cpp` (`0x00163220`),
+  `AIPlayerBuildSpecificAITeam.cpp` (`0x001650F0`),
+  `AIPlayerQueueUnits.cpp`, `AIPlayerOnUnitProduced.cpp`,
+  `AIPlayerCheckQueuedTeams.cpp` and `AIPlayerCheckReadyTeams.cpp`.
+  Production-condition evaluation: `Common/RTS/TeamPrototypeScripts.cpp`,
+  `0x000ED850`; build timeout: `0x00160FC0`.
+- Threat: object query `0x001D2580` / scan `0x001CF710`, team query
+  `0x000F72D0` / scan `0x000F67B0`. Command-point team estimate:
+  `ScriptConditionsHasCommandPointsToBuildTeam.cpp`, `0x003262C0`.
+- Opposition probe creation: BFME1 action 444 at `0x00304127` calls
+  `0x003006B0`. Plain unit-position rows use bounding sphere radius
+  (`Object + 0xBC`), X spacing `radius * index * 2.25`, Y spacing
+  `radius * 2`, and sampled ground height (`0x0030094F`–`0x00300A51`).
+  The constant at VA `0x010D0370` is double 2.25. The waypoint form,
+  alternate origin and structure-origin pathfinder adjustment use the same
+  native helper, including transport loading and delivery described below.
+- Script recruitment: `ScriptActionsTeamRecruit.cpp`, `0x002F5BE0` /
+  `0x000F2FB0`; queue-time recruitment is `0x000F2A00`, with its
+  candidate predicate at `0x000F10F0`. Specific recruitment is
+  `AISkirmishPlayerRecruitSpecificAITeam.cpp`, `0x001699C0`.
+  Reinforcement selection: `AIPlayerSelectTeamToReinforce.cpp`,
+  `0x00167080`; join: `AIUpdateInterface_joinTeam.cpp`, `0x0027D4F0`.
+  Surviving-member position estimate: `TeamMemberQueries.cpp`, `0x000F2420`.
+  Nearest-kind move: `0x002FC800`.
+- Team references: `ScriptActionsReferences.cpp`, `0x002F5B00`;
+  assignment `0x00345470`, copy `0x003455E0`, and lookup before the
+  prototype fallback in `ScriptEngine::getTeamNamed`, `0x0034F160`.
+- Player update order: `Player::update`, `0x000D9A80`; active empty-team
+  cleanup: `TeamPrototype::updateState`, `0x000F71C0`; merge handler:
+  `0x002FD790`. Spell readiness: condition 85, `0x0032B8D0`, with a
+  50-frame retry cap, the module's earlier ready frame, and a permanent -1
+  cache for an unknown power. Successful checks leave the cache unchanged.
+- Factory and hero selection: `AIPlayer_findFactory.cpp`, `0x001643B0`;
+  `BuildAssistant_isPossibleToMakeUnit.cpp`, `0x000FDBF0`; first-name
+  revival index `0x000FA8B0`, availability `0x000F9700`. BFME1 has a
+  legacy 0x60-byte revival record at Player +0x684, unlike RotWK's 0xE8-byte
+  record. This ports the AI selection/gate, not the shared revival engine's
+  full BFME1 arithmetic. Recruitment-aware team feasibility: `0x00164750`;
+  factory/cost feasibility: `AIPlayerIsPossibleToBuildTeam.cpp`, `0x001645B0`.
+
+The native AI save block is version 8 for BFME1. Pending work orders,
+production identifiers, selection timers, threat caches, ready/reinforcement
+queues, team references, per-condition power readiness and explicit
+recruitment/auto-build overrides are saved and hashed.
+Older BFME1 AI blocks, including version 7 which lacks the new queue and flag
+state, are refused rather than silently discarding this state. BFME2 / RotWK save layouts are
+unchanged. This is OpenBFME's snapshot format, not retail save compatibility.
+
+Combined-horde recruitment now follows `0x000F2A00`: one ordered scan of
+existing combinations and the first two SplitResult types, including repeated
+component types, with the native nearest-candidate and tie rules. Combination
+uses HordeContain's slots 0x6C/0x70 (`0x0023CAA0` / `0x00245BF0`): the same-owner,
+disabled/status/JUST_BUILT gates, exact ComboHorde target, cancellation of queued
+production, transfer of the existing soldiers, union of upgrades, maximum horde
+rank and selection of the higher-ranked banner (ties keep the receiver's).
+The result takes the other horde's transform; both source hordes retire without
+spawning replacement payloads. The named-team handler `0x00303AC0` ->
+`0x000F5E40` scans source prototype instances newest first and releases the two
+components to the destination owner's default team before testing the merge.
+It resets movement when their squared sphere-edge distance exceeds 22,500.
+It does not use RotWK's plain recruitment helper (`RW 0x7A449F`).
+
+Scripted transports follow reinforcement helper `0x003006B0`. Starts-full teams
+partition passengers and carriers by descending slot sizes using the native
+STLport sort and first-fit order (`0x00095FB0` / `0x00096570`). An explicit
+teamTransport loads valid passengers and creates overflow carriers with the
+native destination-relative placement. BFME1-only states 28/29/30 are registered
+as in `0x00185A20`: move and evacuate, optionally followed by return to the spawn
+origin and deletion. The moves lock against interruption; any terminal update
+result evacuates and activates the team, or deletes the returning carrier
+(`0x0017A280`, `0x00188520`, `0x0017A340`, `0x0017A430`, `0x0017A530`). State goals,
+origin, pending path append, lock and internal movement survive OpenBFME snapshots.
+BFME2/RotWK do not register these BFME1 states.
+
+Full retail fidelity remains **S-5018**, with shared horde/transport, hero revival,
+combat, movement and script gaps under **S-5017**, **S-1186** and **S-1190**.
+The combination callback is now implemented: Object +0x370 is the indicator-color
+index, copied from the receiver and broadcast to every behavior module by
+`0x001BF2E0` / `0x001BF2A0`. The horde/transport implementations of that virtual
+are native no-ops; no tint or ownership effect is invented. Object snapshot
+version 3 saves this BFME1-only field; BFME2/RotWK still write version 2.
+Member adoption (`0x0023FDB0`) releases old pathfinder goals, raises soldiers to
+the maximum horde rank, applies the forced locomotor set and refreshes formation.
+Scoring is disabled temporarily during the native transfer.
+
+The container-system variant also implements BFME1's entry/relationship rules,
+transparent wrappers and virtual capacity, payload creation at build completion,
+indestructible payload inheritance, GrabWeapon's temporary passenger protection,
+exit permission/layer checks, unload idling/mood reset, and exact PC24 healing.
+An off-map return regression observes travel past the map edge before deletion.
+The client now follows current animated passenger bones and blends released
+attachments; BFME1 entry/exit fades and their zero-frame behavior are implemented.
+The native scripted rampage state arms falling riders at the original eject
+deadline. Its RunOffMap completion raises a named S-5017 error; selection and
+script-entry guards remain unverified. SlaughterHordeContain has a BFME1-only
+wrapper/member/refund path, exact-team upgrade replacement (including permanent
+module removal), experience rewards and saved deferred ownership score correction.
+Passenger client aiming follows the native goal/range gate and 0.1-radian step.
+BFME1 AOD has its own wave/path/scatter and contact-damage runtime; mounted large
+and small Oathbreaker templates are exercised. HorseHordeContain has its native
+member order, speed clamp and paired reform assignment. Ordinary, horse and AOD hordes now share native polar formation, frozen member
+phases, pair reform, budgeted melee destination search and ground member
+acquisition. Ordinary walking paths no longer suppress the readiness callback.
+A BFME1-only persistent three-axis contact manager supplies cached tests, native
+bucket dispatch, and removal checks between callbacks. Native wall/deployed-tower
+melee views, reciprocal recipient guards, crush-speed/facing checks, temporary
+machine preservation and scalar reservations now run in the BFME1 variant.
+Native mood/target search, emotion/quarrel, collision-ignore guards and plain
+Bridge-end queries run. Plain retail Bridge creation/classification, the general
+quick-reachability and cell-passability differences, and charge attack paths now
+have BFME1 variants. General pathfinder equivalence, contested-building and
+AssaultTransport mood callbacks, mesh-backed Bridge heights/damage,
+contact-coordinate storage, combat and physics boundaries still limit parity.
+See [the native evidence and scope](re/bfme1_containers.md).
+Ordinary skirmish has no strategic walk-on army;
+that assimilation action is therefore a no-op, as in the original handler.
+
+`test_bfme1_skirmish_ai.cpp` checks real faction libraries, construction,
+trained hordes and actual damage to an opponent for Gondor, Rohan, Mordor and
+Isengard on Fords of Isen. It requires `BFME1_INSTALL`; without game files it
+prints SKIP. Synthetic tests cover optional production, cancellation recovery,
+inactive production-condition scripts, threat-cache timing, hero build-index
+selection (including a busy first record), recruitment overrides, automatic
+replacement, mixed busy-factory production, the 60-second ready boundary and
+transactional AI save/load, independent power-condition caches and their
+exact retry boundaries. Additional checks cover soldier-preserving combinations,
+native merge refusals, starts-full packing, overflow transports, activation and
+return/deletion, with AI-state round trips. A mounted test uses Rohan, Gondor and
+Elven double combinations plus a MordorMumakil carrying a Haradrim horde.
+These checks establish those outcomes, not replay parity with
+the original executable.
+
+The BFME2 standalone startup check retains its existing reported **S-1321**
+`AddPlayer` parser gap in `WOTRTutorial.inc`; the AI regression test allows
+that specifically named campaign error and checks ordinary skirmish startup.
+Other object-data parse errors fail the regression check.
+
+Validation for the skirmish AI and recruitment/transport changes (2026-11-08):
+
+- The normal Core Debug target passed. The Godot extension and interactive
+  client were not rebuilt or played.
+- The focused regression runner passed 2,359 assertions in 126 cases without
+  retail mounts; tests requiring installed game data printed SKIP. Coverage
+  includes the earlier AI paths plus component/direct-combination tie rules,
+  repeated split types, named-team source ordering and merge refusals,
+  soldier preservation, starts-full packing, overflow carriers, delivery and
+  return/deletion, original indicator-color callbacks, maximum horde/member ranks
+  without duplicate scores, payload timing and protection, native entry/exit/mood
+  rules, recursive slot costs, grab damage/protection, PC24 healing, BFME1-only
+  state registration, and delivery/departure AI-state
+  round trips (including the departure locomotor flag).
+  The optional RotWK binary-table oracle was not run (`RW_GAME_DAT` unset).
+- The existing SAVE-4b suite passed 1,596 assertions in 16 cases, including
+  round trips for all 181 ported behavior classes and links between hordes,
+  transports and tunnel networks.
+- With all three installs mounted, the three retail cases passed all 316
+  assertions. All four Medium BFME1 factions completed buildings, trained
+  hordes and damaged the opponent on Fords of Isen (seed 9001, starting cash
+  2000), within the unchanged 4,500-frame limit. Four AI snapshot round trips
+  and BFME2/RotWK startup isolation passed, with the specifically named BFME2
+  S-1321 campaign parse gap above reported. A separate retail case preserved
+  all ten original soldiers in Rohan, Gondor and Elven double combinations
+  and delivered a Haradrim horde from a scripted MordorMumakil. The combinations
+  also retained the native receiver color index and synchronized all soldiers
+  to rank 3 without awarding extra level-up scores.
+- The earlier Rohan/Mordor zero-damage failures were reproduced before the
+  horde-worker binding fix. The Rohan peasants had been routed to generic AI;
+  their soldiers had weapons (and Draft modifiers) but no horde attack
+  handoff. The Mordor test's Rohan opponent used that same incorrect runtime.
+  Correcting the native horde inheritance and initial wake resolved both;
+  the retail tests' targets, damage assertions and frame limit were unchanged.
+- The temporary regression/retail runner compiled the changed simulation
+  sources with optimization and the configured strict floating-point flags,
+  to avoid Debug-mode simulation/checksum delays. These are outcome checks,
+  not a replay comparison against the original executable.
+- Compiler flags (1,476 commands), link flags (15 commands) and simulation
+  source classification passed. The full libclang AST audit was not run.
+- The commit gate passed all 30 changed/new files using a temporary index;
+  the workspace index was left untouched. No game data was committed.

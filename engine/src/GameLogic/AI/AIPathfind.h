@@ -1225,6 +1225,8 @@ public:
 	bool raisedLayerInUse(PathfindLayerEnum layer) const;
 	// PathfindLayer + 0x3C (Pathfinder::GetWallLayerHeight BFME2 WB 0xd3ec10: the int height as a float); 0 for a layer not in use
 	float raisedLayerHeight(PathfindLayerEnum layer) const;
+	PathfindLayerEnum addBfme1Bridge(const Bfme1BridgeGeometry &);
+	PathfindLayerEnum bfme1BridgeAt(float x,float y,float z) const;
 	size_t raisedLayerCount() const;
 	// PathfindLayer + 0x18 (k = 0) / + 0x20 (k = 1): the layer's wall connect cells, (-1, -1) when unset (see AIPathfindRaised.cpp)
 	ICoord2D raisedConnectCell(PathfindLayerEnum layer, int k) const;
@@ -1390,13 +1392,14 @@ private:
 	// the areas' surfaces with the pieces they came from
 	struct RaisedLayer
 	{
+		std::shared_ptr<Bfme1BridgeGeometry> bridge;
 		std::vector<std::pair<PathfindObjectID, PathfindWallSurface>> areas; // + 0x38 (newest first in RW; insertion order here: the union is the same)
 		int height = 0;                 // + 0x3C
 		ICoord2D origin{ 0, 0 };        // + 0x10 / + 0x14
 		int width = 0, depth = 0;       // + 8 / + 0xC (cells)
 		std::vector<PathfindCell> cells; // + 0 / + 4, column-major: cells[x * depth + y]
 		ICoord2D connect[2] = { { -1, -1 }, { -1, -1 } }; // + 0x18 / + 0x20: the wall connect cells (reset by ClassifyWallCells RW 0x768832)
-		bool used() const { return !areas.empty(); }      // RW 0x768326 (+ 0x34 the bridge, none of the wall kind, or + 0x38 the areas)
+		bool used() const { return bridge || !areas.empty(); }      // RW 0x768326 (+ 0x34 the bridge, none of the wall kind, or + 0x38 the areas)
 		// AddWallConnectCell (RW 0x76879E): a cell that is neither connect cell yet takes the first free one; a third is dropped
 		void addWallConnectCell(const ICoord2D &c)
 		{
@@ -1428,6 +1431,7 @@ private:
 	PathfindLayerEnum raisedLayerFor(const PathfindWallSurface &s, PathfindObjectID owner);
 	void rebuildRaisedLayer(PathfindLayerEnum layer); // the cells (rebuildRaisedCells), then the units' slots on the layer registered again
 	void rebuildRaisedCells(PathfindLayerEnum layer);
+	void rebuildBfme1Bridge(PathfindLayerEnum layer);
 	// RW 0x9356DF's ends: the cell of a ramp end (getRamp's from, then its to) on a raised layer becomes a wall connect cell of that layer
 	void addRampConnectCells(const Coord3D &from, const Coord3D &to);
 	// every raised layer's connect cells from the wall pieces' ramps, in insertion order: after the load of a version 1 walls snapshot, which has none (RW's
@@ -1725,6 +1729,7 @@ public:
 		};
 		struct Raised
 		{
+			std::shared_ptr<Bfme1BridgeGeometry> bridge;
 			bool used = false;
 			std::vector<std::pair<PathfindObjectID, PathfindWallSurface>> areas;
 			int height = 0, width = 0, depth = 0;

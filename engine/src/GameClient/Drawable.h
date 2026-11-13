@@ -202,6 +202,9 @@ public:
 
 	// The render transform from the object's record in a completed logic frame's snapshot (SMOOTH-1: RenderInterpolation::retailPose, RW 0x6765B9;
 	// `interpolate` false: the record's current transform, the stepped look). Then the construction look (updateConstruction).
+	bool currentContainerBone(const std::string &name, Matrix3D &world) const;
+	void syncContainerBone(const Drawable *parent, const std::string &bone, const ObjectSnapshot *record = nullptr);
+	void releaseContainerBone(float snappyness) { m_containerRelease = snappyness; }
 	void syncFromSnapshot(const ObjectSnapshot &s, UnsignedInt snapshotFrame, double alpha, bool interpolate);
 	// lane PERF-3: syncFromSnapshot in two parts, for DrawableManager::syncTransforms to run the first on the client job pool. prepareSync reads only this
 	// drawable and the record and writes only this drawable's own state (the construction look, the move speed, the script target) and `out` (the pose,
@@ -315,6 +318,12 @@ public:
 private:
 	void addEntry(DrawServices &services, const ThingTemplate::Nugget &nugget, std::vector<std::string> &problems);
 
+	Matrix3D m_containerLastPose;
+	bool m_containerHadPose = false;
+	float m_containerRelease = 1.0f;
+	double m_containerClientFrames = 0.0;
+	double m_containerAimFrames = 1.0;
+	float m_containerAimAngle = 0.0f;
 	DrawServices &m_services;
 	DrawableID m_id;
 	ObjectID m_objectId;

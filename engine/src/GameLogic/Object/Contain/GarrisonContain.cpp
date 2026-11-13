@@ -37,6 +37,10 @@
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/Economy.h"
+#include "GameLogic/AttributeModifiers.h"
+#include "GameLogic/Object/ExperienceTracker.h"
+#include "GameLogic/Object/Contain/ContainEditionRules.h"
 #include "GameLogic/Weapon.h"
 
 #include <algorithm>
@@ -151,10 +155,201 @@ GarrisonContain::GarrisonContain(Thing *thing, const ModuleData *data, const Gar
 
 GarrisonContain::~GarrisonContain() = default;
 
+// BFME1 factory 0x00116D80 -> data ctor 0x0024F390, table 0x00CB0E98.
+// The similarly named ctor at 0x0022B160 belongs to another registry entry.
+class Bfme1SlaughterData : public HordeGarrisonContainBehaviorData
+{
+public:
+	float cashBackPercent = 0.5f;
+	static void buildFieldParse(MultiIniFieldParse &parse)
+	{
+		HordeGarrisonContainBehaviorData::buildFieldParse(parse);
+		static const FieldParse fields[] = {
+			{"CashBackPercent", INI::parsePercentToReal, nullptr, (int)offsetof(Bfme1SlaughterData, cashBackPercent)},
+			{nullptr, nullptr, nullptr, 0}
+		};
+		parse.add(fields);
+	}
+};
+
+class Bfme1SlaughterContain final : public GarrisonContain
+{
+public:
+	bool isSlaughterContain() const override { return true; }
+	Bfme1SlaughterContain(Thing *thing, const Bfme1SlaughterData *data)
+		: GarrisonContain(thing, data, data->horde.m_garrison, data->m_dieMux, &data->horde), m_slaughter(data)
+	{
+
+	}
+	void xfer(Xfer &x) override
+	{
+		GarrisonContain::xfer(x); XferVersion v{1, 1}; x.xferVersion(v);
+		x.xferInt(&m_pendingCount); x.xferAsciiString(&m_pendingTemplate);
+		if (m_pendingCount < 0) throw XferException("BFME1 slaughter: negative pending score count");
+	}
+	void crc(StateHasher &h) const override
+	{
+		GarrisonContain::crc(h); h.addI32(m_pendingCount); h.addString(m_pendingTemplate);
+	}
+	const std::type_info &xferClass() const override { return typeid(Bfme1SlaughterContain); }
+	int getContainMax() const override { return m_slaughter->horde.m_maxHordeCapacity; }
+	bool addToContain(Object *object) override
+	{
+		// BFME1 0x0024ECA0: wrapper first; members take the accounting
+		// callback 0x0024ED40, not the ordinary garrison entry callback.
+		if (!object || object->getContainedBy()) return false;
+		if (hordeOf(*object)) return GarrisonContain::addToContain(object);
+		Player *owner = object->getControllingPlayer();
+		if (!owner) return false;
+		Object *horde = nullptr;
+		for (Object *wrapper : *getContainedItemsList())
+			if (auto *contain = hordeOf(*wrapper); contain && contain->isMemberOrEntering(*object)) { horde = wrapper; break; }
+		GameLogic &logic = getObject()->logic();
+		int bounty = (int)Economy::templateInt(*object->getTemplate(), "BountyValue");
+		if (object->isKindOf((unsigned)CombatNames::kindOf("HERO")))
+			if (auto *experience = object->getExperienceTracker()) bounty *= experience->getRank(); // 0x001C9310.
+		if (bounty > 0 && m_slaughter->cashBackPercent > 0.0f)
+		{
+			// 0x0024EDB7: floor(double x87 product), then one float store.
+			float amount = SimMath::fstpDword(SimMath::floorD(SimMath::pc24MulW((double)bounty, (double)m_slaughter->cashBackPercent)));
+			if (logic.economy().isMultiplayerGame())
+				amount = SimMath::pc24Mul(amount, logic.economy().multiPlayMoneyMult(logic.economy().livePlayableCount(false)));
+			float production = 1.0f;
+			if (getObject()->attributeModifierProduct(ATTRIBUTE_PRODUCTION, nullptr, false, production)) amount = SimMath::pc24Mul(production, amount);
+			const int paid = owner->applyHandicapMoney(SimMath::ceilToInt(amount));
+			owner->depositMoney((unsigned)paid, true);
+			// BFME1 0x0024EF91..0x0024EFD0: the refund also trains
+			// the slaughterhouse, using rank and scalar multipliers.
+			if (auto *experience = getObject()->getExperienceTracker(); experience && experience->isAcceptingExperiencePoints())
+				experience->addExperiencePoints((float)paid, true, true, true, false);
+		}
+		// BFME1 0x0024F002..0x0024F07B: a nonzero cashback policy
+		// retains upgrades only while the exact incoming Team is the same.
+		if (m_slaughter->cashBackPercent != 0.0f)
+		{
+			flushScore(object);
+			const TeamID team = object->getTeam() ? object->getTeam()->getID() : 0;
+			bool refresh = false;
+			if (originalTeamForVariant() != team)
+			{
+				getObject()->resetBfme1Upgrades(); originalTeamForVariant() = team; refresh = true;
+			}
+			if (!getObject()->getUpgradeMask().testForAll(object->getUpgradeMask()))
+			{
+				getObject()->friend_orUpgradeMask(object->getUpgradeMask()); refresh = true;
+			}
+			if (refresh) getObject()->updateUpgradeModules();
+		}
+		object->setDrawableHidden(true);
+		if (object->testStatus((unsigned)CombatNames::status("HORDE_MEMBER")))
+		{
+			// 0x0024F084 -> 0x002489E0: members rejoin their
+			// garrisoned horde. The final arrival destroys the whole
+			// wrapper; killing arrivals individually loses this handoff.
+			GarrisonContain::addToContain(object);
+			finishEntry();
+			if (horde && hordeOf(*horde)->allMembersEntered())
+			{
+				if (m_slaughter->cashBackPercent != 0.0f)
+				{
+					m_pendingCount = (int)horde->getContain()->getContainCount() + (int)hordeOf(*horde)->membersEntering().size();
+					m_pendingTemplate = object->getTemplate()->getName();
+				}
+				logic.destroyObject(horde);
+			}
+		}
+		else
+		{
+			// 0x0024F097..0x0024F0AE: standalone passengers die
+			// immediately (NORMAL / UNRESISTABLE), then are destroyed.
+			object->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+			logic.destroyObject(object);
+			finishEntry();
+		}
+		return true;
+	}
+	UpdateSleepTime update() override
+	{
+		// BFME1 0x0024F350 -> callbacks 0x0024F2D0 / 0x0024F280:
+		// each member still outside is ordered into the slaughterhouse.
+		const auto wrappers = *getContainedItemsList();
+		for (Object *wrapper : wrappers)
+		{
+			auto *horde = wrapper ? hordeOf(*wrapper) : nullptr;
+			if (!horde) continue;
+			std::vector<ObjectID> members;
+			if (const auto *items = wrapper->getContain()->getContainedItemsList())
+				for (Object *member : *items) members.push_back(member->getID());
+			const auto entering = horde->membersEntering();
+			members.insert(members.end(), entering.begin(), entering.end());
+			for (ObjectID id : members)
+				if (Object *member = getObject()->logic().findObjectByID(id))
+					if (auto *ai = member->getAIUpdateInterface(); ai && ai->currentStateId() != 56 && ai->currentStateId() != 15)
+						ai->aiEnter(getObject(), CMD_FROM_AI);
+		}
+		return GarrisonContain::update();
+	}
+protected:
+	void onContaining(Object *object, bool selected) override
+	{
+		flushScore(object); // BFME1 0x0024EA60, before the owner changes.
+		GarrisonContain::onContaining(object, selected);
+	}
+	void onRemoving(Object *object) override
+	{
+		GarrisonContain::onRemoving(object);
+		getObject()->setModelConditionState(CombatNames::modelCondition("CONSTRUCTION_COMPLETE"), true); // BFME1 0x0024EAC0.
+	}
+private:
+	void finishEntry()
+	{
+		// BFME1 0x0024F0AE..0x0024F0F6, for both horde and standalone arrivals.
+		if (m_slaughter->cashBackPercent == 0.0f) return;
+		if (auto *brain = getObject()->getAIUpdateInterface()) brain->aiIdle(CMD_FROM_AI);
+		const ObjectID builder = getObject()->getBuilderID();
+		if (builder && builder != getObject()->getID())
+			if (Object *worker = getObject()->logic().findObjectByID(builder))
+			{
+				worker->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+				getObject()->setBuilder(nullptr);
+			}
+	}
+	void flushScore(Object *next)
+	{
+		// BFME1 0x0024E990: pending troops are lost by the previous
+		// house owner and destroyed by the next owner. Both native count
+		// helpers are deliberately ungated. Same-player entry only clears.
+		if (m_pendingCount <= 0 || m_pendingTemplate.empty() || !next) return;
+		auto &logic = getObject()->logic();
+		Player *oldOwner = getObject()->getControllingPlayer(), *newOwner = next->getControllingPlayer();
+		const auto *type = logic.things().findTemplate(m_pendingTemplate);
+		if (oldOwner && newOwner && oldOwner != newOwner && type)
+		{
+			oldOwner->getScoreKeeper().bfme1SlaughterLost(*type, m_pendingCount);
+			newOwner->getScoreKeeper().bfme1SlaughterDestroyed(*type, oldOwner->getPlayerIndex(), m_pendingCount);
+		}
+		m_pendingCount = 0; m_pendingTemplate.clear();
+	}
+	int m_pendingCount = 0;
+	std::string m_pendingTemplate;
+	const Bfme1SlaughterData *m_slaughter;
+};
+
 void GarrisonContain::registerClasses(ModuleFactory &modules)
 {
-	modules.bindTypedData<SlaughterHordeContainBehaviorData>("SlaughterHordeContain", MODULETYPE_BEHAVIOR);
+	modules.bindDataProc("SlaughterHordeContain", MODULETYPE_BEHAVIOR, [](INI *ini) -> std::shared_ptr<ModuleData> {
+		if (ini && ini->bfme1Data())
+		{
+			auto data = std::make_shared<Bfme1SlaughterData>();
+			ini->initFromINIMultiProc(data.get(), &Bfme1SlaughterData::buildFieldParse);
+			return data;
+		}
+		auto data = std::make_shared<SlaughterHordeContainBehaviorData>();
+		if (ini) ini->initFromINIMultiProc(data.get(), &SlaughterHordeContainBehaviorData::buildFieldParse);
+		return data;
+	});
 	modules.bindModuleProc("SlaughterHordeContain", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
+		if (auto *typed = dynamic_cast<const Bfme1SlaughterData *>(data)) return std::make_unique<Bfme1SlaughterContain>(thing, typed);
 		const auto *typed = dynamic_cast<const SlaughterHordeContainBehaviorData *>(data);
 		if (!typed) throw std::logic_error("SlaughterHordeContain: module data is not typed");
 		return std::make_unique<SlaughterHordeContain>(thing, typed);

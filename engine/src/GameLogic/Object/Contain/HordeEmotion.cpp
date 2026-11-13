@@ -294,7 +294,7 @@ bool HordeContain::attackedWithin(unsigned frames, ObjectID &attacker) const
 		}
 	}
 	// RW H+0x170: also visits registered members released toward a garrison, in object-ID order.
-	for (ObjectID id : m_core->registeredMembers())
+	for (ObjectID id : usesNativeMelee()?m_garrisonEntering:m_core->registeredMembers())
 	{
 		Object *member = logic.findObjectByID(id);
 		if (member && emotionAttackedWithin(*member, 4, attacker))
@@ -329,6 +329,7 @@ static Object *nearestOtherMember(const HordeContain::ContainedItemsList &member
 
 int HordeContain::emotionMemberOrder(Object &member, Object *scarer, Coord3D &pos, float &angle)
 {
+	if(m_data->horde.m_isPorcupineFormation)return 0; // RW 0x873FE8; BFME1's override has no such gate.
 	// RW 0x874155 .. 0x874671
 	GameLogic &logic = getObject()->logic();
 	if (!m_quarrelDistance.empty())

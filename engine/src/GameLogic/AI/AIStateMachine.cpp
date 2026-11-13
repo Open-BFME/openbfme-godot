@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/AI/AIStateMachine.h for the sources and what is inference.
 
+#include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 #include "GameLogic/AI/AIStateMachine.h"
 
 #include "Common/GameCommon.h"
@@ -643,6 +644,7 @@ StateReturnType AIIdleState::update()
 		{
 			if (self.aiAttackObject(target, CMD_FROM_AI))
 			{
+				Bfme1Melee::autoAcquired(self); // BFME1 AIIdleState 0x00188090, +0x335.
 				return STATE_CONTINUE; // the machine changed state: the new state runs next
 			}
 		}

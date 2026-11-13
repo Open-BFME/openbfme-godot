@@ -93,6 +93,15 @@ void parseMinDistFromEdgeOfMapForBuild(INI *ini, void *instance, void *store, co
 	static_cast<BlockState *>(instance)->minDistFromEdgeOfMapForBuildSeen = true;
 }
 
+// BFME1 TAiDataCtor.cpp / AIPlayer.cpp and RW row 0xC1CCD0 (parseReal
+// 0x42ED00) use the same INI key. One parse supplies both edition runtimes;
+// duplicate field rows would hide the second runtime's destination.
+void parseMaxRecruitRadius(INI *ini, void *instance, void *store, const void *)
+{
+	INI::parseReal(ini, instance, store, nullptr);
+	static_cast<BlockState *>(instance)->values.legacyAI.maxRecruitRadius = *static_cast<float *>(store);
+}
+
 // the line without its ; or // comment
 std::string withoutComment(const std::string &line)
 {
@@ -313,6 +322,14 @@ const FieldParse kGameDataFields[] = {
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kAIDataFields[] = {
+	// BFME1 TAiData's legacy production rows (TAiDataCtor.cpp / AIPlayer.cpp).
+	// Read in every edition; only the BFME1 AI variant consumes/hashes them.
+	{ "TeamSeconds", INI::parseReal, nullptr, (int)offsetof(BlockState, values.legacyAI.teamSeconds) },
+	{ "Wealthy", INI::parseUnsignedInt, nullptr, (int)offsetof(BlockState, values.legacyAI.wealthy) },
+	{ "Poor", INI::parseUnsignedInt, nullptr, (int)offsetof(BlockState, values.legacyAI.poor) },
+	{ "TeamsWealthyRate", INI::parseReal, nullptr, (int)offsetof(BlockState, values.legacyAI.wealthyRate) },
+	{ "TeamsPoorRate", INI::parseReal, nullptr, (int)offsetof(BlockState, values.legacyAI.poorRate) },
+	{ "TeamResourcesToStart", INI::parseReal, nullptr, (int)offsetof(BlockState, values.legacyAI.resourcesToStart) },
 	{ "EnableRepulsors", parseNoting<INI::parseBool>, SEEN_DATA(SEEN_REPULSORS), (int)offsetof(BlockState, values.enableRepulsors) },
 	// lane MODULES-3: RepulsedDistance (row RW 0x81CC40, parseReal RW 0x42ED00, AIData + 0x60): the safe path's distance beyond the vision range (RW 0x668E94)
 	{ "RepulsedDistance", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_REPULSED), (int)offsetof(BlockState, values.repulsedDistance) },
@@ -352,13 +369,14 @@ const FieldParse kAIDataFields[] = {
 	{ "SkirmishGroupFudgeDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.skirmishGroupFudgeDistance) },
 	// lane PORT-40: MaxRecruitRadius (row RW 0xC1CCD0, parseReal RW 0x42ED00, AIData + 0x5C): the recruit radius of TEAM_RECRUIT_UNITS (RW 0x7C2BFB
 	// -> RW 0x7A491C) and of the AI player's own team building (RW 0x8F8E2C -> RW 0x7A41D4, not ported)
-	{ "MaxRecruitRadius", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.maxRecruitRadius) },
+	{ "MaxRecruitRadius", parseMaxRecruitRadius, nullptr, (int)offsetof(BlockState, values.maxRecruitRadius) },
 	// lane AIDATA-1: the pathfinder's rows (were PathfindConfigLoader's text scan): RW 0xC1CDD0 WadeWaterDepth + 0x98, 0xC1CDE0 DeepWaterDepth + 0x9C,
 	// 0xC1CDB0 MeleeApproachTolerance + 0x90, 0xC1CDC0 MeleeApproachDist + 0x94, 0xC1CF00 CastleSiegeStandBackDistance + 0xD4 (parseReal RW 0x42ED00);
 	// 0xC1CE40 HordesWaitForHordes + 0xB9 (parseBool RW 0x42E558)
 	{ "WadeWaterDepth", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.wadeWaterDepth) },
 	{ "DeepWaterDepth", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.deepWaterDepth) },
 	{ "MeleeApproachTolerance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.meleeApproachTolerance) },
+	{ "MeleeAcquireLimitDist", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.bfme1MeleeAcquireLimitDist) },
 	{ "MeleeApproachDist", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.meleeApproachDist) },
 	{ "CastleSiegeStandBackDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.castleSiegeStandBackDistance) },
 	{ "HordesWaitForHordes", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.hordesWaitForHordes) },
@@ -472,6 +490,16 @@ public:
 		}
 		return true;
 	}
+	bool globalMacros(ArchiveFileSystem &fs, std::string *error)
+ {
+  // Standalone AIData/map readers need the same global definitions as
+  // the subsystem load. Preprocess only: do not apply GameData again.
+  const char *file="data\\ini\\gamedata.ini";
+  if(!fs.doesFileExist(file))return true;
+  try { INI ini(m_env);ini.preprocessFile(file,INI_LOAD_OVERWRITE); }
+  catch(const std::exception &e){if(error)*error=std::string(file)+": "+e.what();return false;}
+  return true;
+ }
 	BlockState &state() { return m_state; }
 	const std::vector<std::string> &files() const { return m_files; }
 
@@ -608,7 +636,7 @@ bool loadAIDataFiles(ArchiveFileSystem &fs, Load &l, std::string *error)
 bool GameLogicSettingsLoader::loadAIData(ArchiveFileSystem &fs, GameLogicSettings &out, std::string *error)
 {
 	Load l(&fs, out, true);
-	return loadAIDataFiles(fs, l, error) && finish(l, 2u, "AIData", kAIDataNeeds, "default\\aidata.ini", out, error);
+	return l.globalMacros(fs,error) && loadAIDataFiles(fs, l, error) && finish(l, 2u, "AIData", kAIDataNeeds, "default\\aidata.ini", out, error);
 }
 
 bool GameLogicSettingsLoader::scanMultiplayer(const std::string &text, GameLogicSettings &out, std::string *error)
@@ -680,7 +708,7 @@ bool GameLogicSettingsLoader::applyMapAIData(ArchiveFileSystem &fs, const std::s
 			continue;
 		}
 		Load l(&fs, out, true);
-		if (!l.text(path, std::string(bytes.begin(), bytes.end()), &error))
+		if (!l.globalMacros(fs,&error) || !l.text(path, std::string(bytes.begin(), bytes.end()), &error))
 		{
 			errors.push_back(error);
 			ok = false;
@@ -725,6 +753,7 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addFloat(groupMoveClickToGatherAreaFactor);
 	h.addU32(forceIdleFrames); // lane TARGET-1
 	h.addFloat(attackPriorityDistanceModifier);
+	if(bfme1MeleeAcquireLimitDist!=100.0f){h.addU32(0xC94DB0);h.addFloat(bfme1MeleeAcquireLimitDist);}
 	h.addBool(attackUsesLineOfSight);
 	h.addBool(attackIgnoreInsignificantBuildings);
 	h.addFloat(artilleryMaxFriendlyFire);

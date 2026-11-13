@@ -2,6 +2,8 @@
 // See GameLogic/AI/AIClosestEnemy.h.
 
 #include "GameLogic/AI/AIClosestEnemy.h"
+#include "GameLogic/AI/AIEditionRules.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -21,6 +23,9 @@
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Module/SiegeModules.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/Object/Contain/Bfme1HordeRuntime.h"
+#include "GameLogic/Object/Contain/HordeContainCore.h"
+#include "GameLogic/Module/SiegeModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/ScriptEngine/AttackPriority.h"
@@ -459,8 +464,36 @@ float adjustedVisionRange(const Object &obj, unsigned flags)
 	}
 }
 
+// BFME1 1.03 0x14CA60; RW 0x6FF7FA remains below.
+static bool canBfme1AttackFromHere(Object &source,Object &victim)
+{
+ auto *ai=source.getAIUpdateInterface();if(!ai)return false;
+ const bool standing=source.testStatus((unsigned)names().standGround) || ai->nativeMeleeState().stopRetaliation;
+ Object *representative=&source;
+ if(source.isKindOfName("HORDE")) {
+  auto *h=dynamic_cast<Bfme1HordeContain*>(source.getContain());if(!h)return false;
+  representative=h->nativeAttackRepresentative(source.isKindOfName("MELEE_HORDE"));
+  if(!representative)return false;
+ }
+ auto *weapons=representative->getWeapons();if(!weapons)return false;
+ for(int slot=0;slot<(int)WEAPONSLOT_COUNT;++slot) {
+  const auto *w=weapons->weaponInSlot(slot);if(!w)continue;
+  if(ObjectWeapons::providedWeaponWithinRange(source,*w,victim))return true;
+  if(!w->getTemplate() || !w->getTemplate()->m_meleeWeapon)continue;
+  if(standing)return false;
+  auto *world=source.logic().aiWorld();if(!world)return false;
+  const auto layer=world->adapterFor(source).getLayer(),other=world->adapterFor(victim).getLayer();
+  if(layer!=other && !(source.isKindOfName("HORDE") && victim.isKindOfName("SIEGE_TOWER") && siegeTowerTopReach(victim,*source.getPosition(),CombatQueries::boundingCircleRadius(source))))continue;
+  const float vision=std::min(AIUpdateInterface::objectVisionRangeOf(source),source.logic().settings().bfme1MeleeAcquireLimitDist);
+  const float distance=CombatQueries::edgeDistanceSquared2D(source,*source.getPosition(),victim,*victim.getPosition());
+  if(distance<=SimMath::pc24MulW(vision,vision))return true;
+ }
+ return false;
+}
+
 bool canAttackFromHere(Object &source, Object &victim)
 {
+ if(AIEditionRules::forObject(source).bfme1)return canBfme1AttackFromHere(source,victim);
 	// RW 0x6FF7FA
 	AIUpdateInterface *ai = source.getAIUpdateInterface();
 	ObjectWeapons *w = source.getWeapons();
@@ -691,8 +724,189 @@ Object *findClosestEnemy(Object &me, float range, unsigned qualifiers, const Att
 	return findClosestEnemy(me, *me.getPosition(), range, qualifiers, info, optionalFilter, arg); // RW 0x701443
 }
 
+// BFME1 1.03 0x0014D120. RW 0x7006D7 retains the shared path below.
+static Object *findClosestBfme1Enemy(Object &me, const Coord3D &pos, float range, unsigned q, const AttackPriorityInfo *info, PartitionFilter *optionalFilter, int arg)
+{
+	const Names &n = names();
+	GameLogic &logic = me.logic();
+	if ((q & CAN_ATTACK) && !me.isAbleToAttack())
+	{
+		return nullptr;
+	}
+		const Player *mePlayer = me.getControllingPlayer();
+	class NativeEnemies final : public EnemiesFilter {
+ public:using EnemiesFilter::EnemiesFilter;
+ bool allow(Object &o)override{return !o.isOffMap() && EnemiesFilter::allow(o);}
+ };
+ NativeEnemies enemies(me);
+	AliveFilter alive;
+	RejectBuildingsFilter rejectBuildings(me);
+	AutoAcquireKindFilter kindFilter(false);
+	WithinAttackRangeFilter withinRange(me);
+	LineOfSightFilter lineOfSight(me);
+	FreeOfFogFilter fog(mePlayer ? mePlayer->getPlayerIndex() : -1);
+	InsignificantBuildingsFilter insignificant;
+	StealthFilter stealth(me);
+	FleeOffMapFilter fleeOffMap;
+	PossibleToAttackFilter possible(me);
+	PartitionFilter *links[16];
+	size_t count = 0;
+	struct Chain
+	{
+		PartitionFilter **data;
+		size_t &n;
+		void push_back(PartitionFilter *f) { data[n++] = f; }
+	} chain{ links, count };
+	chain.push_back(&enemies);
+	chain.push_back(&alive);
+	if (!(q & ATTACK_BUILDINGS))
+	{
+		chain.push_back(&rejectBuildings);
+	}
+	if (q & AUTO_ACQUIRE)
+	{
+		chain.push_back(&kindFilter);
+	}
+	if (q & WITHIN_ATTACK_RANGE)
+	{
+		chain.push_back(&withinRange);
+	}
+	if (q & CAN_SEE)
+	{
+		chain.push_back(&lineOfSight);
+	}
+	if (q & UNFOGGED)
+	{
+		chain.push_back(&fog);
+	}
+	if (q & IGNORE_INSIGNIFICANT_BUILDINGS)
+	{
+		chain.push_back(&insignificant);
+	}
+	chain.push_back(&stealth);
+	chain.push_back(&fleeOffMap);
+	if (q & CAN_ATTACK)
+	{
+		chain.push_back(&possible);
+	}
+
+ if(status(me,n.contestingBuilding) && me.getContainedBy())
+  logic.noteStop("[S-5017] BFME1 target search: contested-building recipient callback 0x14D3E9 is unverified");
+
+	if (!info || info==logic.scriptEngine().attackPriorities().getDefaultAttackInfo())
+	{
+		Object *found = logic.partition().getClosestObject(pos, range, FROM_CENTER_3D, PartitionFilterList(links, count));
+		if (found && (q & CAN_ATTACK))
+		{
+			found = adjustVictim(*found, &me, true, arg);
+		}
+		return found;
+	}
+
+	const PartitionHits hits = 9000.0f > range ? logic.partition().iterateObjectsInRange(pos, range, FROM_CENTER_3D, PartitionFilterList(links, count), ITER_FASTEST)
+	                                           : logic.partition().iterateAllObjects(PartitionFilterList(links, count));
+	const ObjectWeapons *myWeapons = me.getWeapons();
+	const Weapon *weapon = myWeapons ? myWeapons->currentWeapon() : nullptr;
+	AIUpdateInterface *myAi = me.getAIUpdateInterface();
+	std::optional<Pathfinder::PortalMemoScope> portalMemo;
+	if (myAi)
+	{
+		portalMemo.emplace(&myAi->adapter());
+	}
+	const float modifier = logic.settings().attackPriorityDistanceModifier;     // AIData + 0x54
+	Object *best = nullptr;
+	float bestScore=0.0f; int bestP=0;
+	bool bestPathable = false;
+	for (const PartitionHit &h : hits)
+	{
+		Object &hit = *h.object;
+		int p=info->templatePriority(hit.getTemplate());
+		if (status(hit, n.hordeMember))
+		{
+			if (Object *horde = hit.getHordeObject(false))
+			{
+				if (!horde->getContainedBy())
+				{
+					const int hp=info->templatePriority(horde->getTemplate());
+					p = p > hp ? p : hp; // fcomip; ja
+				}
+				else
+				{
+					p = 0;
+				}
+			}
+		}
+		if (p == 0)
+		{
+			continue;
+		}
+		if (status(hit, n.doNotPickMe))
+		{
+			continue;
+		}
+		if (kind(hit, n.blockingGate))
+		{
+			const GateOpenAndCloseBehavior *gate = dynamic_cast<const GateOpenAndCloseBehavior *>(hit.findModule("GateOpenAndCloseBehavior"));
+			if (gate && gate->isOpen()) // slot 6
+			{
+				continue;
+			}
+		}
+  if(auto *contain=hit.getContain()) {
+   if(const auto *riders=contain->getContainedItemsList())for(Object *rider:*riders)if(rider)p=std::max(p,info->templatePriority(rider->getTemplate()));
+  }
+		const Coord3D &hp = *hit.getPosition();
+		const float d2 = CombatQueries::edgeDistanceSquared2D(me, pos, hit, hp);
+  // Native 0x14D694: integer addition wraps before FILD, stored
+  // base score; root and quotient retain PC24's wide exponent.
+  const auto plus=(std::int32_t)((std::uint32_t)p+100u);
+  const float base=SimMath::fstpDword((double)plus);
+  float score=SimMath::fstpDword(SimMath::pc24SubW(base,SimMath::pc24DivW(SimMath::sqrtPC24(d2),modifier)));
+		if (q & COMPUTER_CREEPS)
+		{
+			const Player *hp2 = hit.getControllingPlayer();
+			if ((hp2 && hp2->getPlayerName() == kCreepPlayer) || kind(hit, n.creep))
+			{
+				score = 1.0f;
+			}
+		}
+		const bool better = score > bestScore || (score == bestScore && p > bestP);
+		if (!better && bestPathable)
+		{
+			continue;
+		}
+		const bool pathable = canApproach(me, hp, weapon);
+		if (!pathable && bestPathable)
+		{
+			continue;
+		}
+		if (!better && !(pathable && !bestPathable))
+		{
+			continue;
+		}
+		if (optionalFilter && !optionalFilter->allow(hit))
+		{
+			continue;
+		}
+		if (!pathable && bestPathable && best)
+		{
+			continue;
+		}
+		bestScore = score;
+		bestP = p;
+		best = &hit;
+		bestPathable = pathable;
+	}
+	if (best && (q & CAN_ATTACK) && !(q & WITHIN_ATTACK_RANGE))
+	{
+		best = adjustVictim(*best, &me, true, arg);
+	}
+	return best;
+}
+
 Object *findClosestEnemy(Object &me, const Coord3D &pos, float range, unsigned q, const AttackPriorityInfo *info, PartitionFilter *optionalFilter, int arg)
 {
+ if(AIEditionRules::forObject(me).bfme1)return findClosestBfme1Enemy(me,pos,range,q,info,optionalFilter,arg);
 	const Names &n = names();
 	GameLogic &logic = me.logic();
 	if ((q & CAN_ATTACK) && !me.isAbleToAttack()) // RW 0x691269

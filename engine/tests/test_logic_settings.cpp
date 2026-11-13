@@ -105,7 +105,8 @@ TEST_CASE("logic settings: fields no row reads and nested blocks are consumed an
 		"End\n";
 	REQUIRE_MESSAGE(L::scanAIData(text, g, &err), err);
 	CHECK_FALSE(g.enableRepulsors);
-	CHECK(g.unappliedFields.count("AIData.Wealthy") == 1);
+	CHECK(g.unappliedFields.count("AIData.Wealthy") == 0);
+	CHECK(g.legacyAI.wealthy == 7000u); // BFME1's AIPlayer consumes this; the newer editions keep their own AI.
 	CHECK(g.unappliedFields.count("AIData.SideInfo") == 1);
 	CHECK(g.unappliedFields.count("AIData.SkirmishBuildList") == 1);
 	// lane TARGET-1: the AttackPriority block has its own row (RW 0x70153B): read, not recorded
@@ -305,4 +306,14 @@ TEST_CASE("logic settings: an AIData block indented after a skipped block's End 
 	fs.setLocalFolder(std::string());
 	std::error_code ec;
 	stdfs::remove_all(dir, ec);
+}
+
+#include "IniTestUtil.h"
+TEST_CASE("logic settings: standalone AIData inherits GameData vision macros without applying its blocks")
+{
+ initest::Fixture fixture({{"data\\ini\\gamedata.ini","#define VISION_STANDARD_MELEE 175\nGameData\n DefaultStartingCash = 12345\nEnd\n"},{"data\\ini\\default\\aidata.ini","AIData\n MeleeAcquireLimitDist = VISION_STANDARD_MELEE\nEnd\n"}});
+ GameLogicSettings settings;const auto cash=settings.defaultStartingCash;std::string error;
+ REQUIRE_MESSAGE(GameLogicSettingsLoader::loadAIData(fixture.fsys,settings,&error),error);
+ CHECK(settings.bfme1MeleeAcquireLimitDist==175);CHECK(settings.defaultStartingCash==cash);CHECK(settings.unappliedFields.count("AIData.MeleeAcquireLimitDist")==0);
+ CHECK_FALSE(GameLogicSettingsLoader::scanAIData("AIData\n MeleeAcquireLimitDist = MISSING_VISION\nEnd\n",settings,&error));
 }

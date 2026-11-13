@@ -141,6 +141,8 @@ public:
 	virtual void replaceDrawable(Object &obj, const ThingTemplate *tmpl, bool hasColor, std::uint32_t color) { (void)obj; (void)tmpl; (void)hasColor; (void)color; }
 	// lane BUILD-4, RW 0x670AA2 Drawable::fadeIn(frames) called by the simulation (a wall span's tiles, RW 0x7954A8): the object's drawable fades in over
 	// `frames` client frames (0: shown at once)
+	// BFME1 0x0022E3FF: detach the client model, starting its release blend.
+	virtual void releaseContainerBone(Object &, float) {}
 	virtual void fadeIn(Object &obj, UnsignedInt frames) { (void)obj; (void)frames; }
 	// lane PORTERFOG-1, RW 0x670A50 Drawable::fadeOut(frames) called by the simulation (a porter starting its work, RW 0x88DDC1): the drawable fades out over
 	// `frames` client frames (0: at once) and is hidden once its opacity * 255 is below 1 (RW 0x675B7E)
@@ -175,6 +177,16 @@ struct ObjectFilter;
 
 struct GameLogicSettings
 {
+	// BFME1 AIPlayerSelectTeamToBuild.cpp (RVA 0x00163220): the legacy
+	// production cadence. Kept separately from RotWK's ArmyDefinition system.
+	struct LegacyAI
+	{
+		float teamSeconds = 0.0f; // TAiDataCtor.cpp: all six legacy fields start at zero.
+		unsigned wealthy = 0, poor = 0;
+		float wealthyRate = 0.0f, poorRate = 0.0f;
+		float resourcesToStart = 0.0f;
+		float maxRecruitRadius = 0.0f;
+	} legacyAI;
 	// lane AIDATA-1: every AIData default below is the AIData constructor's (RW 0x6FFBEF; BFME2 decomp AIConstructor_Unresolved.cpp TAiData::TAiData), so a mod
 	// aidata.ini that leaves a field out gets retail's value; no AIData field is required (retail's parser RW 0x7017AA requires none)
 	bool enableRepulsors = false;                    ///< AIData EnableRepulsors (RW 0xDE4B40 + 0x18 + 0x64, ctor 0): the RepulsorHelper condition
@@ -218,6 +230,7 @@ struct GameLogicSettings
 	// (parsePercentToReal RW 0x42EEFA, ctor 1.0); the AttackPriority blocks (+ 0xFC, RW 0x70153B: see AttackPriorityDef)
 	unsigned forceIdleFrames = 1; // lane AIDATA-1: the constructor's 1 (RW 0x6FFBEF: + 0x14)
 	float attackPriorityDistanceModifier = 0.0f;
+	float bfme1MeleeAcquireLimitDist = 100.0f; // BFME1 0x14B150, +0x98; table 0xC94DB0.
 	bool attackUsesLineOfSight = true;
 	bool attackIgnoreInsignificantBuildings = false;
 	float artilleryMaxFriendlyFire = 1.0f;

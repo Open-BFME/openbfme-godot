@@ -3,6 +3,7 @@
 
 #include "GameClient/LiveScripting.h"
 #include "GameLogic/Module/EmotionModules.h"
+#include "GameLogic/SkirmishAI/Bfme1SkirmishAI.h"
 
 #include "Common/Audio/AudioLog.h"
 #include "Common/Audio/AudioRequests.h"
@@ -305,6 +306,13 @@ void LiveScripting::enterEmotion(int id, int type, int otherId)
 	}
 	Object *other = otherId != 0 ? m_logic.findObjectByID((ObjectID)otherId) : nullptr;
 	EmotionTrackerUpdate::requestEmotion(*obj, type, other, 1); // RW 0x736AD5: push 1 (ebp), the other, the type
+}
+
+void LiveScripting::enterRampageState(int id)
+{
+	Object *object = m_logic.findObjectByID((ObjectID)id);
+	if (!object) return;
+	if (!Bfme1SkirmishAI::enterRampage(*object)) LuaGameHost::enterRampageState(id);
 }
 
 LuaGameHost::UpgradeLookup LiveScripting::findUpgrade(const std::string &name)

@@ -784,7 +784,7 @@ void Pathfinder::rebuildWallConnectCells()
 {
 	for (RaisedLayer &r : m_raised)
 	{
-		r.connect[0] = r.connect[1] = ICoord2D{ -1, -1 };
+		if(!r.bridge)r.connect[0] = r.connect[1] = ICoord2D{ -1, -1 };
 	}
 	// lane WALL-5: in the order the ramps are stamped (restampWalls: newest first, RW 0x935BFF)
 	for (auto p = m_wallPieces.rbegin(); p != m_wallPieces.rend(); ++p)
@@ -1066,7 +1066,7 @@ bool Pathfinder::isPointOnRamp(float x, float y, float *z) const
 
 bool Pathfinder::isPointOnWall(const Coord3D &pos, bool requireClear) const
 {
-	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	if ((m_wallPieces.empty() && !m_anyRaised) || m_blockOfMapCells.empty())
 	{
 		return false;
 	}
@@ -1083,12 +1083,14 @@ PathfindLayerEnum Pathfinder::getLayerAt(float x, float y) const
 
 PathfindLayerEnum Pathfinder::getLayerAt(float x, float y, float z) const
 {
-	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	if ((m_wallPieces.empty() && !m_anyRaised) || m_blockOfMapCells.empty())
 	{
 		return LAYER_GROUND;
 	}
 	const int cx = SimMath::floorToInt(SimMath::mulf32(x, 0.1f)), cy = SimMath::floorToInt(SimMath::mulf32(y, 0.1f));
 	const PathfindCell *c = cellAt(cx, cy);
+	// BFME1 TerrainLogic 0x1A7C20 scans Bridges before its ramp fallback.
+	const auto bridge=bfme1BridgeAt(x,y,z);if(bridge!=LAYER_GROUND)return bridge;
 	if (isPointOnRamp(x, y))
 	{
 		return LAYER_RAMP; // TerrainLogic::getLayerForDestination RW 0x680A75 (BFME2 0x6802FE): a ramp first (RW 0x6E89EE)
@@ -1104,7 +1106,7 @@ PathfindLayerEnum Pathfinder::getLayerAt(float x, float y, float z) const
 
 PathfindLayerEnum Pathfinder::getLayerAt(const PathfindObject &obj, const Coord3D &pos) const
 {
-	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	if ((m_wallPieces.empty() && !m_anyRaised) || m_blockOfMapCells.empty())
 	{
 		return LAYER_GROUND;
 	}
@@ -1112,6 +1114,7 @@ PathfindLayerEnum Pathfinder::getLayerAt(const PathfindObject &obj, const Coord3
 	// with the object, which moves the point by 5 in x and y for an even footprint (RW 0x6EE62D .. 0x6EE64C, 5.0 at RW 0xBDAE58, the parity RW 0x6ECFC5)
 	// before the walkway scan and the ground grid cell's layer. RotWK first returns the ground for an object whose byte + 0x4AC is set (RW 0x68C053): HordeContain's
 	// transform reaction (RW 0x871536 -> 0x68C02E) sets it on a horde and its members for 13 frames; the port has none (S-4840)
+	const auto bridge=bfme1BridgeAt(pos.x,pos.y,pos.z);if(bridge!=LAYER_GROUND)return bridge;
 	if (isPointOnRamp(pos.x, pos.y))
 	{
 		return LAYER_RAMP;
@@ -1133,7 +1136,7 @@ PathfindLayerEnum Pathfinder::getLayerAt(const PathfindObject &obj, const Coord3
 
 PathfindLayerEnum Pathfinder::objectLayerAt(const PathfindObject &obj, const Coord3D &pos) const
 {
-	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	if ((m_wallPieces.empty() && !m_anyRaised) || m_blockOfMapCells.empty())
 	{
 		return LAYER_GROUND;
 	}
@@ -1143,6 +1146,7 @@ PathfindLayerEnum Pathfinder::objectLayerAt(const PathfindObject &obj, const Coo
 		x = SimMath::addf32(x, 5.0f); // RW 0x6EE62D .. 0x6EE64C (5.0 at RW 0xBDAE58, the parity RW 0x6ECFC5)
 		y = SimMath::addf32(y, 5.0f);
 	}
+	const auto bridge=bfme1BridgeAt(pos.x,pos.y,pos.z);if(bridge!=LAYER_GROUND)return bridge;
 	const PathfindLayerEnum raised = raisedLayerAtPoint(x, y, pos.z);
 	if (raised != LAYER_INVALID)
 	{
@@ -1155,13 +1159,13 @@ PathfindLayerEnum Pathfinder::objectLayerAt(const PathfindObject &obj, const Coo
 float Pathfinder::getLayerHeight(float x, float y, PathfindLayerEnum layer) const
 {
 	const float terrain = m_terrain ? m_terrain->getGroundHeight(x, y) : 0.0f;
-	if (m_wallPieces.empty())
+	if (m_wallPieces.empty() && !m_anyRaised)
 	{
 		return terrain;
 	}
 	if (isRaisedLayer(layer))
 	{
-		return raisedLayerInUse(layer) ? raisedLayerHeight(layer) : terrain; // lane WALL-2: GetWallLayerHeight (BFME2 WB 0xd3ec10)
+		return m_raised[(size_t)layer].bridge ? m_raised[(size_t)layer].bridge->height(x,y) : (raisedLayerInUse(layer) ? raisedLayerHeight(layer) : terrain); // lane WALL-2: GetWallLayerHeight (BFME2 WB 0xd3ec10)
 	}
 	if (!isWallLayer(layer) && layer != LAYER_RAMP)
 	{
@@ -1239,7 +1243,7 @@ float Pathfinder::getLayerHeight(float x, float y, PathfindLayerEnum layer) cons
 float Pathfinder::getHighestLayerHeight(float x, float y) const
 {
 	const float terrain = m_terrain ? m_terrain->getGroundHeight(x, y) : 0.0f;
-	if (m_wallPieces.empty())
+	if (m_wallPieces.empty() && !m_anyRaised)
 	{
 		return terrain;
 	}
@@ -1271,7 +1275,8 @@ float Pathfinder::getHighestLayerHeight(float x, float y) const
 			const PathfindCell *rc = raisedCellAt((PathfindLayerEnum)l, cx, cy);
 			if (rc && rc->getType() != PathfindCell::CELL_BRIDGE_IMPASSABLE)
 			{
-				take(raisedLayerHeight((PathfindLayerEnum)l));
+				if(m_raised[(size_t)l].bridge){if(m_raised[(size_t)l].bridge->contains(x,y))take(m_raised[(size_t)l].bridge->height(x,y));}
+				else take(raisedLayerHeight((PathfindLayerEnum)l));
 			}
 		}
 	}
@@ -1287,7 +1292,7 @@ PathfindLayerEnum Pathfinder::searchDestinationLayer(const Coord3D &to) const
 PathfindLayerEnum Pathfinder::updateLayer(const PathfindObject &obj, PathfindLayerEnum nodeLayer)
 {
 	const PathfindLayerEnum cur = obj.getLayer();
-	if (m_wallPieces.empty())
+	if (m_wallPieces.empty() && !m_anyRaised)
 	{
 		return cur;
 	}
@@ -1368,7 +1373,7 @@ PathfindLayerEnum Pathfinder::updateLayer(const PathfindObject &obj, PathfindLay
 
 PathfindLayerEnum Pathfinder::adjustLayer(const PathfindObject &obj, PathfindLayerEnum layer)
 {
-	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	if ((m_wallPieces.empty() && !m_anyRaised) || m_blockOfMapCells.empty())
 	{
 		return layer; // a map without wall pieces has no other layer under a unit (every cell is the ground's)
 	}
@@ -1421,7 +1426,7 @@ PathfindLayerEnum Pathfinder::adjustLayer(const PathfindObject &obj, PathfindLay
 
 bool Pathfinder::straightStepKeepsLayer(const PathfindObject &obj, const Coord3D &from, const Coord3D &to, PathfindLayerEnum toLayer)
 {
-	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	if ((m_wallPieces.empty() && !m_anyRaised) || m_blockOfMapCells.empty())
 	{
 		return true;
 	}
@@ -1460,7 +1465,7 @@ PathfindLayerEnum Pathfinder::layerAfterSurfaceLoss(const PathfindObject &obj) c
 	{
 		return cur;
 	}
-	if (m_wallPieces.empty() || m_blockOfMapCells.empty())
+	if ((m_wallPieces.empty() && !m_anyRaised) || m_blockOfMapCells.empty())
 	{
 		return LAYER_GROUND; // no wall piece left: no surface but the ground
 	}

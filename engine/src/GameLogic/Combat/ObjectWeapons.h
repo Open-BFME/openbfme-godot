@@ -72,6 +72,8 @@ public:
 	ObjectWeapons &operator=(const ObjectWeapons &) = delete;
 
 	Object &owner() const { return *m_owner; }
+	// BFME1 0x14CB3D: a representative supplies the weapon, the horde supplies the owner.
+	static bool providedWeaponWithinRange(Object &owner,const Weapon &,const Object &victim);
 
 	// ---- the set -------------------------------------------------------------------------------------------------------------------
 	// the object's WeaponSet conditions (WeaponSetFlags, RW Object + 0x3xx; ZH Object::m_weaponSetFlags): a change re-selects the set
@@ -257,6 +259,8 @@ private:
 	BonusRange bonusRangeOf(const Weapon &w, const Object &victim) const;
 	void rebuildWeapons(const WeaponTemplateSet *set);
 	void clearSlotConditions();
+	struct RangeContextOnly {};
+	ObjectWeapons(Object &,RangeContextOnly);
 	WeaponHost &host();
 	WeaponRangeHost &rangeHost();
 	static void fireTempWeapon(const WeaponTemplate *t, Object *source, const WeaponShotTarget &target); // lane DECOMP-1

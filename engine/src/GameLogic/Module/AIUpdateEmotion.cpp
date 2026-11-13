@@ -3,6 +3,7 @@
 // aiDoCommand's gate (RW 0x667174), the vision range (RW 0x68E43B) and the safe path host of the run-away-panic state. The states are GameLogic/AI/AIEmotionStates.cpp.
 
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/SkirmishAI/Bfme1SkirmishAI.h"
 
 #include "Common/GameCommon.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -107,7 +108,10 @@ bool AIUpdateInterface::allowedToRespondToCommand(CommandSourceType source, int 
 			return false;
 		}
 	}
-	// + 0x3C6 (the script lock) is never set in the port
+	// BFME1 0x0017EA8A..0x0017EA98 sets both command locks;
+	// the later-edition script lock remains unported.
+	if (source == CMD_FROM_SCRIPT && Bfme1SkirmishAI::rampageBlocksScriptCommand(*obj)) return false;
+	// + 0x3C6 (the script lock) is never set in the shared runtime
 	if (m_machine && m_machine->temporaryStateLocked())
 	{
 		return false;

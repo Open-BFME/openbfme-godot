@@ -21,6 +21,7 @@
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/SimMath.h"
 #include "Common/NumericState.h"
 #include <cfloat>
@@ -652,12 +653,20 @@ Team *ScriptConditions::team(ScriptEngine &engine, const std::string &name, bool
 			return ct;
 		}
 	}
+	// BFME1 getTeamNamed RVA 0x0034F160: its reference table precedes
+	// prototype lookup. The shared BFME2/RotWK lookup retains its own path.
+	if (auto *ai = engine.logic().skirmishAI().bfme1())
+	{
+		Team *reference = nullptr;
+		if (ai->teamReference(engine, name, reference)) return reference;
+	}
 	TeamPrototype *proto = teams.findTeamPrototype(q.first, q.second);
 	if (!proto)
 	{
 		return nullptr;
 	}
 	Team *head = proto->getNewestTeam();
+	if (auto *ai = engine.logic().skirmishAI().bfme1()) head = ai->visibleTeam(*proto);
 	if (!proto->getIsSingleton())
 	{
 		if (!head && create)

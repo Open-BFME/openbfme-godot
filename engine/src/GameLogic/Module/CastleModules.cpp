@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/CastleModules.h"
+#include "GameLogic/CastleEditionRules.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/CastleUpgrade.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -497,6 +498,32 @@ Object *CastleBehavior::preBuild(const ThingTemplate &tt, int index, bool instan
 }
 
 // lane MODCOMPAT-AI: RW 0x7996D3
+Object *CastleBehavior::buildAtBaseNear(const ThingTemplate &tt, const Coord3D &position, int comparison)
+{
+	if (comparison != 0 && comparison != 1) return nullptr;
+	GameLogic &logic = getObject()->logic();
+	const auto &list = templateKindOf(logic, tt, "FS_BASE_DEFENSE") ? m_defenseFoundations : m_foundations;
+	ObjectID best = INVALID_ID;
+	float distance = comparison == 0 ? 9999999.0f : 0.0f;
+	for (ObjectID id : list)
+	{
+		Object *pad = logic.findObjectByID(id);
+		if (!pad || pad->isKindOf((unsigned)castleNames().wallUpgrade) || occupantOf(*pad)) continue;
+		bool foundation = false;
+		for (const auto &m : pad->modules()) foundation = foundation || m->getFoundationAIUpdate() != nullptr;
+		if (!foundation) continue;
+		const float dx = SimMath::subf32(pad->getPosition()->x, position.x);
+		const float dy = SimMath::subf32(pad->getPosition()->y, position.y);
+		const float d = SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
+		if (comparison == 0 ? distance >= d : distance < d)
+		{
+			distance = d;
+			best = id;
+		}
+	}
+	return best == INVALID_ID ? nullptr : buildOnPad(best, tt, false);
+}
+
 bool CastleBehavior::canBuildAtBase(const ThingTemplate *tt) const
 {
 	if (m_state != STATE_UNPACKED)
@@ -642,11 +669,14 @@ bool CastleBehavior::unpack(bool instant)
 	if (Object *keep = m_keepId != INVALID_ID ? logic.findObjectByID(m_keepId) : nullptr)
 	{
 		keep->setBuildCostPaid((float)SimMath::truncToInt32(castle->getBuildCostPaid()));
-		if (!castle->getName().empty())
+		if (CastleEditionRules::forTemplate(*castle->getTemplate()).moveNameToKeep)
 		{
-			keep->setName(castle->getName());
+			if (!castle->getName().empty())
+			{
+				keep->setName(castle->getName());
+			}
+			castle->setName("No Name");
 		}
-		castle->setName("No Name");
 	}
 	m_state = STATE_UNPACKED;
 	return true;

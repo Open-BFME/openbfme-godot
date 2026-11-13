@@ -14,6 +14,7 @@
 #include "GameLogic/Object/Object.h"
 
 #include <algorithm>
+#include <cmath>
 
 DrawableManager::DrawableManager(WW3DAssetManager &assets, GameLogic &logic)
 	: m_services(assets, logic.modules(), hostOptions(m_scriptFrame))
@@ -293,6 +294,9 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				d->setCustomColors(ev.customKind, ev.customColors);
 			}
 			break;
+		case ClientEvent::RELEASE_CONTAINER_BONE:
+			if (Drawable *d = findByObject(ev.object)) d->releaseContainerBone(ev.scale);
+			break;
 		case ClientEvent::FADE_IN: // lane BUILD-4 (RW 0x670AA2)
 			if (Drawable *d = findByObject(ev.object))
 			{
@@ -535,6 +539,7 @@ void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha
 				}
 			}
 		}
+		syncContainerBones(snapshot);
 		m_animationSounds.update();
 		return;
 	}
@@ -593,6 +598,7 @@ void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha
 			d->commitSync(prep);
 		}
 	}
+	syncContainerBones(snapshot);
 	// lane AUDIO-4: TheAnimationSoundModuleManager's client update (RW 0x83F321), after the animations advanced and the drawables moved
 	m_animationSounds.update();
 }
@@ -721,4 +727,136 @@ DrawableManager::Report DrawableManager::report(const LogicSnapshot *presented) 
 		}
 	}
 	return r;
+}
+
+// BFME1 0x007629F0: use the parent's CURRENT client bone, not the
+// pristine pose used by lockstep. Never called from a simulation worker.
+bool Drawable::currentContainerBone(const std::string &name, Matrix3D &world) const
+{
+	for (const DrawEntry &entry : entries())
+	{
+		if (!entry.draw || entry.moduleHidden) continue;
+		W3DDrawPoseView view;
+		entry.draw->poseView(view);
+		const RenderObjPrototype *model = view.model;
+		if (!model) continue;
+		const HTreeClass &tree = model->Tree ? *model->Tree : model->DefaultTree;
+		const int bone = tree.Get_Bone_Index(name);
+		if (bone < 0) continue;
+		HTreePose pose;
+		const auto *clip0 = static_cast<const HAnimClass *>(view.clipKey0);
+		const auto *clip1 = static_cast<const HAnimClass *>(view.clipKey1);
+		Matrix3D root;
+		for (int r = 0; r < 3; ++r)
+			for (int c = 0; c < 3; ++c) root.Row[r][c] = getBasis()[r * 3 + c] * getInstanceScale();
+		root.Set_Translation(Vector3(getPosition()->x, getPosition()->y, getPosition()->z));
+		if (clip0 && clip1) tree.Blend_Pose(root, clip0, view.frame0, clip1, view.frame1, view.blendPercentage, pose);
+		else if (clip0) tree.Anim_Pose(root, clip0, view.frame0, pose);
+		else tree.Base_Pose(root, pose);
+		if (bone < pose.Num_Pivots()) { world = pose.Transform[(size_t)bone]; return true; }
+	}
+	return false;
+}
+
+void Drawable::syncContainerBone(const Drawable *parent, const std::string &bone, const ObjectSnapshot *record)
+{
+	Matrix3D target;
+	if (parent && parent->currentContainerBone(bone, target))
+	{
+		// BFME1 0x007629F0 -> 0x0075F210 / 0x0075B550. The
+		// aiming latch is client-only and steps by 0.1 rad per 30 Hz tick.
+		const float boneAngle = std::atan2(target.Row[1][0], target.Row[0][0]);
+		if (record && record->containerBoneCanAim)
+		{
+			const float desired = record->containerBoneHasTarget
+				? std::atan2(record->containerBoneTarget.y - record->position.y, record->containerBoneTarget.x - record->position.x) : boneAngle;
+			while (m_containerAimFrames >= 1.0)
+			{
+				if (m_containerAimAngle > desired)
+				{
+					if (m_containerAimAngle - desired > 3.14159274f) m_containerAimAngle += 0.1f;
+					else if (m_containerAimAngle - desired > 0.1f) m_containerAimAngle -= 0.1f;
+					else m_containerAimAngle = desired;
+				}
+				else if (m_containerAimAngle < desired)
+				{
+					if (desired - m_containerAimAngle > 3.14159274f) m_containerAimAngle -= 0.1f;
+					else if (desired - m_containerAimAngle > 0.1f) m_containerAimAngle += 0.1f;
+					else m_containerAimAngle = desired;
+				}
+				if (m_containerAimAngle > 3.14159274f) m_containerAimAngle -= 6.28318548f;
+				if (m_containerAimAngle < -3.14159274f) m_containerAimAngle += 6.28318548f;
+				m_containerAimFrames -= 1.0;
+			}
+			const float delta = m_containerAimAngle - boneAngle, c = std::cos(delta), sn = std::sin(delta);
+			for (int r = 0; r < 3; ++r)
+			{
+				const float x = target.Row[r][0], y = target.Row[r][1];
+				target.Row[r][0] = x * c + y * sn;
+				target.Row[r][1] = y * c - x * sn;
+			}
+		}
+		else m_containerAimFrames = 0.0;
+		m_containerLastPose = target;
+		m_containerHadPose = true;
+		m_containerRelease = 1.0f;
+		m_containerClientFrames = 0.0;
+	}
+	else if (m_containerHadPose && m_containerRelease < 1.0f)
+	{
+		// BFME1 adjustTransformMtx 0x007629F0: Matrix3D::Lerp from the
+		// last attachment to the ordinary rendered pose, +1/30 each client tick.
+		const auto &a = m_containerLastPose;
+		float from[9], to[9], blended[9];
+		const float scale = std::sqrt(a.Row[2][0] * a.Row[2][0] + a.Row[2][1] * a.Row[2][1] + a.Row[2][2] * a.Row[2][2]);
+		const float divisor = std::fabs(scale - 1.0f) > 0.000001f ? scale : 1.0f;
+		for (int r = 0; r < 3; ++r)
+			for (int c = 0; c < 3; ++c)
+			{
+				from[r * 3 + c] = a.Row[r][c] / divisor;
+				to[r * 3 + c] = getBasis()[r * 3 + c] / divisor;
+			}
+		RenderInterpolation::slerpBasis(from, to, m_containerRelease, blended);
+		const float position[3] = {getPosition()->x, getPosition()->y, getPosition()->z};
+		for (int r = 0; r < 3; ++r)
+		{
+			for (int c = 0; c < 3; ++c) target.Row[r][c] = blended[r * 3 + c] * divisor;
+			target.Row[r][3] = (position[r] - a.Row[r][3]) * m_containerRelease + a.Row[r][3];
+		}
+	}
+	else { m_containerHadPose = false; m_containerAimFrames = 1.0; return; }
+	float basis[9];
+	for (int r = 0; r < 3; ++r)
+		for (int c = 0; c < 3; ++c) basis[r * 3 + c] = target.Row[r][c];
+	const Coord3D position{target.Row[0][3], target.Row[1][3], target.Row[2][3]};
+	setTransform(&position, basis);
+}
+
+void DrawableManager::syncContainerBones(const LogicSnapshot &snapshot)
+{
+	// Run after both serial and parallel sync have committed every parent.
+	// Recurse by dependency, so creation order does not change nested attachments.
+	std::vector<std::uint8_t> visited(m_slots.size());
+	std::function<void(DrawableID)> sync = [&](DrawableID id) {
+		if (!id || id >= m_slots.size() || visited[id]) return;
+		visited[id] = 1;
+		Drawable *drawable = find(id);
+		if (!drawable) return;
+		const ObjectSnapshot *record = snapshot.find(drawable->getObjectID());
+		if (!record) return;
+		Drawable *parent = findByObject(record->containerBoneParent);
+		if (parent) sync(parent->getID());
+		if (record->containerBoneParent != INVALID_ID)
+		{
+			Matrix3D bone;
+			if (!parent || !parent->currentContainerBone(record->containerBone, bone))
+			{
+				const auto key = "bfme1-container-bone:" + record->containerBone;
+				if (m_sink.stopKeys.insert(key).second)
+					m_sink.stops.push_back("[S-5017] BFME1 client attachment: missing passenger bone " + record->containerBone);
+			}
+		}
+		drawable->syncContainerBone(parent, record->containerBone, record);
+	};
+	for (DrawableID id = 1; id < m_slots.size(); ++id) sync(id);
 }

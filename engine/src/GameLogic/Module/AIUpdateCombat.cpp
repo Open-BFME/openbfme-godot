@@ -11,6 +11,7 @@
 #include "Common/Thing/RawModuleData.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIClosestEnemy.h"
+#include "GameLogic/AI/AIEditionRules.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
@@ -687,6 +688,7 @@ bool teamAttacksCommonTarget(const Team *t)
 
 Object *AIUpdateInterface::getNextMoodTarget(bool calledByAI, bool calledDuringIdle)
 {
+	if(AIEditionRules::forObject(*getObject()).bfme1)return getNextBfme1MoodTarget(calledByAI,calledDuringIdle);
 	Object &obj = *getObject();
 	GameLogic &logic = obj.logic();
 	if (!logic.combat().autoAcquireEnabled())

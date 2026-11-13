@@ -9,6 +9,7 @@
 
 #include "Common/ModEngineFeatures.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/AI/AIEditionRules.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/WeaponChangeSpecialPower.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
@@ -1035,6 +1036,8 @@ bool SpecialPowerModule::initiate(Object *target, const Coord3D *loc, unsigned o
 		if (ai && player && player->resourceGatheringManager().findHarvestPosition(obj, pos))
 		{
 			ai->aiHarvest(pos, CMD_FROM_AI);
+			// BFME1 0x26A379 clears the player-stop latch after a valid harvest task.
+			if(AIEditionRules::forObject(*obj).bfme1)ai->nativeMeleeState().stopRetaliation=false;
 		}
 	}
 	bool driven = false;

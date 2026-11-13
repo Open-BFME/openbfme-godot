@@ -178,6 +178,9 @@ public:
 	void endingMove();   // RW 0x6627CB
 	// RW 0x664485: the unit (or the AI of the container it rides in) moves
 	bool isMoving() const;
+	// The stored flag alone (B1 AI +0x324, RW AI +0x3BC), without
+	// isMoving's goal/container tests; BFME1 RVA 0x00278830 reads it.
+	bool movementFlag() const { return m_isMoving; }
 	bool isWaitingForPath() const { return m_waitingForPath; }
 	bool isBlocked() const { return m_isBlocked; }
 	int blockedFrames() const { return m_blockedFrames; }

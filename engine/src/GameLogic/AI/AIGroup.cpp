@@ -2,6 +2,7 @@
 // See GameLogic/AI/AIGroup.h.
 
 #include "GameLogic/AI/AIGroup.h"
+#include "GameLogic/AI/AIEditionRules.h"
 
 #include "GameLogic/AI/AIWorld.h"
 #include "Common/Thing/KindOfTokens.h"
@@ -468,6 +469,8 @@ void AIGroup::groupIdle(CommandSourceType source)
 		if (AIUpdateInterface *ai = o->getAIUpdateInterface())
 		{
 			ai->aiIdle(source);
+			// BFME1 0x155C02, after the idle command.
+			if(AIEditionRules::forObject(*o).bfme1 && source==CMD_FROM_PLAYER)ai->nativeMeleeState().stopRetaliation=true;
 		}
 	}
 }

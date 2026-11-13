@@ -43,6 +43,16 @@ float combatChainModifier(const AICombatChain &chain, int targetCategory)
 }
 } // namespace
 
+int AttackPriorityInfo::templatePriority(const ThingTemplate *t) const
+{
+ if(t) {
+  const ThingTemplate *key=t->getFinalOverride();
+  const auto it=m_priorities.find(key?key:t);
+  if(it!=m_priorities.end())return it->second;
+ }
+ return m_defaultPriority;
+}
+
 float AttackPriorityInfo::getPriority(const Object &hunter, const Object &target, bool adjust) const
 {
 	int priority = m_defaultPriority; // + 8
