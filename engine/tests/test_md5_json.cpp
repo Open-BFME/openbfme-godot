@@ -43,7 +43,7 @@ TEST_CASE("built-in policies: RotWK 2.01 and BFME2 1.06 English")
 	CHECK(rotwk.patch == "2.01");
 	CHECK(rotwk.archives.size() == 106);
 	CHECK(bfme2.archives.size() == 107);
-	CHECK(rotwk.excluded.size() == 4);
+	CHECK(rotwk.excluded.size() == 5);
 	CHECK(bfme2.excluded.empty());
 	bool hasPatch = false;
 	for (const RetailArchiveEntry &e : rotwk.archives)
