@@ -168,11 +168,16 @@ public:
 
 private:
 	bool inRange() const;
+	// the path request and the move toward `goal` (RW 0x749A3E computePath, then the move's onEnter)
+	StateReturnType startMove(const Coord3D &goal, Object *victim);
 	std::unique_ptr<class AIMoveToState> m_move;
 	AIAttackState *m_att;
 	bool m_follow;
 	Coord3D m_prevVictimPos{ 0.0f, 0.0f, 0.0f };
 	unsigned m_approachFrame = 0;
+	// an owner that cannot move waits (RW 0x74E6CE, + 0x68 / + 0x71; BFME2 decomp AIAttackApproachTargetState::onEnter retail 0x0034CD3A)
+	bool m_waiting = false;
+	unsigned m_waitFrame = 0;
 };
 
 class AIAttackAimState : public AIState

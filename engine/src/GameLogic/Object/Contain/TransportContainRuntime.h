@@ -12,8 +12,10 @@
 //   * isValidContainerFor RW 0x86A002 (TEMPORARILY_DEFECTED, ConditionForEntry, OpenContain's RW 0x86603B, CanGrabStructure with a CHUNK_VENDOR, the object's
 //     TransportSlotCount RW 0x69029B (template + 0x601): none refuses, the capacity count + the extra slots + it <= Slots); getContainMax RW 0x869F86 (Slots);
 //   * onContaining RW 0x86A943 (held, TRANSPORT_MOVING cleared while the transport moves, the extra slots, LOADED, the rider's PASSENGER / firing passenger
-//     condition, the WEAPONSTATE_ONE / TWO / THREE condition of the Type*ForWeaponState masks RW 0x86A43E, the rider's bone RW 0x86B77B, ShouldThrowOutPassengers'
-//     frame); onRemoving RW 0x86ABDC (no longer held, ExitBone, OrientLikeContainerOnExit, the extra slots, LOADED, PASSENGER, a dead container scatters the rider
+//     condition, the WEAPONSTATE_ONE / TWO / THREE condition of the Type*ForWeaponState masks RW 0x86A43E, the rider's bone RW 0x86B77B, the GrabWeapon's temporary
+//     weapon fired from the container at its own position on a rider that is not an ALLIES, bracketed by FireGrabWeaponOnVictim's UNATTACKABLE on the rider for
+//     that one fire RW 0x86AA4B .. 0x86AAA2 (lane PORT-62: the bracket spares the grabbed rider, ActiveBody::attemptDamage RW 0x8C3FFB refuses it),
+//     ShouldThrowOutPassengers' frame); onRemoving RW 0x86ABDC (no longer held, ExitBone, OrientLikeContainerOnExit, the extra slots, LOADED, PASSENGER, a dead container scatters the rider
 //     RW 0x867AD4, ResetMoodCheckTimeOnExit, ExitDelay, the WEAPONSTATE conditions cleared RW 0x86A4E4);
 //   * the rider on its PassengerBonePrefix bone (OpenContain RW 0x868A70 through RW 0x8671F5) with ForceOrientationContainer (main slot 0x38 RW 0x869F97) and the
 //     rider's drawable hidden by the ENCLOSED status (slot 0x6C RW 0x86B77B);
@@ -34,7 +36,7 @@
 //   * the update RW 0x87AD94: once slot 0xF8 armed it (RW 0x87A321), the riders fall off one at a time (GameLogicRandomValue(3, 5), then (0, 4) frames apart:
 //     RW 0x87AC9A / 0x87A72F / main slot 0x3C RW 0x87AE43).
 // INFERENCE / NOT PORTED (stop S-1104, reported by stopLines()): WHEN the payload is made (RW's caller of main slot 0x70 is not located: here at onObjectCreated, as
-// lane LOGIC-1's HordeContain does, S-149); the client parts (the fades, the drawable bone attachment, the sounds); GrabWeapon and CanGrabStructure (the trolls);
+// lane LOGIC-1's HordeContain does, S-149); the client parts (the fades, the drawable bone attachment, the sounds); CanGrabStructure (the trolls' GrabObject body path; the entry test RW 0x86A07D and the GrabWeapon fire RW 0x86AA4B .. 0x86AAA2 with FireGrabWeaponOnVictim's UNATTACKABLE bracket are ported, lane PORT-62);
 // ShouldThrowOutPassengers' throw (RW 0x86A530, the physics shock RW 0x792A69); the AI
 // slot 0x1A8 of isSpecificRiderFreeToExit; the SHIP boarding AI (S-4160; lane SHIP-1 ported the pathfinder's shore spot RW 0x6EFBB8 for a SHIP's entries and exits); an indestructible container's payload (body slots 0x8C / 0x88); PassengersInTurret's turret bone
 // (RW 0x68E807); the payload creator's CREATE_DRAWABLE_WITH_LOW_DETAIL status (client); who arms the falling riders (slot 0xF8: no caller located).
@@ -99,7 +101,7 @@ public:
 		unsigned long long healed = 0;             // HealthRegen%PerSec heals
 		unsigned long long scattered = 0;          // RW 0x867AD4
 		unsigned long long ridersKilledNotFree = 0;
-		unsigned long long unported = 0;           // GrabWeapon / throw out / the indestructible payload (S-1103)
+		unsigned long long unported = 0;           // throw out / the indestructible payload (S-1103); GrabWeapon's fire is ported (lane PORT-62)
 	};
 	const Stats &stats() const { return m_stats; }
 

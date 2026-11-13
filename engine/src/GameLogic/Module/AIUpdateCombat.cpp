@@ -231,6 +231,10 @@ void AIUpdateInterface::setCurrentVictim(Object *victim)
 bool AIUpdateInterface::isAttacking() const
 {
 	const unsigned id = currentStateId();
+	if (id == (unsigned)AI_FOLLOW_PATH_AS_TEAM_ATTACK)
+	{
+		return isStateActive(); // RW 0x662B3C -> State vslot 0x24 (RW 0x7427EA: + 0x5C != null and not idle)
+	}
 	return id == (unsigned)AI_ATTACK_OBJECT || id == (unsigned)AI_FORCE_ATTACK_OBJECT || id == (unsigned)AI_ATTACK_POSITION;
 }
 

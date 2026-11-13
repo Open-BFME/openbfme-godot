@@ -1599,7 +1599,9 @@ TEST_CASE("bfme1 ai: slaughter uses bounty value and original percent rounding")
 		}
 		else REQUIRE(f.w.load(config).empty());
 		Object *house = f.make("Slaughter", f.teamOf("Alice")); REQUIRE(house);
-		if (!bfme1) { CHECK(house->findModule("SlaughterHordeContain")->isUnported()); continue; }
+		REQUIRE(house->getContain()); CHECK(house->getContain()->isSlaughterContain());
+		// Main now supplies the BFME2/RotWK Slaughter runtime; BFME1 keeps its native variant.
+		if (!bfme1) { CHECK_FALSE(house->findModule("SlaughterHordeContain")->isUnported()); continue; }
 		Object *offering = f.make("Offering", f.teamOf("Alice")); REQUIRE(offering); REQUIRE(house->getContain());
 		Player *owner = offering->getControllingPlayer(); REQUIRE(owner);
 		const auto money = owner->getMoney()->countMoney();
@@ -2363,4 +2365,36 @@ TEST_CASE("bfme1 ai retail: Bridge producer reads the pristine retail model and 
  CHECK(ai->aiForceAttackObject(victim,CMD_FROM_PLAYER));auto *attack=dynamic_cast<AIAttackState*>(ai->stateMachine().currentState());REQUIRE(attack);REQUIRE(attack->attackMachine());
  CHECK(attack->attackMachine()->name()=="AttackFireWhileChargingMachine");attack->attackMachine()->updateStateMachine();CHECK(mumak->testModelCondition(CombatNames::modelCondition("CHARGING")));
  CHECK(ai->curLocomotorSet()==4);ai->aiIdle(CMD_FROM_PLAYER);CHECK(ai->curLocomotorSet()==0);CHECK_FALSE(mumak->testModelCondition(CombatNames::modelCondition("CHARGING")));
+}
+
+TEST_CASE("bfme1 ai: shared gate pass does not dispatch native contact pairs twice")
+{
+	for (bool bfme1 : {false, true})
+	{
+		movetest::MoveWorld f(100, 100, "", bfme1); f.buildMap();
+		std::vector<std::pair<ObjectID, ObjectID>> calls; bool remove = false;
+		bindContactObserver(f, calls, remove);
+		REQUIRE(f.w.load(
+			"Object GateProbe\n KindOf = STRUCTURE IMMOBILE\n Geometry = BOX\n GeometryMajorRadius = 10\n GeometryMinorRadius = 10\n GeometryHeight = 20\n"
+			" Behavior = GateOpenAndCloseBehavior Gate\n End\n Behavior = AutoHealBehavior Probe\n End\nEnd\n"
+			"ChildObject GateWalker ContactProbe\n Behavior = AIUpdateInterface AI\n End\nEnd\n").empty());
+		Object *gate = f.spawn("GateProbe", 200, 200);
+		Object *unit = f.spawn("GateWalker", 201, 200);
+		REQUIRE(gate); REQUIRE(unit);
+		CHECK(f.logic->skirmishAI().gates().size() == 1);
+		f.ai->processCollisions();
+		const auto before = calls;
+		f.ai->processGateContacts();
+		if (bfme1)
+		{
+			CHECK(before.size() == 2);
+			CHECK(calls == before);
+			CHECK(f.ai->gateContacts() == 0);
+		}
+		else
+		{
+			CHECK(calls.size() == before.size() + 2);
+			CHECK(f.ai->gateContacts() == 1);
+		}
+	}
 }

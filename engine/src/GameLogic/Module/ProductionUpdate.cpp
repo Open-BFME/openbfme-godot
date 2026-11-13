@@ -661,6 +661,20 @@ void ProductionUpdate::cancelUnitCreate(ProductionID productionID)
 	}
 }
 
+// RW 0x8A03A0 (slot 14, DONOR BFME2 0x0049CC15): sets the +0x3C horde target field of the entry with this productionID
+void ProductionUpdate::setEntryHordeTarget(ProductionID productionID, ObjectID hordeTarget)
+{
+	for (const auto &up : m_queue)
+	{
+		ProductionEntry *e = up.get();
+		if (e->productionID == productionID)
+		{
+			e->hordeTarget = hordeTarget;
+			return;
+		}
+	}
+}
+
 // RW 0x8A03EC (slot 11, lane HERO-1): the first unit or hero entry from the head whose template the type is equivalent to is cancelled (slot 10)
 void ProductionUpdate::cancelFirstUnitOfType(const ThingTemplate *type)
 {

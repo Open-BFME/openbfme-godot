@@ -19,6 +19,7 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/LiveGame.h"
+#include "GameClient/MapChunks.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -776,7 +777,7 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 		"[S-563] shroud numerics: the look polygon's x87 extended-precision vertices are computed in binary64 with SimMath's sin / cos (RW fsin / fcos); "
 		"a horizontal first left edge (uninitialised slope in RW 0xB501A0) starts at the top vertex with slope 0",
 		"[S-564] object look: the SHROUD_CLEARING modifier (RW 0x804F39 type 0x14) and the object's own range (Object + 0x1B4) are read since lane DECOMP-1; the spied mask (player + 0x3C8), object + 0x30 / + 0x3F4 (radii "
-		"0.1), DynamicShroudClearingRangeUpdate and the HordeContain VisionSide / VisionRearOverride are not read; object + 0x480 (hide when fogged) is taken as set",
+		"0.1) and DynamicShroudClearingRangeUpdate are not read; object + 0x480 (hide when fogged) is taken as set",
 		"[S-565] fogged targets: a human player's units cannot attack an object FOGGED or SHROUDED for that player unless the order comes from a script (RW "
 		"0x82C167, the action helper: human and not script, as ZH ActionManager isObjectShroudedForAction); its other callers and the other action types were not read",
 		"[S-566] stealth and detection: RotWK's invisibility (InvisibilityUpdate, StealthDetectorUpdate, the InvisibilityManager, the INVISIBLE_STEALTH / CAMOUFLAGE "
@@ -1051,4 +1052,70 @@ TEST_CASE("shroud objects (DECOMP-1): a SHROUD_CLEARING modifier widens the look
 	f.shroud.update();
 	CHECK(f.shroud.getCellStatus(alice, 15, 10) == CELLSHROUD_CLEAR);
 	CHECK(f.shroud.getCellStatus(alice, 16, 10) == CELLSHROUD_SHROUDED);
+}
+
+TEST_CASE("shroud regional reveal: world circles preserve player masks and overlapping permanent looks")
+{
+	Fx f;
+	const int alice = f.idx("Alice"), bob = f.idx("Bob");
+	const std::uint32_t mask = 1u << alice;
+	f.shroud.revealCircle(420, 420, 40, mask, true); // cell (10,10), ceil(40/40) = 1
+	CHECK(f.shroud.getCellStatus(alice, 10, 10) == CELLSHROUD_CLEAR);
+	CHECK(f.shroud.getCellStatus(alice, 9, 10) == CELLSHROUD_CLEAR);
+	CHECK(f.shroud.getCellStatus(alice, 12, 10) == CELLSHROUD_SHROUDED);
+	CHECK(f.shroud.getCellStatus(bob, 10, 10) == CELLSHROUD_SHROUDED);
+	f.shroud.revealCircle(460, 420, 40, mask, true);
+	f.shroud.revealCircle(420, 420, 40, mask, false);
+	CHECK(f.shroud.getCellStatus(alice, 9, 10) == CELLSHROUD_FOGGED);
+	CHECK(f.shroud.getCellStatus(alice, 10, 10) == CELLSHROUD_CLEAR);
+	f.shroud.revealCircle(460, 420, 40, mask, false);
+	CHECK(f.shroud.getCellStatus(alice, 10, 10) == CELLSHROUD_FOGGED);
+	CHECK(f.shroud.getCellStatus(alice, 13, 10) == CELLSHROUD_SHROUDED);
+}
+
+
+TEST_CASE("shroud regional reveal: a trigger cell is tested at its centre in whole world units (RW 0xB4FFF0)")
+{
+	Fx f;
+	const int alice = f.idx("Alice");
+	f.shroud.setExtent(-0.75f, -0.75f, 1000.0f, 800.0f); // cell 2's centre is -0.75 + 2 * 40 + 20 = 99.25, cut to 99
+	TriggerArea area;
+	area.name = "Edge";
+	area.points = {{99.1f, 99.1f}, {240.0f, 99.1f}, {240.0f, 240.0f}, {99.1f, 240.0f}};
+	f.shroud.revealTrigger(area, 1u << alice, true);
+	CHECK(f.shroud.getCellStatus(alice, 2, 2) == CELLSHROUD_SHROUDED); // (99, 99) is outside; the exact centre (99.25, 99.25) would be inside
+	CHECK(f.shroud.getCellStatus(alice, 3, 3) == CELLSHROUD_CLEAR);    // (139, 139)
+	CHECK(f.shroud.getCellStatus(alice, 5, 5) == CELLSHROUD_CLEAR);    // (219, 219)
+	CHECK(f.shroud.getCellStatus(alice, 6, 6) == CELLSHROUD_SHROUDED); // (259, 259)
+}
+
+TEST_CASE("shroud retail: campaign maps draw unexplored black shroud while bare viewers opt out")
+{
+	OPENBFME_REQUIRE_START(s);
+	ArchiveW3DFileSource source(*s->mount->fs);
+	WW3DAssetManager assets(source);
+	LiveGame game(*s->world, *s->mount->fs, assets, s->options);
+	LiveGame::Options options;
+	options.mapName = "map beginner tutorial";
+	options.campaign = true;
+	options.mapScripts = 0; // isolate initial visibility from authored reveal actions
+	SUBCASE("tutorial") {}
+	SUBCASE("campaign") { options.mapName = "map ang angmar"; }
+	SUBCASE("bare viewer") { options.campaign = false; }
+	std::string error;
+	REQUIRE_MESSAGE(game.load(options, &error), error);
+	ShroudManager &shroud = game.shroud();
+	CHECK(shroud.displayed() == options.campaign);
+	CHECK(shroud.displayLevel(CELLSHROUD_SHROUDED) == 0u); // mounted GameData ShroudAlpha: black unexplored terrain
+	const Player *local = game.logic().players().getLocalPlayer();
+	REQUIRE(local != nullptr);
+	bool unexplored = false;
+	for (int y = 0; y < shroud.cellCountY(); ++y)
+	{
+		for (int x = 0; x < shroud.cellCountX(); ++x)
+		{
+			unexplored = unexplored || shroud.getCellStatus(local->getPlayerIndex(), x, y) == CELLSHROUD_SHROUDED;
+		}
+	}
+	CHECK(unexplored);
 }

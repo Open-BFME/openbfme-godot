@@ -1200,18 +1200,12 @@ void defensiveTactic(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 	++b.tacticsStarted;
 }
 
-// RW 0x8F17EE: the team attack-moves to the target (AIGroup::groupAttackMoveToPosition(pos, 0x7FFFFFFF, CMD_FROM_PLAYER), lane COMBAT-1's attack-move)
+// RW 0x8F17EE: the team attack-moves to the target (AIGroup::groupAttackMoveToPosition(pos, 0x7FFFFFFF, CMD_FROM_PLAYER), lane PORT-13: a formation
+// attack-move for a player's group of more than one unit when AIData AttackMoveUsesFormations and UseFormations allow it)
 void attackMove(GameLogic &logic, const std::vector<ObjectID> &members, const Coord3D &pos, CommandSourceType source = CMD_FROM_PLAYER)
 {
 	AIGroup group(logic, members);
-	group.groupMoveToPosition(pos, false, source, false, 0.0f, true); // lane BACKLOG-8 r2: no formation march for an attack-move (its attack march is S-4463)
-	for (Object *o : group.members())
-	{
-		if (AIUpdateInterface *u = o->getAIUpdateInterface())
-		{
-			u->armAttackMove(u->stateMachine().goalPosition(), source);
-		}
-	}
+	group.groupAttackMoveToPosition(pos, 0x7FFFFFFF, source);
 }
 
 bool teamAlive(GameLogic &logic, const AITacticTeam &team)
@@ -3256,7 +3250,7 @@ void updateOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 }
 
 // RW 0x774F2B (lane AI-3), a tactic team's AIGroup update from RW 0x8F144C: when not every member with an AI is idle or dead (RW 0x76FCBF: AI slot 0x1B8, + 0x458
-// bit 0), RW 0x77005F(1) (the group's speed matching: NOT ported, stop S-1301) and RW 0x7728E8: the goal object (RW 0x668303) of the first member not held by a
+// bit 0), RW 0x77005F(1) (the group's speed matching, AIGroup::cohereMoveSpeed: stop S-1301) and RW 0x7728E8: the goal object (RW 0x668303) of the first member not held by a
 // horde (+ 0x27C) whose AI has one; then every member not held by a horde that can attack (Object::isAbleToAttack RW 0x691269, lane DECOMP-3), whose AI
 // has no goal object and is idle (slot 0x1B8), attack-moves to that object's position with INT_MAX shots from the AI (RW 0x696266(pos, 0x7FFFFFFF, 2):
 // AI command 0xF, the attack-move to a position)
@@ -3277,6 +3271,7 @@ void updateTeamGroup(GameLogic &logic, const AITacticTeam &team)
 	{
 		return;
 	}
+	AIGroup(logic, team.members).cohereMoveSpeed(true); // RW 0x774F37 .. 0x774F3B
 	const Object *goal = nullptr;
 	for (ObjectID id : team.members)
 	{

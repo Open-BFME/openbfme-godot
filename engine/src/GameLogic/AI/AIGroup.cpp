@@ -7,6 +7,8 @@
 #include "GameLogic/AI/AIWorld.h"
 #include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/WeaponState.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/AIUpdate.h"
@@ -548,6 +550,261 @@ void AIGroup::groupAttackPosition(const Coord3D &pos, int maxShotsToFire, Comman
 		{
 			ai->aiAttackPosition(pos, maxShotsToFire, source);
 		}
+	}
+}
+
+void AIGroup::groupAttackMoveToPosition(const Coord3D &pos, int maxShots, CommandSourceType source)
+{
+	// RW 0x774E2F: count > 1 && AIData AttackMoveUsesFormations (+ 0xBA) && source == CMD_FROM_PLAYER && AIData UseFormations (+ 0xBD) ->
+	// gatherAndMoveInFormation(pos, CMD_FROM_PLAYER, /*mode=*/1, /*ground=*/true) (RW 0x7747DE; unlike RW 0x774897's head, no tighten-rectangle check)
+	const GameLogicSettings &gs = m_logic.settings();
+	if (m_members.size() > 1 && gs.attackMoveUsesFormations && source == CMD_FROM_PLAYER && gs.useFormations)
+	{
+		if (gatherAndMoveInFormation(pos, CMD_FROM_PLAYER, 1, true))
+		{
+			return; // the group marched; RW 0x774E2F's tail does not run
+		}
+	}
+	// NOT PORTED (follow-up): RW 0x774E96 .. 0x774ED8 gives each member with an AI aiAttackMoveToPosition(pos, maxShots, source) (RW 0x696266) when
+	// Object::isAbleToAttack (RW 0x691269), else aiMoveToPosition(pos, source) (RW 0x66C4CA); the port keeps lane COMBAT-1's group attack-move here
+	groupMoveToPosition(pos, false, source, false, 0.0f, true);
+	for (Object *o : m_members)
+	{
+		if (AIUpdateInterface *ai = o->getAIUpdateInterface())
+		{
+			ai->armAttackMove(ai->stateMachine().goalPosition(), source);
+			if (maxShots != 0x7FFFFFFF)
+			{
+				if (ObjectWeapons *w = o->getWeapons())
+				{
+					if (Weapon *cur = w->currentWeapon())
+					{
+						cur->setMaxShotCount(maxShots);
+					}
+				}
+			}
+		}
+	}
+}
+
+// ---- stop S-1301: RW 0x77005F, the group's speed matching (read from the RotWK binary; the BFME2 decomp's AIGroup_cohereMoveSpeed.cpp,
+// retail 0x0036DF92, is the one-pass ancestor without the leader bands) ----
+namespace
+{
+const float kNoCap = -1.0f;            // RW 0xBD19DC
+const float kBandStep = 100.0f;        // RW 0xBD88D8 (also the range of a member without a weapon)
+const float kBandSlack = 25.0f;        // RW 0xC69574
+const float kLongRange = 450.0f;       // RW 0xC2E44C
+const float kAheadScale = 0.7f;        // RW 0xBDE0A8
+const float kBehindScale = 0.769f;     // RW 0xC2E448
+const float kNearGoalSq = 360000.0f;   // RW 0xC16784
+
+// RW 0x68B58C(0): the weapon of the current slot (the filled-slot mask + 0x374), else the weapon in slot 0 (RW 0x6C81B0(0) on Object + 0x34C)
+const Weapon *groupWeaponOf(const Object &obj)
+{
+	const ObjectWeapons *w = obj.getWeapons();
+	if (!w)
+	{
+		return nullptr;
+	}
+	const Weapon *cur = w->currentWeapon();
+	return cur ? cur : w->weaponInSlot(0);
+}
+
+// RW 0x6CA935(leader) on the member's weapon (stored by fstp dword); kBandStep without one
+float bandRangeOf(const Object &member, const Object &leader)
+{
+	const Weapon *weapon = groupWeaponOf(member);
+	if (!weapon)
+	{
+		return kBandStep;
+	}
+	return member.getWeapons()->attackRangeNoTargetFor(*weapon, leader);
+}
+
+// (goal - pos) squared as RW 0x770449 .. 0x77048C adds it: z*z + y*y, then + x*x (SSE)
+float distSqZYX(const Coord3D &goal, const Coord3D &pos)
+{
+	const float dx = SimMath::subf32(goal.x, pos.x), dy = SimMath::subf32(goal.y, pos.y), dz = SimMath::subf32(goal.z, pos.z);
+	return SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
+}
+
+float sqOrZero(float v) // RW `comiss 0, v; jbe -> v*v`, else 0
+{
+	return 0.0f > v ? 0.0f : SimMath::mulf32(v, v);
+}
+} // namespace
+
+// RW 0x77005F(withLeader). Callers: the skirmish AI team step RW 0x774F2B (withLeader 1), MSG_DO_ATTACKMOVETO and MSG_DO_MOVETO_FORMATION RW 0x77AAEE (0,
+// after the move order). MSG_DO_MOVETO, MSG_DO_FORCEMOVETO and the attack orders clear the caps again (RW 0x77B00A -> RW 0x76FD04).
+//   * withLeader and more than one member: the leader is the first member not effectively dead (+ 0x458 bit 0; none: return). Its goal is the pathfind goal
+//     cell's centre (RW 0x68B411 -> 0x8E1BD4) or, when its AI has a goal object (RW 0x668303), that object's position; no goal: no leader. d = |leader - goal|
+//     (RW 0x403111, stored as a float); the leader's weapon range (RW 0x6CA935 on itself; 100 without a weapon) picks the squared band limits below.
+//   * pass 1, every member: one with a current locomotor (AI + 0x1F0, RW 0x68B31D), that moves (speed RW 0x5E36F7 > 0) or withLeader is 0, and is not
+//     effectively dead loses its cap (+ 0x2C = -1) and its max speed (RW 0x5E3F49) > 0 lowers the minimum (min, and min * 0.7); with a leader a member other
+//     than it, farther from the goal than its "behind" limit, lowers the minimum with 0.769 * its max speed. Every member: one whose AI's goal object stands
+//     within 600 of it (squared 360000) marks the group "near" (once marked, the test stops).
+//   * pass 2, every member with a current locomotor: near or effectively dead -> no cap; else the minimum, except (leader, not the leader, min set) beyond the
+//     "behind" limit -> no cap, closer than the "ahead" limit -> min * 0.7.
+void AIGroup::cohereMoveSpeed(bool withLeader)
+{
+	float minSpeed = kNoCap, minAhead = kNoCap;
+	bool nearGoal = false;
+	Object *leader = nullptr;
+	Coord3D goal{ 0.0f, 0.0f, 0.0f };
+	// the squared limits RW keeps at [ebp-0x18] / -0x20 / -0x0C / -0x30 / -0x1C / -0x24, by the member's range band: (< 100) behind c / ahead 18,
+	// (< 450) behind 1c / ahead 20, (else) behind 24 / ahead 30
+	float l18 = 0.0f, l20 = 0.0f, l0c = 0.0f, l30 = 0.0f, l1c = 0.0f, l24 = 0.0f;
+	if (!m_members.empty() && m_members.front() && m_members.size() > 1 && withLeader)
+	{
+		for (Object *o : m_members)
+		{
+			if (o && !o->isEffectivelyDead())
+			{
+				leader = o;
+				break;
+			}
+		}
+		if (!leader)
+		{
+			return; // RW 0x770108 -> 0x7706E5
+		}
+		const Weapon *weapon = groupWeaponOf(*leader);
+		float range = kBandStep;
+		const Coord3D leaderPos = *leader->getPosition();
+		bool hasGoal = false;
+		AIWorld *world = m_logic.aiWorld();
+		if (world && world->mapReady())
+		{
+			hasGoal = world->pathfinder().goalPosition(world->adapterFor(*leader), &goal); // RW 0x68B411 (Object + 0xA4)
+		}
+		if (AIUpdateInterface *ai = leader->getAIUpdateInterface())
+		{
+			if (Object *g = ai->currentVictim()) // RW 0x668303
+			{
+				goal = *g->getPosition();
+				hasGoal = true;
+			}
+		}
+		if (!hasGoal)
+		{
+			leader = nullptr; // RW 0x770357
+		}
+		else
+		{
+			if (weapon)
+			{
+				range = leader->getWeapons()->attackRangeNoTargetFor(*weapon, *leader);
+			}
+			const float d = SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(SimMath::subf32(leaderPos.x, goal.x), SimMath::subf32(leaderPos.y, goal.y),
+				SimMath::subf32(leaderPos.z, goal.z)))); // RW 0x403111, fstp dword
+			if (kBandStep > range) // RW 0x7701D0
+			{
+				const float a = SimMath::addf32(d, kBandStep), b = SimMath::addf32(a, kBandStep), c = SimMath::addf32(b, kBandStep);
+				l18 = SimMath::mulf32(d, d);
+				l20 = SimMath::mulf32(a, a);
+				l0c = SimMath::mulf32(SimMath::subf32(a, kBandSlack), SimMath::subf32(a, kBandSlack));
+				l30 = SimMath::mulf32(b, b);
+				l1c = SimMath::mulf32(SimMath::subf32(b, kBandSlack), SimMath::subf32(b, kBandSlack));
+				l24 = SimMath::mulf32(SimMath::subf32(c, kBandSlack), SimMath::subf32(c, kBandSlack));
+			}
+			else if (kLongRange > range) // RW 0x77025C
+			{
+				const float a = SimMath::addf32(d, kBandStep), b = SimMath::addf32(a, kBandStep);
+				l20 = SimMath::mulf32(d, d);
+				l18 = sqOrZero(SimMath::subf32(d, kBandStep));
+				l0c = sqOrZero(SimMath::subf32(d, kBandSlack));
+				l30 = SimMath::mulf32(a, a);
+				l1c = SimMath::mulf32(SimMath::subf32(a, kBandSlack), SimMath::subf32(a, kBandSlack));
+				l24 = SimMath::mulf32(SimMath::subf32(b, kBandSlack), SimMath::subf32(b, kBandSlack));
+			}
+			else // RW 0x7702C7
+			{
+				const float a = SimMath::addf32(d, kBandStep), m = SimMath::subf32(d, kBandStep);
+				l30 = SimMath::mulf32(d, d);
+				l1c = SimMath::mulf32(SimMath::subf32(d, kBandSlack), SimMath::subf32(d, kBandSlack));
+				l24 = SimMath::mulf32(SimMath::subf32(a, kBandSlack), SimMath::subf32(a, kBandSlack));
+				l20 = sqOrZero(m);
+				l18 = sqOrZero(SimMath::subf32(m, kBandStep));
+				l0c = sqOrZero(SimMath::subf32(m, kBandSlack));
+			}
+		}
+	}
+	auto lower = [&](float v) { // RW 0x7703C8 .. 0x7703F1 / 0x7704C7 .. 0x7704EB
+		if (minSpeed > v || minSpeed == kNoCap)
+		{
+			minSpeed = v;
+			minAhead = SimMath::mulf32(v, kAheadScale);
+		}
+	};
+	auto bandOf = [](float r) { return kBandStep > r ? 0 : kLongRange > r ? 1 : 2; };
+	// pass 1 (RW 0x770366 .. 0x77057D)
+	for (Object *o : m_members)
+	{
+		AIUpdateInterface *ai = o ? o->getAIUpdateInterface() : nullptr;
+		Locomotor *loco = ai ? ai->curLocomotor() : nullptr;
+		if (loco && (loco->speed() > 0.0f || !withLeader) && !o->isEffectivelyDead())
+		{
+			loco->setTemporarySpeedCap(kNoCap);
+			const float v = loco->getMaxSpeedForCondition(ai->locomotorHost());
+			if (v > 0.0f)
+			{
+				lower(v);
+			}
+			if (leader && o != leader)
+			{
+				const float r = bandRangeOf(*o, *leader);
+				const float distSq = distSqZYX(goal, *o->getPosition());
+				const int band = bandOf(r);
+				const float behind = band == 0 ? l0c : band == 1 ? l1c : l24;
+				if (distSq > behind && v > 0.0f)
+				{
+					lower(SimMath::mulf32(v, kBehindScale));
+				}
+			}
+		}
+		if (!nearGoal && o && ai)
+		{
+			if (Object *g = ai->currentVictim())
+			{
+				if (kNearGoalSq > distSqZYX(*g->getPosition(), *o->getPosition()))
+				{
+					nearGoal = true;
+				}
+			}
+		}
+	}
+	// pass 2 (RW 0x77058E .. 0x7706DF)
+	for (Object *o : m_members)
+	{
+		AIUpdateInterface *ai = o ? o->getAIUpdateInterface() : nullptr;
+		Locomotor *loco = ai ? ai->curLocomotor() : nullptr;
+		if (!loco)
+		{
+			continue;
+		}
+		float cap = kNoCap;
+		if (!nearGoal && !o->isEffectivelyDead())
+		{
+			cap = minSpeed;
+			if (leader && o != leader && minSpeed != kNoCap)
+			{
+				const float r = bandRangeOf(*o, *leader);
+				const float distSq = distSqZYX(goal, *o->getPosition());
+				const int band = bandOf(r);
+				const float behind = band == 0 ? l0c : band == 1 ? l1c : l24;
+				const float ahead = band == 0 ? l18 : band == 1 ? l20 : l30;
+				if (distSq > behind)
+				{
+					cap = kNoCap;
+				}
+				else if (ahead > distSq)
+				{
+					cap = minAhead;
+				}
+			}
+		}
+		loco->setTemporarySpeedCap(cap);
 	}
 }
 

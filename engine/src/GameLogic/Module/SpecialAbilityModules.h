@@ -349,6 +349,7 @@ public:
 	CreateModuleInterface *getCreate() override { return this; }
 	void onCreate() override {}
 	void onBuildComplete() override; // RW 0x8B11FE (create interface slot 1): TriggerInstantlyOnCreate triggers at once
+	bool handlePackingProcessing() override; // RW 0x8B1142 (vtable 0xC6BDA0 slot 0x50): the drawable fade, no new simulation state
 	// RW 0x8B1FDA (slot 0 of the special power update interface RW 0xC6BCB8, shared with SummonReplacement; lane SUMMON-1)
 	void initiateIntentToDoSpecialPower(const SpecialPowerTemplate *t, Object *target, const Coord3D *loc, unsigned options, int extra) override;
 	void finishAbility(bool ownerDying, bool aborted) override; // RW 0x8B1219

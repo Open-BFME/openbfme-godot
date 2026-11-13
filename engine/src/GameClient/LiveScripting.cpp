@@ -199,6 +199,7 @@ bool LiveScripting::describe(Object &obj, LuaObjectInfo *out, bool count)
 			t.listName = lists.front().eventList;
 			t.list = m_engine->findEventList(t.listName);
 		}
+		t.forcesLuaRegistration = MapCreationHooks::templateForcesLuaRegistration(*tt);
 	}
 	if (!t.list)
 	{
@@ -207,7 +208,23 @@ bool LiveScripting::describe(Object &obj, LuaObjectInfo *out, bool count)
 			m_stats.stops.push_back("[S-127] " + tt->getName() + ": AILuaEventsList " + t.listName +
 				" is not an EventList of ScriptEvents.xml; retail binds a null event list (RW 0x7396E8, AIUpdateInterface RW 0x662597)");
 		}
-		return false;
+		// RW 0x73595A jne: an object WITH an AI always goes on to the record. Without one, RW 0x73595C loads [Object + 4] (the template) and
+		// RW 0x73595F tests byte + 0x640: zero jumps to the return at RW 0x735A0D (no record), non-zero makes the record as well. A registered
+		// object without an AI has no AILuaEventsList, so it has no handlers and dispatch returns at its Object + 0x260 test (RW 0x735F8F / 0x735F9D).
+		if (!t.forcesLuaRegistration)
+		{
+			return false;
+		}
+		out->id = (int)obj.getID();
+		out->hasAI = false;
+		out->forceLuaRegistration = true;
+		out->dead = obj.isDestroyed();
+		out->luaEvents = nullptr;
+		if (count)
+		{
+			++m_stats.creationForcedObjects;
+		}
+		return true;
 	}
 	out->id = (int)obj.getID();
 	out->hasAI = true;
@@ -362,8 +379,8 @@ LiveScripting::Stats LiveScripting::stats() const
 	Stats s = m_stats;
 	s.stops.push_back("[S-147] live creation path: " + std::to_string(s.creations) + " objects went through LuaScriptEngine::sendObjectCreated (one creation draw each), " +
 		std::to_string(s.creationListObjects) + " have an AILuaEventsList and were registered and sent OnCreated (" + std::to_string(s.creationHookObjects) +
-		" with an OnCreated handler). Narrowed, not closed: an object's AI for the registry is its template's AILuaEventsList (no AIUpdateInterface exists yet), "
-		"ForceLuaRegistration is not read from the template, the handlers' callees that need engine objects (upgrades, emotions, powers, the partition manager) are the "
+		" with an OnCreated handler), " + std::to_string(s.creationForcedObjects) + " have no AI and were registered by ForceLuaRegistration (no handler to send). Narrowed, "
+		"not closed: an object's AI for the registry is its template's AILuaEventsList (no AIUpdateInterface exists yet), the handlers' callees that need engine objects (upgrades, emotions, powers, the partition manager) are the "
 		"script engine's S-124, and the other dispatch sites (OnDestroyed, OnDamaged, OnUnitEntered ...) have no call site in the live logic yet");
 	if (m_engine)
 	{

@@ -67,6 +67,7 @@ struct BlockState
 	GameLogicSettings values;
 	unsigned seen = 0;
 	unsigned blocks = 0; ///< bit 0 GameData, 1 AIData, 2 MultiplayerSettings: which blocks were read
+	bool minDistFromEdgeOfMapForBuildSeen = false; // PORT-12: the seen mask already uses all 32 bits
 	std::set<std::string> unapplied; ///< "Block.Field" of the fields no row of this lane reads
 };
 
@@ -83,6 +84,22 @@ void parseNoting(INI *ini, void *instance, void *store, const void *userData)
 {
 	Proc(ini, instance, store, nullptr);
 	static_cast<BlockState *>(instance)->seen |= (unsigned)(std::uintptr_t)userData;
+}
+
+// RotWK's GameData row RW 0xC002B0 calls the real parser RW 0x42ED00 and writes GlobalData +0xA68.
+void parseMinDistFromEdgeOfMapForBuild(INI *ini, void *instance, void *store, const void *)
+{
+	INI::parseReal(ini, instance, store, nullptr);
+	static_cast<BlockState *>(instance)->minDistFromEdgeOfMapForBuildSeen = true;
+}
+
+// BFME1 TAiDataCtor.cpp / AIPlayer.cpp and RW row 0xC1CCD0 (parseReal
+// 0x42ED00) use the same INI key. One parse supplies both edition runtimes;
+// duplicate field rows would hide the second runtime's destination.
+void parseMaxRecruitRadius(INI *ini, void *instance, void *store, const void *)
+{
+	INI::parseReal(ini, instance, store, nullptr);
+	static_cast<BlockState *>(instance)->values.legacyAI.maxRecruitRadius = *static_cast<float *>(store);
 }
 
 // the line without its ; or // comment
@@ -227,9 +244,13 @@ const FieldParse kGameDataFields[] = {
 	{ "UnitDamagedThreshold", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_DAMAGED), (int)offsetof(BlockState, values.unitDamagedThreshold) },
 	{ "UnitReallyDamagedThreshold", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_REALLY), (int)offsetof(BlockState, values.unitReallyDamagedThreshold) },
 	{ "DefaultStartingCash", parseNoting<INI::parseUnsignedInt>, SEEN_DATA(SEEN_CASH), (int)offsetof(BlockState, values.defaultStartingCash) },
-	// lane BUILD-1: the building placement rules (BuildAssistant: AllowedHeightVariationForBuilding, SupplyBuildBorder, MaxLineBuildObjects)
+	// lane BUILD-1 / PORT-12: the building placement rules. RW 0xC002C0 (parseReal RW 0x42ED00) writes SupplyBuildBorder to GlobalData +0xA6C;
+	// MinDistFromEdgeOfMapForBuild is row RW 0xC002B0 (parseReal RW 0x42ED00), GlobalData +0xA68; BuildAssistant reads it at RW 0x794BF2.
+	// The row is not an edition difference: clean BFME2 1.06 carries it at BFME2 0x00BE924C (its name pointer at 0x00BE9250, the same +4 slot), and its
+	// data/ini/gamedata.ini (ini.big) reads MinDistFromEdgeOfMapForBuild = 30.0 as RotWK 2.01 does (_patch201ini.big).
 	{ "AllowedHeightVariationForBuilding", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_HEIGHTVAR), (int)offsetof(BlockState, values.allowedHeightVariationForBuilding) },
 	{ "SupplyBuildBorder", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_SUPPLYBORDER), (int)offsetof(BlockState, values.supplyBuildBorder) },
+	{ "MinDistFromEdgeOfMapForBuild", parseMinDistFromEdgeOfMapForBuild, nullptr, (int)offsetof(BlockState, values.minDistFromEdgeOfMapForBuild) },
 	{ "MaxLineBuildObjects", parseNoting<INI::parseInt>, SEEN_DATA(SEEN_LINEBUILD), (int)offsetof(BlockState, values.maxLineBuildObjects) },
 	// lane BUILD-3: BuilderMoveFromNewStructureDistance (row RW 0xC010D0, parseReal, GlobalData + 0x11E4): the walk of a porter out of the structure it built (RW 0x88D6AE)
 	{ "BuilderMoveFromNewStructureDistance", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_BUILDERMOVE), (int)offsetof(BlockState, values.builderMoveFromNewStructureDistance) },
@@ -309,7 +330,6 @@ const FieldParse kAIDataFields[] = {
 	{ "TeamsWealthyRate", INI::parseReal, nullptr, (int)offsetof(BlockState, values.legacyAI.wealthyRate) },
 	{ "TeamsPoorRate", INI::parseReal, nullptr, (int)offsetof(BlockState, values.legacyAI.poorRate) },
 	{ "TeamResourcesToStart", INI::parseReal, nullptr, (int)offsetof(BlockState, values.legacyAI.resourcesToStart) },
-	{ "MaxRecruitRadius", INI::parseReal, nullptr, (int)offsetof(BlockState, values.legacyAI.maxRecruitRadius) },
 	{ "EnableRepulsors", parseNoting<INI::parseBool>, SEEN_DATA(SEEN_REPULSORS), (int)offsetof(BlockState, values.enableRepulsors) },
 	// lane MODULES-3: RepulsedDistance (row RW 0x81CC40, parseReal RW 0x42ED00, AIData + 0x60): the safe path's distance beyond the vision range (RW 0x668E94)
 	{ "RepulsedDistance", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_REPULSED), (int)offsetof(BlockState, values.repulsedDistance) },
@@ -329,6 +349,9 @@ const FieldParse kAIDataFields[] = {
 	{ "FormationEnemyDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.formationEnemyDistance) },
 	{ "NarrowPassageScale", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.narrowPassageScale) },
 	{ "WaitForOthers", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.waitForOthers) },
+	// lane PORT-13: AttackMoveUsesFormations (row RW 0xC1CE50, parseBool RW 0x42E558, AIData + 0xBA): the formation gate of the group's attack-move
+	// (AIGroup::groupAttackMoveToPosition, RW 0x774E6B)
+	{ "AttackMoveUsesFormations", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.attackMoveUsesFormations) },
 	{ "UseFormations", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.useFormations) },
 	// lane STEALTHFLY1: MinFlightHeight (row RW 0xC1CE60 parseReal RW 0x42ED00, AIData + 0xB0): the aerial path's ground floor (RW 0x777ED7)
 	{ "MinFlightHeight", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.minFlightHeight) },
@@ -344,6 +367,9 @@ const FieldParse kAIDataFields[] = {
 	// lane AIDATA-1: ChaseFromBehindLimit (row RW 0xC1CEF0, + 0xD0) and SkirmishGroupFudgeDistance (row RW 0xC1CC30, + 0x58), parseReal RW 0x42ED00
 	{ "ChaseFromBehindLimit", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.chaseFromBehindLimit) },
 	{ "SkirmishGroupFudgeDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.skirmishGroupFudgeDistance) },
+	// lane PORT-40: MaxRecruitRadius (row RW 0xC1CCD0, parseReal RW 0x42ED00, AIData + 0x5C): the recruit radius of TEAM_RECRUIT_UNITS (RW 0x7C2BFB
+	// -> RW 0x7A491C) and of the AI player's own team building (RW 0x8F8E2C -> RW 0x7A41D4, not ported)
+	{ "MaxRecruitRadius", parseMaxRecruitRadius, nullptr, (int)offsetof(BlockState, values.maxRecruitRadius) },
 	// lane AIDATA-1: the pathfinder's rows (were PathfindConfigLoader's text scan): RW 0xC1CDD0 WadeWaterDepth + 0x98, 0xC1CDE0 DeepWaterDepth + 0x9C,
 	// 0xC1CDB0 MeleeApproachTolerance + 0x90, 0xC1CDC0 MeleeApproachDist + 0x94, 0xC1CF00 CastleSiegeStandBackDistance + 0xD4 (parseReal RW 0x42ED00);
 	// 0xC1CE40 HordesWaitForHordes + 0xB9 (parseBool RW 0x42E558)
@@ -536,7 +562,10 @@ bool finish(Load &l, unsigned blockBit, const char *blockName, const std::vector
 		return false;
 	}
 	out = l.state().values;
-	if ((l.state().seen & (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD)) == (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD))
+	// set only, never cleared (review lane PRTRLW, Sol note): GameData fields are additive like retail's INI table, so a later scan that lacks a row (or a
+	// separate AIData / MultiplayerSettings scan into the same settings object) keeps what an earlier GameData scan loaded
+	if ((l.state().seen & (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD)) == (SEEN_HEIGHTVAR | SEEN_SUPPLYBORDER | SEEN_LINEBUILD) &&
+		l.state().minDistFromEdgeOfMapForBuildSeen)
 	{
 		out.buildRulesLoaded = true;
 	}
@@ -711,6 +740,11 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addFloat(formationEnemyDistance);
 	h.addFloat(narrowPassageScale);
 	h.addBool(waitForOthers);
+	if (!attackMoveUsesFormations)
+	{
+		h.addBool(attackMoveUsesFormations); // lane PORT-13: both retail editions' default\aidata.ini set AttackMoveUsesFormations = Yes and the constructor stores 1,
+		                                     // so only a mod that turns the formation attack-move off is hashed and retail games keep their pre-port settings hash
+	}
 	h.addBool(useFormations);
 	if (minFlightHeight != FLT_MAX)
 	{
@@ -723,6 +757,11 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addBool(attackUsesLineOfSight);
 	h.addBool(attackIgnoreInsignificantBuildings);
 	h.addFloat(artilleryMaxFriendlyFire);
+	if (maxRecruitRadius != 400.0f)
+	{
+		h.addFloat(maxRecruitRadius); // lane PORT-40: retail 2.01 and Ennorath set 400.0 (default\aidata.ini:32, the mod keeps it), so a game with
+		                             // that data is unchanged; a map.ini / mod AIData block with another value is hashed (as lane STEALTHFLY1 above)
+	}
 	h.addU32((std::uint32_t)attackPriorityDefs.size());
 	for (const AttackPriorityDef &d : attackPriorityDefs)
 	{
@@ -744,8 +783,9 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addU32(defaultStartingCash);
 	h.addBool(buildRulesLoaded);
 	h.addFloat(allowedHeightVariationForBuilding);
-	h.addFloat(supplyBuildBorder);
+	h.addFloat(supplyBuildBorder); // PORT-12: always hash the placement rule, including zero
 	h.addI32(maxLineBuildObjects);
+	h.addFloat(minDistFromEdgeOfMapForBuild); // RotWK GameData +0xA68: always hash this simulation input, including zero
 	h.addBool(builderMoveLoaded);
 	h.addFloat(builderMoveFromNewStructureDistance);
 	h.addBool(sellPercentageLoaded); // lane FACT-A

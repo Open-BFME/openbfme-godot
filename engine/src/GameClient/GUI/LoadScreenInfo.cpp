@@ -5,6 +5,7 @@
 #include "Common/ExtendedPlayerColors.h"
 
 #include "GameClient/GUI/GameTextSource.h"
+#include "GameClient/GUI/Skirmish/RealTimeStats.h"
 #include "GameClient/GUI/Skirmish/SkirmishSetup.h"
 
 #include <cctype>
@@ -47,7 +48,7 @@ std::string loadScreenU16ToUtf8(const std::u16string &s)
 }
 
 LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSetupSource &setup, const GameTextSource *text,
-	const std::function<bool(const std::string &)> &imageExists)
+	const std::function<bool(const std::string &)> &imageExists, const SkirmishProfileStore *profiles, bool online)
 {
 	LoadScreenInfo info;
 	info.mapStartCount = game.mapStartCount;
@@ -66,6 +67,25 @@ LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSe
 	}
 	info.gameLoadingType = 2;
 	info.mapName = game.mapName;
+	// lane RANKICON-1 (RW 0x81CF16 .. 0x81CFD4; BFME2 AptLoadScreenInit.cpp): SkirmishPreferences(game mode) -> the current profile (RW 0x8221F5 /
+	// 0x821A14), then StrategicStatsPreferences (RW 0x93E6F2) for a War of the Ring battle, else RealTimeStatsPreferences (RW 0x93E72F). Retail builds the
+	// object per human card; the file is the same for every card, so it is read once. Retail's preferences object reads a missing file as no keys: 0 points.
+	const bool warOfTheRing = game.warOfTheRing();
+	const RankPointTable rankTable = loadScreenRankTable(online, warOfTheRing);
+	RealTimeStatsPreferences realTimeStats;
+	StrategicStatsPreferences strategicStats;
+	if (profiles && imageExists && !online)
+	{
+		info.rankStatsRead = true;
+		std::string error;
+		const bool ok = warOfTheRing ? strategicStats.load(profiles->folder(), profiles->current(), &error)
+									 : realTimeStats.load(profiles->folder(), profiles->current(), &error);
+		info.rankStatsPath = warOfTheRing ? strategicStats.path() : realTimeStats.path();
+		if (!ok)
+		{
+			info.rankStatsError = error.empty() ? "the profile stats file could not be read" : error;
+		}
+	}
 	int card = 0;
 	bool haveLocal = false;
 	for (int i = 0; i < game.mapStartCount; ++i)
@@ -95,10 +115,15 @@ LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSe
 		{
 			c.color = color->rgb;
 		}
-		// lane MENU-1: the Level column (RW 0x81CB08); the profile's points are 0: the stats files are not ported [S-3506]
+		// lane MENU-1: the Level column (RW 0x81CB08); lane RANKICON-1: a human's points are its army's "<army>Points" of the profile's stats (RW 0x93C1F9)
 		if (imageExists)
 		{
-			c.levelImage = rankIconFor(slot, c.armyName, 0, imageExists);
+			if (slot.isHuman() && info.rankStatsRead && info.rankStatsError.empty())
+			{
+				const std::string army = rankArmyAscii(c.armyName);
+				c.rankPoints = warOfTheRing ? strategicStats.armyPoints(army) : realTimeStats.armyPoints(army);
+			}
+			c.levelImage = rankIconFor(slot, c.armyName, rankTable, c.rankPoints, imageExists, (int)setup.factions().size());
 		}
 		c.human = slot.isHuman();
 		if (slot.isHuman() && !haveLocal)
@@ -146,14 +171,62 @@ bool equalNoCaseAscii(const std::string &a, const char *b)
 }
 } // namespace
 
-std::string rankIconFor(const SkirmishGameSlot &slot, const std::u16string &armyName, int humanPoints, const std::function<bool(const std::string &)> &imageExists)
+RankPointTable loadScreenRankTable(bool online, bool warOfTheRing)
 {
-	// the army name as ASCII (AsciiString from the UnicodeString: the low byte of each unit)
+	if (online)
+	{
+		return warOfTheRing ? RankPointTable::OnlineStrategic : RankPointTable::OnlineRealTime;
+	}
+	return warOfTheRing ? RankPointTable::LocalStrategic : RankPointTable::LocalRealTime;
+}
+
+const int *rankPointThresholds(RankPointTable table)
+{
+	// RW 0x96054C (BFME2 Rva00559A76): RW 0xDEBAA4 / 0xDEBAD0
+	static const int kLocal[11] = { -1, 0, 5, 10, 30, 50, 150, 300, 500, 800, 1500 };
+	// RW 0x9604E7 (BFME2 Rva00559A11): RW 0xDEBA3C / 0xDEBA70
+	static const int kOnline[11] = { -1, 0, 5, 10, 30, 50, 150, 500, 1000, 2000, 5000 };
+	switch (table)
+	{
+		case RankPointTable::LocalStrategic:
+		case RankPointTable::LocalRealTime:
+			return kLocal;
+		case RankPointTable::OnlineStrategic:
+		case RankPointTable::OnlineRealTime:
+			return kOnline;
+	}
+	return kLocal; // unreachable: every enumerator is handled above
+}
+
+int rankLevelForPoints(RankPointTable table, int points)
+{
+	// RW 0x960597: the first threshold above the points, less one; 10 past the last
+	const int *thresholds = rankPointThresholds(table);
+	for (int i = 1; i < 11; ++i)
+	{
+		if (thresholds[i] > points)
+		{
+			return i - 1;
+		}
+	}
+	return 10;
+}
+
+std::string rankArmyAscii(const std::u16string &armyName)
+{
+	// AsciiString from the UnicodeString: the low byte of each unit
 	std::string army;
 	for (char16_t ch : armyName)
 	{
 		army.push_back((char)(ch & 0xFF));
 	}
+	return army;
+}
+
+std::string rankIconFor(const SkirmishGameSlot &slot, const std::u16string &armyName, RankPointTable table, int humanPoints,
+	const std::function<bool(const std::string &)> &imageExists, int templateCount)
+{
+	const std::string army = rankArmyAscii(armyName);
 	int side = 9; // RW 0x73BDA3
 	if (army == "Goblins")
 	{
@@ -179,17 +252,13 @@ std::string rankIconFor(const SkirmishGameSlot &slot, const std::u16string &army
 	}
 	else if (slot.isHuman())
 	{
-		// RW 0x9604E7 thresholds, RW 0x960597
-		static const int kThresholds[11] = { -1, 0, 5, 10, 30, 50, 150, 500, 1000, 2000, 5000 };
-		level = 10;
-		for (int i = 1; i < 11; ++i)
+		// RW 0x81CF09 / 0x81CF10: no player template (an observer) -> no icon
+		if (templateCount >= 0 && (slot.playerTemplate < 0 || slot.playerTemplate >= templateCount))
 		{
-			if (humanPoints < kThresholds[i])
-			{
-				level = i - 1;
-				break;
-			}
+			return std::string();
 		}
+		// RW 0x9606E2 -> RW 0x960597 in the caller's table (lane RANKICON-1)
+		level = rankLevelForPoints(table, humanPoints);
 	}
 	if (level < 0)
 	{

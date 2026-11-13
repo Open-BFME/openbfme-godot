@@ -23,6 +23,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/InvisibilityModules.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/SimMath.h"
@@ -164,6 +165,22 @@ private:
 	ObjectWeapons &m_w;
 };
 
+// RW 0x696057 (lane MECH-D): a CAN_CLIMB_WALLS object is on a wall when its horde keeps one (Object::getHorde RW 0x694BF8, the contain's isScalingWall RW
+// 0x86BD54) or, without a horde, when it is CLIMBING or RAPPELLING (RW 0x696080: model conditions 0x67 / 0x69)
+bool objectIsOnWall(const Object &o)
+{
+	Object *horde = o.getHordeObject(false); // RW 0x693A1A: the object itself when HORDE, else its container
+	ContainModuleInterface *contain = horde ? horde->getContain() : nullptr;
+	HordeContainInterface *hc = contain ? contain->getHordeContainInterface() : nullptr;
+	if (hc)
+	{
+		return hc->isScalingWall();
+	}
+	static const int kClimbing = CombatNames::modelCondition("CLIMBING");
+	static const int kRappelling = CombatNames::modelCondition("RAPPELLING");
+	return o.testModelCondition(kClimbing) || o.testModelCondition(kRappelling);
+}
+
 const char *meleeReachStopLine()
 {
 	return "[S-3806] melee reach (RW 0x6ED843, lane PLAY-4): the footprint test of a unit target is ported; a SIEGE_TOWER target outside the boxes takes RW's top branch "
@@ -210,8 +227,8 @@ public:
 	//   * a STRUCTURE target (RW 0x6ED8D5): rings around the unit footprint find the target obstacle id (RW 0x6ED937 .. 0x6EDA52).
 	//     The WALK_ON_TOP_OF_WALL / bridge-layer tail remains unported (S-3806).
 	//   * any other target (lane PLAY-4 r1): the footprint boxes (Pathfinder::meleeReachCells, RW 0x6EDB0C .. 0x6EDB69); a CAN_CLIMB_WALLS target on a wall
-	//     (RW 0x6EDAD4 -> 0x696057) is not ported (wall climbing is S-084: no unit climbs); a SIEGE_TOWER target outside the boxes takes the top branch
-	//     (RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: siegeTowerTopReach; stop S-3806 for its inference).
+	//     (RW 0x6EDAD4 -> 0x696057, lane MECH-D: objectIsOnWall, and RW 0x66352C's squared edge distance below 5.0) is reached from below; a SIEGE_TOWER target
+	//     outside the boxes takes the top branch (RW 0x6EDB6F .. 0x6EDC74, lane SIEGE-1: siegeTowerTopReach; stop S-3806 for its inference).
 	bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) override
 	{
 		if (!victim.object)
@@ -245,6 +262,17 @@ public:
 		if (victim.isStructure)
 		{
 			return world->pathfinder().meleeStructureReach(*unit, sourcePos, *target, cells);
+		}
+		// RW 0x6EDAD4 (lane MECH-D): a CAN_CLIMB_WALLS victim that is on a wall (RW 0x696057: the horde's wall kept, or no horde and CLIMBING / RAPPELLING)
+		// is reached when RW 0x66352C's squared 2D edge distance (the centres' distance - both radii, 0 when the circles overlap; CircleDistanceSquared) is
+		// below the double at RW 0xC1B678, 5.0 (x87 compare, RW 0x6EDAF1 .. 0x6EDAFB); else the answer is false, without the footprint test. RW 0x66352C reads
+		// both objects' own positions (+0x38), not the position the reach is asked from (review prtrlo)
+		static const int canClimbWalls = CombatNames::kindOf("CAN_CLIMB_WALLS");
+		if (victim.object->isKindOf((unsigned)canClimbWalls) && objectIsOnWall(*victim.object))
+		{
+			const Object &self = source.object ? *source.object : m_w.owner();
+			const float d2 = CircleDistanceSquared(*self.getPosition(), source.boundingCircleRadius, *victim.object->getPosition(), victim.boundingCircleRadius);
+			return (double)d2 < 5.0;
 		}
 		if (world->pathfinder().meleeReachCells(*unit, sourcePos, *target, cells))
 		{
@@ -1485,6 +1513,22 @@ float ObjectWeapons::currentAttackRangeNoTarget() const
 	w->computeBonus(*self->m_host, 0, bonus);
 	const RangeSubject src = subjectOf(*m_owner);
 	return WeaponGetAttackRangeNoTarget(*w->getTemplate(), bonus, *self->m_rangeHost, src);
+}
+
+float ObjectWeapons::attackRangeNoTargetFor(const Weapon &weapon, const Object &source) const
+{
+	if (!weapon.getTemplate())
+	{
+		return 0.0f;
+	}
+	ObjectWeapons *self = const_cast<ObjectWeapons *>(this);
+	ObjectWeapons *sw = const_cast<Object &>(source).getWeapons();
+	WeaponBonus bonus;
+	if (sw)
+	{
+		weapon.computeBonus(sw->host(), 0, bonus); // RW 0x6CA7AC(source, 0, bonus)
+	}
+	return WeaponGetAttackRangeNoTarget(*weapon.getTemplate(), bonus, sw ? sw->rangeHost() : *self->m_rangeHost, subjectOf(source));
 }
 
 bool ObjectWeapons::isTooClose(const Object &victim) const

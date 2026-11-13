@@ -363,7 +363,9 @@ TEST_CASE("decomp1 melee contact: RW 0x870180 compares the hordes of the two obj
 	a.frames(3);
 	HordeAIUpdate *h = dynamic_cast<HordeAIUpdate *>(horde->getAIUpdateInterface());
 	REQUIRE(h);
-	REQUIRE(h->isMeleeTargetReady(*target)); // a close target is ready: the cache takes it for 3 seconds
+	h->setMeleeTargetId(target->getID()); // lane FLEECHASE-1: the wait state's slot 0x168 and the refresh (slot 0x164) fill the cache for 3 seconds
+	h->refreshMeleeReadiness(*target);
+	REQUIRE(h->isMeleeTargetReady(*target));
 	REQUIRE(h->meleeTargetId() == target->getID());
 	CHECK(h->isInCurrentMelee(target));
 	CHECK(h->isInCurrentMelee(far)); // both outside a horde: null == null

@@ -309,6 +309,18 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				d->fadeOut((double)ev.fadeFrames);
 			}
 			break;
+		case ClientEvent::SET_SHADOWS: // TOP20 #24 (RW 0x672D28)
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->setShadowsEnabled(ev.shadowsOn);
+			}
+			break;
+		case ClientEvent::SET_OPACITY: // lane PORT-46 (RW 0x8B11F0 / 0x8B44F0, the packing fades; reset by RW 0x8B1219 / 0x8B125F)
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->setDrawableOpacity(ev.opacity);
+			}
+			break;
 		case ClientEvent::SHOW_MODULE:
 			if (Drawable *d = findByObject(ev.object))
 			{

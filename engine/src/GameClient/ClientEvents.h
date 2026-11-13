@@ -61,6 +61,8 @@ struct ClientEvent
 		MODEL_FLUSH,     ///< lane ANIM-1 (RW 0x67449C / 0x6759C4): the drawable's changed flags reach its draw modules; scriptTarget, weapon timing
 		FADE_IN,         ///< lane BUILD-4 (RW 0x670AA2): fadeFrames client frames
 		FADE_OUT,        ///< lane PORTERFOG-1 (RW 0x670A50): fadeFrames client frames
+		SET_SHADOWS,     ///< TOP20 #24 (RW 0x672D28): shadowsOn
+		SET_OPACITY,     ///< lane PORT-46 (RW 0x8B11F0 / 0x8B44F0 / 0x8B1219 / 0x8B125F): opacity, the drawable's + 0xB0
 		CUSTOM_COLORS,   ///< lane CAH-2 (RW 0x80AF0B -> 0x6727B0): customKind and customColors, the drawable's house colour set
 		HERO_ATTACKED,   ///< RW 0x67B78C: the local hero-select bar's attacked effect
 		HERO_FLASH,      ///< RW 0x7BDD7A: name = exact template name, flashFrames = signed client-frame duration
@@ -100,6 +102,8 @@ struct ClientEvent
 	bool setFlags = false, setScale = false, mirror = false;
 	float scale = 1.0f;
 	UnsignedInt fadeFrames = 0;
+	bool shadowsOn = true; ///< SET_SHADOWS
+	float opacity = 1.0f; ///< SET_OPACITY (lane PORT-46)
 	int flashFrames = 0;
 	int customKind = 0;                             ///< CUSTOM_COLORS (lane CAH-2)
 	std::uint32_t customColors[3] = { 0u, 0u, 0u }; ///< CUSTOM_COLORS: ARGB
@@ -126,6 +130,8 @@ public:
 	void releaseContainerBone(Object &obj, float snappyness) override;
 	void fadeIn(Object &obj, UnsignedInt frames) override;
 	void fadeOut(Object &obj, UnsignedInt frames) override;
+	void setShadowsEnabled(Object &obj, bool enabled) override;
+	void setDrawableOpacity(Object &obj, float opacity) override; // lane PORT-46 (RW 0x8B11F0 / 0x8B44F0)
 	void setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2) override; // lane CAH-2
 	void createAHeroKill(Object &killer, Object &victim) override;
 	void heroAttacked(Object &obj) override;

@@ -1677,6 +1677,79 @@ TEST_CASE("wallsearch1 retail: on Helm's Deep a hero ordered from the enemy's st
 	}
 }
 
+// lane UBER-3P (follow-up): Uber's stall cut-off ends only a search whose goal cell cannot be reached. An Isengard fighter horde on Helm's Deep's causeway
+// ordered onto the Deeping Wall's top (a user's Uber replay: object 926 at frame 3084): the goal cell is on the wall top's layer, in the start's zone and a valid
+// movement position, but the horde's goal footprint touches the top's rim (checkDestination, units ignored, fails on terrain alone), so the search is
+// approximate. No cell on the narrow causeway passes the candidate's footprint test either, so the closest cell stays the start's; the stall cut-off ended
+// the search (and the horde retry's) after 256 cells with a 2-node partial path ending where the horde stood. The goal cell itself is reached after 458 cells:
+// Uber's path is Faithful's, node for node
+TEST_CASE("uberstall1 retail: on Helm's Deep a horde on the causeway ordered onto the Deeping Wall's top, its goal footprint at the rim, gets the full path in both profiles")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::vector<Coord3D> faithful; // Faithful's nodes, run first
+	for (const SimulationProfile profile : { SimulationProfile::Faithful, SimulationProfile::Uber })
+	{
+		INFO("profile " << (int)profile);
+		WallGame g(*s, profile);
+		g.frames(2);
+		Player *me = g.human();
+		REQUIRE(me);
+		Pathfinder &pf = g.game->ai().pathfinder();
+		REQUIRE(g.game->logic().simulationProfile() == profile);
+		std::string error;
+		const Coord3D at{ 2801.0f, 2410.0f, g.game->logic().getGroundHeight(2801.0f, 2410.0f) };
+		Object *horde = g.game->createObject("IsengardFighterHorde", me->getPlayerIndex(), at, 0.0f, &error);
+		REQUIRE_MESSAGE(horde, error);
+		g.frames(2);
+		AIUpdateInterface *ai = horde->getAIUpdateInterface();
+		REQUIRE(ai);
+		PathfindObject &unit = ai->adapter();
+		REQUIRE(unit.getLayer() == LAYER_GROUND);
+		// the goal: a cell of the wall top (layer 0x11) whose horde footprint fails on terrain alone (no unit counted) while the cell is a valid movement position
+		Coord3D to{ 2535.0f, 2725.0f, 184.3f };
+		REQUIRE(pf.getLayerAt(to.x, to.y, to.z) == LAYER_WALL_FIRST);
+		int radius = 0;
+		bool center = true;
+		pf.getRadiusAndCenter(&unit, radius, center);
+		REQUIRE(center); // the search's goal cell is then the one checked below (no + 5 shift)
+		int out = -1;
+		CHECK_FALSE(pf.checkDestination(&unit, 253, 272, LAYER_WALL_FIRST, radius, center, &out, true));
+		CHECK(out == 0);
+		CHECK(pf.validMovementPosition(&unit, ai->locomotorInfo(), LAYER_WALL_FIRST, &to));
+		Coord3D from = *horde->getPosition();
+		bool partial = true;
+		Path *path = pf.findPath(&unit, ai->locomotorInfo(), &from, &to, &partial);
+		REQUIRE(path);
+		std::vector<Coord3D> nodes;
+		for (const PathNode *n = path->getFirstNode(); n; n = n->getNext())
+		{
+			nodes.push_back(*n->getPosition());
+		}
+		// before the fix, Uber: partial, 2 nodes, ending at (2805, 2435) on the ground (Faithful: as below)
+		CHECK_FALSE(partial);
+		CHECK(nodes.size() == 34);
+		if (profile == SimulationProfile::Faithful)
+		{
+			faithful = nodes;
+		}
+		else
+		{
+			REQUIRE(nodes.size() == faithful.size());
+			for (size_t i = 0; i < nodes.size(); ++i)
+			{
+				INFO("node " << i);
+				CHECK(nodes[i].x == faithful[i].x);
+				CHECK(nodes[i].y == faithful[i].y);
+				CHECK(nodes[i].z == faithful[i].z);
+			}
+		}
+		CHECK(path->getLastNode()->getLayer() == LAYER_WALL_FIRST);
+		CHECK(path->getLastNode()->getPosition()->x == 2535.0f);
+		CHECK(path->getLastNode()->getPosition()->y == 2725.0f);
+		delete path;
+	}
+}
+
 TEST_CASE("wallsearch1: validMovementPosition tests a wall layer only, exactly (RW 0x6EA4E7): the ramp and the ground take any cell of their grid")
 {
 	WallWorld w;
