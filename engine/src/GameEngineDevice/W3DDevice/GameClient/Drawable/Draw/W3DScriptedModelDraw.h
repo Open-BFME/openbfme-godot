@@ -349,6 +349,7 @@ private:
 	void setTrack(int slot, const W3DDrawTrack &track);
 	void clearTrack(int slot);
 	void promote();
+	void activateQueuedMovementRepair();
 	void initBlend(const W3DDrawTrack &incoming);
 	bool trackComplete(const W3DDrawTrack &t, bool flag) const; // RW 0x4B271C
 	void stepTrack(W3DDrawTrack &t, float elapsedMs);
@@ -380,7 +381,9 @@ private:
 	int m_whichAnim = -1;                   // RW +0x44
 	int m_lastAnim = 0;                     // RW +0x88
 	const W3DAnimationInfo *m_movementRepairInfo = nullptr; // S-5920: playback metadata; requested state / index stay retail's.
-	const HAnimClass *m_movementRepairAnimation = nullptr; // Pair Distance with this cycle's duration, including incoming / queued tracks.
+	const HAnimClass *m_movementRepairAnimation = nullptr; // Pair Distance with this cycle's duration when visible or incoming.
+	float m_queuedMovementRepairSpeedFactor = 1.0f;
+	bool m_movementRepairQueued = false; // S-5920: a waiting repair must not retime the visible blend.
 
 	const RenderObjPrototype *m_model = nullptr;
 	std::string m_modelName; // lower case, the render object identity

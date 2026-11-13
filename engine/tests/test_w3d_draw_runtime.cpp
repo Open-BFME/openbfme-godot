@@ -1437,32 +1437,41 @@ TEST_CASE("draw runtime: ordinary movement retains retail track zero duration du
 	CHECK_FALSE(hasStop(*r.draw, "S-5920"));
 }
 
-TEST_CASE("draw runtime: repaired movement sync follows its cycle through the must-complete blend queue")
+TEST_CASE("draw runtime: queued movement repair preserves visible timing until it blends in")
 {
 	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_ATTACK", 60 }, { "ABUNIT_RUN", 90 } }, std::string(kDefaultState) +
 		"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
 		"AnimationState = ATTACKING\n" + anim("ABUNIT_ATTACK", "LOOP", " AnimationMustCompleteBlend = Yes\n") + "End\n"
 		"AnimationState = MOVING BACKING_UP\n" + anim("ABUNIT_MISSING") + "End\n"
-		"AnimationState = MOVING\n" + anim("ABUNIT_RUN", "LOOP", " Distance = 30\n") + "End\nEnd\n");
+		"AnimationState = MOVING\n" + anim("ABUNIT_RUN", "LOOP", " Distance = 30\n AnimationSpeedFactorRange = 3 3\n") + "End\nEnd\n");
 	W3DScriptedModelDraw::Options options;
-	options.objectSpeed = [] { return 2.0f; };
+	options.objectSpeed = [] { return 6.0f; };
 	r.start(true, false, options);
 	r.draw->setModelConditionFlags(flagsOf({ "ATTACKING" }));
 	r.draw->setModelConditionFlags(flagsOf({ "MOVING", "BACKING_UP" }));
 	REQUIRE(r.draw->frame().trackCount == 3);
 	CHECK(clipIs(r.draw->track(2), "abunit_skl.ABUNIT_RUN"));
-	// Only RUN's 90 / 30 = 3-second duration matches Distance 30 / speed 2 * 200 ms = 3 seconds.
-	// Neither the outgoing idle's duration nor the prior incoming attack's duration belongs to this repair.
+	// Visible idle / attack use factor 1 and sync 1. RUN's factor 3 and Distance sync 3 must wait:
+	// its 90 / 30 = 3-second duration covers Distance 30 / speed 6 * 200 ms = 1 second.
 	r.draw->advance(50.0);
 	CHECK(r.draw->speedMultiplier() == 1.0f);
-	r.draw->advance(200.0);
+	r.draw->advance(50.0);
+	REQUIRE(r.draw->frame().trackCount == 3);
+	CHECK(r.draw->speedMultiplier() == 1.0f);
+	// tolerance: binary32 milliseconds * 0.001 rounds the two 30 fps render steps by one ULP.
+	CHECK(r.draw->track(1).frame == doctest::Approx(3.0f).epsilon(0.000001));
+	r.draw->advance(100.0); // finish the original 5-frame blend at its original speed
 	REQUIRE(r.draw->frame().trackCount == 2);
 	CHECK(clipIs(r.draw->track(1), "abunit_skl.ABUNIT_RUN"));
-	CHECK(r.draw->speedMultiplier() == 1.0f);
-	r.draw->advance(200.0);
+	CHECK(r.draw->speedMultiplier() == 3.0f);
+	// tolerance: the three binary32 steps accumulate their one-ULP rounding.
+	CHECK(r.draw->track(0).frame == doctest::Approx(6.0f).epsilon(0.000001));
+	r.draw->advance(50.0); // RUN is visible now: factor 3 * sync 3 adds 13.5 frames, ending its blend.
 	REQUIRE(r.draw->frame().trackCount == 1);
 	CHECK(clipIs(r.draw->track(0), "abunit_skl.ABUNIT_RUN"));
-	CHECK(r.draw->speedMultiplier() == 1.0f);
+	CHECK(r.draw->speedMultiplier() == 3.0f);
+	// tolerance: the accumulated binary32 frame is within one ULP of 6 + 13.5.
+	CHECK(r.draw->track(0).frame == doctest::Approx(19.5f).epsilon(0.000001));
 }
 
 TEST_CASE("draw runtime: movement repair does not borrow a different model or an unrelated state")

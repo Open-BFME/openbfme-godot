@@ -357,6 +357,7 @@ void W3DScriptedModelDraw::apply(const AnimationStateInfo *prevState, float frac
 	{
 		m_movementRepairInfo = nullptr;
 		m_movementRepairAnimation = nullptr;
+		m_movementRepairQueued = false;
 		// RW 0x4BE602-0x4BE62C
 		if (renderObject)
 		{
@@ -370,6 +371,7 @@ void W3DScriptedModelDraw::apply(const AnimationStateInfo *prevState, float frac
 	{
 		m_movementRepairInfo = nullptr;
 		m_movementRepairAnimation = nullptr;
+		m_movementRepairQueued = false;
 		clearTrack(0);
 		clearTrack(1);
 	}
@@ -504,6 +506,7 @@ void W3DScriptedModelDraw::apply(const AnimationStateInfo *prevState, float frac
 	std::string err;
 	m_movementRepairInfo = nullptr;
 	m_movementRepairAnimation = nullptr;
+	m_movementRepairQueued = false;
 	const HAnimClass *handle = resolveAnimation(requestedInfo, &resolved, &err);
 	if (!handle)
 	{
@@ -799,6 +802,7 @@ void W3DScriptedModelDraw::promote()
 		m_tracks[1] = m_tracks[2];
 		clearTrack(2);
 		initBlend(m_tracks[1]);
+		activateQueuedMovementRepair();
 	}
 	else
 	{
@@ -806,9 +810,20 @@ void W3DScriptedModelDraw::promote()
 	}
 }
 
+// S-5920 only: the queued repair's speed takes effect when ESC(1,2) makes it visible.
+void W3DScriptedModelDraw::activateQueuedMovementRepair()
+{
+	if (m_movementRepairQueued)
+	{
+		m_speedFactor = m_queuedMovementRepairSpeedFactor;
+		m_movementRepairQueued = false;
+	}
+}
+
 void W3DScriptedModelDraw::startAnimation(const HAnimClass *anim, const std::string &clipName, const W3DAnimationInfo &info, int animationIndex, float startFrame,
 	float speedFactor)
 {
+	const float previousSpeedFactor = m_speedFactor;
 	m_speedFactor = speedFactor; // RW 0x4B55E9
 	W3DDrawTrack t;
 	t.anim = anim;
@@ -852,6 +867,12 @@ void W3DScriptedModelDraw::startAnimation(const HAnimClass *anim, const std::str
 			if (m_tracks[1].mustCompleteBlend)
 			{
 				setTrack(2, t); // RW 0x4B56A0: AnimationMustCompleteBlend queues the request in track 2
+				if (m_movementRepairAnimation == anim && m_movementRepairInfo == &info)
+				{
+					m_queuedMovementRepairSpeedFactor = speedFactor;
+					m_movementRepairQueued = true;
+					m_speedFactor = previousSpeedFactor;
+				}
 				return;
 			}
 			if (m_blendCountdown / m_blendInitial < 0.5f)
@@ -1044,10 +1065,11 @@ float W3DScriptedModelDraw::constructionHeightOffset(float objectPercent, bool r
 // ratio of the animation's natural duration to the time the object needs for that distance (200 ms per logic frame).
 void W3DScriptedModelDraw::syncSpeedToMovement()
 {
+	if (m_movementRepairQueued) return; // Preserve the visible blend's sync until the repair leaves track 2.
 	m_speedSync = 1.0f;
 	const W3DAnimationInfo *playing = playbackAnimationInfo();
 	// S-5920 adaptation only: pair the replacement's Distance with its own handle while it blends in
-	// or waits in track 2. Ordinary playback retains RW 0x4B67D4's track-0 duration rule.
+	// once it leaves track 2. Ordinary playback retains RW 0x4B67D4's track-0 duration rule.
 	const HAnimClass *animation = m_movementRepairAnimation ? m_movementRepairAnimation : m_tracks[0].anim;
 	if (!playing || !m_options.objectSpeed || !animation)
 	{
@@ -1103,6 +1125,7 @@ void W3DScriptedModelDraw::advance(double elapsedMsD)
 			m_tracks[1] = m_tracks[2];
 			clearTrack(2);
 			initBlend(m_tracks[1]);
+			activateQueuedMovementRepair();
 		}
 	}
 	for (W3DDrawTrack &t : m_tracks)
