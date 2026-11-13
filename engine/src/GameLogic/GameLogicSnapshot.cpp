@@ -74,7 +74,14 @@ void GameLogic::registerSnapshotBlocks()
 	add("obfme:TeamFactory", [this](Xfer &x) { m_players.teams().xfer(x); },
 		[this]() { m_players.teams().loadPostProcess([this](ObjectID id) { return findObjectByID(id); }); }, { "players and teams" });
 	add("obfme:Players", [this](Xfer &x) { m_players.xfer(x); }, nullptr, { "players and teams" });
-	add("obfme:GameLogic", [this](Xfer &x) { xferCore(x); }, nullptr, { "frame, object ids, RNG" });
+	add("obfme:GameLogic", [this](Xfer &x) { xferCore(x); },
+		[this]() {
+			if (!m_rankLevelLimitScripted)
+			{
+				resetRankLevelLimitFromEconomy();
+			}
+		},
+		{ "frame, object ids, RNG" });
 	add("obfme:Random", [this](Xfer &x) { m_random.xfer(x); }, nullptr, { "frame, object ids, RNG" });
 	// ---- SAVE-4b: the objects and the module runtimes ----
 	gs.declareBlockWithoutXfer("obfme:Objects", kSaveLoadAndDeepCRC, "SAVE-4b", { "objects", "frame, object ids, RNG" }); // + the object count and list order
@@ -213,10 +220,12 @@ void GameLogic::xferCore(Xfer &x)
 {
 	// lane CHEAT-1: version 2 adds the Cheat Mode block at the end; lane BFME2CAMP1: version 3 adds the buildability overrides (GameLogic.h, RW GameLogic
 	// + 0x10) and the campaign's carry-over after it; WOTR2 milestone 7: version 4 adds the War of the Ring battle's army tags after those (it was
-	// version 3 on feature/wotr before the archive merge: never released). Each version is written only when its state is there, so every other game's
-	// snapshot is byte-identical to version 1's (an older snapshot loads with none of the later state)
+	// version 3 on feature/wotr before the archive merge: never released); PORT-43: version 5 adds GameLogic + 0x118 (m_rankLevelLimit, retail
+	// GameLogic::xfer RW 0x630D6F .. 0x630D78) when PLAYER_SET_RANKLEVELLIMIT scripted it.
+	// Each version is written only when its state is there, so every other game's snapshot is byte-identical to version 1's (an older snapshot loads with
+	// none of the later state)
 	const bool campaignState = !m_buildableOverrides.empty() || m_campaignCarryover.has_value();
-	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_livingWorldTags.inUse() ? 4 : campaignState ? 3 : m_cheatMode.enabled() ? 2 : 1) };
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_rankLevelLimitScripted ? 5 : m_livingWorldTags.inUse() ? 4 : campaignState ? 3 : m_cheatMode.enabled() ? 2 : 1) };
 	x.xferVersion(v);
 	x.xferUnsignedInt(&m_frame);
 	x.xferBool(&m_frameAdvance);
@@ -320,6 +329,30 @@ void GameLogic::xferCore(Xfer &x)
 	else if (x.isLoading())
 	{
 		m_livingWorldTags.clear();
+	}
+	if (v.current >= 5)
+	{
+		bool scripted = x.isLoading() ? false : m_rankLevelLimitScripted;
+		x.xferBool(&scripted);
+		if (scripted)
+		{
+			std::int32_t limit = x.isLoading() ? 0 : m_rankLevelLimit;
+			x.xferInt(&limit);
+			if (x.isLoading() && limit < 1)
+			{
+				throw XferException("the snapshot's rank level limit " + std::to_string(limit));
+			}
+			m_rankLevelLimit = limit;
+			m_rankLevelLimitScripted = true;
+		}
+		else if (x.isLoading())
+		{
+			resetRankLevelLimitFromEconomy();
+		}
+	}
+	else if (x.isLoading())
+	{
+		resetRankLevelLimitFromEconomy();
 	}
 }
 

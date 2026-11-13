@@ -9,8 +9,9 @@
 //   ResourceBonusMultiplier +0xE88 (real)  GoodCommandPointLimit +0xE8C / EvilCommandPointLimit +0xE90 (ints)  PowerLimit +0xE94 (int)  ResourceMultiplierLimit +0xE98 (real)
 //   MultiPlayMoneyMult +0xEC4 (RW 0x642182: `MPn:value` tokens, n = 1..8, compared with _stricmp, stored at 4 * (n - 1); an index lookup RW 0x642002 reads
 //   [0, 20) and gives 1.0 outside)
-// Not read here (campaign / Living World, M9): StartingCashRTS and the regions' resource bonuses; the Good/Evil CommandPointLimit / PowerLimit /
-// ResourceMultiplierLimit / ResourceBonusMultiplier values are loaded (they are GameData) but nothing in the skirmish game consumes them.
+// Not read here (campaign / Living World, M9): StartingCashRTS and the regions' resource bonuses; PowerLimit (+0xE94, row RW 0xC00C00) is copied into
+// GameLogic + 0x118 at RW 0x631420 .. 0x631436 (GameLogic::initRankLevelLimit, PORT-43); the Good/Evil CommandPointLimit / ResourceMultiplierLimit /
+// ResourceBonusMultiplier values are loaded (they are GameData) and nothing in the skirmish game consumes them.
 //
 // EconomyContext is what RW keeps in GameLogic (+0x110 game mode, +0x114 kind, +0x98 keep score) and TheGameInfo (+0x6C lobby percentage):
 //   * gameMode (+0x110): 1 LAN, 2 SKIRMISH, 5 INTERNET (RW 0x441B7C / 0x625456 read it); the multiplayer-money and command-point rules apply to those three;
