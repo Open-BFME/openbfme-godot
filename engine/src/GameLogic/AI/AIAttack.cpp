@@ -832,7 +832,7 @@ StateReturnType AIAttackAimState::aim(bool firstCall)
 		bool contact = false;
 		if (wt && (victim->isKindOf((unsigned)kWallTop) || victim->isKindOf((unsigned)kBlockingGate)) && wt->m_meleeWeapon)
 		{
-			contact = ObjectGeometry::worldspaceBestContactPoint(*victim, *self.getPosition(), "Ram", false, target);
+			contact = ObjectGeometry::worldspaceBestContactPoint(*victim, *self.getPosition(), "Ram", 0, false, target);
 		}
 		if (!victim->isKindOf((unsigned)kWallUpgrade) && !contact)
 		{
