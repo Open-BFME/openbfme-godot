@@ -170,38 +170,24 @@ GiantBirdAIUpdate *birdOf(Object *o)
 	return o ? dynamic_cast<GiantBirdAIUpdate *>(o->getAIUpdateInterface()) : nullptr;
 }
 
-// RW 0x690BD2 with no label, mode 1 and a seed (the geometry's random contact point): stop S-362's approximation (the geometry centre), the seed drawn
-Coord3D seededContactPoint(Object &victim, int line)
-{
-	GameLogic &logic = victim.logic();
-	(void)logic.random().getValue(0, 12345678, kGiantBirdCpp, line); // GetGameLogicRandomValue(0, 0xBC614E)
-	Coord3D aim = *victim.getPosition();
-	aim.z = SimMath::addf32(aim.z, SimMath::mulf32(CombatQueries::geometry(victim).height, 0.5f));
-	return aim;
-}
-
-// the victim's contact point of the swoop / attack states: the AI's labelled point (RW 0x667C76), else the seeded one (RW 0x690BD2 at `line`)
+// the victim's contact point of the swoop / attack states: the AI's labelled point (RW 0x667C76), else Object::getWorldspaceBestContactPoint with no label, mode 1
+// and a logic-random seed (RW 0x690BD2 -> GeometryInfo::getBestContactPoint RW 0xAD3340: the target's highest GeometryContactPoint, z clamped to its geometry height,
+// back to the world). RW 0x76B711 .. 0x76B721 is the attack state's fallback: push 0 (no skip), push 0x37B (the seed), push 0xC2E120 (the file name), push 0xBC614E
+// (the top of GetGameLogicRandomValue's range) and call; the swoop's on-enter (line 0x254) and update (line 0x294) reach the same call. The seed value is drawn and
+// dropped exactly as RW does, so the logic random stays in step.
 // RW 0x667C76 with `preferred` false runs GeometryInfo::getBestContactPoint's overlap test (RW 0xAD2CE0: the target's shapes against the static point geometry
-// RW 0xDF1EA8 at the label's point; ported by lane AIMAIM-1). A logic error left (another mode, S-1281) makes the bird take the seeded contact point, as RW
-// does for a target without the label, and the world's report carries S-1281
+// RW 0xDF1EA8 at the label's point; ported by lane AIMAIM-1).
 Coord3D contactPointOn(AIUpdateInterface &ai, Object &victim, int line)
 {
 	Coord3D pos;
-	bool found = false;
-	try
-	{
-		found = ai.findNearestLabeledContactPointOnTarget(victim, pos, *ai.getObject()->getPosition(), false);
-	}
-	catch (const std::logic_error &)
-	{
-		static const std::string stop = "[S-1281] GiantBirdAIUpdate: the labelled contact point (SpecialContactPoints, RW 0x667C76) asked a getBestContactPoint "
-		                                "mode that is not ported: the seeded contact point is used";
-		ai.world().noteStop(stop.c_str());
-		found = false;
-	}
+	bool found = ai.findNearestLabeledContactPointOnTarget(victim, pos, *ai.getObject()->getPosition(), false);
 	if (!found)
 	{
-		pos = seededContactPoint(victim, line);
+		(void)victim.logic().random().getValue(0, 12345678, kGiantBirdCpp, line); // GetGameLogicRandomValue(0, 0xBC614E), RW 0x76B721
+		if (!ObjectGeometry::worldspaceBestContactPoint(victim, *ai.getObject()->getPosition(), "", 1, false, pos))
+		{
+			pos = *victim.getPosition(); // unreachable: mode 1 answers true (RW 0xAD3373 `mov al, 1`)
+		}
 	}
 	return pos;
 }
