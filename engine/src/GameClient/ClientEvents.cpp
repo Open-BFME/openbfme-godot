@@ -114,6 +114,20 @@ void ClientEventRecorder::fadeOut(Object &obj, UnsignedInt frames)
 	e.fadeFrames = frames;
 }
 
+void ClientEventRecorder::setShadowsEnabled(Object &obj, bool enabled)
+{
+	ClientEvent &e = push(ClientEvent::SET_SHADOWS, obj);
+	e.shadowsOn = enabled;
+}
+
+// lane PORT-46 (RW 0x8B11F0 / 0x8B44F0, reset by RW 0x8B1219 / 0x8B125F): the ability module's opacity for this frame -> Drawable::setDrawableOpacity
+// (drawable + 0xB0). Retail writes the drawable directly from the logic frame; the port's client applies the event on its own thread (INFERENCE, S-810)
+void ClientEventRecorder::setDrawableOpacity(Object &obj, float opacity)
+{
+	ClientEvent &e = push(ClientEvent::SET_OPACITY, obj);
+	e.opacity = opacity;
+}
+
 void ClientEventRecorder::setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2)
 {
 	ClientEvent &e = push(ClientEvent::CUSTOM_COLORS, obj);

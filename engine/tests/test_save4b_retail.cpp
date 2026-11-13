@@ -383,16 +383,18 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 	// object again; no AutoHealBehavior or RepairSpecialPower object (109)
 	// Merge queue q49 (DECOMPFIX-1109's FLEECHASE-1, the chase of a fleeing target goes on, moves the AIs' play; measured once on the merged tree, the only
 	// item): no CommandButtonHuntUpdate or HordeDispatchSpecialPower object; an AutoHealBehavior and RepairSpecialPower object (109)
+	// Merge queue q52 (#294's SlaughterHordeContain under the citadels moves the 4-AI play; measured once on the merged tree and at #294 / #295's merge
+	// point, #297 and #298 keep it): a HordeDispatchSpecialPower object again; no AutoHealBehavior object (109)
 	CHECK(classes == std::set<std::string>{
 		"AISpecialPowerUpdate", "ActiveBody", "ArmorUpgrade", "ArrowStormUpdate", "AttributeModifierAuraUpdate", "AttributeModifierPoolUpdate",
-		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoHealBehavior", "AutoPickUpUpdate",
+		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoPickUpUpdate",
 		"BannerCarrierUpdate", "BezierProjectileBehavior", "BloodthirstyUpdate", "BoredUpdate", "BuildableHeroListUpgrade", "BuildingBehavior",
 		"CastleBehavior", "CastleMemberBehavior", "CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower",
 		"CommandPointsUpgrade", "CommandSetUpgrade", "CostModifierUpgrade", "CreateObjectDie", "CritterEmitterUpdate", "DamageFilteredCreateObjectDie",
 		"DarknessSpecialPower", "DefectionHelper", "DelayedDeathBody", "DestroyDie", "DevastateSpecialPower", "DoCommandUpgrade", "DualWeaponBehavior",
 		"ElvenWoodSpecialPower", "EmotionTrackerUpdate", "FXListDie", "FiringTrackerHelper", "FoundationAIUpdate", "FreezingRainSpecialPower",
 		"GeometryUpgrade", "GettingBuiltBehavior", "GiveUpgradeUpdate", "GrabPassengerSpecialPower", "GrantUpgradeCreate", "GuardingHelper",
-		"HighlanderBody", "HitReactionBehavior", "HordeContain", "HordeMemberCollide",
+		"HighlanderBody", "HitReactionBehavior", "HordeContain", "HordeDispatchSpecialPower", "HordeMemberCollide",
 		"ImmortalBody", "InactiveBody", "InvisibilityUpdate", "KeepObjectDie",
 		"LargeGroupAudioUpdate", "LargeGroupBonusUpdate", "LevelUpUpgrade", "LifetimeUpdate", "ModelConditionUpgrade", "MonitorConditionUpdate",
 		"OCLSpecialPower", "ObjectCreationUpgrade", "PassiveAreaEffectBehavior", "PhysicsBehavior", "PickupStuffUpdate", "PlayerHealSpecialPower",

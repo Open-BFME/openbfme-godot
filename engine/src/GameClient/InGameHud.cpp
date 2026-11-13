@@ -656,6 +656,15 @@ void InGameHud::update(double seconds)
 		local.rankLabelFormat = loadScreenU16ToUtf8(fetchOrMissing(m_config.gameText, "APT:RankLabel"));
 		local.timeRemainingText = loadScreenU16ToUtf8(fetchOrMissing(m_config.gameText, "APT:PalantirTimeRemaining"));
 	}
+	// RW 0x930970: feed the existing Palantir update the context object's cost section.
+	const auto cost = PalantirCommandUI::costModifierInfo(m_input->context(), local.contextObject);
+	local.costVisible = cost.visible;
+	local.costUpgradeDiscount = cost.upgradeDiscount;
+	local.costAmount = cost.amount;
+	if (cost.visible) // RW 0x92FCD9
+	{
+		local.costLabelFormat = loadScreenU16ToUtf8(fetchOrMissing(m_config.gameText, cost.label));
+	}
 	m_palantirRef->setLocalState(local);
 	updateHud6(local.contextObject, local.faction, seconds); // lane HUD-6: the side bar's gate, the radial bubbles, the help box (InGameHudHud6.cpp)
 	m_palantirRef->sync(*m_bar);
