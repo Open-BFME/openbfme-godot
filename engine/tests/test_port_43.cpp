@@ -131,7 +131,7 @@ TEST_CASE("PORT-43: GameData PowerLimit populates GameLogic + 0x118 in skirmish 
 	CHECK_FALSE(logic.isRankLevelLimitScripted());
 }
 
-TEST_CASE("PORT-43: script action 279 PLAYER_SET_RANKLEVELLIMIT writes GameLogic + 0x118 clamped to >= 1, hashes, and round-trips in obfme:GameLogic v6 "
+TEST_CASE("PORT-43: script action 279 PLAYER_SET_RANKLEVELLIMIT writes GameLogic + 0x118 clamped to >= 1, hashes, and round-trips in obfme:GameLogic v5 "
 		  "(RW 0x7CE020 -> 0x7BD1A8 -> 0x7BB04E, RW 0x630D6F)")
 {
 	using namespace scripttest;
@@ -171,10 +171,10 @@ TEST_CASE("PORT-43: script action 279 PLAYER_SET_RANKLEVELLIMIT writes GameLogic
 	const std::uint32_t hash42 = g.lw.logic->computeStateHash();
 	CHECK(hash42 != hash1);
 
-	// Full snapshot save/load round-trip preserves scripted limit (v6) and exact state hash.
+	// Full snapshot save/load round-trip preserves scripted limit (v5) and exact state hash.
 	std::vector<std::uint8_t> fullSnap;
 	REQUIRE_MESSAGE(g.lw.logic->saveSnapshot(fullSnap, &err), err);
-	CHECK(gameLogicBlockVersion(fullSnap) == 6);
+	CHECK(gameLogicBlockVersion(fullSnap) == 5);
 
 	ScriptGame loader;
 	REQUIRE_MESSAGE(EconomySettings::scan(econtest::kGameData, loader.lw.logic->economy().settings(), &err), err);
@@ -195,18 +195,18 @@ TEST_CASE("PORT-43: script action 279 PLAYER_SET_RANKLEVELLIMIT writes GameLogic
 	CHECK_FALSE(loader.lw.logic->isRankLevelLimitScripted());
 	CHECK(loader.lw.logic->getRankLevelLimit() == 60);
 
-	// Corrupting the saved int32 limit at the tail of a v6 obfme:GameLogic core stream to 0 is rejected by XferException.
-	std::vector<std::uint8_t> v6Core;
-	g.lw.logic->gameState().saveBlocks(kCoreBlocks, v6Core);
-	REQUIRE(gameLogicBlockVersion(v6Core) == 6);
+	// Corrupting the saved int32 limit at the tail of a v5 obfme:GameLogic core stream to 0 is rejected by XferException.
+	std::vector<std::uint8_t> v5Core;
+	g.lw.logic->gameState().saveBlocks(kCoreBlocks, v5Core);
+	REQUIRE(gameLogicBlockVersion(v5Core) == 5);
 	const std::string randToken = "obfme:Random";
-	auto randAt = std::search(v6Core.begin(), v6Core.end(), randToken.begin(), randToken.end());
-	REQUIRE(randAt != v6Core.end());
+	auto randAt = std::search(v5Core.begin(), v5Core.end(), randToken.begin(), randToken.end());
+	REQUIRE(randAt != v5Core.end());
 	// Immediately before obfme:Random's 1-byte length prefix sit the 4 little-endian bytes of m_rankLevelLimit (42).
-	const size_t limitOffset = (size_t)(randAt - v6Core.begin()) - 1 - 4;
-	REQUIRE(v6Core[limitOffset] == 42);
-	v6Core[limitOffset] = 0;
-	CHECK_THROWS_AS(loader.lw.logic->gameState().loadBlocks(kCoreBlocks, v6Core), XferException);
+	const size_t limitOffset = (size_t)(randAt - v5Core.begin()) - 1 - 4;
+	REQUIRE(v5Core[limitOffset] == 42);
+	v5Core[limitOffset] = 0;
+	CHECK_THROWS_AS(loader.lw.logic->gameState().loadBlocks(kCoreBlocks, v5Core), XferException);
 }
 
 TEST_CASE("PORT-43 retail: LiveGame skirmish load copies gamedata.ini PowerLimit (60) into GameLogic + 0x118 (RW 0x6311ED)")
