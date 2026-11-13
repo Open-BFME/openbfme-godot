@@ -59,6 +59,7 @@
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
 #include "GameLogic/Module/SiegeModules.h"
 #include "GameLogic/Module/PickupStuffUpdate.h"
+#include "GameLogic/Module/ThreatFinderUpdate.h" // PORT 17 (issue #73)
 #include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/BoredUpdate.h"
 
@@ -130,6 +131,8 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	SpawnBehavior::registerClass(modules); // lane MOD-4: the lairs' spawns
 	TransitionDamageFXModule::registerClass(modules); // lane FX-4: the damage state transition effects (S-686)
 	SlavedUpdate::registerClass(modules); // lane MOD-4: the spawns' guard
+	// PORT 17 (issue #73): the map's named threat areas (RW 0x65A133); slot 45 RW 0x7EDECE, update RW 0x7EDDB6
+	ThreatFinderUpdate::registerModule(modules);
 	PickupStuffUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: a skirmish AI's hordes walk to the crates near them (S-1422)
 	AutoPickUpUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: the monsters' grab / eat scans and the WAKE_AUTO_PICKUP button (S-7160)
 	BoredUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: an idle troll clubs a troll friend (S-7161)

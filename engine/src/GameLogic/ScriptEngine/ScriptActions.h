@@ -52,6 +52,9 @@ public:
 	static bool executeCampaignAction(ScriptEngine &engine, const ScriptActionRec &a, const std::string &name);
 	// lane SIEGE-1 (ScriptActionsSiege.cpp): the siege engines' deploy / retract actions; false when `name` is not one of them
 	static bool executeSiegeAction(ScriptEngine &engine, const ScriptActionRec &a, const std::string &name);
+	// PORT 17 (issue #73): SET_COUNTER_TO_THREAT_FINDER_THREAT (case 556, RW 0x7C68AA): a counter takes the threat of a named threat area for one
+	// player and one relationship (ScriptActionsThreatFinder.cpp); false when `name` is not it
+	static bool executeThreatFinderAction(ScriptEngine &engine, const ScriptActionRec &a, const std::string &name);
 	// lane SIEGE-1: the condition IS_SEIGE_ATTACHED_TO_WALL (RW 0x7E5760): the named unit's siege deploy is deployed
 	static bool isSiegeAttachedToWall(ScriptEngine &engine, const std::string &unitName);
 	// lane CAMP-1: the stops of the campaign script ports (S-1363, S-1365; lane CAMP-1H: S-1712)

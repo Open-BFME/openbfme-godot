@@ -28,7 +28,8 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Combat/ObjectWeapons.h" // lane PERF-WS: the final list's weapon status conditions on the pool
 #include "GameLogic/Map/TerrainLogic.h"
-#include "GameLogic/Map/TerrainTrees.h"
+#include "GameLogic/Map/TerrainTrees.h" 
+#include "GameLogic/System/ThreatFinder.h" // PORT 17
 #include "GameLogic/Module/ObjectHelper.h"
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Module/UnportedModule.h"
@@ -71,6 +72,7 @@ GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &p
 	, m_invisibility(std::make_unique<InvisibilityManager>(*this))
 	, m_dot(std::make_unique<DOTManager>(*this)) // lane DECOMP-1
 	, m_trees(std::make_unique<TerrainTrees>(*this)) // lane SPELL-3
+	, m_threatFinders(std::make_unique<ThreatFinderManager>()) // PORT 17: RW 0xDE8888
 	, m_scriptEngine(std::make_unique<ScriptEngine>(*this)) // lane SCRIPT-1
 {
 	buildPhaseWorkTable();
@@ -1102,6 +1104,7 @@ void GameLogic::reset()
 	m_invisibility->reset();
 	m_dot->reset(); // lane DECOMP-1
 	m_trees->reset(); // lane SPELL-3
+	m_threatFinders->reset(); // PORT 17: the map's named threat areas go with their objects
 	m_scriptEngine->reset(); // lane SCRIPT-1
 }
 
