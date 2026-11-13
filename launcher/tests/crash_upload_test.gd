@@ -5,6 +5,7 @@ extends SceneTree
 
 const LauncherCrash := preload("res://scripts/core/launcher_crash.gd")
 const CrashClient := preload("res://scripts/net/crash_client.gd")
+const CrashDialog := preload("res://scripts/ui/crash_dialog.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
 
 var checks := 0
@@ -105,3 +106,22 @@ func _upload(r: Dictionary) -> void:
 	var client := LauncherCrash.upload(root)
 	var summary: Dictionary = await client.finished
 	check(summary.sent.size() == 1 and summary.error.is_empty() and CrashClient.queued(LauncherCrash.QUEUE).is_empty(), "sent: %s" % [summary])
+	# lane CRASHDIALOG-1: the same report through the dialog, in the launcher's words
+	var words := LauncherCrash.dialog_words()
+	for word in CrashDialog.required_strings():
+		check(words.has(word) and not str(words[word]).is_empty(), "the launcher has the dialog's word %s" % word)
+	var closed := [false]
+	var dialog: Control = CrashDialog.new()
+	dialog.setup({"strings": words, "data": r.data, "json": r.json, "wire": r.wire, "queue": LauncherCrash.QUEUE, "install_id": LauncherCrash.INSTALL_ID,
+		"client": CrashClient, "automatic": true, "on_close": func() -> void: closed[0] = true})
+	root.add_child(dialog)
+	dialog.start()
+	for i in 300:
+		await create_timer(0.1).timeout
+		if dialog.state != CrashDialog.State.SENDING:
+			break
+	check(dialog.state == CrashDialog.State.SENT and dialog.reference.length() == 24, "the dialog sent it: %d %s" % [dialog.state, dialog.error_text])
+	check(CrashClient.queued(LauncherCrash.QUEUE).is_empty(), "nothing stays queued")
+	dialog._close.pressed.emit()
+	check(closed[0], "Close closes")
+	dialog.queue_free()

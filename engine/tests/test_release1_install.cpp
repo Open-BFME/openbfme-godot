@@ -6,6 +6,7 @@
 #include "doctest.h"
 
 #include "Common/InstallLocator.h"
+#include "Common/WindowsCrashDump.h"
 #include "PeImage.h"
 #include "RetailTestMount.h"
 
@@ -115,6 +116,16 @@ std::string wideAt(const retailtest::PeImage &pe, std::uint32_t va)
 }
 
 } // namespace
+
+TEST_CASE("crashdialog1: the crash dialog's command line quotes the program and spaced arguments, and names the crashed process last")
+{
+	const std::wstring packaged = WindowsCrashDump::crashDialogCommandLine(L"C:\\Program Files\\OpenBFME.exe", {}, 4896);
+	CHECK((packaged == L"\"C:\\Program Files\\OpenBFME.exe\" --windowed --resolution 720x600 "
+		L"--rendering-method gl_compatibility --rendering-driver opengl3 --audio-driver Dummy -- --crash-report=4896"));
+	const std::wstring editor = WindowsCrashDump::crashDialogCommandLine(L"g.exe", {L"--path", L"C:\\my games\\godot"}, 7);
+	CHECK((editor.rfind(L"\"g.exe\" --path \"C:\\my games\\godot\" --windowed ", 0) == 0));
+	CHECK((editor.substr(editor.size() - 17) == L" --crash-report=7"));
+}
 
 TEST_CASE("release1: Wine registry values (escapes, sections, str(2), case)")
 {

@@ -15,6 +15,7 @@ const MARKER := "user://launcher.running"
 const QUEUE := "user://crash-queue"
 const INSTALL_ID := "user://crash-install-id"
 const OPTION := "OpenBFMECrashReports"
+const L10n := preload("res://scripts/l10n/l10n.gd")
 
 
 static func eligible(packaged: bool) -> bool:
@@ -75,6 +76,52 @@ static func report(previous: Dictionary, log_path: String = "") -> Dictionary:
 		"header": ["OpenBFME crash report: the launcher, %s, build %s" % [OS.get_name(), version], "its last lines of launcher.log follow"],
 	}
 	return CrashClient.build(facts, mine, Callable(Log, "scrub"))
+
+
+## lane CRASHDIALOG-1: the crash dialog's words (scripts/ui/crash_dialog.gd)
+static func dialog_words() -> Dictionary:
+	return {
+		"title": L10n.t("launcher.crash.dialog.title"),
+		"subtitle": L10n.t("launcher.crash.dialog.subtitle"),
+		"ask_subtitle": L10n.t("launcher.crash.dialog.ask_subtitle"),
+		"what": L10n.t("launcher.crash.dialog.what"),
+		"what_ask": L10n.t("launcher.crash.dialog.what_ask"),
+		"report_section": L10n.t("launcher.crash.dialog.report_section"),
+		"not_included": L10n.t("launcher.crash.dialog.not_included"),
+		"view": L10n.t("launcher.crash.dialog.view"),
+		"hide": L10n.t("launcher.crash.dialog.hide"),
+		"row_version": L10n.t("launcher.crash.dialog.row_version"),
+		"row_pc": L10n.t("launcher.crash.dialog.row_pc"),
+		"row_game": L10n.t("launcher.crash.dialog.row_game"),
+		"row_display": L10n.t("launcher.crash.dialog.row_display"),
+		"row_crash": L10n.t("launcher.crash.dialog.row_crash"),
+		"row_log": L10n.t("launcher.crash.dialog.row_log"),
+		"row_id": L10n.t("launcher.crash.dialog.row_id"),
+		"id_value": L10n.t("launcher.crash.dialog.id_value"),
+		"lines": L10n.t("launcher.crash.dialog.lines"),
+		"log_lines": L10n.t("launcher.crash.dialog.log_lines"),
+		"vsync_on": L10n.t("launcher.crash.dialog.vsync_on"),
+		"vsync_off": L10n.t("launcher.crash.dialog.vsync_off"),
+		"preparing": L10n.t("launcher.crash.dialog.preparing"),
+		"sending": L10n.t("launcher.crash.dialog.sending"),
+		"sent_label": L10n.t("launcher.crash.dialog.sent_label"),
+		"sent_title": L10n.t("launcher.crash.dialog.sent_title"),
+		"sent_subtitle": L10n.t("launcher.crash.dialog.sent_subtitle"),
+		"kept_title": L10n.t("launcher.crash.dialog.kept_title"),
+		"kept_subtitle": L10n.t("launcher.crash.dialog.kept_subtitle"),
+		"refused_title": L10n.t("launcher.crash.dialog.refused_title"),
+		"refused_subtitle": L10n.t("launcher.crash.dialog.refused_subtitle"),
+		"reference": L10n.t("launcher.crash.dialog.reference"),
+		"copy": L10n.t("launcher.crash.dialog.copy"),
+		"copied": L10n.t("launcher.crash.dialog.copied"),
+		"open_logs": L10n.t("launcher.crash.dialog.open_logs"),
+		"dont_send": L10n.t("launcher.crash.dialog.dont_send"),
+		"send": L10n.t("launcher.crash.dialog.send"),
+		"close": L10n.t("launcher.crash.dialog.close"),
+		"retry": L10n.t("launcher.crash.dialog.retry"),
+		"restart": L10n.t("launcher.crash.dialog.restart"),
+		"automatic": L10n.t("launcher.crash.dialog.automatic"),
+	}
 
 
 ## Queues a report. "" or why not (logged)

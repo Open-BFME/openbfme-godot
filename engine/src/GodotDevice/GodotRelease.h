@@ -51,6 +51,7 @@ public:
 	void crash_test() const;
 	void crash_test_worker() const;
 	String install_crash_handler() const;
+	String arm_crash_dialog(const PackedStringArray &extra_arguments) const;
 
 protected:
 	static void _bind_methods();
