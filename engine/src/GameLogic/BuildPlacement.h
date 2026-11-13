@@ -6,15 +6,21 @@
 // castle unpack asks it for every layout entry (RW 0x7987EE calls RW 0x797A96 with the options 5 = CLEAR_PATH | NO_OBJECT_OVERLAP, unless the template is a
 // COMMANDCENTER).
 //
-// TARGET FACTS (RotWK game.dat, S-001 caveat): the call RW 0x7987EE -> 0x797A96(pos, options 5, builder, tmpl, angle, owner) exists; GameData's
-// AllowedHeightVariationForBuilding / SupplyBuildBorder / MaxLineBuildObjects exist in gamedata.ini (10 / 20 / 50). RW 0x797A96 itself was not read.
+// TARGET FACTS (RotWK game.dat, S-001 caveat): the call RW 0x7987EE -> 0x797A96(pos, options 5, builder, tmpl, angle, owner) exists. GameData's
+// AllowedHeightVariationForBuilding / SupplyBuildBorder / MaxLineBuildObjects exist in gamedata.ini (10 / 20 / 50); RotWK also parses
+// MinDistFromEdgeOfMapForBuild (GlobalData +0xA68) and checks every footprint sample against the active playable boundary (RW 0x794BF2..0x794C5A;
+// equality allowed). Clean BFME2 1.06 keeps the same rows: its data/ini/gamedata.ini (ini.big) reads MinDistFromEdgeOfMapForBuild = 30.0,
+// SupplyBuildBorder = 20.0, AllowedHeightVariationForBuilding = 10.0, MaxLineBuildObjects = 50, so both editions load all four and neither loses
+// buildRulesLoaded to this port (BFME1 data is not on the measuring host: a file without the row is a named error, never a silent zero).
 // DONOR (ZH, followed): the order of the checks (extent, shroud, object overlap, enemy overlap, supply border, clear path, terrain restrictions); object overlap
 // ignores removable-for-construction objects, mines and inert objects, an IMMOBILE object blocks, a mobile enemy of the builder blocks (friends move away);
 // terrain restrictions sample the footprint at 3 * cell and at 1 * cell size, refuse cliff cells and water and a ground height spread above the GameData value.
-// INFERENCE (stop S-301): the footprint is the template's Geometry (BOX with its radii, CYLINDER / SPHERE a disc) tested as oriented rectangles / circles in 2D; the
-// shroud (VIS-1), the supply source border, the clear-path test (needs the builder's pathfinding query), the factory exit width / extra bib checks and
-// the cleared-by-build objects are not ported: the options that need them are refused with an error (never silently passed) in the first three cases and
-// counted in `unportedChecks()`.
+// TARGET (RotWK): CANNOT_BUILD_NEAR_SUPPLIES searches the closest SUPPLY_SOURCE, expands its geometry by SupplyBuildBorder, and returns
+// LBC_TOO_CLOSE_TO_SUPPLIES on overlap before the DOZER clear-path gate (RW 0x796942..0x796A3C); sample type-4 obstacles also reject a missing object or
+// an INERT template (+0x113 & 2, KindOf 89; RW 0x794AE2..0x794B21); HERO is +0x113 & 4 and does not trigger that branch, contrary to the issue prose.
+// INFERENCE / stop S-301: template Geometry (BOX with its radii, CYLINDER / SPHERE a disc) is tested in 2D; shroud (VIS-1), the clear-path query, factory
+// exit width / extra bib checks, cleared-by-build objects and the WALL_SEGMENT sample layer (RW 0x680B70, taken as the ground: S-161) remain unported. The preview's PortSnapView carries only
+// immutable settings/boundary data; it deliberately does not read live pathfinder cells or objects while the logic worker runs.
 //
 // Simulation maths goes through SimMath.
 
@@ -67,7 +73,7 @@ struct Footprint
 {
 	int type = 0; // 0 box, 1 sphere, 2 cylinder (PathfindGeometryType)
 	float major = 0.0f, minor = 0.0f;
-	float x = 0.0f, y = 0.0f, angle = 0.0f;
+	float x = 0.0f, y = 0.0f, z = 0.0f, angle = 0.0f; // z is the shape-offset sample height for the retail layer lookup
 };
 bool footprintsCollide(const Footprint &a, const Footprint &b);
 // the footprints of a template at a place: one per ACTIVE shape of its geometry, at the shape's offset turned by `angle` (RW 0xAD14F0; lane PATH-2, S-341: the
@@ -80,14 +86,18 @@ const char *codeName(LegalBuildCode code);
 // lane BUILD-5: RotWK BuildAssistant::getPortTransform (RW 0x794C63): a PORT's site snapped to the shore and turned to face the water; false when the
 // footprint does not straddle water and land (the caller keeps its site)
 bool getPortTransform(GameLogic &logic, const Coord3D &pos, const ThingTemplate &build, float angle, float &outAngle, Coord3D &outPos);
-// lane BUILD-5 r3: getPortTransform split for the render thread. portSnapView reads the logic's lazily filled caches (AIWorld::movementInfo), so it runs
-// with the logic idle; getPortTransform(view, ...) then reads only the view's shapes and the terrain view, whose height map, cliff plane and standing water
-// areas are fixed after the map load, so the ghost can snap on a frame the logic worker runs
+// lane BUILD-5 r3 / PORT-12: getPortTransform split for the render thread. portSnapView copies the settings, active-boundary extent and lazily filled
+// movement geometry while the logic is idle; getPortTransform(view, ...) then reads only that snapshot and the fixed terrain view. In particular, it must
+// never query live PathfindCell/object state: the preview can run while the logic worker is busy.
 struct PortSnapView
 {
 	const PathfindTerrain *terrain = nullptr;
 	std::vector<PathfindShape> shapes;
 	bool hasGeometry = false;
+	bool buildRulesLoaded = false;
+	float minDistFromEdgeOfMapForBuild = 0.0f;
+	bool hasPlayableExtent = false;
+	float playableMaxX = 0.0f, playableMaxY = 0.0f; // active boundary 0; the active-boundary selector remains S-921
 };
 bool portSnapView(GameLogic &logic, const ThingTemplate &build, PortSnapView &out);
 bool getPortTransform(const PortSnapView &view, const Coord3D &pos, float angle, float &outAngle, Coord3D &outPos);

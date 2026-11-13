@@ -35,6 +35,19 @@
 //     centre over its live members (RW 0x7A02E1), once; up to the count: over the source prototype's teams, newest first (prototype + 0x334), their
 //     members in order: of the type (RW 0x73D5C2, or the list, RW 0x778EA0), not DISABLED_HELD (+ 0x1C8 bit 3), recruitable (AI + 0x3BE): the nearest by
 //     the squared 2D distance, a tie going to the later one (<=); it joins the destination (Object::setTeam RW 0x69954A).
+//   * TEAM_RECRUIT_UNITS (397) RW 0x7C2BFB (the case RW 0x7CEAF2 .. 0x7CEB1E) -> Team RW 0x7A491C: params 0 team (RW 0x759FDA, found only), 1 count
+//     (int), 2 unit type (a template RW 0x6D1305 or an object list RW 0x759158). The radius (RW 0x7C2C47 -> RW 0x7A0956(0) over the team's members):
+//     with a live member it is AIData MaxRecruitRadius ([TheGameLogic 0xDE4B40] + 0x18 + 0x5C, read RW 0x7C2C5B), without one the constant 1000000.0
+//     (RW 0xBDCDC0, read RW 0x7C2C60). The worker itself (RW 0x7A491C): the destination's centre over its live members (RW 0x7A02E1) and the radius
+//     squared, both once; up to the count: over EVERY object (RW 0x97338F of RW 0xDE412C, the next + 0x8C): controlled by the destination's player
+//     (RW 0x79FD6F / RW 0x68B678), of the type (RW 0x73D5C2, or the filter's name list RW 0x7A407A, or the object list RW 0x778EA0), in another team,
+//     whose team is active (+ 0x5D) and its prototype's teamProductionPriority (+ 0x21C, RW 0x7A383A) below the destination's prototype's (RW 0x7A4A00
+//     jge skips), recruitable (RW 0x7A49D4: a member of its player's default team (+ 0x30C); else the prototype's teamIsAIRecruitable, + 0x210,
+//     RW 0x7A35EA; else the team's override + 0x110 / + 0x111) and not DISABLED_HELD (+ 0x1C8 bit 3; the AI's recruitable + 0x3BE, read as true,
+//     S-1186): the nearest by the squared 2D distance (a tie goes to the later, `comiss` + `ja`), it joins the team (setTeam RW 0x69954A) and the scan
+//     restarts with the radius squared again.
+//   * TEAM_AVAILABLE_FOR_RECRUITMENT (94) RW 0x7C0C3E / TEAM_SET_AI_RECRUITABLE_FLAG (566) RW 0x7C199C (cases RW 0x7CC9A8 / RW 0x7CDE2B): the team,
+//     then + 0x110 = 1 and + 0x111 = the bool parameter (the per-team recruitable override the gate above reads).
 //   * SET_UNIT_REFERENCE (376) RW 0x7C2AAC(ref, unit, 0): the unit (RW 0x75A3D8); the side's reference map (RW 0x608397) and the named cache (RW 0x60A1D5).
 //     SET_UNIT_REFERENCE_TO_REFERENCE (378) is RW 0x7C2AAC(ref, source, 1) -> RW 0x608504 (ScriptActionsUnits.cpp, lane MODCOMPAT-AI).
 //   * TEAM_GARRISON_SPECIFIC_BUILDING (106) / _INSTANTLY (570) RW 0x7C7091 (BFME2 ScriptActions_garrison.cpp): the team, the named building with a contain
@@ -218,6 +231,21 @@ std::vector<ObjectID> idsOf(const std::vector<Object *> &objects)
 		ids.push_back(o->getID());
 	}
 	return ids;
+}
+
+// RW 0x7A0956(0): a member that is alive, not DESTROYED (+ 0x94 bit 0), not PROJECTILE / INERT / IGNORE_FOR_VICTORY (the same member filter as
+// ScriptConditions.cpp's copy of this helper)
+bool teamHasAnyUnits(const Team &t)
+{
+	for (const Object *o = t.getFirstMember(); o; o = o->friend_teamNext())
+	{
+		if (!o->isEffectivelyDead() && !o->isDestroyed() && !isKindOfName(*o, "PROJECTILE") && !isKindOfName(*o, "INERT") &&
+			!isKindOfName(*o, "IGNORE_FOR_VICTORY"))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 // RW 0x7A02E1: the mean position of the live members (not dead, not destroyed); (0, 0, 0) without one
@@ -561,6 +589,104 @@ bool ScriptActions::executeOrderAction(ScriptEngine &engine, const ScriptActionR
 		{
 			AIGroup group(logic, idsOf(teamAIGroup(*t)));
 			group.groupMoveToPosition(*best->getPosition(), false, CMD_FROM_SCRIPT); // RW 0x774897
+		}
+		return true;
+	}
+	if (name == "TEAM_RECRUIT_UNITS")
+	{
+		Team *dst = ScriptConditions::team(engine, param(a, 0).stringValue); // RW 0x7C2BFB -> RW 0x759FDA: found only, never created
+		if (!dst || !dst->getPrototype())
+		{
+			return true;
+		}
+		const Player *owner = dst->getControllingPlayer(); // RW 0x79FD6F
+		const ThingTemplate *tt = logic.things().findTemplate(param(a, 2).stringValue);         // RW 0x6D1305 (null when the type names no template)
+		const std::vector<std::string> *list = engine.findObjectList(param(a, 2).stringValue);  // RW 0x759158
+		const Coord3D home = teamCentreLiving(*dst);                                            // RW 0x7A02E1, once
+		// RW 0x7C2C47 -> RW 0x7A0956(0): a team with a live member recruits within AIData MaxRecruitRadius (+ 0x5C, RW 0x7C2C5B); a team without
+		// one takes the constant 1000000.0 (RW 0xBDCDC0, RW 0x7C2C60): the whole map
+		const float radius = teamHasAnyUnits(*dst) ? logic.settings().maxRecruitRadius : 1000000.0f;
+		const float reach = SimMath::sseMul(radius, radius); // RW 0x7A4933 / RW 0x7A4939 (mulss), once
+		const std::int32_t maxCount = param(a, 1).intValue;
+		for (std::int32_t count = 0; count < maxCount; ++count) // RW 0x7A491C
+		{
+			Object *best = nullptr;
+			float bestD = reach; // the first pass: the radius squared (RW 0x7A4943), then the running best, restored per recruit (RW 0x7A4A99)
+			for (Object *o = logic.getFirstObject(); o; o = o->getNextObject()) // RW 0x97338F (RW 0xDE412C), the next + 0x8C
+			{
+				if (o->getControllingPlayer() != owner) // RW 0x68B678, the candidate keeps its own player's objects
+				{
+					continue;
+				}
+				bool match = tt && ScriptConditions::equivalentTemplates(o->getTemplate(), tt); // RW 0x73D5C2, or the name list RW 0x7A407A
+				if (!match && list && o->getTemplate())
+				{
+					for (const std::string &n : *list)
+					{
+						if (n == o->getTemplate()->getName()) // RW 0x778EA0
+						{
+							match = true;
+							break;
+						}
+					}
+				}
+				if (!match)
+				{
+					continue;
+				}
+				Team *cur = o->getTeam(); // RW 0x7A49CC: the object + 0x31C
+				// RW 0x7A49DE (the team itself) / RW 0x7A49E7 (+ 0x5D, active). Retail reads those fields without a null test; this Object's team may be
+				// null (an object created without one), so the null case skips here where retail would not have one at all
+				if (cur == nullptr || cur == dst || !cur->isActive() || cur->getPrototype() == nullptr)
+				{
+					continue;
+				}
+				// RW 0x7A49F1 .. 0x7A4A06: recruited only into a strictly higher teamProductionPriority (TeamTemplateInfo + 0xF0 <-> prototype + 0x21C)
+				if (cur->getPrototype()->teamProductionPriority() >= dst->getPrototype()->teamProductionPriority())
+				{
+					continue;
+				}
+				bool recruitable = cur == owner->getDefaultTeam(); // RW 0x7A49D4: player + 0x30C
+				recruitable = recruitable || cur->getPrototype()->teamIsAIRecruitable(); // RW 0x7A4A08: prototype + 0x210
+				if (cur->hasAIRecruitableOverride()) // RW 0x7A4A13 .. 0x7A4A22: team + 0x110 / + 0x111
+				{
+					recruitable = cur->aiRecruitableOverride();
+				}
+				if (!recruitable || (o->getDisabledMask() & (1u << 3)) != 0) // the override / DISABLED_HELD (+ 0x1C8 bit 3); the AI's flag (+ 0x3BE) is read as true, S-1186
+				{
+					continue;
+				}
+				const float dx = SimMath::sseSub(home.x, o->getPosition()->x);
+				const float dy = SimMath::sseSub(home.y, o->getPosition()->y);
+				const float d = SimMath::sseAdd(SimMath::sseMul(dx, dx), SimMath::sseMul(dy, dy)); // RW 0x7A4A42 .. 0x7A4A65
+				if (d > bestD) // RW 0x7A4A65: comiss + ja — a candidate beyond the running best (the radius squared at first) is skipped; a tie goes to the later one
+				{
+					continue;
+				}
+				bestD = d;
+				best = o;
+			}
+			if (!best)
+			{
+				break;
+			}
+			best->setTeam(dst); // RW 0x69954A
+		}
+		return true;
+	}
+	if (name == "TEAM_AVAILABLE_FOR_RECRUITMENT") // RW 0x7C0C3E (the case RW 0x7CC9A8): team + 0x110 = 1, + 0x111 = the bool parameter
+	{
+		if (Team *t = ScriptConditions::team(engine, param(a, 0).stringValue)) // RW 0x759FDA
+		{
+			t->setAIRecruitableOverride(param(a, 1).intValue != 0);
+		}
+		return true;
+	}
+	if (name == "TEAM_SET_AI_RECRUITABLE_FLAG") // RW 0x7C199C (the case RW 0x7CDE2B): as above
+	{
+		if (Team *t = ScriptConditions::team(engine, param(a, 0).stringValue)) // RW 0x759FDA
+		{
+			t->setAIRecruitableOverride(param(a, 1).intValue != 0);
 		}
 		return true;
 	}

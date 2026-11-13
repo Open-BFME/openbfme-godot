@@ -118,21 +118,15 @@ bool AICommands::move(GameLogic &logic, const GameMessage &m)
 			}
 			return true;
 		}
-		group.groupMoveToPosition(dest->location, false, CMD_FROM_PLAYER, false, 0.0f, type == MSG_DO_ATTACKMOVETO);
 		if (type == MSG_DO_ATTACKMOVETO)
 		{
-			// ZH groupAttackMoveToPosition (lane COMBAT-1, stop S-328): every unit marches to its own goal and attacks what it meets on the way
-			for (Object *o : group.members())
-			{
-				if (AIUpdateInterface *ai = o->getAIUpdateInterface())
-				{
-					ai->armAttackMove(ai->stateMachine().goalPosition());
-				}
-			}
+			// lane PORT-13: RW 0x77AAE6 -> AIGroup::groupAttackMoveToPosition (RW 0x774E2F) when PlanningModeEnabled (+ 0x11CA) is false
+			group.groupAttackMoveToPosition(dest->location, 0x7FFFFFFF, CMD_FROM_PLAYER);
 			group.cohereMoveSpeed(false); // RW 0x77AAEE, the group's speed matching without a leader
 		}
 		else
 		{
+			group.groupMoveToPosition(dest->location, false, CMD_FROM_PLAYER);
 			// MSG_DO_MOVETO (RW 0x77BB53 -> 0x77AB5C) and MSG_DO_FORCEMOVETO (RW 0x77AAF8) end at RW 0x77AB65 -> 0x77B00A -> 0x77A342: the
 			// group's temporary speed caps go (RW 0x76FD04), so an attack-move's speed matching does not outlast the next move order
 			group.clearTemporarySpeedCaps();
