@@ -887,14 +887,13 @@ TEST_CASE("siege1 retail: Grond (CrusherLevel 2) drives over an enemy soldier an
 	CHECK_FALSE(crushes("MordorBatteringRam"));
 }
 
-TEST_CASE("siege1: the stop lines of the siege deploy are S-4940 .. S-4943 and S-4945, and the siege modules have their runtime classes")
+TEST_CASE("siege1: the stop lines of the siege deploy are S-4940, S-4942 and S-4943 .. S-4945, and the siege modules have their runtime classes")
 {
 	const std::vector<std::string> lines = SiegeModules::stopLines();
-	REQUIRE(lines.size() == 4u);
+	REQUIRE(lines.size() == 3u);
 	CHECK(lines[0].rfind("[S-4940]", 0) == 0);
-	CHECK(lines[1].rfind("[S-4941]", 0) == 0);
-	CHECK(lines[2].rfind("[S-4942]", 0) == 0);
-	CHECK(lines[3].rfind("[S-4945]", 0) == 0);
+	CHECK(lines[1].rfind("[S-4942]", 0) == 0);
+	CHECK(lines[2].rfind("[S-4945]", 0) == 0);
 	CHECK(std::string(siegeExitStopLine()).rfind("[S-4943]", 0) == 0);
 	CHECK(std::string(SiegeModules::portalStopLine()) == lines[0]);
 }

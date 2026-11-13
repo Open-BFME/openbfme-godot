@@ -657,7 +657,8 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_MOVE_TO, std::make_unique<AIMoveToMachineState>(*m), AI_GOING_IDLE, AI_GOING_IDLE);
 	m->defineState(AI_FOLLOW_PATH, std::make_unique<AIFollowPathState>(*m, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_EXITPRODUCTION_PATH, std::make_unique<AIFollowPathState>(*m, true), AI_IDLE, AI_IDLE);
-	m->defineState(AI_FOLLOW_PATH_AS_TEAM, std::make_unique<AIFollowPathAsTeamState>(*m), AI_IDLE, AI_IDLE); // lane BACKLOG-8 r2: RW state 54
+	m->defineState(AI_FOLLOW_PATH_AS_TEAM, std::make_unique<AIFollowPathAsTeamState>(*m, false), AI_IDLE, AI_IDLE);       // lane BACKLOG-8 r2: RW state 54
+	m->defineState(AI_FOLLOW_PATH_AS_TEAM_ATTACK, std::make_unique<AIFollowPathAsTeamState>(*m, true), AI_IDLE, AI_IDLE); // lane PORT-13: RW state 61
 	m->defineState(AI_WAIT, std::make_unique<AIWaitState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_BUSY, std::make_unique<AIBusyState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_MOVE_OUT_OF_THE_WAY, makeMoveOutOfTheWayState(*m), AI_GOING_IDLE, AI_GOING_IDLE); // lane PHYS-1: state 26 (AIUpdateAllies.cpp); PLAY-4: -> 0x4E
@@ -1318,12 +1319,45 @@ void AIUpdateInterface::aiFollowPathAsTeam(const std::vector<Coord3D> &path, Obj
 	{
 		return;
 	}
+	if (source != CMD_FROM_AI)
+	{
+		m_attackMoveActive = false;
+	}
 	m_machine->setGoalPosition(path.back());
 	m_machine->setGoalPath(path);
 	setLastCommandSource(source);
 	m_mover->ignoreObstacle(ignoreObject ? ignoreObject->getID() : PATHFIND_INVALID_ID);
 	m_teamPathAngle = angle;
 	m_machine->setState(AI_FOLLOW_PATH_AS_TEAM);
+	wakeUpNow();
+}
+
+void AIUpdateInterface::aiFollowPathAsTeamAttack(const std::vector<Coord3D> &path, Object *ignoreObject, float angle, CommandSourceType source)
+{
+	// RW 0x66BC68 (AI command 0x25, RW 0x66ABAF -> AI vslot 0x80): identical to RW 0x66BB9D except it enters state 61 (0x3D), the attack march
+	if (!acceptCommand(source, 0x25))
+	{
+		return;
+	}
+	if (hasKind(*getObject(), kindBits().immobile))
+	{
+		return;
+	}
+	m_machine->clear();
+	if (path.empty())
+	{
+		return;
+	}
+	if (source != CMD_FROM_AI)
+	{
+		m_attackMoveActive = false;
+	}
+	m_machine->setGoalPosition(path.back());
+	m_machine->setGoalPath(path);
+	setLastCommandSource(source);
+	m_mover->ignoreObstacle(ignoreObject ? ignoreObject->getID() : PATHFIND_INVALID_ID);
+	m_teamPathAngle = angle;
+	m_machine->setState(AI_FOLLOW_PATH_AS_TEAM_ATTACK);
 	wakeUpNow();
 }
 
@@ -1955,16 +1989,25 @@ PathfindObjectID AIUpdateInterface::enterTargetOf(const PathfindObject &o) const
 {
 	Object *obj = getObject()->logic().findObjectByID((ObjectID)o.getID());
 	const AIUpdateInterface *ai = obj ? obj->getAIUpdateInterface() : nullptr;
-	const AIStateMachine *m = ai ? ai->stateMachineOrNull() : nullptr;
+	const Object *target = ai ? ai->enterTarget() : nullptr;
+	return target ? (PathfindObjectID)target->getID() : PATHFIND_INVALID_ID;
+}
+
+// lane PORT-9: RW 0x664D12 itself, without the PathfindObject wrapper the pathfinder's two queries take. OpenContain::onCollide (RW 0x865A00) calls the
+// slot with the object it touched and compares the answer with the container
+const Object *AIUpdateInterface::enterTarget() const
+{
+	// RW 0x664D16 the state type (RW 0x662D70), RW 0x664D20 the machine's goal object (RW 0x8DBACE); RW 0x664D29 .. 0x664D45 the entering states
+	const AIStateMachine *m = stateMachineOrNull();
 	const Object *goal = m ? m->goalObject() : nullptr;
 	if (goal == nullptr)
 	{
-		return PATHFIND_INVALID_ID;
+		return nullptr;
 	}
 	static const int kShip = ObjectTemplateInfoBuilder::kindOfIndex("SHIP");
-	const unsigned t = ai->aiStateType();
+	const unsigned t = aiStateType();
 	const bool entering = t == 15 || t == 0x31 || t == 0x18 || t == 0x2B || t == 0x19 || t == 52 || (t == 56 && hasKind(*goal, kShip));
-	return entering ? (PathfindObjectID)goal->getID() : PATHFIND_INVALID_ID;
+	return entering ? goal : nullptr;
 }
 
 bool AIUpdateInterface::crushOrSquishPolicy(const PathfindObject &other) const

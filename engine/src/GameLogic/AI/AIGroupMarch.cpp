@@ -111,10 +111,10 @@ AIGroup::~AIGroup() = default;
 
 const char *AIGroup::marchStopLine()
 {
-	return "[S-4462] the formation march (lane BACKLOG-8: RW 0x774897's head, 0x7747DE, 0x76F115, 0x6FAA6D, 0x77348C) runs for a player's group of more than "
-		   "one unit with AIData UseFormations; INFERENCE: the closest enemy (RW 0x701443, qualifiers 0xE4) is the alive ENEMIES partition scan, a horde's "
-		   "damage record is its members' bodies; NOT ported: the group's speed recompute (RW 0x76F037), the tighten move (a tighten makes the ZH group "
-		   "move), the burning cells of the ground search (S-191), the bridge / wall layers (S-161), the attack march (mode 1, state 61)";
+	return "[S-4462] the formation march (lanes BACKLOG-8 / PORT-13: RW 0x774897's head, 0x774E2F, 0x7747DE, 0x76F115, 0x6FAA6D, 0x77348C modes 0 and 1) runs for a "
+		   "player's group of more than one unit with AIData UseFormations (and AttackMoveUsesFormations for an attack-move); INFERENCE: the closest enemy (RW 0x701443, "
+		   "qualifiers 0xE4) is the alive ENEMIES partition scan, a horde's damage record is its members' bodies; NOT ported: the group's speed recompute (RW 0x76F037), "
+		   "the tighten move (a tighten makes the ZH group move), the burning cells of the ground search (S-191), the bridge / wall layers (S-161)";
 }
 
 bool AIGroup::getCenter(Coord3D &center) const
@@ -617,9 +617,21 @@ void AIGroup::moveFormationToPos(const Coord3D &pos, CommandSourceType source, i
 		}
 		pf.updateGoal(adapter, &dest, pf.getLayerAt(dest.x, dest.y)); // RW 0x68B3BD (lane WALL-1: the destination's layer, as AIMoveToState::onEnter)
 		path.push_back(dest);
-		// mode 1 (the attack march, command 0x25 / RW 0x695C42 0xF) is not ported (S-4463): the port's callers ask for mode 0 only
-		(void)mode;
-		if (!ai->canFollowTeamPath())
+		// lane PORT-13: RW 0x773D4D .. 0x773DD1: mode 1 + Object::isAbleToAttack (RW 0x691269) -> command 0x25 (RW 0x77122F -> RW 0x66BC68, state 61) when
+		// canFollowTeamPath accepts, else aiAttackMoveToPosition (RW 0x696266); mode 0, or a unit that cannot attack, keeps command 0x24 / aiMoveToPosition
+		if (mode == 1 && unit->isAbleToAttack())
+		{
+			if (ai->canFollowTeamPath())
+			{
+				ai->aiFollowPathAsTeamAttack(path, nullptr, angle, source);
+			}
+			else
+			{
+				// the fork's three-argument overload would take the shot count; this one order always asks for the unlimited count (RW 0x696266)
+				ai->aiAttackMoveToPosition(dest, source);
+			}
+		}
+		else if (!ai->canFollowTeamPath())
 		{
 			ai->aiMoveToPosition(dest, source);
 		}

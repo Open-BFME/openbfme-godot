@@ -3427,6 +3427,73 @@ TEST_CASE("bfme2camp1 menu retail: RotWK's Solo Play list gets BFME2's Evil Camp
 		CHECK(sp.nav->asSprite()->childByName(good ? "GoodCampaign" : "EvilCampaign") == nullptr); // the list closed with its rows
 	}
 }
+// Both menu styles: the added campaign rows must grow the invisible panel as well as the artwork. RotWK's MainMenu.apt has 35.5 row spacing but
+// 35-unit hit meshes: the half-unit gaps must hit the panel, whose release action is inert while hovering, rather than the stage-wide close button.
+TEST_CASE("solo hover retail: moving between every expanded Solo Play row keeps the list open; leaving still closes it (both styles and channels)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	retailtest::Mount *bfme2 = retailtest::bfme2Mount();
+	REQUIRE(bfme2);
+	REQUIRE_MESSAGE(bfme2->fs, bfme2->error);
+	AptRetail bfme2Only{ *bfme2->fs };
+	for (AptRetail *movie : { &mount, &bfme2Only })
+	{
+		for (bool strategic : { true, false })
+		{
+			INFO("RotWK style: " << (movie == &mount));
+			INFO("War of the Ring offered: " << strategic);
+			ShellFx fx(*movie, "");
+			fx.environment.warOfTheRingOffered = strategic;
+			SoloPlay sp = openSoloPlay(fx);
+			std::vector<std::array<float, 4>> bounds;
+			for (const char *name : { "Skirmish", "WarOfTheRing", "EvilCampaign", "GoodCampaign", "Expansion1Campaign", "BonusCampaign", "LoadGame" })
+			{
+				INFO(name);
+				AptCharacterInst *row = sp.rows[name];
+				REQUIRE(row);
+				if (!row->globallyVisible())
+				{
+					continue;
+				}
+				AptButtonInst *button = firstButtonUnder(row);
+				std::array<float, 4> b;
+				if (button)
+				{
+					REQUIRE(button->hitBounds(b.data()));
+				}
+				else
+				{
+					// BFME2's locked Epilogue is a disabled face without a button; hovering past it must also keep the list open.
+					REQUIRE(std::string(name) == "BonusCampaign");
+					REQUIRE(WindowManager::stageBounds(*row, b.data()));
+				}
+				bounds.push_back(b);
+			}
+			REQUIRE(bounds.size() == (strategic ? 7 : 6));
+			const float x = (bounds.front()[0] + bounds.front()[2]) * 0.5f;
+			// Cross each boundary in both directions, pausing long enough for any unwanted close animation to remove the rows.
+			for (int direction : { 1, -1 })
+			{
+				for (std::size_t i = 1; i < bounds.size(); ++i)
+				{
+					const std::size_t below = direction == 1 ? i : bounds.size() - i;
+					const auto &a = bounds[below - 1];
+					const auto &b = bounds[below];
+					const float start = direction == 1 ? (a[1] + a[3]) * 0.5f : (b[1] + b[3]) * 0.5f;
+					fx.wm->apt().input().postMouseMove(x, start);
+					fx.tick(2);
+					fx.wm->apt().input().postMouseMove(x, (a[3] + b[1]) * 0.5f);
+					fx.tick(60);
+					REQUIRE(sp.nav->asSprite()->childByName("Skirmish") == sp.rows["Skirmish"]);
+				}
+			}
+			fx.wm->apt().input().postMouseMove(900.0f, 200.0f);
+			fx.tick(60);
+			CHECK(sp.nav->asSprite()->childByName("Skirmish") == nullptr);
+		}
+	}
+}
+
 // lane STABLEQA-1 (owner, 2026-10-30): a Stable build (ShellEnvironment::warOfTheRingOffered false) hides War of the Ring's Solo Play row in both menu
 // styles: the row is not drawn and takes no click, Skirmish moves down into its place (where War of the Ring sits in a Nightly build), the other rows
 // stay where a Nightly build has them; a WarOfTheRing command that still arrives sends no request and shows the Stable box

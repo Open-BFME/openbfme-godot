@@ -187,9 +187,17 @@ include(cmake/Port12.cmake) # PORT-12: BuildAssistant edge margin / SupplyBuildB
 include(cmake/Port15.cmake) # PORT-15: LockWeaponCreate/Object::setWeaponLock (OPENBFME_PORT15_TESTS)
 include(cmake/Port18.cmake) # PORT-18: hold fire
 include(cmake/Port20.cmake) # PORT-20: GarrisonContain/onSelling (OPENBFME_PORT20_TESTS)
+include(cmake/Port22.cmake) # PORT-22: the siege deploy's approach offset, Pathfinder::adjustMeleeOffset (OPENBFME_PORT22_TESTS)
 include(cmake/Port24.cmake) # PORT-24: Object/ForceLuaRegistration (OPENBFME_PORT24_TESTS)
 include(cmake/Port6.cmake) # PORT-6: StealthDetectorUpdate/CanDetectWhileGarrisoned (OPENBFME_PORT6_TESTS)
 include(cmake/Port55.cmake) # PORT-55: SlaughterHordeContain, the citadel's cashback and CanAlwaysEnter (issue #165; OPENBFME_PORT55_TESTS)
+include(cmake/Port62.cmake) # PORT-62: TransportContain/FireGrabWeaponOnVictim, the GrabWeapon fire (OPENBFME_PORT62_TESTS)
+include(cmake/Port40.cmake) # PORT-40: AIData/MaxRecruitRadius (issue #125; OPENBFME_PORT40_TESTS)
+include(cmake/Port46.cmake) # PORT-46: ToggleMountedSpecialAbilityUpdate/OpacityTarget, the drawable fade (OPENBFME_PORT46_TESTS)
+include(cmake/Port13.cmake) # PORT-13: AIData/AttackMoveUsesFormations and the formation attack march (OPENBFME_PORT13_TESTS)
+include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the collide pickup (OPENBFME_PORT9_TESTS)
+include(cmake/Port7.cmake) # PORT-7: AnimalAIUpdate's enemy scan (OPENBFME_PORT7_TESTS)
+include(cmake/Port58.cmake) # PORT-58: SpecialAbilityUpdate/ApproachUntilMembersInRange (OPENBFME_PORT58_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
 include(cmake/Fx2.cmake)        # FX-2: effects in the live game (appends to OPENBFME_SIM_SOURCES; OPENBFME_FX2_SOURCES / OPENBFME_FX2_TESTS)
@@ -741,9 +749,17 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT15_TESTS}
     ${OPENBFME_PORT18_TESTS}
     ${OPENBFME_PORT20_TESTS}
+    ${OPENBFME_PORT22_TESTS}
     ${OPENBFME_PORT24_TESTS}
     ${OPENBFME_PORT6_TESTS}
     ${OPENBFME_PORT55_TESTS}
+    ${OPENBFME_PORT62_TESTS}
+    ${OPENBFME_PORT40_TESTS}
+    ${OPENBFME_PORT46_TESTS}
+    ${OPENBFME_PORT13_TESTS}
+    ${OPENBFME_PORT9_TESTS}
+    ${OPENBFME_PORT7_TESTS}
+    ${OPENBFME_PORT58_TESTS}
     ${OPENBFME_PLAY4_TESTS}
     ${OPENBFME_MAPRESET1_TESTS}
     ${OPENBFME_APT_TESTS}
