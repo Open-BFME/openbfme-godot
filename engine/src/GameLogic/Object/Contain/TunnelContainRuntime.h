@@ -32,6 +32,8 @@
 #include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 
 #include <list>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -59,8 +61,12 @@ public:
 	int containCount() const { return (int)m_riders.size(); }                        // RW 0x8FA203(0): + 0x18
 	static int containMax(const GameLogic &logic);                                     // RW 0x8FA152
 	bool isValidContainerFor(const Object *obj, bool checkCapacity, const GameLogic &logic) const; // RW 0x8FA240
-	void addToContainList(Object *obj) { m_riders.push_back(obj); }                    // RW 0x8FA4B2
+	void addToContainList(Object *obj, ObjectID tunnelId = INVALID_ID);                 // RW 0x8FA4B2 (the reported in play: the tunnel it entered)
 	void removeFromContain(Object *obj);                                                // RW 0x8FA28C
+	// Reported in play: the network shares its riders, but a destroyed tunnel must only release the ones that entered
+	// by it (and move the rest to the first tunnel left). `entryTunnelOf` is the rider -> tunnel it entered map.
+	ObjectID entryTunnelOf(const Object *obj) const;
+	std::vector<Object *> ridersEnteredBy(ObjectID tunnelId) const;
 	bool isInContainer(const Object *obj) const;                                        // RW 0x8FA2D7
 	void onTunnelCreated(const Object &tunnel);                                         // RW 0x8FA4C9
 	bool onTunnelDestroyed(const Object &tunnel, GameLogic &logic);                     // RW 0x8FA4E8: true when it was the last
@@ -75,6 +81,7 @@ public:
 private:
 	std::list<ObjectID> m_tunnelIds; // + 0x08
 	ContainedItemsList m_riders;     // + 0x10
+	std::map<ObjectID, ObjectID> m_entryTunnel; // not retail: rider id -> the tunnel it entered by (reported in play)
 	unsigned m_tunnelCount = 0;      // + 0x1C
 	unsigned long long m_healHits = 0; // a statistic
 };
@@ -124,4 +131,6 @@ private:
 	const TunnelContainBehaviorData *m_tunnel;
 	bool m_doBuildComplete = true; // + 0x9E4
 	bool m_registered = false;     // + 0x9E5
+	bool m_destroying = false;     // reported in play: a dying tunnel may only release its own origin riders
+	std::set<ObjectID> m_destroyingOwn; // the riders whose origin this tunnel is, captured before onTunnelDestroyed reassigns them
 };

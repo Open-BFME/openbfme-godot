@@ -211,6 +211,66 @@ TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of 
 	CHECK(alive > 0u);
 }
 
+// Destroying a shaft keeps the riders that entered by another one inside; only the last shaft's death lets the
+// whole network out. (The sale path is under separate work: the port's base keeps retail's order-out body.)
+TEST_CASE("tunnel retail: destroying a shaft keeps the riders of another inside; the last shaft releases the network")
+{
+	if (!haveWorld("tunnel retail"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s);
+	Player *enemy = r.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	const Coord3D c0 = gridSpot(r, 0.3f, 0.5f, 350.0f);
+	const Coord3D c1 = gridSpot(r, 0.6f, 0.5f, 350.0f);
+	const Coord3D c2 = gridSpot(r, 0.45f, 0.75f, 350.0f);
+	Object *a = r.make("WildMineShaft", c0.x, c0.y, enemy);
+	Object *b = r.make("WildMineShaft", c1.x, c1.y, enemy);
+	Object *c = r.make("WildMineShaft", c2.x, c2.y, enemy);
+	Object *horde = r.make("GoblinFighterHorde", c0.x + 200.0f, c0.y, enemy);
+	r.frame(3);
+	REQUIRE(a != nullptr);
+	REQUIRE(b != nullptr);
+	REQUIRE(c != nullptr);
+	REQUIRE(horde != nullptr);
+	a->friend_onBuildComplete();
+	b->friend_onBuildComplete();
+	c->friend_onBuildComplete();
+	TunnelContain *ta = tunnelOf(*a), *tb = tunnelOf(*b), *tc = tunnelOf(*c);
+	REQUIRE(ta != nullptr);
+	REQUIRE(tb != nullptr);
+	REQUIRE(tc != nullptr);
+	REQUIRE(enter(r, *horde, *a, 400));
+	CHECK(horde->getContainedBy() == a);
+	const unsigned tunnels = enemy->tunnelTracker().tunnelCount();
+	REQUIRE(tunnels >= 3u); // tolerance: the map shaft count is data; at least three are needed for the test
+	// destroy C: it never held the horde
+	c->kill(DAMAGE_UNRESISTABLE, 0);
+	r.frame(10);
+	CHECK(horde->getContainedBy() == a);
+	CHECK(enemy->tunnelTracker().tunnelCount() == tunnels - 1u);
+	CHECK(ta->getContainCount() == 1u);
+	// destroy B: the horde still entered by A
+	b->kill(DAMAGE_UNRESISTABLE, 0);
+	r.frame(10);
+	CHECK(horde->getContainedBy() == a);
+	CHECK(enemy->tunnelTracker().tunnelCount() == 1u);
+	// A is the last shaft: its death lets the whole network out (retail's cave-in rule)
+	a->kill(DAMAGE_UNRESISTABLE, 0);
+	int out = -1;
+	for (int f = 0; f < 60 && out < 0; ++f)
+	{
+		r.frame(1);
+		if (!horde->getContainedBy())
+		{
+			out = f;
+		}
+	}
+	REQUIRE_MESSAGE(out >= 0, "the last shaft did not let the horde out"); // tolerance: the shaft index is non-negative; the exact shaft follows the map order
+}
+
 // TUNNEL-1: the player's flow on the HUD. A Goblin player right-clicks a mine shaft with a horde selected (MSG_ENTER), selects the OTHER shaft: its
 // WildMineShaftCommandSet's five Command_ExitGarrison (EXIT_CONTAINER) buttons show the network's rider (RW 0x94251F: the contain's list is the tracker's,
 // RW 0x8810AB), and the press (MSG_EXIT RW 0x940FEF -> RW 0x77AC92, the rider in the pressed tunnel's network: contain slot 0xE8 = RW 0x8811DD) lets the
