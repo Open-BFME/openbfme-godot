@@ -167,6 +167,9 @@ bool AptView3DViewers::create(Slot &slot, const AptCanvasOp &op)
 	slot.inst = memnew(W3DInstancer);
 	slot.instId = slot.inst->get_instance_id();
 	slot.black->add_child(slot.inst);
+	// owner report 2026-11-10: the menu's View3D fade showed the W3D pivot-dither as an image disintegration at startup;
+	// keep opaque pivots at 1 for the first two seconds (the same warm-up the game world uses).
+	W3D_Set_Fade_Warmup((uint64_t)Time::get_singleton()->get_ticks_msec() + 2000);
 	const Dictionary setup = slot.inst->setup(m_fs);
 	if (!bool(setup.get("ok", false)))
 	{
@@ -283,6 +286,29 @@ void AptView3DViewers::draw(RID item, const Rect2 &rect, const AptCanvasOp &op, 
 void AptView3DViewers::endBuild()
 {
 	syncVisibility();
+	// owner report 2026-11-10: a viewer this canvas did not draw is released, not just disabled. Keeping it alive left the
+	// hidden menu's SubViewports/instancer/model in memory and its SFE_MENUBKGRND clip at the last (dark) frame.
+	for (auto it = m_slots.begin(); it != m_slots.end();)
+	{
+		if (!it->second.used)
+		{
+			release(it->second);
+			it = m_slots.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+}
+
+void AptView3DViewers::releaseAll()
+{
+	for (auto &kv : m_slots)
+	{
+		release(kv.second);
+	}
+	m_slots.clear();
 }
 
 bool AptView3DViewers::ownerVisible() const

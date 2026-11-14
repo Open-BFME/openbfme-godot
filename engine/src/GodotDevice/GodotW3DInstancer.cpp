@@ -17,6 +17,8 @@
 
 #include <cmath>
 
+#include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/rd_texture_format.hpp>
 #include <godot_cpp/classes/rd_texture_view.hpp>
 #include <godot_cpp/classes/rendering_device.hpp>
@@ -52,6 +54,14 @@ namespace godot
 namespace
 {
 
+// S-029 (1) warm-up: the first milliseconds of a game keep opaque pivot fades at 1 instead of the W3D screen-door dither.
+std::atomic<uint64_t> g_fadeWarmupUntilMs{ 0 };
+bool fade_warmup_active()
+{
+	const uint64_t until = g_fadeWarmupUntilMs.load(std::memory_order_relaxed);
+	return until != 0 && Time::get_singleton() != nullptr && (uint64_t)Time::get_singleton()->get_ticks_msec() < until;
+}
+
 // lane PERF-HD: every MultiMesh's custom AABB, a box beyond any map. Without one Godot recomputes the AABB over every instance at each set_buffer,
 // and an animated model's buffers are rewritten every frame; one MultiMesh holds a model's instances across the whole battlefield, so its own
 // box culled nothing anyway
@@ -85,6 +95,11 @@ const char *kindName(RenderSubObject::Kind k)
 }
 
 } // namespace
+
+void W3D_Set_Fade_Warmup(uint64_t untilMs)
+{
+	g_fadeWarmupUntilMs.store(untilMs, std::memory_order_relaxed);
+}
 
 // RenderingDevice texture calls are only valid on the render thread. The node thread copies texel bytes into a
 // PackedByteArray and appends work here; call_on_render_thread runs that work in order. The callable is a static
@@ -2148,7 +2163,7 @@ void W3DInstancer::write_buffers()
 			for (int id : ids)
 			{
 				const Instance &inst = Instances[(size_t)id];
-				if (d.Mesh->HasOpaque && pose_source(inst).Pose.PivotFade[(size_t)bone] * inst.Opacity < 0.999f) ++d.Dithered; // S-029 counts the members, drawn or culled
+				if (d.Mesh->HasOpaque && !AlphaOverride && !fade_warmup_active() && pose_source(inst).Pose.PivotFade[(size_t)bone] * inst.Opacity < 0.999f) ++d.Dithered; // S-029 counts the members, drawn or culled
 			}
 			pack_draw(m, d); // lane GPUPERF-2: the buffer, the MultiMeshes' boxes and the shadow batch
 			visible += (int)d.Packed.size();
@@ -2306,7 +2321,10 @@ void W3DInstancer::pack_draw(Model &m, DrawItem &d)
 	// be built from instances the camera culling left out
 	auto fill = [&](const Instance &inst, float *o) {
 		const Instance &src = pose_source(inst); // lane PERF-HD
-		const float fade = src.Pose.PivotFade[(size_t)bone] * inst.Opacity; // PROJ-2: the drawable's opacity
+		// S-029 (1): the first milliseconds keep opaque surfaces fully opaque instead of the screen-door fade dither.
+		// The placement ghost (AlphaOverride) and the phantom structure (opacity < 1) keep their intended translucency.
+		const bool fadeWarm = fade_warmup_active() && !AlphaOverride && inst.Opacity >= 0.999f;
+		const float fade = (d.Mesh->HasOpaque && fadeWarm) ? 1.0f : src.Pose.PivotFade[(size_t)bone] * inst.Opacity; // PROJ-2: the drawable's opacity
 		const Basis &b = inst.Xf.basis;
 		o[0] = b.rows[0][0]; o[1] = b.rows[0][1]; o[2] = b.rows[0][2]; o[3] = inst.Xf.origin.x;
 		o[4] = b.rows[1][0]; o[5] = b.rows[1][1]; o[6] = b.rows[1][2]; o[7] = inst.Xf.origin.y;

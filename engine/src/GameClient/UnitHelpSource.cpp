@@ -148,8 +148,14 @@ UnitHelpSource::Text UnitHelpSource::compose(const Object &obj, const GameTextSo
 	{
 		t.unported.push_back("the disguise label DisplayNameInvisibleForEnemy (RW 0x691B15, S-4612)");
 	}
-	// the rank line (RW 0x8EBE3B .. 0x8EBE9C)
-	const ExperienceTracker *tracker = obj.getExperienceTracker();
+	// the rank line (RW 0x8EBE3B .. 0x8EBE9C). A horde member carries its rank on the horde object (owner report 2026-11-12: hovering a soldier
+	// showed no level): the container answers for the rank while the title and the health stay the soldier's.
+	const Object *rankOwner = &obj;
+	if (const Object *container = obj.getContainedBy(); container && container->isKindOfName("HORDE"))
+	{
+		rankOwner = container;
+	}
+	const ExperienceTracker *tracker = rankOwner->getExperienceTracker();
 	const bool multiplayer = logic.economy().isMultiplayerGame();
 	const int rank = createAHero ? 1 : (tracker ? levelRank(*tracker) : 0);
 	if (rank > 0)

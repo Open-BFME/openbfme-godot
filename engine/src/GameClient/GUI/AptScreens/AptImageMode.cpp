@@ -45,7 +45,8 @@ std::string aptImageModeShader(AptImageMode mode)
 	}
 	if (grayscale)
 	{
-		code += "\tpixel.rgb = vec3(dot(pixel.rgb, vec3(0.299, 0.587, 0.114)));\n";
+		// owner report 2026-11-13: the locked command buttons' grayscale came out too light; the same luma as before, darkened.
+		code += "\tpixel.rgb = vec3(dot(pixel.rgb, vec3(0.299, 0.587, 0.114)) * 0.65);\n";
 	}
 	code += "\tCOLOR = pixel * v_tint;\n}\n";
 	return code;

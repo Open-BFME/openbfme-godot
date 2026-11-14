@@ -53,6 +53,13 @@ std::vector<Object *> drawablesThatWillSelect(HudContext &ctx, const IRegion2D &
 	return out;
 }
 
+bool isBuilder(const Object &o)
+{
+	// QoL (owner report 2026-11-11): a builder caught in a troop drag box is left out, so it is not sent
+	// into battle by accident. The game's builders are KindOf DOZER (the no-select workers included).
+	return o.isKindOfName("DOZER");
+}
+
 bool areAllSelected(const HudContext &ctx, const std::vector<Object *> &list)
 {
 	for (Object *o : list)
@@ -279,6 +286,23 @@ MessageDisposition SelectionTranslator::leftClick(const ClientMessage &msg)
 	const IRegion2D selectionRegion = msg.arg(0).region;
 	const bool isPoint = selectionRegion.lo.x == selectionRegion.hi.x && selectionRegion.lo.y == selectionRegion.hi.y;
 	std::vector<Object *> will = drawablesThatWillSelect(m_ctx, selectionRegion);
+	if (!isPoint && will.size() > 1)
+	{
+		// QoL (owner report 2026-11-11): a drag box that catches troops and builders selects the troops only. A box that
+		// holds builders alone keeps them, so several builders can still be selected together. A box with builders and
+		// buildings but no troops selects the builders: more than one building cannot be selected at once, and the box
+		// used to end up selecting nothing (owner report 2026-11-11).
+		const auto isStructure = [](const Object *o) { return o && o->isKindOfName("STRUCTURE"); };
+		const bool hasTroops = std::any_of(will.begin(), will.end(), [&](const Object *o) { return o && !isBuilder(*o) && !isStructure(o); });
+		if (hasTroops)
+		{
+			will.erase(std::remove_if(will.begin(), will.end(), [](const Object *o) { return o && isBuilder(*o); }), will.end());
+		}
+		else if (std::any_of(will.begin(), will.end(), [](const Object *o) { return o && isBuilder(*o); }))
+		{
+			will.erase(std::remove_if(will.begin(), will.end(), isStructure), will.end());
+		}
+	}
 	if (will.empty())
 	{
 		// lane HUD-7, TARGET FACTS (RotWK SelectionTranslator::translateGameMessage, the MSG_MOUSE_LEFT_CLICK case, RW 0x83C44F .. 0x83C4B9; caveat S-001): a click
@@ -475,7 +499,11 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 				Object *under = HudObjects::pickForHover(m_ctx, pixel); // RW 0x83CC13
 				if (under && (!HudObjects::isEffectivelyDead(*under) || under->isKindOfName("ALWAYS_SELECTABLE")))
 				{
-					m_ctx.ui.setMouseover(under->getID());
+					// owner report 2026-11-13: the tooltip and the health bar follow the soldier under the cursor, not always the horde's first member.
+					// The command hint keeps the horde (retail's promoted drawable); the UI's mouseover gets the raw member when the pick returns one of it.
+					Object *member = HudObjects::pickObject(m_ctx, pixel, HudObjects::pickTypesForContext(m_ctx, true), false);
+					const bool isMember = member && member != under && member->getContainedBy() == under;
+					m_ctx.ui.setMouseover(isMember ? member->getID() : under->getID());
 					m_ctx.stream.append(CMSG_MOUSEOVER_DRAWABLE_HINT).appendObjectID(under->getID());
 				}
 				else
@@ -554,7 +582,14 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 				// a waiting ATTACK_MOVE (type 10) is not cancelled here (GUICommandTranslator's click roles own it, 0x004314B1) and takes the
 				// no-command branch: the standard mouse setup deselects
 				const CommandButton *command = m_ctx.ui.getGUICommand();
-				if (command && command->m_command != GUI_COMMAND_ATTACK_MOVE)
+				if (command && command->m_command == GUI_COMMAND_BLOODTHIRSTY)
+				{
+					// owner report 2026-11-10: the right button must not cancel the sacrifice targeting (that then became a move order);
+					// the left click carries it out, as CommandXlat's context targeting expects.
+					disp = MessageDisposition::Destroy;
+					m_ctx.ui.setScrolling(false);
+				}
+				else if (command && command->m_command != GUI_COMMAND_ATTACK_MOVE)
 				{
 					// cancel the GUI command mode without deselecting
 					m_ctx.ui.setGUICommand(nullptr);
