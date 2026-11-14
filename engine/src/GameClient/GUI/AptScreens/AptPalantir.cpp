@@ -968,6 +968,12 @@ void AptPalantir::sync(const ControlBar &bar)
 		// (the faction icon of the resource bar: syncLocal)
 		m_started = true;
 		call("", "SetPalantirFrameState", { m_evil ? "_evil" : "_good" });
+		// Owner report 2026-11-11 (P-02): the resource bar's barrel clip starts on its `_hide` frame and the engine never
+		// asked the movie to show it, so the money icon was blank. `_show` is the clip's own visible frame.
+		if (!call("", "SetResourceIconState", { "_show" }))
+		{
+			windows().note("palantir-resource-icon", "SetResourceIconState(_show) could not be called");
+		}
 		if (m_bfme1) call("", "ShowCommandInterface", {});
 		else call("CommandButtons", "gotoAndPlay", { "_show" });
 		m_arcShown = true; // the frame state shows the six command slots

@@ -234,12 +234,14 @@ bool wantsHealthBar(const Object &obj, const IconUISettings &s, const std::set<O
 	{
 		sel = selected.count(obj.getContainedBy()->getID()) != 0;
 	}
+	// owner report 2026-11-12: a damaged unit in the local player's sight shows its bar even when it is not selected (the caller drops shrouded and
+	// fogged objects first); the Always mode keeps showing full-health bars. A full-health object needs the selection or the mouse.
+	const bool always = s.healthBarMode == IconUISettings::HEALTH_BARS_ALWAYS;
+	const BodyModuleInterface *healthBody = obj.getBodyModule();
+	const bool damaged = healthBody && healthBody->getMaxHealth() > 0.0f && healthBody->getHealth() < healthBody->getMaxHealth();
 	if (!sel && mousedOver != obj.getID())
 	{
-		// lane OPTS-2: the OpenBFME health bar mode (retail: none here)
-		const BodyModuleInterface *body = s.healthBarMode == IconUISettings::HEALTH_BARS_DAMAGED ? obj.getBodyModule() : nullptr;
-		const bool extra = s.healthBarMode == IconUISettings::HEALTH_BARS_ALWAYS || (body && body->getHealth() < body->getMaxHealth());
-		if (!extra)
+		if (!always && !damaged)
 		{
 			return false;
 		}
@@ -259,7 +261,14 @@ bool wantsHealthBar(const Object &obj, const IconUISettings &s, const std::set<O
 		// lane ZOOM-1: the OpenBFME "Always (all players)" mode shows the infantry and cavalry bars as AllHealthBars does (the owner, 2026-10-10: "see all my
 		// troops' health bars all the time, and the enemies' too"); retail's AllHealthBars alone only widens the kinds of the selected / moused-over objects
 		const bool allKinds = s.allHealthBars || s.healthBarMode == IconUISettings::HEALTH_BARS_ALWAYS;
-		if (!allKinds || (!kindOf(obj, INFANTRY) && !kindOf(obj, CAVALRY)))
+		// owner report 2026-11-10: a selected horde shows a bar over each of its soldiers (per model), not only the
+		// object/hero bar; the horde object itself stays excluded below.
+		const bool focused = sel || mousedOver == obj.getID() || damaged;
+		if (!allKinds && !focused)
+		{
+			return false;
+		}
+		if (!kindOf(obj, INFANTRY) && !kindOf(obj, CAVALRY))
 		{
 			return false;
 		}
@@ -368,10 +377,11 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 			{
 				barCandidate = true;
 			}
-			else if (s.healthBarMode == IconUISettings::HEALTH_BARS_DAMAGED)
+			else
 			{
+				// owner report 2026-11-12: damaged objects in sight show their bars (wantsHealthBar has the final say)
 				const BodyModuleInterface *body = obj->getBodyModule();
-				barCandidate = body && body->getHealth() < body->getMaxHealth();
+				barCandidate = body && body->getMaxHealth() > 0.0f && body->getHealth() < body->getMaxHealth();
 			}
 		}
 		const bool hordeMember = containerOf && kindOf(*containerOf, HORDE_KIND);

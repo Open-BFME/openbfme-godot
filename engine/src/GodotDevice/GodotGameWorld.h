@@ -806,6 +806,23 @@ private:
 	Array m_commandErrors;
 	void clear_scene();
 	void build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &report, Array &errors, Array &stops);
+	// Lane PERF-4 (owner report 2026-11-10): every player's units / buildings, the map's neutral objects and the placement ghost (the flag)
+	// plus GameData's move hint are built during the load, so the first one of each does not pay the W3D / texture /
+	// material cost in the middle of a game. The models stay in `m_dynamicModels` with no instance (nothing is drawn).
+	void prewarm_match_models(W3DInstancer &dyn, Dictionary &timings);
+	// lane PERF-4: the models the load pass did not build (the other model-condition states of the present factions
+	// and the map, i.e. upgrades, rubble, damage variants) are built one per wave while the game runs. A wave never
+	// starts on a busy main frame; the next one waits longer after an expensive model.
+	void prewarm_wave_tick();
+	struct PrewarmJob
+	{
+		std::string model; // lower-cased W3D name
+		std::vector<std::pair<std::string, std::string>> swaps; // a ModelConditionState's `Texture = A B` (empty: the plain model)
+	};
+	std::vector<PrewarmJob> m_prewarmQueue;
+	size_t m_prewarmCursor = 0;
+	double m_prewarmNextMs = 0.0;
+	int64_t m_prewarmBuilt = 0, m_prewarmFailed = 0;
 	void refresh_views(double deltaMs);
 	// lane PERF-CLIENT: refresh_views' parts (one drawable's view; whether it may run on the job pool; the prefetch of the drawables ahead)
 	void refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *presented, W3DDrawPoseView &f, size_t &animated);

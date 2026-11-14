@@ -30,10 +30,12 @@ const float kPi = 3.14159274f;              // RW 0xBDD388
 const float kTwoPi = 6.28318548f;           // RW 0xBDD38C
 const float kMinRadius = 0.6666667f;        // RW 0xBDAD60
 const float kRadiusBias = 0.1f;             // RW 0xBD83D4
-const float kClockScale = 46.0f / 48.0f;    // W3DPushButton.cpp RADIAL_CLOCK_SCALE
+const float kClockScale = 46.0f / 48.0f;    // W3DPushButton.cpp RADIAL_CLOCK_SCALE (owner report 2026-11-13: 1.0 put the rim outside the gold border)
 const int kOffView = -999;                  // RW 0x9458FE (0xFFFFFC19)
 // INFERENCE (S-2701): the clock colours (the control bar's clock colour and GlobalData + 0x1160 / + 0x1164) are not identified
-const std::uint32_t kClockColor = 0x80000000u, kClockRimColor = 0xFFFFFFFFu;
+// owner report 2026-11-13: the building's radial button clock was the movie's translucent black (grey over the cameo); it must be the same white
+// fill with the blue rim as the Palantir's timer (the radial clock is the building's own production progress).
+const std::uint32_t kClockColor = 0xB3FFFFFFu; // 70 % white fill; the rim is the faction-group colour
 const std::uint32_t kOverlayColor = 0xFFFFFFFFu; // W3DPushButton.cpp overlayColor GameMakeColor(255, 255, 255, 255)
 const std::uint32_t kGrayOverlayColor = 0xFF909090u; // lane HUD-7: W3DPushButton.cpp grayOverlayColor GameMakeColor(144, 144, 144, 255)
 const std::uint32_t kAlwaysColorMultiplier = 0xFF909090u; // lane HUD-7: the colour multiplier of a disabled WIN_STATUS_ALWAYS_COLOR window's image
@@ -345,7 +347,9 @@ void ControlBarRadialMenu::buildOps()
 		{
 			// INVERSE_CLOCK with a percent below 100: RadialClockOverlay1 / 2 over 46/48 of the button, centred
 			const float rx = w * 0.5f * kClockScale, ry = h * 0.5f * kClockScale;
-			const float mx = x + w * 0.5f, my = y + h * 0.5f;
+			// owner report 2026-11-13: the gold border's art is not centred in its 48x48 image; the clock sat to the right of the visible frame.
+			// Nudge the clock left so the border looks even around it.
+			const float mx = x + w * 0.5f - w * 0.015f, my = y + h * 0.5f; // owner: another 0.5 % back to the right (1.5 % left of the button centre)
 			for (int k = 0; k < 2; ++k)
 			{
 				RadialDrawOp c;
@@ -355,8 +359,10 @@ void ControlBarRadialMenu::buildOps()
 				c.y = my - ry;
 				c.w = rx * 2.0f;
 				c.h = ry * 2.0f;
-				c.percent = s.timer * 100.0f;
-				c.color = k == 0 ? kClockColor : kClockRimColor;
+				// the fill is wiped by the progress; the rim is the full blue ring (owner report 2026-11-13: a wiped rim left the frame's
+				// view uneven against the gold border)
+				c.percent = k == 0 ? s.timer * 100.0f : 0.0f;
+				c.color = k == 0 ? kClockColor : m_clockRimColor;
 				c.slot = b.slot;
 				m_ops.push_back(c);
 			}

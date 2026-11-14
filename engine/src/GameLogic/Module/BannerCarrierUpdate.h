@@ -71,5 +71,6 @@ public:
 private:
 	bool spawnMember(); // RW 0x89A392
 	const BannerCarrierUpdateModuleData *m_data;
+	std::string m_lastMorphPayload; // the payload type whose MorphCondition model was applied (owner report 2026-11-12)
 	unsigned long long m_spawned = 0;
 };

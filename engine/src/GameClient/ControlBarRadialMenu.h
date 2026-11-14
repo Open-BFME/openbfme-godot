@@ -139,6 +139,9 @@ public:
 	// lane OWNERFIX-3: the count's font and colours and the text measure (the device's fonts); without either a count to draw is an error (errors())
 	void setCountLook(const CommandWindowLook &look) { m_countLook = look; }
 	void setFontMetrics(FontMetricsSource *metrics) { m_metrics = metrics; }
+	// owner report 2026-11-13: the clock rim follows the faction group (good blue, evil red), like the button frame; the retail clock is black for all
+	// (controlbarscheme.ini BuildUpClockColor is only set by Mordor, to black).
+	void setClockRimColor(std::uint32_t color) { m_clockRimColor = color; }
 
 	// ---- input (window pixels) ----
 	// the slot of the button under the pixel (the button's ellipse: retail's window rectangle is the hit area of a push button; INFERENCE: the rectangle),
@@ -179,6 +182,7 @@ private:
 	void *m_imageCtx = nullptr;
 	CommandWindowLook m_countLook;
 	FontMetricsSource *m_metrics = nullptr;
+	std::uint32_t m_clockRimColor = 0xFF3F8CFFu;
 	int m_mouseX = -10000, m_mouseY = -10000;
 	int m_hilite = -1;
 	int m_pushed = -1; ///< WIN_STATE_SELECTED: the button the left press went down on, while it is held

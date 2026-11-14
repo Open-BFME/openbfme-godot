@@ -1142,6 +1142,16 @@ int DozerAIUpdate::workOnRepair(int t, Object &structure)
 		return taskSucceeded(t);
 	}
 	setWorking(true); // RW 0x88DBED
+	// owner report 2026-11-13: the worker faced away from the structure while repairing (it kept the direction it arrived with); face the target.
+	if (const Coord3D *wp = self->getPosition())
+	{
+		const float dx = SimMath::sseSub(structure.getPosition()->x, wp->x);
+		const float dy = SimMath::sseSub(structure.getPosition()->y, wp->y);
+		if (dx != 0.0f || dy != 0.0f)
+		{
+			self->setOrientation(toAngle(dx, dy));
+		}
+	}
 	++m_taskWorkFrames;
 	// RW 0x88DC46: rate (slot 4) * max health, / LOGICFRAMES_PER_SECOND (fidiv), x87 PC24, stored as the float argument
 	const float amount = SimMath::fstpDword(SimMath::pc24DivW(SimMath::pc24MulW((double)body->getMaxHealth(), (double)m_repairPercentPerSecond), 5.0));

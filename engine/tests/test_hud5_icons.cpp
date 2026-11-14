@@ -309,7 +309,7 @@ TEST_CASE("hud5 icons retail: a construction's health bar: the building frames a
 	CHECK(ops[6].y == ops[3].y + 3.0f);
 }
 
-TEST_CASE("hud5 icons retail: health bars only on selection or hover; AllHealthBars lets a selected horde's soldiers have them, never all the time")
+TEST_CASE("hud5 icons retail: health bars only on selection or hover; a selected horde shows each soldier's bar, AllHealthBars widens the kinds")
 {
 	if (!haveWorld("hud5 icons bar visibility"))
 	{
@@ -345,9 +345,39 @@ TEST_CASE("hud5 icons retail: health bars only on selection or hover; AllHealthB
 		CHECK(bars({}, 0) == 0); // nothing selected, nothing under the mouse: no bar at all
 		CHECK(bars({ hero->getID() }, 0) == 1); // a hero: its bar with or without the option
 		CHECK(bars({}, hero->getID()) == 1);
-		CHECK(bars({ h->getID() }, 0) == (all ? (int)soldiers.size() : 0)); // the selected horde's soldiers (INFANTRY) only with AllHealthBars
-		CHECK(bars({}, soldiers[0]) == (all ? 1 : 0));
+		CHECK(bars({ h->getID() }, 0) == (int)soldiers.size()); // owner report: each selected horde soldier's bar (INFANTRY included)
+		CHECK(bars({}, soldiers[0]) == 1); // and the soldier under the mouse
 	}
+}
+
+
+TEST_CASE("hud5 icons retail: a damaged unit in sight shows its bar without selection; a full-health one does not (owner report 2026-11-12)")
+{
+	if (!haveWorld("hud5 icons bar damaged"))
+	{
+		return;
+	}
+	IconRig r(shared());
+	Player *enemy = r.rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	Object *e = r.place("GondorFighter", enemy, 900.0f, 900.0f);
+	for (int i = 0; i < 5; ++i)
+	{
+		r.rig.game->advance(0.2);
+	}
+	r.look(*e);
+	auto bars = [&]() {
+		int n = 0;
+		for (const IconUIOp &op : r.build({}, 0))
+		{
+			n += op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u ? 1 : 0;
+		}
+		return n;
+	};
+	CHECK(bars() == 0); // full health, not selected, not under the mouse: no bar
+	REQUIRE(e->getBodyModule() != nullptr);
+	e->getBodyModule()->setInitialHealth(50); // 50%: damaged
+	CHECK(bars() == 1);
 }
 
 TEST_CASE("zoom1 health bars: the OpenBFME Always mode shows every unit's and building's bar, own and enemy, infantry, cavalry, heroes, without selection")

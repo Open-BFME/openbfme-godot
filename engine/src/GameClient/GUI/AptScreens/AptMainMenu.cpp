@@ -88,6 +88,16 @@ void AptMainMenu::runInit()
 	{
 		windows().hideBackground(true);
 	}
+	else
+	{
+		// Owner report 2026-11-10: after Skirmish / Quick Match the front-end background the sub-screen asked for
+		// (SetBackground fadein -> Background.apt, the dark ring) stayed over the shell backdrop, so the main menu's
+		// own artwork never came back. MainMenu.apt's StopBackground / SetBackground off (RW 0x815507) hides it at
+		// once (hideBackground(true) is the same HideFrontEndBackground("1")): the owner asked for the artwork to
+		// appear suddenly, because the movie's fade flickered before settling. On the first load the background is
+		// already hidden (mode 0) and this changes nothing.
+		windows().hideBackground(true);
+	}
 }
 
 namespace

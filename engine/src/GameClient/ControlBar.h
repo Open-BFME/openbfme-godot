@@ -124,6 +124,7 @@ public:
 	// disabled, and presses are refused
 	bool foreignView() const { return m_foreignView; }
 	static bool localPlayerActive(const Player *local);
+	const Player *localPlayer() const { return m_ctx.localPlayer(); } // owner report 2026-11-13: the HUD colours by the local faction group
 	// RW 0x729D9A: the production count of a command window showing `b` for an object with the production interface `pu` (0: none shown)
 	static int productionCountOf(const CommandButton &b, const ProductionUpdateInterface *pu);
 	// RW 0x71EE67 .. 0x71EF1E: the object's GettingBuiltBehavior (behavior slot 0x80, RW 0x68C3E6) rebuilds it (+ 0x35, slot 14 RW 0x71C2EA) or has + 0x36 set

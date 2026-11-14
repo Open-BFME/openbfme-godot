@@ -31,6 +31,7 @@
 // way, which RW holds in the same set (interface + 0x54 = H+0x170): returnToFormation walks the members on the way only.
 
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/Object/Contain/TunnelContainRuntime.h"
 #include "GameLogic/Object/Contain/HordeContainCore.h"
 
 #include "GameLogic/AI/AIGarrisonStates.h"
@@ -42,6 +43,8 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
+
+#include <algorithm>
 
 bool HordeContain::isMemberOrEntering(const Object &member) const
 {
@@ -164,6 +167,7 @@ void HordeContain::pushMembersIntoContainer(Object *container)
 	Object *horde = getObject();
 	GameLogic &logic = horde->logic();
 	unsigned forceLeft = logic.settings().maxNumMembersToForceToImmediatelyEnter; // RW 0x876B2E: GameData + 0x1230
+	bool enteredNear = false; // at most one near member per push (the tunnel's widened entry; Devin's zero-budget finding)
 	const std::vector<ObjectID> entering(m_garrisonEntering.begin(), m_garrisonEntering.end());
 	for (ObjectID id : entering)
 	{
@@ -175,6 +179,7 @@ void HordeContain::pushMembersIntoContainer(Object *container)
 		}
 		AIUpdateInterface *mai = m->getAIUpdateInterface();
 		bool near = false;
+		float nearRadius = 0.0f;
 		if (mai && mai->curLocomotor())
 		{
 			// RW 0x86C02C: SSE, (dy * dy) + (dx * dx) < CloseEnoughDist^2 (locomotor + 0x3C)
@@ -182,12 +187,37 @@ void HordeContain::pushMembersIntoContainer(Object *container)
 			const float dy = SimMath::subf32(m->getPosition()->y, container->getPosition()->y);
 			const float d = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx));
 			const float r = mai->closeEnoughDist();
+			nearRadius = r;
 			near = d < SimMath::mulf32(r, r);
 		}
 		ContainModuleInterface *contain = container->getContain();
-		if (near && contain)
+		if (!near && mai && contain && dynamic_cast<TunnelContain *>(contain))
 		{
+			// Owner report 2026-11-11: a tunnel's members circle the building because the entry offset is farther than the
+			// locomotor's CloseEnoughDist; accept them within the tunnel entry's neighbourhood instead of leaving them
+			// walking around until the force fallback makes them vanish.
+			Coord3D entry;
+			if (contain->getEntryOffset(entry))
+			{
+				const float dx = SimMath::subf32(m->getPosition()->x, entry.x);
+				const float dy = SimMath::subf32(m->getPosition()->y, entry.y);
+				const float d = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx));
+				const float r = std::max(nearRadius, 90.0f);
+				near = d < SimMath::mulf32(r, r);
+			}
+		}
+		if (near && contain && !enteredNear)
+		{
+			// One near member per push (owner report 2026-11-11: a tunnel's wider entry radius made every member
+			// "near" and the whole horde vanished in the same frame). The rest wait for the next update. This must not
+			// depend on forceLeft: a zero budget (maxNumMembersToForceToImmediatelyEnter = 0) still lets the first
+			// nearby member in, or the horde circles forever (Devin review).
 			contain->addToContain(m);
+			enteredNear = true;
+			if (forceLeft > 0)
+			{
+				--forceLeft;
+			}
 			continue;
 		}
 		const unsigned last = m_lastMemberEnteredFrame;

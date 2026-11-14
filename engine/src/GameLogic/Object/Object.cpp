@@ -16,6 +16,7 @@
 #include "GameLogic/Object/EvaDamageNotice.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/CollideModule.h"
+#include "GameLogic/Module/AreaScanModules.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
@@ -1082,6 +1083,35 @@ void Object::setCapturedTeam(Team *team)
 	// RW 0x8E3ABB are not ported (S-1225); the selection, radar and EVA messages after the change are the client's
 	m_logic.noteStop("[S-1225] Object::setCapturedTeam: the production cancel, score counts and RW 0x68B303 / 0x8E3ABB of a capture are not ported");
 	setTeam(team); // RW 0x69954A
+	// owner report 2026-11-12: a captured signal fire must reveal a wide area (its function). The INI clears only 160; the building's passive aura
+	// (PassiveAreaEffectBehavior, radius 300 for SignalFire) is the area it serves, so the new owner's shroud uses that radius. The template's module
+	// data is read (the runtime module lookup by class name did not find it in the capture path).
+	if (const ThingTemplate *tt = getTemplate())
+	{
+		bool widened = false;
+		// QoL (owner report 2026-11-12): the retail signal fire reveals a much wider area than its 160 INI value; the loaded template carries no
+		// PassiveAreaEffectBehavior to take a radius from, so its capture reveals 400 (the building's function). Other captured structures use their aura.
+		if (tt->getName() == "SignalFire")
+		{
+			setShroudClearingRange(400.0f);
+			widened = true;
+		}
+		for (const ThingTemplate::Nugget &n : tt->getFinalOverride()->behaviorModules().nuggets())
+		{
+			if (widened)
+			{
+				break;
+			}
+			if (const auto *d = dynamic_cast<const PassiveAreaEffectBehaviorModuleData *>(n.data.get()))
+			{
+				if (d->m_effectRadius > 0.0f)
+				{
+					setShroudClearingRange(d->m_effectRadius);
+				}
+				break;
+			}
+		}
+	}
 	if (AIUpdateInterface *ai = getAIUpdateInterface())
 	{
 		ai->aiIdle(CMD_FROM_AI); // RW 0x6997C4: RW 0x68C213, then aiIdle(2)

@@ -26,6 +26,7 @@
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/Contain/OpenContainRuntime.h"
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "Common/Team.h"
 #include "GameLogic/WeaponSetToggle.h"
 #include "GameLogic/Module/CastleModules.h"
@@ -291,6 +292,54 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj, bool &comm
 			if (!u)
 			{
 				return ButtonState::Hidden;
+			}
+			// owner report 2026-11-10: a mixed selection (some objects already upgraded, some not) must keep the upgrade
+			// button usable: Purchased only when every selected object has or queues it; otherwise Enabled for the ones that lack it.
+			// UpgradeCommands::queueUpgrade already applies the command to every eligible selected object.
+			const std::vector<ObjectID> &selectedForUpgrade = m_ctx.ui.selected();
+			if (selectedForUpgrade.size() > 1)
+			{
+				bool allHave = true, anyLacks = false, anyAffected = false, anyQueueRoom = false, anyAffordable = false;
+				for (ObjectID sid : selectedForUpgrade)
+				{
+					Object *o = m_ctx.logic.findObjectByID(sid);
+					if (!o || o->isDestroyed())
+					{
+						continue;
+					}
+					auto *opu = o->getProductionUpdate();
+					const bool has = o->hasUpgrade(u) || (opu && opu->isUpgradeInQueue(u));
+					allHave = allHave && has;
+					if (!has && o->affectedByUpgrade(u))
+					{
+						anyLacks = true;
+						anyAffected = true;
+						// Devin review: an object without a production queue cannot take the upgrade; it must not count as room.
+						// The button is affordable when ANY eligible lacking object can pay (queueUpgrade upgrades the ones it can),
+						// not only the first one in selection order.
+						if (opu && opu->getProductionCount() < 20)
+						{
+							anyQueueRoom = true;
+							if (UpgradeCenter::canAffordUpgrade(player, u, o))
+							{
+								anyAffordable = true;
+							}
+						}
+					}
+				}
+				if (allHave)
+				{
+					return ButtonState::Purchased;
+				}
+				if (!anyLacks || !anyAffected)
+				{
+					return ButtonState::Restricted;
+				}
+				if (!anyQueueRoom)
+				{
+					return ButtonState::CantAfford;
+				}
+				return anyAffordable ? ButtonState::Enabled : ButtonState::CantAfford;
 			}
 			static const int underConstruction = ObjectTemplateInfoBuilder::objectStatusIndex("UNDER_CONSTRUCTION"), repair = ObjectTemplateInfoBuilder::objectStatusIndex("UNDERGOING_REPAIR");
 			if ((obj.testStatus((unsigned)underConstruction) || obj.isEffectivelyDead()) && (obj.isKindOfName("DEFENSIVE_WALL") || obj.isKindOfName("CASTLE_KEEP"))
@@ -809,6 +858,12 @@ void ControlBar::update()
 							}
 						}
 					}
+					// owner report 2026-11-12: a unit already in the queue keeps the queued look (bluish border / light layer), not the dark
+					// population-limit disabled look. The evaluate() gate above may have returned Restricted for a full population.
+					if (cb.queued > 0 && cb.state == ButtonState::Restricted)
+					{
+						cb.state = ButtonState::NotReady;
+					}
 				}
 				// Upgrade buttons share the production queue's progress with unit buttons. Availability
 				// remains Purchased while researching; it does not mean the research is complete.
@@ -990,6 +1045,17 @@ void ControlBar::doTransportInventoryUI(Object &obj)
 		if (!rider || current > last)
 		{
 			continue;
+		}
+		// Owner report 2026-11-11: the tunnel network lists a horde as soon as the first soldier enters. Its icon (and the
+		// exit button) must wait until every member is inside, otherwise invoking it from another tunnel cancels the entry.
+		if (rider->isKindOfName("HORDE"))
+		{
+			ContainModuleInterface *hordeContain = rider->getContain();
+			HordeContainInterface *horde = hordeContain ? hordeContain->getHordeContainInterface() : nullptr;
+			if (horde && !horde->allMembersEntered())
+			{
+				continue;
+			}
 		}
 		const std::string image = templateButtonImage(rider->getTemplate());
 		const int n = TransportContain::transportSlotCount(*rider);
