@@ -102,6 +102,7 @@ private:
 	bool m_lightApplied = false; ///< the last applied frame had an effect (the base lights must be restored once it ends)
 	float m_lastLight[7] = { -1, -1, -1, -1, -1, -1, -1 };
 	unsigned long long m_snowFrames = 0, m_fxPlayed = 0, m_relights = 0;
+	double m_snowWarmup = 0.0; ///< seconds the snow particles stay hidden after load (their texture may still be a placeholder on the first frames)
 	int m_lastCount = 0;
 	// lane WEATHERFX-1: the last advance, for fxState
 	int m_lastWeather = 0;

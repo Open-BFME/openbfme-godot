@@ -76,6 +76,13 @@ const char kObjects[] =
 	"  Geometry = CYLINDER\n"
 	"  GeometryMajorRadius = 5\n"
 	"End\n"
+	"Object HillerNoSeg\n"
+	"  KindOf = INFANTRY\n"
+	"  ShroudClearingRange = 150\n"
+	"  VisionBonusPercentPerFoot = 1%\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 5\n"
+	"End\n"
 	"Object BigScout\n"
 	"  KindOf = INFANTRY\n"
 	"  ShroudClearingRange = 100\n"
@@ -135,6 +142,20 @@ const std::set<std::pair<int, int>> kCircle2 = { { 9, 12 }, { 10, 12 }, { 11, 12
 // r = 1: rows 11 / 9 get x 10; then dy = 0 and r == 1 widens to 9..11 on row 10 (a plus)
 const std::set<std::pair<int, int>> kCircle1 = { { 10, 11 }, { 10, 9 }, { 9, 10 }, { 10, 10 }, { 11, 10 } };
 } // namespace
+
+TEST_CASE("shroud: a template without the vision-bonus rows keeps the ThingTemplate constructor's defaults (RW 0x73FB7A: segments 8, radius 100, max +50%, min -50%)")
+{
+	Fx f;
+	const ThingTemplate *tt = f.w.get("HillerNoSeg");
+	REQUIRE(tt != nullptr);
+	const ShroudManager::TemplateVision tv = ShroudManager::templateVision(*tt->getFinalOverride());
+	// owner report 2026-11-11: the INI never sets VisionBonusTestSegments; with the port's old 0 the ground reference was 0 and the height bonus used the
+	// absolute Z (the dwarven axe throwers saw up to four times farther).
+	CHECK(tv.bonusTestSegments == 8);
+	CHECK(tv.bonusTestRadius == 100.0f);
+	CHECK(tv.maxBonus == 0.5f);
+	CHECK(tv.minBonus == -0.5f);
+}
 
 TEST_CASE("shroud cells: the grid is ceil(extent / PartitionCellSize), every cell starts never seen, the looker counts follow RW 0xB52E10 / 0xB52EC0")
 {

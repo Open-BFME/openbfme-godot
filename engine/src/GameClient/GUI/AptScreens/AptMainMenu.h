@@ -36,6 +36,7 @@ public:
 	~AptMainMenu() override;
 	void runInit() override;
 
+
 	// The RotWK names in binary order, for the registry test (commands and the render component).
 	static const std::vector<std::string> &retailNames();
 

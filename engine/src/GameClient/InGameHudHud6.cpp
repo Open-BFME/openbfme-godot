@@ -429,6 +429,13 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	const bool allowed = ctx && (ctx->getControllingPlayer() == local || !ControlBar::localPlayerActive(local));
 	m_radial.setImageSize(imageSizeOf, (void *)m_hud6Images);
 	m_radial.setFontMetrics(m_hud6Metrics); // lane OWNERFIX-3: the count's measure (the device's fonts)
+	// owner report 2026-11-13: the radial clock's rim follows the faction group (good blue, evil red), like the button frame. Retail's clock is black for
+	// every side (controlbarscheme.ini's BuildUpClockColor: only Mordor overrides it, to black); this is a UI colour choice.
+	{
+		const Player *local = m_input ? m_input->context().localPlayer() : nullptr;
+		const bool evil = local && local->getPlayerTemplate() && local->getPlayerTemplate()->m_evil;
+		m_radial.setClockRimColor(evil ? 0xFFFF4040u : 0xFF3F8CFFu);
+	}
 	m_radial.update(logic, &m_config.game.drawables(), m_config.view, m_windowW, m_windowH, context, m_bar->sideButtons(), allowed);
 	// the help box: the control bar's test of the last frame, the hover of this one, the movie clip's update
 	m_helpBox.setEndGameTimer(m_config.endGameTimer ? m_config.endGameTimer() : -1);
@@ -473,6 +480,37 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	if (!have)
 	{
 		have = hoveredHelpButton(p, hovered, unit, context); // lane HOVER-1
+	}
+	// owner report 2026-11-12: hovering a soldier in the world shows the same help box the hero portraits use (name, rank, maximum health, damage,
+	// upgrades, description), next to its health bar. Only when no command button is under the pointer.
+	if (!have && m_input)
+	{
+		ObjectID hover = m_input->ui().mouseoverObject();
+		if (Object *ho = hover != INVALID_ID ? logic.findObjectByID(hover) : nullptr; ho && ho->isKindOfName("HORDE") && ho->getContain())
+		{
+			// the pick returns the horde: the first living soldier answers (UnitHelpSource takes the rank from the horde)
+			if (const ContainModuleInterface::ContainedItemsList *members = ho->getContain()->getContainedItemsList())
+			{
+				for (Object *member : *members)
+				{
+					if (member && !member->isEffectivelyDead())
+					{
+						hover = member->getID();
+						break;
+					}
+				}
+			}
+		}
+		Object *o = hover != INVALID_ID ? logic.findObjectByID(hover) : nullptr;
+		if (o && !o->isEffectivelyDead() && o->getBodyModule())
+		{
+			p.bar = 4;
+			p.slot = -1;
+			p.button = nullptr;
+			p.object = (std::uint32_t)hover;
+			unit = hover;
+			have = true;
+		}
 	}
 	const std::vector<ObjectID> &selected = m_input->ui().selected();
 	if (have)

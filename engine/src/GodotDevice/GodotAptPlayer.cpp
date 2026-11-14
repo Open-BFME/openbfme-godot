@@ -2142,6 +2142,9 @@ void AptMenuPlayer::shell_show_shell_map(bool use)
 	if (m->shell && m->shell->shell)
 	{
 		m->shell->shell->showShellMap(use);
+		// owner report 2026-11-10: recreate the shell's View3D on a shell-map change (the return to the menu and a game's
+		// start). Released rather than hidden, so the menu background restarts from its first frame and nothing accumulates.
+		m->view3d.releaseAll();
 		m->dirty = true;
 		m->drawnValid = false; // lane CAMP-2: the backdrop is not in the canvas list: an unchanged list must still be drawn again without it
 	}
@@ -4565,7 +4568,9 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 			const Ref<ImageTexture> texture = m->imageTexture(sm, img, name);
 			if (texture.is_valid())
 			{
-				const AptStageMapping backdrop = m->mapping.fitImage((float)img->imageSize.x, (float)img->imageSize.y);
+				// owner report 2026-11-10: the menu backdrop must use the same stretch as the movie's buttons; fitting it to 4:3
+				// left pillarbox bars and put the buttons outside the picture.
+				const AptStageMapping backdrop = m->mapping;
 				float x0, y0, x1, y1;
 				backdrop.stageToWindow(0.0f, 0.0f, x0, y0);
 				backdrop.stageToWindow(backdrop.stageW, backdrop.stageH, x1, y1);
@@ -5066,7 +5071,7 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 							const ::Image *backdropImage = m->shell->skins.images.findImageByName(m->shell->shell->backdropImage());
 							if (backdropImage)
 							{
-								const AptStageMapping artwork = m->mapping.fitImage((float)backdropImage->imageSize.x, (float)backdropImage->imageSize.y);
+								const AptStageMapping artwork = m->mapping; // same stretch as the backdrop and the menu buttons (owner report)
 								imageScaleX = artwork.scaleX();
 								imageScaleY = artwork.scaleY();
 								imageOffsetX = artwork.offsetX();
@@ -5142,7 +5147,12 @@ void AptMenuPlayer::drawSegment(const AptCanvasList &list, size_t segment, const
 				}
 				// the font follows the device scale by min(scaleX, scaleY) (donor AptDisplayStringAllocation_ctor.cpp:105-110)
 				const float k = std::min(op.scaleX, op.scaleY);
-				const int px = std::max(1, (int)std::lround(op.drawSize * k * fieldScale));
+				int px = std::max(1, (int)std::lround(op.drawSize * k * fieldScale));
+				// owner report 2026-11-13: the production count ("1") on a command button one point smaller than the movie's font.
+				if (op.path.find("ProductionCount") != std::string::npos)
+				{
+					px = std::max(1, px - 5);
+				}
 				Ref<Font> font;
 				auto fit = m->fontByName.find(lowerAscii(op.drawFont));
 				if (fit == m->fontByName.end())

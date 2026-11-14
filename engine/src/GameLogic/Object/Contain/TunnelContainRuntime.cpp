@@ -72,6 +72,24 @@ bool TunnelTracker::isValidContainerFor(const Object *obj, bool checkCapacity, c
 	return true;
 }
 
+void TunnelTracker::addToContainList(Object *obj, ObjectID tunnelId)
+{
+	if (!obj)
+	{
+		return;
+	}
+	// Keep the FIRST tunnel a rider entered by: opening another tunnel's exit list (or a re-add) must not make that
+	// tunnel its origin, otherwise destroying it would release the rider there (owner report 2026-11-11).
+	if (std::find(m_riders.begin(), m_riders.end(), obj) == m_riders.end())
+	{
+		m_riders.push_back(obj);
+	}
+	if (m_entryTunnel.find(obj->getID()) == m_entryTunnel.end())
+	{
+		m_entryTunnel[obj->getID()] = tunnelId;
+	}
+}
+
 void TunnelTracker::removeFromContain(Object *obj)
 {
 	auto it = std::find(m_riders.begin(), m_riders.end(), obj);
@@ -79,6 +97,38 @@ void TunnelTracker::removeFromContain(Object *obj)
 	{
 		m_riders.erase(it);
 	}
+	if (obj)
+	{
+		m_entryTunnel.erase(obj->getID());
+	}
+}
+
+ObjectID TunnelTracker::entryTunnelOf(const Object *obj) const
+{
+	if (!obj)
+	{
+		return INVALID_ID;
+	}
+	auto it = m_entryTunnel.find(obj->getID());
+	return it == m_entryTunnel.end() ? INVALID_ID : it->second;
+}
+
+std::vector<Object *> TunnelTracker::ridersEnteredBy(ObjectID tunnelId) const
+{
+	std::vector<Object *> out;
+	if (tunnelId == INVALID_ID)
+	{
+		return out;
+	}
+	for (Object *r : m_riders)
+	{
+		auto it = r ? m_entryTunnel.find(r->getID()) : m_entryTunnel.end();
+		if (it != m_entryTunnel.end() && it->second == tunnelId)
+		{
+			out.push_back(r);
+		}
+	}
+	return out;
 }
 
 bool TunnelTracker::isInContainer(const Object *obj) const
@@ -97,6 +147,16 @@ bool TunnelTracker::onTunnelDestroyed(const Object &tunnel, GameLogic &logic)
 	(void)logic;
 	--m_tunnelCount;
 	m_tunnelIds.remove(tunnel.getID()); // RW 0x87EDB7
+	// The riders that entered by this tunnel now count as entered by the first tunnel left (RW 0x6901AE). Keep the
+	// origin map in step so a later destruction does not release them from the wrong tunnel.
+	const ObjectID fallback = m_tunnelIds.empty() ? INVALID_ID : m_tunnelIds.front();
+	for (auto &kv : m_entryTunnel)
+	{
+		if (kv.second == tunnel.getID())
+		{
+			kv.second = fallback;
+		}
+	}
 	return m_tunnelCount == 0;
 }
 
@@ -132,6 +192,13 @@ void TunnelTracker::crc(StateHasher &h) const
 	for (const Object *o : m_riders)
 	{
 		h.addU32(o->getID());
+	}
+	// not retail: the rider -> entry tunnel map (owner report 2026-11-11), sorted by rider id
+	h.addU32((std::uint32_t)m_entryTunnel.size());
+	for (const auto &kv : m_entryTunnel)
+	{
+		h.addU32(kv.first);
+		h.addU32(kv.second);
 	}
 	h.addU32(m_tunnelCount);
 }
@@ -230,12 +297,24 @@ void TunnelContain::addToContainList(Object *obj)
 {
 	if (TunnelTracker *t = tracker())
 	{
-		t->addToContainList(obj); // RW 0x880F0E
+		t->addToContainList(obj, getObject()->getID()); // RW 0x880F0E; the origin is this tunnel
 	}
 }
 
 void TunnelContain::removeFromContain(Object *obj)
 {
+	// Owner report 2026-11-11: a tunnel that is dying or has left the network must not release the riders that entered
+	// another tunnel, even if its exit list was open when it died. Only the riders that entered by it may leave here
+	// (and the last tunnel still releases everyone, tunnelCount() == 0, as retail does).
+	Object *self = getObject();
+	const bool dying = m_destroying || !m_registered || self->isEffectivelyDead();
+	if (dying && obj)
+	{
+		if (TunnelTracker *t = tracker(); t && t->tunnelCount() > 0 && m_destroyingOwn.count(obj->getID()) == 0 && t->entryTunnelOf(obj) != self->getID())
+		{
+			return;
+		}
+	}
 	GarrisonContain::removeFromContain(obj); // RW 0x87D04B
 	if (TunnelTracker *t = tracker())
 	{
@@ -318,6 +397,20 @@ void TunnelContain::leaveNetwork()
 		return;
 	}
 	Object *self = getObject();
+	// Capture the riders that actually entered by this tunnel before onTunnelDestroyed moves their origin to the first
+	// tunnel left. A rider that entered another tunnel is not touched: destroying this tunnel must not release it here.
+	const std::vector<Object *> entered = t->ridersEnteredBy(self->getID());
+	// Gate the removals of this destruction: only the riders captured above (or every rider when this is the last
+	// tunnel) may leave here, whatever path asks (owner report 2026-11-11).
+	m_destroying = true;
+	m_destroyingOwn.clear();
+	for (Object *r : entered)
+	{
+		if (r)
+		{
+			m_destroyingOwn.insert(r->getID());
+		}
+	}
 	if (!t->onTunnelDestroyed(*self, self->logic()))
 	{
 		// RW 0x8FA4E8: the riders that entered by this tunnel count as entered by the first tunnel left (RW 0x6901AE)
@@ -325,20 +418,15 @@ void TunnelContain::leaveNetwork()
 		{
 			if (TunnelContain *v = dynamic_cast<TunnelContain *>(valid->getContain()))
 			{
-				const std::vector<Object *> riders(t->riders().begin(), t->riders().end());
-				for (Object *r : riders)
+				for (Object *r : entered)
 				{
-					if (r->getContainedBy() == self)
-					{
-						v->objectOnContainedBy(r);
-					}
+					v->objectOnContainedBy(r);
 				}
 			}
 		}
-		// RW 0x881105: a HORDE rider whose AI goal is this tunnel and whose members are all in comes out here
+		// RW 0x881105: a HORDE rider whose AI goal is this tunnel and whose members are not all in yet is let out here
 		static const int horde = CombatNames::kindOf("HORDE");
-		const std::vector<Object *> riders(t->riders().begin(), t->riders().end());
-		for (Object *r : riders)
+		for (Object *r : entered)
 		{
 			AIUpdateInterface *ai = r->getAIUpdateInterface();
 			if (!ai || ai->stateMachine().goalObject() != self || !r->isKindOf((unsigned)horde))
@@ -356,7 +444,48 @@ void TunnelContain::leaveNetwork()
 	{
 		removeAllContained(); // the last tunnel: everyone comes out (slot 0xA8 RW 0x881367)
 	}
+	m_destroying = false;
+	m_destroyingOwn.clear();
 	m_registered = false;
+}
+
+// Owner report 2026-11-11: the sale path (RW 0x796804 -> contain slot 0x64 -> RW 0x86561F) clears the kill-on-death
+// byte and orders every rider out. For a tunnel that list is the player's whole network, so selling one shaft made the
+// units entered by another come out of it. Only this shaft's riders leave; the rest stay in the network, and the
+// shaft's destruction moves their origin to the first tunnel left.
+void TunnelContain::onSelling()
+{
+	m_killingRiders = false; // RW 0x865623
+	TunnelTracker *t = tracker();
+	if (!t)
+	{
+		return;
+	}
+	if (t->tunnelCount() <= 1u)
+	{
+		orderAllPassengersToExit((int)CMD_FROM_AI); // the last tunnel: everyone comes out here
+		return;
+	}
+	static const int horde = CombatNames::kindOf("HORDE");
+	const std::vector<Object *> own = t->ridersEnteredBy(getObject()->getID());
+	for (Object *r : own)
+	{
+		if (!r)
+		{
+			continue;
+		}
+		if (r->isKindOf((unsigned)horde))
+		{
+			if (HordeContainInterface *h = hordeOfObject(*r))
+			{
+				h->exitContainer(getObject(), (int)CMD_FROM_AI);
+			}
+		}
+		else if (AIUpdateInterface *ai = r->getAIUpdateInterface())
+		{
+			ai->aiExit(getObject(), CMD_FROM_AI);
+		}
+	}
 }
 
 void TunnelContain::onDie(const DieModuleInterface::Event &event)
@@ -433,6 +562,16 @@ void TunnelTracker::xfer(Xfer &x, GameLogic &logic)
 			loaded.push_back(o);
 		}
 		m_riders.swap(loaded);
+		// the origin map is derived, not stored (the retail format has no room for it): a loaded rider belongs to the
+		// tunnel its contain names
+		m_entryTunnel.clear();
+		for (Object *r : m_riders)
+		{
+			if (r && r->getContainedBy())
+			{
+				m_entryTunnel[r->getID()] = r->getContainedBy()->getID();
+			}
+		}
 	}
 	x.xferUnsignedInt(&m_tunnelCount);
 	ObjectID nemesis = INVALID_ID;

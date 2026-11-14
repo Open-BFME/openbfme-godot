@@ -3,6 +3,7 @@
 
 #include "Common/ModEngineFeatures.h"
 #include "GameLogic/Module/AreaScanModules.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/AsciiString.h"
@@ -357,6 +358,8 @@ PassiveAreaEffectBehavior::PassiveAreaEffectBehavior(Thing *thing, const Passive
 	: UpdateModule(thing, data)
 	, m_data(data)
 {
+	// owner report 2026-11-13: the placement decal (GONDOR_WELL_AOE_RADIUS_DECAL = 440) is a 440 DIAMETER (220 radius, "about 2.2 times" the
+	// 200 INI radius); the old 440-radius override healed outside the drawn circle. Use the INI radius.
 	setWakeFrame(getObject(), UPDATE_SLEEP(1)); // RW 0x887D49
 }
 
@@ -467,7 +470,10 @@ UpdateSleepTime PassiveAreaEffectBehavior::update()
 	}
 	if (obj->isEffectivelyDead())
 	{
-		return UPDATE_SLEEP_FOREVER;
+		// owner report 2026-11-13 (P-23, both editions): a placed structure is briefly flagged effectively dead while it is a foundation; retail's
+		// UPDATE_SLEEP_FOREVER leaves the aura asleep after the structure is finished or rebuilt, so the Hearth never heals. Keep checking at the
+		// aura's own ping delay instead (the dead object does nothing in scan()/affect()).
+		return sleep;
 	}
 	const UnsignedInt now = logic.getFrame();
 	if (now - m_lastScan >= m_data->m_pingDelay)

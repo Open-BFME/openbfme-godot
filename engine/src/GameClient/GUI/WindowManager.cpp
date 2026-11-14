@@ -117,6 +117,7 @@ void WindowManager::setBackground(int mode)
 		return;
 	}
 	m_backgroundHidden = 0;
+	showAptWindow(m_backgroundLevel); // an instant hide hides the level's root (hideBackground); show it again for the fadein
 	std::string error;
 	if (!invokeAS(m_backgroundLevel, function, {}, nullptr, &error))
 	{
@@ -146,6 +147,13 @@ void WindowManager::hideBackground(bool instant)
 			note("background", std::string(function) + ": " + error);
 		}
 		m_backgroundHidden = mode;
+	}
+	if (instant)
+	{
+		// The movie's own instant hide leaves its last View3D texture drawn until the next canvas build (owner report
+		// 2026-11-10: a one-frame flicker when the main menu comes back). Hiding the level's root now removes it in
+		// the same frame, so the shell backdrop shows at once; setBackground shows it again for a later fadein.
+		hideAptWindow(m_backgroundLevel);
 	}
 	m_backgroundMode = 0;
 }

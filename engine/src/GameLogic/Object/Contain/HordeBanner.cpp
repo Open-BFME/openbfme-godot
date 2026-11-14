@@ -26,6 +26,7 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/FXEvents.h"
@@ -45,6 +46,7 @@
 #include "GameLogic/SimMath.h"
 
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 
 namespace
@@ -199,6 +201,89 @@ bool bannerSpawnAllowed(Object &carrier)
 UpdateSleepTime BannerCarrierUpdate::update()
 {
 	Object *obj = getObject();
+	// owner report 2026-11-12/13: the carrier stood at its formation slot with no model. The banners' default model is None; MorphCondition maps the
+	// horde's payload type to model states (Dwarven axe thrower -> USER_5, Gondor archer -> "USER_1 PASSENGER_VARIATION_2", ...). The raw lines were
+	// kept but never applied. Every BannerCarrierUpdate is handled, not only the Dwarven one: the union of the states the lines name is cleared, then
+	// the matching line's list (one or more tokens) is set.
+	if (Object *horde = obj->getContainedBy(); horde && horde->getContain())
+	{
+		if (HordeContainInterface *hc = horde->getContain()->getHordeContainInterface())
+		{
+			const std::string payload = hc->getPayloadMemberTemplateName();
+			if (!payload.empty() && payload != m_lastMorphPayload)
+			{
+				m_lastMorphPayload = payload;
+				const auto valueAfter = [](const std::string &line, const char *key) -> std::string {
+					const size_t p = line.find(key);
+					if (p == std::string::npos)
+					{
+						return std::string();
+					}
+					size_t b = p + std::strlen(key);
+					while (b < line.size() && (line[b] == ' ' || line[b] == '\t'))
+					{
+						++b;
+					}
+					if (b < line.size() && line[b] == '"')
+					{
+						const size_t e = line.find('"', b + 1);
+						return line.substr(b + 1, e == std::string::npos ? std::string::npos : e - b - 1);
+					}
+					size_t e = b;
+					while (e < line.size() && line[e] != ' ' && line[e] != '\t' && line[e] != ';')
+					{
+						++e;
+					}
+					return line.substr(b, e - b);
+				};
+				const auto setStates = [&](const std::string &states, bool on) {
+					size_t b = 0;
+					while (b < states.size())
+					{
+						while (b < states.size() && states[b] == ' ')
+						{
+							++b;
+						}
+						size_t e = b;
+						while (e < states.size() && states[e] != ' ')
+						{
+							++e;
+						}
+						if (e > b)
+						{
+							const int bit = CombatNames::modelCondition(states.substr(b, e - b).c_str());
+							if (bit >= 0)
+							{
+								obj->setModelConditionState(bit, on);
+							}
+							b = e;
+						}
+						else
+						{
+							break;
+						}
+					}
+				};
+				std::string chosen;
+				for (const std::string &line : m_data->m_morphConditions)
+				{
+					const std::string states = valueAfter(line, "ModelState:");
+					if (!states.empty())
+					{
+						setStates(states, false); // the union: a previous payload's states go away
+					}
+					if (chosen.empty() && valueAfter(line, "UnitType:") == payload)
+					{
+						chosen = states;
+					}
+				}
+				if (!chosen.empty())
+				{
+					setStates(chosen, true);
+				}
+			}
+		}
+	}
 	const UpdateSleepTime sleep = UPDATE_SLEEP((int)(m_data->m_idleSpawnRate > 0 ? m_data->m_idleSpawnRate : 1));
 	if (!m_data->m_upgradeRequired.empty() && !obj->hasUpgrade(m_data->m_upgradeRequired))
 	{

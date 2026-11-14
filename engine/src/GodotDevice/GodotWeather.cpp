@@ -252,6 +252,9 @@ bool GodotWeather::load(Node3D *parent, ArchiveFileSystem &fs, const std::string
 	m_snowNode->set_custom_aabb(AABB(Vector3(-1e5f, -1e5f, -1e5f), Vector3(2e5f, 2e5f, 2e5f)));
 	m_snowNode->set_visible(false);
 	m_node->add_child(m_snowNode);
+	// The first game frames can still show the snow texture as a black placeholder while the effect player finishes loading it:
+	// keep the particles hidden for a short warm-up instead of drawing a screen of black dots (owner report, 2026-11-10).
+	m_snowWarmup = 2.0;
 	m_builtSpacing = m_builtCount = m_builtColumns = m_builtTiles = m_builtStepX = m_builtStepY = -1;
 	m_lightApplied = false;
 	for (float &v : m_lastLight)
@@ -432,6 +435,14 @@ void GodotWeather::advance(double seconds, int globalWeather)
 	}
 	const WeatherClientFrame f = m_client.advance(seconds, globalWeather, *m_random);
 	applySnow(f.snow);
+	if (m_snowWarmup > 0.0)
+	{
+		m_snowWarmup -= seconds > 0.0 ? seconds : 0.0;
+		if (m_snowNode)
+		{
+			m_snowNode->set_visible(false); // the warm-up: no snow particles until the texture is ready
+		}
+	}
 	applyLight(f);
 	m_lastWeather = globalWeather; // lane WEATHERFX-1
 	m_lastSnowDraw = f.snow.draw;

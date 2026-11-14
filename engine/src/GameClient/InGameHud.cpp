@@ -30,6 +30,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "Common/Player.h"
+#include "Common/Team.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Science.h"
 #include "GameLogic/WeaponSetToggle.h"
@@ -711,7 +712,24 @@ void InGameHud::update(double seconds)
 	m_iconSettings.snapshot = iconSnap.get();
 	m_iconSettings.shroudDrawn = iconSnap && iconSnap->shroud && iconSnap->shroud->displayed;
 	presentBeacons(); // lane CHAT-1
-	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, m_input->ui().mouseoverObject(), m_iconOps);
+	// owner report 2026-11-12: hovering a horde must show the soldier's bar and help, not the horde object's. The pick returns the horde; the
+	// first living member stands for it (the member's own name and health; its rank comes from the horde in UnitHelpSource).
+	ObjectID mouseover = m_input->ui().mouseoverObject();
+	if (Object *ho = m_config.game.logic().findObjectByID(mouseover); ho && ho->isKindOfName("HORDE") && ho->getContain())
+	{
+		if (const ContainModuleInterface::ContainedItemsList *members = ho->getContain()->getContainedItemsList())
+		{
+			for (Object *member : *members)
+			{
+				if (member && !member->isEffectivelyDead())
+				{
+					mouseover = member->getID();
+					break;
+				}
+			}
+		}
+	}
+	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, mouseover, m_iconOps);
 	updateFloatingText(m_config.view, m_iconSettings.shroudDrawn);
 	m_iconSettings.snapshot = nullptr; // the frame's snapshot goes with this frame
 	part(m_updateParts.icons);
@@ -879,6 +897,18 @@ void InGameHud::updateFloatingText(const TacticalView &view, bool shroudDrawn)
 			if (!owner || e.amount <= 0)
 			{
 				continue;
+			}
+			// owner report 2026-11-12: another player's production shows its "+25" over the enemy's buildings. Only the local player's and its
+			// allies' income texts are drawn.
+			const Player *local = m_config.game.players().getLocalPlayer();
+			if (local && owner != local)
+			{
+				const Team *ot = owner->getDefaultTeam();
+				const Team *lt = local->getDefaultTeam();
+				if (!ot || !lt || ot->getRelationship(lt) != ALLIES)
+				{
+					continue;
+				}
 			}
 			Coord3D pos = e.textPos;
 			// BFME2 AutoDepositUpdate.cpp: "add a little z to make it show up above the unit".

@@ -96,8 +96,9 @@ public:
 	struct TemplateVision
 	{
 		float shroudClearingRange = 0.0f, visionSide = 1.0f, visionRear = 1.0f;
-		float bonusPerFoot = 0.0f, bonusTestRadius = 0.0f, maxBonus = 0.0f, minBonus = 0.0f;
-		int bonusTestSegments = 0;
+		// RW 0x73FB7A ThingTemplate constructor: +0x4CC 0, +0x4D0 0.5, +0x4D4 -0.5, +0x4D8 100.0, +0x554 8
+		float bonusPerFoot = 0.0f, bonusTestRadius = 100.0f, maxBonus = 0.5f, minBonus = -0.5f;
+		int bonusTestSegments = 8;
 		bool small = false;
 		ObjectGeometry::Shape shape; ///< the default shape when the template has no geometry row
 	};

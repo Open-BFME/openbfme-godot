@@ -1018,9 +1018,12 @@ ShroudManager::TemplateVision ShroudManager::templateVision(const ThingTemplate 
 	v.visionSide = real(F_SIDE, 1.0f);
 	v.visionRear = real(F_REAR, 1.0f);
 	v.bonusPerFoot = real(F_PERFOOT, 0.0f);
-	v.bonusTestRadius = real(F_RADIUS, 0.0f);
-	v.maxBonus = real(F_MAX, 0.0f);
-	v.minBonus = real(F_MIN, 0.0f);
+	// RW 0x73FB7A ThingTemplate constructor: VisionBonusTestRadius +0x4D8 = 100.0, MaxVisionBonusPercent +0x4D0 = 0.5, MinVisionBonusPercent +0x4D4 = -0.5,
+	// VisionBonusTestSegments +0x554 = 8. The INI never sets the segments; with 0 the ground reference was 0 and the height bonus became the absolute Z
+	// (the dwarven axe throwers saw four times farther: owner report 2026-11-11).
+	v.bonusTestRadius = real(F_RADIUS, 100.0f);
+	v.maxBonus = real(F_MAX, 0.5f);
+	v.minBonus = real(F_MIN, -0.5f);
 	if (const FieldValue *f = field(F_SEGMENTS))
 	{
 		if (const long long *i = std::get_if<long long>(f))

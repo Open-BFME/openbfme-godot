@@ -113,7 +113,6 @@ public:
 	const std::list<ObjectID> &targets() const { return m_targets; }
 	unsigned long long heals() const { return m_heals; }
 	unsigned long long modifiersApplied() const { return m_modifiers; }
-
 private:
 	void scan();                 ///< RW 0x887F17 (slot 0x34)
 	void affect(Object &target); ///< RW 0x887B72 (slot 0x38): the heal RW 0x887BAB, the modifiers RW 0x887C94
