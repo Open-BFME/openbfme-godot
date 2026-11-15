@@ -19,8 +19,9 @@
 //     arg shape, the group's dozers repair (RW 0x7723E6).
 //   * the Dozer construct body (RW 0x88C217) calls the BuildAssistant legality at RW 0x88C2A5 with flags 0x49F and rejects a nonzero result: nothing is created, paid or changed (DozerAIUpdate::siteIsLegal,
 //     asked before the builder is told to idle). The plot path (RW 0x858701) has no such call.
-// INFERENCE (stop S-305): the checks the port adds are BuildAssistant::canMakeUnit (the builder's CommandSet offers the template, the player can afford it, command points, maximum
-// count) in place of the unread body of RW 0x6AAA2E. MSG_DO_REPAIR's
+// INFERENCE (stop S-305, narrowed by PORT-212): Player::canBuild (RW 0x6AAA2E) is stood for by BuildAssistant::playerCanBuild (allowedToBuild RW 0x6AC856, Buildable, the
+// prerequisites) in the MSG_FOUNDATION_CONSTRUCT case; the MSG_DOZER_CONSTRUCT case still stands BuildAssistant::canMakeUnit in (the dozer's click has already asked it at
+// RW 0x83E771, so its maximum cannot be reached twice). MSG_DO_REPAIR's
 // health effect needs the body healing of the combat lane: the repair message is counted, the dozer walks to the structure and stays (reported).
 
 #pragma once
