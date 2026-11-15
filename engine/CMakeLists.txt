@@ -978,6 +978,7 @@ add_executable(openbfme_tests
     tests/test_lua_runtime.cpp
     tests/test_lua_events.cpp
     tests/test_lua_engine.cpp
+    tests/test_stunned_ai_update.cpp
     tests/test_lua_retail.cpp
     tests/test_lua_draw.cpp
     tests/test_lua_binary_facts.cpp
