@@ -154,6 +154,7 @@ public:
 	virtual float productionCostMultiplier(const ThingTemplate *type) const = 0; // slot 26, RW 0x8A093D
 	virtual float productionTimeMultiplier(const ThingTemplate *type) const = 0; // slot 27, RW 0x8A09B7
 	virtual void cancelAllProduction() = 0;                              // slot 15, RW 0x8A05B2
+	virtual void cancelAndReleaseAllProduction() = 0;                    // slot 16 (+0x40), RW 0x8A1666 (DONOR BFME2 0x0049DEC8)
 	virtual int maxQueueEntries() const = 0;
 	// ---- lane UPGRADE-1: upgrade research (the entries of type 2) ----
 	virtual int canQueueUpgrade(const UpgradeTemplate *upgrade) const = 0; // slot 1, RW 0x8A06ED: 4 queue full, 3 TEMPORARILY_DEFECTED, else 0
@@ -202,6 +203,7 @@ public:
 	float productionCostMultiplier(const ThingTemplate *type) const override;
 	float productionTimeMultiplier(const ThingTemplate *type) const override;
 	void cancelAllProduction() override;
+	void cancelAndReleaseAllProduction() override;
 	int maxQueueEntries() const override { return m_data->m_maxQueueEntries; }
 	int canQueueUpgrade(const UpgradeTemplate *upgrade) const override;
 	bool queueUpgrade(const UpgradeTemplate *upgrade) override;
