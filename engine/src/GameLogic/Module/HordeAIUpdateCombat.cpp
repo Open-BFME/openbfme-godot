@@ -161,17 +161,8 @@ struct HordeSquishState : AIState
 	bool m_flagSet = false;
 	bool m_reacquire = true; // + 0x64 (lane FLANK-1): the ctor's 1, cleared and set again only by the update's re-acquisition
 
-	// RW 0x8DBDFF StateMachine::isGoalObjectDestroyed: goal id 0 -> false; an id that no longer resolves -> true; else the object's dead bit (+ 0x458 bit 0)
-	bool goalDestroyed() const
-	{
-		const ObjectID id = machine().goalObjectID();
-		if (id == INVALID_ID)
-		{
-			return false;
-		}
-		const Object *g = ai().getObject()->logic().findObjectByID(id);
-		return !g || g->isEffectivelyDead();
-	}
+	// RW 0x8DBDFF StateMachine::isGoalObjectDestroyed (AIStateMachine::isGoalObjectDestroyed)
+	bool goalDestroyed() const { return machine().isGoalObjectDestroyed(); }
 
 	static Object *victimHorde(Object &v)
 	{
