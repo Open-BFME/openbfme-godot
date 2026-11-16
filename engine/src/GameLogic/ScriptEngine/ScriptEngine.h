@@ -130,6 +130,8 @@ struct ScriptClientRequest
 	Coord3D position;
 	std::string script;      ///< the script that ran it
 	std::uint32_t objectId = 0; ///< lane SCRIPT-2: the object of the first named-unit parameter (resolved when the logic ran the action; 0 none)
+	/// lane PORT-439: FOCAL_LENGTH_CAMERA's parameter 0, the focal length in millimetres (the action's first real); the client's view takes it
+	float focalMm = 0.0f;
 };
 
 class ScriptEngine
