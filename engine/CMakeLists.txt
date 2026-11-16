@@ -193,6 +193,7 @@ include(cmake/Port22.cmake) # PORT-22: the siege deploy's approach offset, Pathf
 include(cmake/Port24.cmake) # PORT-24: Object/ForceLuaRegistration (OPENBFME_PORT24_TESTS)
 include(cmake/Port1.cmake) # PORT-1: AIAttackFireWeaponState/FinishAttackOnceStarted (OPENBFME_PORT1_TESTS)
 include(cmake/Port6.cmake) # PORT-6: StealthDetectorUpdate/CanDetectWhileGarrisoned (OPENBFME_PORT6_TESTS)
+include(cmake/Port253.cmake)   # PORT-253: Upgrade modules (issue #601; OPENBFME_PORT253_TESTS)
 include(cmake/Port55.cmake) # PORT-55: SlaughterHordeContain, the citadel's cashback and CanAlwaysEnter (issue #165; OPENBFME_PORT55_TESTS)
 include(cmake/Port62.cmake) # PORT-62: TransportContain/FireGrabWeaponOnVictim, the GrabWeapon fire (OPENBFME_PORT62_TESTS)
 include(cmake/Port40.cmake) # PORT-40: AIData/MaxRecruitRadius (issue #125; OPENBFME_PORT40_TESTS)

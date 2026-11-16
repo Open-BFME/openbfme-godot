@@ -6,6 +6,8 @@
 #endif
 
 #include "GameLogic/Module/UpgradeModules.h"
+// CostModifierUpgrade missing: RW 0x8B9B36 (name 0xC0AFE4), RW 0x8B9B3C (thunk add ecx 0x10 jmp [eax+0x20]), RW 0x8B9B44 (ModuleData factory), RW 0x8B9BD6 (scalar deleting dtor), RW 0x8B9F05 (thunk lea ecx-0xC)
+// SpellRechargeModifierUpgrade missing: RW 0x00464A09/0x004B612F/0x008B9B3C (shared), RW 0x8B9EFF (name 0xC0AFC4), RW 0x8B9F05 (thunk), RW 0x8B9F12 (data), RW 0x8BA208 (dtor) — simulation impl RW 0x8BA139, removal RW 0x8B9FE0, xfer RW 0x8B9D39, onCapture RW 0x8BA05E already ported.
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/Player.h"
