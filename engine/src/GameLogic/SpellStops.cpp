@@ -17,8 +17,9 @@ std::vector<std::string> SpellStops::lines()
 		"while GameLogic + 0x114 != 3, which no skirmish reaches (S-525)",
 		"[S-525] GameLogic + 0x114 is taken as 3 in every skirmish (constructor RW 0x6301D3; the other writers RW 0x7790EA, 0x779CB4, 0x779D23, 0x779F20 and 0x82BC22, found by "
 		"the review, leave it unchanged on a normal new-game init): the rank sub-object's vslot 5 "
-		"(RW 0x602E64) is false, so the max rank is min(rank count, MaxLevelMP) and the skill points are not scaled; the Living World branch (RW 0x7827D9, RW 0x6B34EE "
-		"InitialMaxRingLevel / GameLogic + 0x118) is not ported",
+		"(RW 0x602E64) is false, so the max rank is min(rank count, MaxLevelMP) and the skill points are not scaled; GameLogic + 0x118 (m_rankLevelLimit: GameData PowerLimit at "
+		"RW 0x631420 .. 0x631436, PLAYER_SET_RANKLEVELLIMIT at RW 0x7BB04E) is ported (PORT-43), while the Living World branch (RW 0x7827D9, RW 0x6B34EE InitialMaxRingLevel; "
+		"RW 0x6B350B's +0x118 fallback is unreachable in game.dat) is not ported",
 		"[S-526] science side effects: a new science tells the special power modules of the player's objects (RW 0x6AE1C9 .. 0x6AE2E6) through PlayerScience's hook (counted "
 		"when none is installed); the script engine notices (RW 0x759A4E, 0x75950A), the control bar refresh and the local player's rank-up EVA (RW 0x6AA9C2) are not ported",
 		"[S-528] game start rank points: RW 0x6311ED (0x6313B6 .. 0x631407) gives the human players GameLogic + 0x94 skill points in the game kind RW 0x6253BF selects; not ported",

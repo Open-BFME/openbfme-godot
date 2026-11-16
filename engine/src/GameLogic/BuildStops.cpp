@@ -60,8 +60,9 @@ std::vector<std::string> BuildStops::lines()
 	}
 	out.push_back("[S-1281] contact points (lane BUILD-3): GeometryContactPoint rows (RW 0xAD3D30) and getBestContactPoint mode 0 with a preferred call (RW 0xAD30E0, "
 	              "via Object::getWorldspaceBestContactPoint RW 0x690BD2 and AIUpdateInterface::findNearestLabeledContactPointOnTarget RW 0x667C76) are ported; the "
-	              "points are the template's, the shapes the object's own GeometryInfo (lane MODCOMPAT-MOD1: a GeometryUpgrade can change them); the other modes (1: the highest "
-	              "point, 3: a random point) are refused (a call without `preferred` and its overlap test: lane AIMAIM-1); the label compare is taken as exact bytes (RW 0x406585)");
+	              "points are the template's, the shapes the object's own GeometryInfo (lane MODCOMPAT-MOD1: a GeometryUpgrade can change them); mode 1 (RW 0xAD3340: the highest "
+	              "GeometryContactPoint row, z clamped to the geometry height) and mode 3 (a seeded blend of neighbouring points) are ported; a mode that is not 0, 1 or 3 answers false "
+	              "(RW 0xAD350E); a call without `preferred` runs its overlap test (lane AIMAIM-1); the label compare is taken as exact bytes (RW 0x406585)");
 	out.push_back("[S-1282] dozer machine gaps (lane BUILD-3): not ported: the selection removed when a porter goes into the structure it builds (RW 0x88C51B; "
 	              "its drawable's fade out / in over BuilderFadeOutTime / BuilderFadeInTime is ported, lane PORTERFOG-1; a snapshot loaded while it works "
 	              "makes the drawable again without the fade, so it is drawn until it comes out), the face command 0x26 before the work (AI state 36), the bridge tower branch of the dock position "

@@ -172,6 +172,48 @@ AptStrategicHUD::~AptStrategicHUD()
 	}
 }
 
+void AptStrategicHUD::setViewportSize(int width, int height, bool fit)
+{
+	AptSpriteInst *root = windows().apt().level(level());
+	if (!root || !root->timelineFile || width < 1 || height < 1)
+	{
+		return;
+	}
+	const float stageWidth = (float)root->timelineFile->width;
+	const float stageHeight = (float)root->timelineFile->height;
+	if (stageWidth <= 0.0f || stageHeight <= 0.0f)
+	{
+		return;
+	}
+	// As in AptPalantir::setViewportSize: cancel only the extra horizontal stretch. Keep the authored matrices intact so timeline animation,
+	// native-image rendering and input all use the same corrected geometry. Fit mode already has a uniform stage mapping.
+	const float scale = fit ? 1.0f : std::min(1.0f, ((float)height / stageHeight) / ((float)width / stageWidth));
+	for (const auto &part : m_parts)
+	{
+		// As in the battle HUD, these two are placed dynamically in stage coordinates.
+		if (part.first == "HelpBox" || part.first == "RadialMenuStage")
+		{
+			continue;
+		}
+		AptCharacterInst *clip = windows().apt().resolvePath(root, relativePath(part.second));
+		if (!clip)
+		{
+			continue;
+		}
+		float anchor = 0.0f; // stats, palantir and its attached selection details tray
+		if (part.first == "EndTurnButton")
+		{
+			anchor = stageWidth;
+		}
+		else if (part.first == "Checklist" || part.first == "LoadDialogFrame" || part.first == "NewTurnIndicator")
+		{
+			anchor = stageWidth * 0.5f;
+		}
+		clip->viewportTransform.a = scale;
+		clip->viewportTransform.tx = anchor * (1.0f - scale);
+	}
+}
+
 std::string AptStrategicHUD::relativePath(const std::string &clip) const
 {
 	// [S-1334 inference] the path without the window's "_levelN." prefix
