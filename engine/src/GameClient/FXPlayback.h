@@ -138,6 +138,7 @@ public:
 	const ScorchBuffer &scorches() const { return m_scorches; }
 	const std::vector<DecalFx> &decals() const { return m_decals; }
 	const LightPulsePool &lightPulses() const { return m_lightPulses; }
+	LightPulsePool &lightPulsesMutable() { return m_lightPulses; }
 	// the CameraShakerVolume calls since the last take, for the view (the HUD forwards them to TacticalCamera and steps them there)
 	std::vector<CameraShakerFx> takeCameraShakers()
 	{
