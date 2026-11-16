@@ -201,7 +201,7 @@ bool bannerSpawnAllowed(Object &carrier)
 UpdateSleepTime BannerCarrierUpdate::update()
 {
 	Object *obj = getObject();
-	// reported in play/13: the carrier stood at its formation slot with no model. The banners' default model is None; MorphCondition maps the
+	// reported in play: the carrier stood at its formation slot with no model. The banners' default model is None; MorphCondition maps the
 	// horde's payload type to model states (Dwarven axe thrower -> USER_5, Gondor archer -> "USER_1 PASSENGER_VARIATION_2", ...). The raw lines were
 	// kept but never applied. Every BannerCarrierUpdate is handled, not only the Dwarven one: the union of the states the lines name is cleared, then
 	// the matching line's list (one or more tokens) is set.

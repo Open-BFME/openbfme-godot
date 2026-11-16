@@ -20,7 +20,10 @@
 //   * lane BANNER-1 (owner, nightly 2026-10-22: "banner carriers don't auto replace units if they are lvl 2"): HORDE-2 asked the carrier's own weapons and a stand-in
 //     combat test (a member IS_ATTACKING, or damaged within MeleeFreeUnitSpawnTime), skipped the emotion and garrison gates and the spawn's hand-downs: the
 //     replacement arrived at level one, without UnitSpawnFX.
-// INFERENCE / NOT PORTED (stop S-587): MorphCondition / ExpLevelDraw keep their raw tokens (the grammars RW 0x89A90F / 0x89AA69 are not read; drawing only); the model
+// INFERENCE / NOT PORTED (stop S-587): MorphCondition / ExpLevelDraw keep their raw tokens (the grammars RW 0x89A90F / 0x89AA69 are not read; drawing only); since #321
+// the carrier's update sets the ModelState of the MorphCondition line naming its horde's payload. Retail runs its morph step (RW 0x89A5C5, BFME2 0x00496E05: an
+// 81-entry clear mask, the shroud refresh, BannerMorphFX and the line's locomotor set) when the carrier joins the horde (HordeContain RW 0x876481 -> 0x876406 ->
+// 0x86BF96); the port's step clears only the states the lines name and skips the FX and the locomotor; the model
 // condition / status gates are read by number from the binary's registries; the FX are the client's.
 
 #pragma once

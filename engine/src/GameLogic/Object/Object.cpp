@@ -18,6 +18,7 @@
 #include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameClient/MapChunks.h"
@@ -1078,9 +1079,15 @@ void Object::setCapturedTeam(Team *team)
 	{
 		return;
 	}
-	// RW 0x699733 .. 0x6997A7: the production module's vslot 0x40 (its queue cancelled), the score keeper's structure counts, RW 0x68B303 and the firing tracker
+	// RW 0x69973D .. 0x69974D (DONOR BFME2 0x00298C76 in ObjectDefect.cpp:133, lane LOCAL-62): cancel and release all production on the previous owner's team
+	// before changing the building's team (ProductionUpdateInterface vslot +0x40, RW 0x8A1666)
+	if (ProductionUpdateInterface *pu = getProductionUpdate()) // RW 0x699740: RW 0x68C327(0)
+	{
+		pu->cancelAndReleaseAllProduction(); // RW 0x69974D -> RW 0x8A1666
+	}
+	// RW 0x699733 .. 0x6997A7: the score keeper's structure counts, RW 0x68B303 and the firing tracker
 	// RW 0x8E3ABB are not ported (S-1225); the selection, radar and EVA messages after the change are the client's
-	m_logic.noteStop("[S-1225] Object::setCapturedTeam: the production cancel, score counts and RW 0x68B303 / 0x8E3ABB of a capture are not ported");
+	m_logic.noteStop("[S-1225] Object::setCapturedTeam: the score counts and RW 0x68B303 / 0x8E3ABB of a capture are not ported");
 	setTeam(team); // RW 0x69954A
 	if (AIUpdateInterface *ai = getAIUpdateInterface())
 	{
