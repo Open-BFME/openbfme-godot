@@ -735,6 +735,7 @@ endif()
 
 # ---- unit tests --------------------------------------------------------------------------
 if(OPENBFME_BUILD_TESTS)
+include(cmake/Port152.cmake)    # PORT-152: CommandButton WeaponSlotToggle1/2, ToggleButtonName, RequiresValidContainer (OPENBFME_PORT152_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
     ${OPENBFME_WIN1_TESTS}
@@ -908,6 +909,7 @@ add_executable(openbfme_tests
     ${OPENBFME_CASTLEAREA1_TESTS}
     ${OPENBFME_WEATHER1_TESTS}
     ${OPENBFME_DECOMPFIX1109_TESTS}
+    ${OPENBFME_PORT152_TESTS}
     ${OPENBFME_PORT5_TESTS}
     ${OPENBFME_TAINTAREA1_TESTS}
     tests/test_main.cpp

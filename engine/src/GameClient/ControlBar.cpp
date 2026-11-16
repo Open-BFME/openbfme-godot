@@ -679,9 +679,31 @@ void ControlBar::update()
 			for (int slot = start; slot < start + shown && slot < end; ++slot)
 			{
 				const CommandButton *b = set->getCommandButton(slot);
+				// lane PORT-152: RW 0x943E59 first asks the object for status 0x64 COMMAND_BUTTON_TOGGLED (RW 0x44DDEC; TheObjectStatusNames
+				// RW 0xD8AFF0), and only while it is set: RW 0x943E67 .. 0x943E85 replaces a button whose ToggleButtonName (+0x48) is not empty by the
+				// button of that name (TheControlBar->findButtonByName RW 0x71D6EA, the override chain RW 0x465AF4), when one is found; the bar slot
+				// then shows the toggle button, whose image index RW 0x75D22E updates at RW 0x943E91 (value 0)
+				static const unsigned kCommandButtonToggled = (unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("COMMAND_BUTTON_TOGGLED");
+				if (b && obj->testStatus(kCommandButtonToggled) && !b->m_toggleButtonName.empty() && store)
+				{
+					if (const CommandButton *toggle = store->findCommandButton(b->m_toggleButtonName))
+					{
+						b = toggle;
+					}
+				}
 				if (!b || !b->m_showButton)
 				{
 					continue;
+				}
+				// lane PORT-152: RW 0x943F75 .. 0x943F91 (updateContextCommand's button loop): a RequiresValidContainer button (+0x107) is skipped
+				// when the object's contain (Object +0x258) is an OpenContain whose Enabled byte (module +0xDE, slot 4 asOpenContain) is off
+				if (b->m_requiresValidContainer)
+				{
+					const OpenContain *open = dynamic_cast<const OpenContain *>(obj->getContain());
+					if (open && !open->isEnabled())
+					{
+						continue;
+					}
 				}
 				ControlBarButton cb;
 				cb.slot = slot;
@@ -773,6 +795,22 @@ void ControlBar::update()
 						cb.image = b->m_buttonImageName[1];
 						cb.textLabel = b->m_textLabel.size() > 1 ? b->m_textLabel[1] : cb.textLabel;
 						cb.descriptLabel = b->m_descriptLabel.size() > 1 ? b->m_descriptLabel[1] : cb.descriptLabel;
+					}
+				}
+				if (b->hasOption(COMMAND_OPTION_TOGGLE_IMAGE_ON_WEAPON) && b->m_command == GUI_COMMAND_TOGGLE_WEAPON)
+				{
+					// lane PORT-152: RW 0x75D22E's 0x800000 arm (RW 0x75D2BB .. 0x75D319, DONOR BFME2 0x35B5C2): the image index (+0xFC) is the
+					// button's WeaponSlotToggle2 (+0x88) for KindOf 0x91, WeaponSlotToggle3 (+0x8C) for KindOf 0x92, else WeaponSlotToggle1 (+0x84);
+					// the image is that index of the ButtonImage list (RW 0x75D19E: null past the end), the labels the same index clamped to the last
+					const int index = obj->isKindOf(0x91) ? b->m_weaponSlotToggle2 : obj->isKindOf(0x92) ? b->m_weaponSlotToggle3 : b->m_weaponSlotToggle1;
+					cb.image = index >= 0 && (size_t)index < b->m_buttonImageName.size() ? b->m_buttonImageName[(size_t)index] : std::string();
+					if (!b->m_textLabel.empty())
+					{
+						cb.textLabel = b->m_textLabel[std::min<size_t>((size_t)std::max(index, 0), b->m_textLabel.size() - 1)];
+					}
+					if (!b->m_descriptLabel.empty())
+					{
+						cb.descriptLabel = b->m_descriptLabel[std::min<size_t>((size_t)std::max(index, 0), b->m_descriptLabel.size() - 1)];
 					}
 				}
 				if (b->m_command == GUI_COMMAND_TOGGLE_STANCE)
