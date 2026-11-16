@@ -124,6 +124,16 @@ Object *AIStateMachine::goalObject() const
 	return m_goalObjectID == INVALID_ID ? nullptr : m_owner->getObject()->logic().findObjectByID(m_goalObjectID);
 }
 
+bool AIStateMachine::isGoalObjectDestroyed() const
+{
+	if (m_goalObjectID == INVALID_ID) // RW 0x8DBDFF .. 0x8DBE07: no goal object (an attack on a position) is not destroyed
+	{
+		return false;
+	}
+	const Object *g = goalObject();
+	return !g || g->isEffectivelyDead(); // RW 0x8DBE08 .. 0x8DBE1C: gone, or the dead bit
+}
+
 void AIStateMachine::internalClear()
 {
 	m_goalObjectID = INVALID_ID;
