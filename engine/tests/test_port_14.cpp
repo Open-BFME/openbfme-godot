@@ -43,7 +43,8 @@ using namespace combattest;
 namespace
 {
 // Port14Bow: a 2000 ms wind-up (10 frames at the fixture's 5 frames per second), the constructor's default FinishAttackOnceStarted = Yes.
-// Port14Archer / Port14ArmyArcher differ only by KindOf ARMY_OF_DEAD (RW 0x751449's template + 0x11A bit 0x80). Port14Tree carries KindOf TREE
+// Port14ArcherNoFinish carries Port14BowNoFinish, the same bow with FinishAttackOnceStarted = No (WeaponTemplate + 0x161, lane
+// ATTACK-FINISH-1). Port14Archer / Port14ArmyArcher differ only by KindOf ARMY_OF_DEAD (RW 0x751449's template + 0x11A bit 0x80). Port14Tree carries KindOf TREE
 // (RW 0x7512E0's template + 0x113 bit 0x40). Dummy is CombatTestUtil's plain target.
 const char kPort14Objects[] =
 	// A FLAME warhead: WeaponDelivery.cpp's estimate for a KindOf TREE victim is 1 for FLAME and 0 for every other damage type, so a
@@ -82,6 +83,49 @@ const char kPort14Objects[] =
 	"  WeaponSet\n"
 	"    Conditions = None\n"
 	"    Weapon = PRIMARY Port14Bow\n"
+	"  End\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 60\n"
+	"  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"    AutoAcquireEnemiesWhenIdle = No\n"
+	"  End\n"
+	"  Behavior = PhysicsBehavior ModuleTag_Physics\n"
+	"  End\n"
+	"  Behavior = DestroyDie ModuleTag_Death\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = WalkerLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 55\n"
+	"  End\n"
+	"End\n"
+	"Weapon Port14BowNoFinish\n"
+	"  AttackRange = 200\n"
+	"  WeaponSpeed = 100\n"
+	"  DelayBetweenShots = 1000\n"
+	"  PreAttackDelay = 2000\n"
+	"  FiringDuration = 200\n"
+	"  FinishAttackOnceStarted = No\n"
+	"  ProjectileNugget\n"
+	"    ProjectileTemplateName = Arrow\n"
+	"    WarheadTemplateName = Port14FlameWarhead\n"
+	"  End\n"
+	"End\n"
+	"Object Port14ArcherNoFinish\n"
+	"  KindOf = INFANTRY SELECTABLE CAN_ATTACK SCORE\n"
+	"  VisionRange = 300\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  ArmorSet\n"
+	"    Conditions = None\n"
+	"    Armor = PlainArmor\n"
+	"  End\n"
+	"  WeaponSet\n"
+	"    Conditions = None\n"
+	"    Weapon = PRIMARY Port14BowNoFinish\n"
 	"  End\n"
 	"  Body = ActiveBody ModuleTag_Body\n"
 	"    MaxHealth = 60\n"
@@ -334,19 +378,36 @@ TEST_CASE("PORT-14 FLEE_OFF_MAP victim: RW 0x751438 .. 0x7515DA keeps the inner 
 }
 
 // Review of the upstream PR: the FLEE_OFF_MAP case above keeps a living victim. A victim that really dies during the wind-up: the inner machine still
-// runs (RW 0x751450 -> 0x7515C8), but its Fire state fails on the dead victim before the pending shot is released, so no shot leaves.
-TEST_CASE("PORT-14 dead victim: a victim that dies during the wind-up gets no shot (the inner Fire fails first)")
+// runs (RW 0x751450 -> 0x7515C8), and its Fire state decides by the weapon's FinishAttackOnceStarted (lane ATTACK-FINISH-1, RW 0x74C6E5): Yes (the
+// constructor's default) keeps the shot, which leaves at the end of the wind-up; No clears the goal and fails, so no shot leaves. The ZH parent's
+// STATE_SUCCESS on a gone victim cancelled the shot either way.
+TEST_CASE("PORT-14 dead victim: a victim that dies during the wind-up still gets the shot with FinishAttackOnceStarted = Yes, none with No")
 {
-	Port14World w;
-	Object *archer = w.unit("Port14Archer", 'A', 300, 300);
-	Object *foe = w.unit("Dummy", 'B', 400, 300);
-	w.frames(2);
-	w.windUp(archer, foe, CMD_FROM_PLAYER);
-	Weapon *bow = w.bow(archer);
-	REQUIRE(bow->lastFireFrame() == 0);
-	foe->kill(DAMAGE_UNRESISTABLE, 0);
-	w.frames(60);
-	CHECK(bow->lastFireFrame() == 0);
+	SUBCASE("Yes (the default)")
+	{
+		Port14World w;
+		Object *archer = w.unit("Port14Archer", 'A', 300, 300);
+		Object *foe = w.unit("Dummy", 'B', 400, 300);
+		w.frames(2);
+		w.windUp(archer, foe, CMD_FROM_PLAYER);
+		Weapon *bow = w.bow(archer);
+		const std::uint32_t windUpEnd = bow->whenPreAttackFinished();
+		foe->kill(DAMAGE_UNRESISTABLE, 0);
+		w.runUntil([&] { return bow->lastFireFrame() != 0; }, 60);
+		CHECK(bow->lastFireFrame() == windUpEnd);
+	}
+	SUBCASE("No")
+	{
+		Port14World w;
+		Object *archer = w.unit("Port14ArcherNoFinish", 'A', 300, 300);
+		Object *foe = w.unit("Dummy", 'B', 400, 300);
+		w.frames(2);
+		w.windUp(archer, foe, CMD_FROM_PLAYER);
+		Weapon *bow = w.bow(archer);
+		foe->kill(DAMAGE_UNRESISTABLE, 0);
+		w.frames(60);
+		CHECK(bow->lastFireFrame() == 0);
+	}
 }
 
 TEST_CASE("PORT-14 ARMY_OF_DEAD: RW 0x751446 .. 0x751456 returns STATE_SUCCESS at once and cancels the wind-up")
