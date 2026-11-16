@@ -92,8 +92,8 @@ public:
 	// open (placed on the nav's frame 9), 35.5 apart upward from Load Game, inside a 5-row frame (BFME2: the clip NavFrameFive; RotWK: unnamed clips).
 	// WHAT THIS DOES: while the list is open, two copies (duplicateMovieClip) of the movie's own campaign row (BFME2: GoodCampaign; RotWK:
 	// Expansion1Campaign) with the other game's names and labels sit right above the insertion row (BFME2: LoadGame; RotWK: Expansion1Campaign); the rows
-	// above move up two places; each frame piece is stretched about its bottom edge so its part above the top row moves up by the same (a piece lying
-	// mostly above the rows is moved instead); _root.<name>Button opens the movie's own difficulty choice with the copied row's name. The copies follow
+	// above move up two places; each frame piece and the panel's hit area are stretched about their bottom edge so their part above the top row moves
+	// up by the same (a piece lying mostly above the rows is moved instead); _root.<name>Button opens the movie's own difficulty choice with the copied row's name. The copies follow
 	// their source row's visibility, colour and timeline matrix, and go when it goes (the list closes).
 	struct ExtraRows
 	{

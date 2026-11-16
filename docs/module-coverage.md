@@ -53,6 +53,17 @@ Status:
 | parsed only | 1 | 1 |
 | missing | 102 | 2340 |
 
+### PORT 17 (issue #73): ThreatFinderUpdate
+
+| Status | Classes | Templates using them (sum) |
+|---|---:|---:|
+| ported | +1 | +40 |
+| missing | -1 | -40 |
+
+The live-skirmish column above stays lane MOD-4's measurement (its QA-1 runs were taken before the port); a new run's
+`unported_modules` count for the class is 0. The registry table `engine/tests/test_module_coverage.cpp` writes pins
+ported 225 / base AI 4 / parsed only 13 / missing 87.
+
 ## Live skirmishes: objects carrying an unported module (lane MOD-4)
 
 The live report's `unported_modules` (objects alive at the end of the run) of eight QA-1 runs (`tools/qa/qa_matrix.py`: each faction as a scripted human against one Medium computer on a 2-player map for 8 game minutes, and a Hard 2 v 2 AI game on Tournament Udun for 12 minutes, seeds 4100 .. 4106 / 4200), before / after lane MOD-4. LargeGroupAudioUpdate is AUDIO's; the creeps the lairs now spawn bring modules that had no live object before (GrabPassengerSpecialPower, AutoPickUpUpdate, ClickReactionBehavior, BoredUpdate).
@@ -64,7 +75,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | GeometryUpgrade | 36 / 36 | 17 / 17 | 12 / 12 | 7 / 7 | 9 / 7 | 16 / 14 | 13 / 12 | 16 / 12 | 126 | 117 |
 | TransitionDamageFX | 29 / 31 | 0 / 0 | 8 / 8 | 29 / 29 | 5 / 2 | 8 / 8 | 33 / 31 | 8 / 7 | 120 | 116 |
 | PickupStuffUpdate | 25 / 26 | 10 / 10 | 12 / 10 | 13 / 12 | 12 / 8 | 14 / 11 | 11 / 11 | 13 / 10 | 110 | 98 |
-| ThreatFinderUpdate | 0 / 0 | 28 / 28 | 0 / 0 | 2 / 2 | 28 / 28 | 28 / 28 | 2 / 2 | 0 / 0 | 88 | 88 |
+| ThreatFinderUpdate | 0 / 0 | 28 / 28 | 0 / 0 | 2 / 2 | 28 / 28 | 28 / 28 | 2 / 2 | 0 / 0 | 88 | 0 |
 | SpawnBehavior | 0 / 0 | 6 / 0 | 0 / 0 | 11 / 0 | 13 / 0 | 5 / 0 | 4 / 0 | 1 / 0 | 40 | 0 |
 | RepairSpecialPower | 0 / 0 | 30 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 30 | 0 |
 | RebuildHoleExposeDie | 0 / 0 | 6 / 5 | 0 / 0 | 2 / 4 | 5 / 4 | 5 / 6 | 2 / 2 | 6 / 3 | 26 | 24 |
@@ -171,7 +182,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 72 | BannerCarrierUpdate | Behavior | 45 | 41 | ported |
 | 73 | FireWeaponUpdate | Behavior | 42 | 37 | ported |
 | 74 | RefundDie | Behavior | 41 | 30 | ported |
-| 75 | ThreatFinderUpdate | Behavior | 40 | 2 | missing |
+| 75 | ThreatFinderUpdate | Behavior | 40 | 2 | ported |
 | 76 | AutoDepositUpdate | Behavior | 39 | 37 | ported |
 | 77 | SlavedUpdate | Behavior | 39 | 30 | ported |
 | 78 | AnimalAIUpdate | Behavior | 37 | 22 | base AI |
