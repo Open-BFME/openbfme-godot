@@ -1015,6 +1015,8 @@ add_executable(openbfme_tests
     tests/test_logic_hash.cpp
     tests/test_logic_settings.cpp
     tests/test_logic_retail.cpp
+    # lane LOCAL-27 (the roads.ini Bridge block: field table RW 0xC19DC0, newBridge RW 0x6DC794)
+    tests/test_local_27.cpp
     # lane LOCAL-8 (RespawnUpdate ButtonImage, AutoRespawnAtObjectFilter, DeathAnimationTime)
     tests/test_local_8.cpp
     # lane LOCAL-62 (capturing a production building cancels and releases its queue, RW 0x69974D -> RW 0x8A1666)
