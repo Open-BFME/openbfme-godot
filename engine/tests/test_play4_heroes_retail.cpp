@@ -434,10 +434,12 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// merge queue q53 (measured at each merge point, from #287's on): the fell beasts' TransportContain fires its GrabWeapon (FellbeastGrabWeapon)
 				// at the horde member it picks up (RW 0x86AA4B .. 0x86AAA2): Khamul and Morgomir 5 strikes, 1425 health, 19 of 20 killed; the Witch-king 6
 				// strikes, 1350 health, 17 killed (before: no strike, 450 health, 5 killed); Drogoth has no GrabWeapon and is unchanged
+				// merge queue q55 (measured at each merge point, from #319's on): the giant bird's swoop takes its victim's contact point through getBestContactPoint
+				// mode 1 (RW 0x76B6FF .. 0x76B721): the Witch-king's 6 strikes take 1500 health and kill 19 of 20 (1350, 17 before); the others are unchanged
 				const bool witchKing = hero == "MordorWitchKingOnFellBeast";
 				CHECK(ord.shots == (drogoth ? 3u : witchKing ? 6u : 5u));
-				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1350.0f : 1425.0f));
-				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 17u : 19u));
+				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1500.0f : 1425.0f));
+				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 19u : 19u));
 				continue;
 			}
 			CHECK(own.walked > 600.0f);

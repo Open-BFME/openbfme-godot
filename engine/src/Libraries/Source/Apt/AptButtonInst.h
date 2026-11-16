@@ -48,6 +48,8 @@ public:
 	bool hitTest(float stageX, float stageY) const;
 	// lane OPTS-6 (checks): the stage box around every Hit record (the mesh's vertices, else the shape's or the text's bounds); false: none
 	bool hitBounds(float out[4]) const;
+	// The same Hit records through a supplied transform (e.g. a menu panel's timeline matrix before layout stretches it).
+	bool hitBounds(float out[4], const AptMatrix &transform) const;
 
 private:
 	friend class AptInput;
