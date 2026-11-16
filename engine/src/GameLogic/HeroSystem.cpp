@@ -280,11 +280,12 @@ std::vector<std::string> HeroSystem::stopLines()
 		"(retail's order: the withdrawal comes first); a hero template with a BuildFadeInOnCreateTime holds its "
 		"producer's exit (retail's own order: the record is erased when the hero is made and the build-index gate RW 0x8A1F3D then never passes; no retail hero has one)",
 		"[S-856] AttributeModifierAuraUpdate: not ported: Object + 0x11C bit 1 (skips the pulse and the target), the WALK_ON_TOP_OF_WALL source (geometry radius, no "
-		"relationship filter), the TAINT / ELVEN_WOOD terrain areas (RW 0xAD49B0: no object is in one), the Object + 0x458 bit 3 filter RW 0xC0F374 (the bit is "
+		"relationship filter), the Object + 0x458 bit 3 filter RW 0xC0F374 (the bit is "
 		"never set), the pool's AntiCategory disable (XP-1's S-633: counted); the aura and AutoHeal scans run on ThePartitionManager (lane MODULES-2, S-1020: the "
 		"retail order of equal distances), the special power trigger and LevelGrant scans still sort the object list by distance (equal distances keep the "
 		"list's order: as an applied modifier can grant an upgrade at once (a CostModifierUpgrade appends to the player's ordered list), that order can change "
-		"shared player state)",
+		"shared player state); lane TAINTAREA-1 ported the TAINT / ELVEN_WOOD condition (RW 0x89F200, BFME2 0x49B98A) on TheTaintManager (RW 0xAD49B0) and the "
+		"destructor's radius clear of a TAINT object (RW 0x89EE67 -> 0x683393)",
 		"[S-858] AutoHealBehavior: not ported: NonStackable (the body's last heal frame, body vslot 0x48: the heal stacks), AffectsWholePlayer (no retail use), "
 		"Object + 0x458 bit 3 in the eligibility, the contain's FX flag; the combat and recent "
 		"damage tests of RW 0x855533 read the healer (verified)",

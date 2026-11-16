@@ -15,6 +15,7 @@
 #include "GameLogic/Object/AttributeModifierPool.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectFilterMatch.h"
+#include "GameLogic/System/TaintManager.h"
 
 void GlobalWeatherSystem::setWeatherModifier(int kind, std::shared_ptr<const ObjectFilter> filter, const Player *player, const std::string &listName,
 	unsigned antiMask, unsigned frames)
@@ -169,7 +170,8 @@ void GlobalWeatherSystem::crc(StateHasher &h) const
 // the anti mask's one bit); version >= 2: + 0x24 the player mask; version >= 3: + 0x28 the weather frames, + 0x2C the modifier frames (u32); version
 // >= 4: + 0x58 the AntiCategory mask as BitFlags<15>::xfer (RW 0x71A1A7: version (1, 1), the count of set bits, each set bit's name in bit order).
 // OpenBFME (S-4251): the filter is the port's own ObjectFilter layout (ObjectFilterMatch::xfer, S-4121), and the burn decay (RW 0xDE46A8 + 0x98, another
-// subsystem's field in retail, kept here and hashed) follows with its own version. The weather change count is the client's (not saved).
+// subsystem's field in retail, kept here and hashed) follows with its own version (1, 2): version 2 adds TheTaintManager's grid (lane TAINTAREA-1).
+// The weather change count is the client's (not saved).
 // The load (SAVE-4a review r1 rules, SAVES.md section 8): every field goes into a temporary, the closed sets are checked (the weather 0 .. 4: NONE ..
 // SUNNY, RW 0xDB0074, MOUNTED = "no change" is never stored; the affect kind 0 .. 3; the player mask 0 or the one bit of a player of this game; the
 // ModifierList name empty or a list of TheAttributeModifierStore), then the system takes them all at once.
@@ -210,10 +212,18 @@ void GlobalWeatherSystem::xfer(Xfer &x)
 		}
 		antiMask = oldCategory != 0 ? 1u << (std::uint32_t)oldCategory : 0u; // RW 0x71A38E .. 0x71A3B5
 	}
-	XferVersion own{ 1, 1 };
+	XferVersion own{ 1, 2 };
 	x.xferVersion(own);
 	std::uint32_t burnDecay = loading ? 0 : m_burnDecay;
 	x.xferUnsignedInt(&burnDecay);
+	// lane TAINTAREA-1: version 2 adds TheTaintManager (retail's CHUNK_TaintManager, list 0 just before CHUNK_WeatherSystem: RW 0xAD4B80 in retail's
+	// layout, TaintManager::xfer); a version 1 snapshot (older builds, which never painted the grid) loads every cell neutral
+	TaintManager::Staged taint;
+	const bool haveTaint = own.current >= 2;
+	if (haveTaint)
+	{
+		m_logic.taint().xfer(x, loading ? &taint : nullptr);
+	}
 	if (!loading)
 	{
 		return;
@@ -253,6 +263,14 @@ void GlobalWeatherSystem::xfer(Xfer &x)
 	m_modifierFrames = modifierFrames;
 	m_antiMask = antiMask;
 	m_burnDecay = burnDecay;
+	if (haveTaint)
+	{
+		m_logic.taint().commit(std::move(taint));
+	}
+	else
+	{
+		m_logic.taint().neutralize(); // the map's grid stays, every cell as the constructor makes it
+	}
 }
 
 std::vector<std::string> GlobalWeatherSystem::stopLines()

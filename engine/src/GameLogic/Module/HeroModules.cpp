@@ -42,6 +42,7 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/System/TaintManager.h"
 
 #include <cstddef>
 #include <cstring>
@@ -958,10 +959,25 @@ void AttributeModifierAuraUpdate::affect(Object &o, const Pulse &pulse)
 	}
 	if (d->m_requiredConditions & 6u)
 	{
-		// RW 0x89F1F8 .. 0x89F271: TAINT / ELVEN_WOOD need the terrain area at the object (RW 0xAD49B0) to be of that kind and owned by an ally; the areas are
-		// not ported, so no object is in one (S-856)
-		logic.noteStop("[S-856] AttributeModifierAuraUpdate: RequiredConditions TAINT / ELVEN_WOOD need the terrain areas (RW 0xAD49B0), not ported: no object is in one");
-		return;
+		// lane TAINTAREA-1: RW 0x89F200 .. 0x89F273 (RotWK) = BFME2 objectAuraUpdate 0x49B98A (AttributeModifierAuraUpdate.cpp:366-389), the same rule in
+		// both editions: TAINT (bit 2) needs TheTaintManager's query at the object's position (RW 0xAD49B0, the owner preset to -1) to be 2; otherwise
+		// ELVEN_WOOD (bit 4) needs 1. An owner of -1 passes; else the owner object (findObjectByID RW 0x449681) must exist and its relationship to the
+		// object (Object::getRelationship RW 0x68D7AB / BFME2 0x68D156) must not be ENEMIES (0)
+		int owner = -1;
+		const Coord3D *at = o.getPosition();
+		const int value = logic.taint().getTaintAt(at->x, at->y, &owner);
+		if (value != ((d->m_requiredConditions & 2u) ? (int)TaintManager::VALUE_TAINT : (int)TaintManager::VALUE_ELVEN_WOOD))
+		{
+			return;
+		}
+		if (owner != -1)
+		{
+			const Object *area = logic.findObjectByID((ObjectID)owner);
+			if (!area || area->getRelationship(o) == ENEMIES)
+			{
+				return;
+			}
+		}
 	}
 	static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
 	if (pulse.containedMode && kHorde >= 0 && o.isKindOf((unsigned)kHorde))
@@ -986,6 +1002,23 @@ void AttributeModifierAuraUpdate::affect(Object &o, const Pulse &pulse)
 	if (!d->m_bonusName.empty())
 	{
 		o.addAttributeModifier(d->m_bonusName, -1); // RW 0x68F1A8
+	}
+}
+
+// RW 0x89EE67 (BFME2 AttributeModifierAuraUpdateDtor.cpp:91, tier A), lane TAINTAREA-1: the destructor of the module of a KindOf TAINT object (template
+// + 0x11B bit 0 = KindOf 152) calls TheTerrainLogic's radius clear (RW 0x683393) with the object's position (+ 0x38), the data's Range (+ 0x1C) and the
+// object's id (+ 0x74): the cells it painted turn neutral. GameLogic runs it where retail deletes the object (processDestroyList)
+void AttributeModifierAuraUpdate::onDeleteClearTaint()
+{
+	Object *obj = getObject();
+	static const int kTaint = ObjectTemplateInfoBuilder::kindOfIndex("TAINT");
+	if (kTaint < 0)
+	{
+		throw std::logic_error("AttributeModifierAuraUpdate: the KindOf name TAINT is not known");
+	}
+	if (obj->isKindOf((unsigned)kTaint))
+	{
+		obj->logic().clearTaintArea(*obj->getPosition(), m_data->m_range, (int)obj->getID());
 	}
 }
 
