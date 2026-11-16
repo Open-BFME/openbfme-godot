@@ -365,35 +365,22 @@ TEST_CASE("MOD-4: a Rohan peasant's RepairSpecialPower sends it to repair a dama
 
 // lane MODCOMPAT-MOD1 ported the rebuild holes (RebuildHoleExposeDie / RebuildHoleBehavior): their S-1427 line is RebuildHoleBehavior's (test_rebuildhole.cpp)
 // lane MODCOMPAT-MOD1 ported PickupStuffUpdate (its stop [S-1422] is PickupStuffUpdate::stopLines, test_pickup_modules.cpp)
-TEST_CASE("MOD-4: ThreatFinderUpdate stays an UnportedModule, reported as its stop [S-1424]")
+// PORT 17 (issue #73) ported ThreatFinderUpdate: [S-1424] is closed, the module is bound, and the port's own stop is [S-7184] (ThreatFinderUpdate::stopLines)
+TEST_CASE("MOD-4: every class of the lane is ported, so its stop list is empty and ThreatFinderUpdate is bound with its [S-7184] reported")
 {
 	OPENBFME_REQUIRE_START(s);
 	const std::vector<std::string> unported = s->world->modules().unportedModuleClassNames();
 	const std::vector<std::string> stops = s->world->acceptanceStops();
-	// lane MODCOMPAT-MOD1 ported GeometryUpgrade (its [S-1423] is now GeometryUpgrade::stopLines, test_geometry_upgrade.cpp)
-	const char *const ids[] = { "[S-1424] ThreatFinderUpdate" };
-	REQUIRE(Mod4Stops::classes().size() == 1);
-	for (size_t i = 0; i < Mod4Stops::classes().size(); ++i)
+	CHECK(Mod4Stops::classes().empty());
+	CHECK(Mod4Stops::lines().empty());
+	// PORT 17: the lane's last class left the unported list and its port's stop is in the world's acceptance stops, exactly once
+	CHECK(std::find(unported.begin(), unported.end(), "ThreatFinderUpdate") == unported.end());
+	int s7184 = 0;
+	for (const std::string &l : stops)
 	{
-		const std::string &name = Mod4Stops::classes()[i];
-		CHECK_MESSAGE(std::find(unported.begin(), unported.end(), name) != unported.end(), name);
-		int found = 0;
-		for (const std::string &l : stops)
-		{
-			found += l.rfind(ids[i], 0) == 0 ? 1 : 0;
-		}
-		CHECK_MESSAGE(found == 1, ids[i]);
-		// the retail data uses each class
-		int uses = 0;
-		for (const ThingTemplate *tt : s->world->things().templates())
-		{
-			for (const ThingTemplate::Nugget &n : tt->behaviorModules().nuggets())
-			{
-				uses += n.name == name ? 1 : 0;
-			}
-		}
-		CHECK_MESSAGE(uses > 0, name); // tolerance: the claim is that retail templates use the class at all, not a count
+		s7184 += l.rfind("[S-7184] ThreatFinderUpdate", 0) == 0 ? 1 : 0;
 	}
+	CHECK(s7184 == 1);
 	// the lane's ported classes are bound (and lane MODCOMPAT-MOD1's PickupStuffUpdate)
 	CHECK(std::find(unported.begin(), unported.end(), "PickupStuffUpdate") == unported.end());
 	CHECK(std::find(unported.begin(), unported.end(), "AISpecialPowerUpdate") == unported.end());
@@ -407,6 +394,17 @@ TEST_CASE("MOD-4: ThreatFinderUpdate stays an UnportedModule, reported as its st
 		s1421 += l.rfind("[S-1421] AISpecialPowerUpdate", 0) == 0 ? 1 : 0;
 	}
 	CHECK(s1421 == 1);
+	// the retail data still uses the class the port now binds
+	int uses = 0;
+	for (const ThingTemplate *tt : s->world->things().templates())
+	{
+		for (const ThingTemplate::Nugget &n : tt->behaviorModules().nuggets())
+		{
+			uses += n.name == "ThreatFinderUpdate" ? 1 : 0;
+		}
+	}
+	// tolerance: the claim is that retail templates use the class at all, not a count
+	CHECK(uses > 0);
 }
 
 TEST_CASE("MOD-4: the binary facts behind [S-1422] .. [S-1424]: the three field tables (RW 0xC64600 / 0xC6F578 / 0xC4C320)")

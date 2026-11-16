@@ -101,6 +101,8 @@ class BuildAssistantSell;
 class InvisibilityManager;
 class DOTManager;
 class TerrainTrees;
+class ThreatFinderManager; // PORT 17
+class TaintManager;
 class SkirmishAIManager;
 class ShroudManager;
 class PartitionManager;
@@ -459,6 +461,21 @@ public:
 	// lane SPELL-3: TheTerrainLogic + 0x578, the map's optimized trees (GameLogic/Map/TerrainTrees.h); filled by MapObjectLoop, hashed once a tree changed
 	TerrainTrees &trees() { return *m_trees; }
 	const TerrainTrees &trees() const { return *m_trees; }
+	// PORT 17 (issue #73): TheThreatFinderManager (RW 0xDE8888), the named threat areas of a map (GameLogic/System/ThreatFinder.h). Not a subsystem
+	// with an update: retail only adds and removes finders and looks them up by name (RW 0x7EE260); a finder scans when it is asked. Its state is
+	// the finders' and it travels with them (each finder's module xfers it, RW 0x7EDF70), so it is not a state-hash section of its own
+	ThreatFinderManager &threatFinders() { return *m_threatFinders; }
+	const ThreatFinderManager &threatFinders() const { return *m_threatFinders; }
+	// lane TAINTAREA-1: TheTaintManager (RW 0xDE435C, GameLogic/System/TaintManager.h): the taint / elven wood grid; hashed (section "taint manager")
+	// while a cell is painted
+	TaintManager &taint() { return *m_taint; }
+	const TaintManager &taint() const { return *m_taint; }
+	// lane TAINTAREA-1: TheTerrainLogic's radius clear RW 0x683393 (BFME2 TerrainLogic::rva00282CFB): the grid's cells of `mode` (every painter's for -1)
+	// within `radius` turn neutral, the TAINTEFFECT objects within it are destroyed and the map's trees within it are retired (GameLogic/Map/TerrainTaint.cpp)
+	void clearTaintArea(const Coord3D &pos, float radius, int mode);
+	// lane TAINTAREA-1: RW 0x683955 (BFME2 TerrainLogic::rva00283262): every TAINT object within `radius` clears the radius around itself (every
+	// painter's) and is destroyed, then the radius clear at `pos` (the castle unpack, RW 0x79BF36)
+	void clearTaintObjects(const Coord3D &pos, float radius);
 	const CombatState &combat() const { return *m_combat; }
 	const GameLogicSettings &settings() const { return m_settings; }
 	void setClientHooks(ObjectClientHooks *hooks) { m_clientHooks = hooks; }
@@ -1029,6 +1046,8 @@ private:
 	std::unique_ptr<InvisibilityManager> m_invisibility; // lane STEALTH-1
 	std::unique_ptr<DOTManager> m_dot;                   // lane DECOMP-1
 	std::unique_ptr<TerrainTrees> m_trees;               // lane SPELL-3
+	std::unique_ptr<ThreatFinderManager> m_threatFinders; // PORT 17: RW 0xDE8888
+	std::unique_ptr<TaintManager> m_taint;               // lane TAINTAREA-1
 	std::unique_ptr<ScriptEngine> m_scriptEngine;        // lane SCRIPT-1
 	CastleTemplateStore m_castleTemplates;
 	std::set<std::string, std::less<>> m_notedStops;

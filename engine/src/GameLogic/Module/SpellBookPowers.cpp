@@ -28,6 +28,7 @@
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/System/TaintManager.h"
 #include "Common/StateHash.h"
 #include "Common/Team.h"
 
@@ -260,11 +261,16 @@ void WeatherFamilySpecialPower::emitCentreFX(const std::string &fx, const Coord3
 	emitPositionFX(logic, "SpecialPower map centre FX", fx, *getObject(), c); // RW 0x494615
 }
 
-Object *WeatherFamilySpecialPower::seedArea(const Coord3D &loc, const std::string &fx, const std::string &ocl, const std::string &objectName)
+// RW 0x8C8E67 (Taint, amount 0x00) / RW 0x8C7DBA (Elven Wood, amount 0xFF), lane TAINTAREA-1: TheTerrainLogic's tree tint RW 0x67F6F0(loc, radius, 1 / 2)
+// and RW 0x67D4CE(loc, radius + 50.0 (RW 0xBD88C4, SSE), 1 / 2) only forward to TheTerrainVisual (slots 0x74 / 0x40, the client: not sent); the FX at the
+// location (RW 0x494615); the OCL at the location (RW 0x5F00CA, source: the object); the area object (RW 0x8C8DF9 / 0x8C7C22); Elven Wood's grove gets
+// status 0x54 (RW 0x8C7E84); then TheTaintManager (RW 0xDE435C): the neutral paint RW 0xAD4C10(loc, radius * 1.25 (RW 0xC2E434, SSE mulss), 0x80,
+// absolute, -1) clears every painter's cells, and with an area object RW 0xAD4C10(loc, radius, amount, absolute, the object's id) paints its circle
+Object *WeatherFamilySpecialPower::seedArea(const Coord3D &loc, float radius, const std::string &fx, const std::string &ocl, const std::string &objectName,
+                                            int amount, int groveStatus)
 {
 	Object *obj = getObject();
 	GameLogic &logic = obj->logic();
-	++m_unported; // RW 0x67F6F0 / 0x67D4CE: the terrain's taint / elven wood area of the radius (S-921)
 	emitPositionFX(logic, "SpecialPower area FX", fx, *obj, loc); // RW 0x494615
 	if (!ocl.empty())
 	{
@@ -274,17 +280,33 @@ Object *WeatherFamilySpecialPower::seedArea(const Coord3D &loc, const std::strin
 			list->create(logic, obj, loc); // RW 0x5F00CA (source: the object)
 		}
 	}
-	// RW 0x8C8DF9 / 0x8C7C22: the template by name (RW 0x6D1305); newObject on no team (the neutral player's, RW 0x699E4A) at the location
-	const ThingTemplate *tt = logic.things().findTemplate(objectName);
-	if (!tt)
+	// RW 0x8C8DF9 / 0x8C7C22: the template by name (RW 0x6D1305); newObject on no team (RW 0x6D165E), its position (RW 0x70C201) and setTeam(the caster's
+	// team, Object + 0x31C) (RW 0x69954A; Taint places it first, Elven Wood sets the team first): the area object is the caster's, so its aura's ally
+	// filter and the grid's owner test follow the caster
+	Object *made = nullptr;
+	if (const ThingTemplate *tt = logic.things().findTemplate(objectName))
 	{
-		return nullptr;
+		made = logic.newObject(tt, nullptr, ObjectStatusMaskType{});
+		if (made && groveStatus < 0)
+		{
+			made->setPosition(&loc);      // RW 0x8C8E46 (Taint: the position first)
+			made->setTeam(obj->getTeam()); // RW 0x8C8E56
+		}
+		else if (made)
+		{
+			made->setTeam(obj->getTeam()); // RW 0x8C7C8F (Elven Wood: the team first)
+			made->setPosition(&loc);      // RW 0x8C7C99
+		}
 	}
-	Object *made = logic.newObject(tt, nullptr, ObjectStatusMaskType{});
+	if (made && groveStatus >= 0)
+	{
+		made->setStatus((unsigned)groveStatus, true); // RW 0x8C7E84: status 0x54 on the grove
+	}
+	TaintManager &taint = logic.taint();
+	taint.applyCircleWorld(loc, SimMath::mulf32(radius, 1.25f), TaintManager::kNeutral, true, -1); // RW 0x8C8F22 .. 0x8C8F47
 	if (made)
 	{
-		made->setPosition(&loc); // RW 0x70C201
-		++m_unported;            // RW 0x69954A (with the caster's + 0x31C) and the terrain decals (RW 0xAD4C10, client): S-921
+		taint.applyCircleWorld(loc, radius, amount, true, (int)made->getID()); // RW 0x8C8F50 .. 0x8C8F65 (the object's id, Object + 0x74)
 	}
 	return made;
 }
@@ -388,7 +410,7 @@ void TaintSpecialPower::doSpecialPowerAtLocation(const Coord3D &loc, unsigned op
 		return;
 	}
 	baseDo(&loc, nullptr, options);
-	Object *made = seedArea(loc, m_data->m_taintFX, m_data->m_taintOCL, m_data->m_taintObject);
+	Object *made = seedArea(loc, m_data->m_taintRadius, m_data->m_taintFX, m_data->m_taintOCL, m_data->m_taintObject, 0x00, -1); // RW 0x8C8F56: amount 0
 	m_lastObject = made ? made->getID() : (ObjectID)INVALID_ID;
 }
 
@@ -399,12 +421,8 @@ void ElvenWoodSpecialPower::doSpecialPowerAtLocation(const Coord3D &loc, unsigne
 		return;
 	}
 	baseDo(&loc, nullptr, options);
-	Object *made = seedArea(loc, m_data->m_elvenWoodFX, m_data->m_elvenWoodOCL, m_data->m_elvenGroveObject);
+	Object *made = seedArea(loc, m_data->m_elvenWoodRadius, m_data->m_elvenWoodFX, m_data->m_elvenWoodOCL, m_data->m_elvenGroveObject, 0xFF, 0x54); // RW 0x8C7EBD: 0xFF
 	m_lastObject = made ? made->getID() : (ObjectID)INVALID_ID;
-	if (made)
-	{
-		made->setStatus(0x54, true); // RW 0x8C7E3A: status 0x54 on the grove
-	}
 }
 
 // ---- ProductionSpeedBonus ------------------------------------------------------------------------------------------------------------------
@@ -594,9 +612,10 @@ std::vector<std::string> SpellBookPowers::stopLines()
 		"active boundary taken as 0: only scripts change it) and CloudBreak's SunbeamObject grid (RW 0x8C8B57: every created sunbeam draws what its "
 		"constructor and sendObjectCreated draw, TWO logic random draws each for the retail CloudBreakSunbeam (LifetimeUpdate's lifetime and the seed), "
 		"2 * N per cast for N grid points); not ported (counted per cast): the fire grid burn rate (RW 0x687C4C), CloudBreak's fire put-out (RW 0x68F383) "
-		"and the sunbeams' Lua terror (their panic gameplay), the terrain taint / elven wood areas and decals (RW 0x67F6F0, 0x67D4CE, 0xAD4C10), RW "
-		"0x69954A on the area object, the production speed bonus consumer (RW 0x6AF3C8 is stored only), the defect side effects (RW 0x699368 / 0x6938BD), "
-		"Devastate's FireWeapon (lane DECOMP-1) and its trees, FX and money (lane SPELL-3, S-930) run",
+		"and the sunbeams' Lua terror (their panic gameplay), the production speed bonus consumer (RW 0x6AF3C8 is stored only), the defect side effects "
+		"(RW 0x699368 / 0x6938BD); the client's taint tree tint and ground decal (RW 0x67F6F0, 0x67D4CE: TheTerrainVisual) are not sent; lane TAINTAREA-1 "
+		"ported Taint / ElvenWood's area object on the caster's team (RW 0x69954A) and its circle in TheTaintManager (RW 0xAD4C10, GameLogic/System/"
+		"TaintManager.h); Devastate's FireWeapon (lane DECOMP-1) and its trees, FX and money (lane SPELL-3, S-930) run",
 	};
 	for (const std::string &s : GlobalWeatherSystem::stopLines())
 	{

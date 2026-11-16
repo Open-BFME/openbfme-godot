@@ -4,7 +4,8 @@
 // list 0 puts CHUNK_ScriptEngine before CHUNK_VictorySystem and CHUNK_WeatherSystem, RW 0x6DF73E):
 //   obfme:ScriptEngine     ScriptEngine::xfer (ScriptEngine/ScriptEngineXfer.cpp)                     "script engine"      lists 0 and 1 (retail's list 1 holds it)
 //   obfme:Victory          VictoryConditions::xfer                                                    "victory"
-//   obfme:Weather          GlobalWeatherSystem::xfer (retail's field order, RW 0x71A2E3)              "weather"
+//   obfme:Weather          GlobalWeatherSystem::xfer (retail's field order, RW 0x71A2E3)              "weather", "taint manager" (TAINTAREA-1: the
+//                          trailer's version 2 holds TheTaintManager in retail's layout, RW 0xAD4B80)
 //   obfme:Economy          Economy::xfer (TerrainResourceManager in retail's layout, RW 0x75C7AE)     "economy"
 //   obfme:CreateAHero      CreateAHeroGame::xfer (the records in retail's layout, RW 0x80B4F5)        "create-a-hero"
 //   obfme:TerrainTrees     TerrainTrees::xfer (the records in retail's layout, RW 0x680753)           "terrain trees"
@@ -71,7 +72,9 @@ void GameLogic::registerSave4dBlocks(GameState &gs)
 	add("obfme:ScriptEngine", saveLoadAndDeepCRC, [this](Xfer &x) { m_scriptEngine->xfer(x); }, [this]() { m_scriptEngine->finishLoad(); },
 		"script engine");
 	add("obfme:Victory", saveLoad, [this](Xfer &x) { m_victory->xfer(x); }, nullptr, "victory");
-	add("obfme:Weather", saveLoad, [this](Xfer &x) { m_weather->xfer(x); }, nullptr, "weather");
+	// lane TAINTAREA-1: the weather block's OpenBFME trailer (version 2) also carries TheTaintManager's grid (retail's CHUNK_TaintManager)
+	gs.addOwnedSnapshotBlock("obfme:Weather", std::make_unique<Save4dSnapshot>(gs, [this](Xfer &x) { m_weather->xfer(x); }, nullptr), saveLoad, "SAVE-4d",
+		{ "weather", "taint manager" });
 	add("obfme:Economy", saveLoad, [this](Xfer &x) { m_economy->xfer(x); }, [this]() { m_economy->finishLoad(); }, "economy");
 	add("obfme:CreateAHero", saveLoad, [this](Xfer &x) { m_createAHeroes->xfer(x); }, [this]() { m_createAHeroes->finishLoad(); }, "create-a-hero");
 	gs.setLoadPreparation("obfme:CreateAHero", [this](Xfer &x) { m_createAHeroes->prepareLoad(x); },
@@ -92,7 +95,8 @@ std::vector<std::string> GameLogic::save4dStopLines()
 		"LargeGroupAudio::xfer (RW 0x60D899, (1, 5)) also holds the bytes + 0x3A / + 0x39 and TheLargeGroupAudio's audio maps, which are the client's here",
 		"[S-4251] snapshot obfme:Weather (SAVE-4d): retail's GlobalWeatherSystem field order and window (RW 0x71A2E3, (1, 4); the AntiCategory mask by name, "
 		"RW 0x71A1A7) except the audio handle + 0x14 (TheAudio vslot 0x160, the client's weather sound: not written) and the ObjectFilter (the port's layout, "
-		"S-4121); the burn decay (RW 0xDE46A8 + 0x98, another subsystem's field in retail) follows in an OpenBFME trailer",
+		"S-4121); the burn decay (RW 0xDE46A8 + 0x98, another subsystem's field in retail) follows in an OpenBFME trailer, whose version 2 (lane TAINTAREA-1) "
+		"also holds TheTaintManager's grid in retail's CHUNK_TaintManager layout (RW 0xAD4B80 / 0xAD50B0 / 0xAD57E0)",
 		"[S-4252] snapshot obfme:TerrainTrees (SAVE-4d): OpenBFME's own layout (retail saves the trees inside TerrainLogic::xfer, RW 0x683F8C (1, 2)): only "
 		"the records changed since the map start, each by index in retail's record layout (RW 0x680753, (1, 2)); a load needs a game at its START; the "
 		"client's tree events (topple, removal) are not saved, so a loaded game's tree buffer does not show the trees that fell before the save; RETAIL QUIRK NOT "

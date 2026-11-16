@@ -11,6 +11,7 @@
 #include "Common/Snapshot.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Combat/CombatState.h"
@@ -29,6 +30,8 @@
 #include "GameLogic/Combat/ObjectWeapons.h" // lane PERF-WS: the final list's weapon status conditions on the pool
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Map/TerrainTrees.h"
+#include "GameLogic/System/ThreatFinder.h" // PORT 17
+#include "GameLogic/System/TaintManager.h"
 #include "GameLogic/Module/ObjectHelper.h"
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Module/UnportedModule.h"
@@ -71,6 +74,8 @@ GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &p
 	, m_invisibility(std::make_unique<InvisibilityManager>(*this))
 	, m_dot(std::make_unique<DOTManager>(*this)) // lane DECOMP-1
 	, m_trees(std::make_unique<TerrainTrees>(*this)) // lane SPELL-3
+	, m_threatFinders(std::make_unique<ThreatFinderManager>()) // PORT 17: RW 0xDE8888
+	, m_taint(std::make_unique<TaintManager>()) // lane TAINTAREA-1 (BFME2 0x6C08F0 / RW 0xAD4A50)
 	, m_scriptEngine(std::make_unique<ScriptEngine>(*this)) // lane SCRIPT-1
 {
 	buildPhaseWorkTable();
@@ -987,11 +992,17 @@ void GameLogic::processDestroyList()
 		}
 		// the module destructors run at RW's delete: GettingBuiltBehavior's (RW 0x85750D) first kills the worker the structure spawned (RW 0x85730B, lane AI-2 r6).
 		// Called before the object leaves the lists so the builder is still found by id; the dead worker goes on this same list (the loop walks its growth)
+		// lane TAINTAREA-1: AttributeModifierAuraUpdate's (RW 0x89EE67): a TAINT object's radius clear (its cells, its TAINTEFFECT objects, the trees). In
+		// the module order of the object (the destructors' order)
 		for (const std::unique_ptr<BehaviorModule> &m : obj->modules())
 		{
 			if (GettingBuiltBehavior *gb = dynamic_cast<GettingBuiltBehavior *>(m.get()))
 			{
 				gb->killSpawnedWorkerOnDelete();
+			}
+			else if (AttributeModifierAuraUpdate *aura = dynamic_cast<AttributeModifierAuraUpdate *>(m.get()))
+			{
+				aura->onDeleteClearTaint();
 			}
 		}
 		// the pathfinder's map removal (RW 0x6E85FB): not ported (PATH-1 hooks in through the object's modules)
@@ -1104,6 +1115,8 @@ void GameLogic::reset()
 	m_invisibility->reset();
 	m_dot->reset(); // lane DECOMP-1
 	m_trees->reset(); // lane SPELL-3
+	m_threatFinders->reset(); // PORT 17: the map's named threat areas go with their objects
+	m_taint->reset(); // lane TAINTAREA-1: GameLogic::reset RW 0x62D2FF -> RW 0xAD4BB0 (the grid shrinks to one cell; its cell size stays)
 	m_scriptEngine->reset(); // lane SCRIPT-1
 }
 
@@ -1412,6 +1425,11 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	{
 		// lane SPELL-3: only once a tree toppled or was harvested, or (RAI-POW-3) a tree killer marked a cluster: a game without keeps its hash
 		section("terrain trees", [&](StateHasher &x) { m_trees->crc(x); });
+	}
+	if (m_taint->anyNonDefault())
+	{
+		// lane TAINTAREA-1: retail's GameLogic::getCRC (RW 0x625886) transfers TheTaintManager; here only while a cell is painted (a game without keeps its hash)
+		section("taint manager", [&](StateHasher &x) { m_taint->crc(x); });
 	}
 	section("large group audio", [&](StateHasher &x) { m_largeGroupAudio.crc(x); }); // lane AUDIO-4: TheLargeGroupAudio's gate (+ 0x38 / + 0x3C)
 	if (m_scriptEngine->loaded())
