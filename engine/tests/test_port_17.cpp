@@ -10,6 +10,8 @@
 #include "ScriptTestUtil.h"
 
 #include "Common/Dict.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -340,6 +342,43 @@ TEST_CASE("PORT-17 snapshot: the finder's records, radius and name travel in the
 	CHECK(again == saved);
 	w.threatAction("Alice/after", "GateArea", "Enemies", "Alice");
 	CHECK(w.counter("Alice/after") == 12);
+}
+
+TEST_CASE("PORT-17 snapshot: a version 1 block (the unported shell's, saves from before the port) still loads, with no finder")
+{
+	// UnportedUpdateModule::xfer wrote version 1, the UpdateModule block and a u32 call count. The port's block is version 2 (the has-finder bool and the
+	// finder), so the old block is the new one of a finder-less module with its version byte 1 and the bool replaced by the count
+	Port17World w;
+	Object *plain = w.mapObject("P17Area", "PlotArea", 200.0f, 200.0f, nullptr); // a structure on a plot: no finder
+	ThreatFinderUpdate *m = w.finderModule(*plain);
+	REQUIRE(m->finder() == nullptr);
+	XferSave save;
+	m->xfer(save);
+	std::vector<std::uint8_t> block = save.data();
+	REQUIRE(!block.empty());
+	CHECK(block.front() == 2); // the port's version
+	CHECK(block.back() == 0);  // no finder
+	block.front() = 1;
+	block.pop_back();
+	const std::uint32_t calls = 37;
+	const auto *c = reinterpret_cast<const std::uint8_t *>(&calls);
+	block.insert(block.end(), c, c + sizeof(calls));
+
+	Dict props = radiusProperty(150.0f);
+	Object *area = w.mapObject("P17Area", "GateArea", 400.0f, 400.0f, &props);
+	ThreatFinderUpdate *loadedInto = w.finderModule(*area);
+	REQUIRE(loadedInto->finder() != nullptr);
+	XferLoad load(block);
+	loadedInto->xfer(load);
+	CHECK(load.atEnd());                    // the call count is read, nothing is left over
+	CHECK(loadedInto->finder() == nullptr); // a game saved before the port had no finder
+	CHECK(w.finder("GateArea") == nullptr); // and the manager does not keep the old one
+
+	// a version 3 block is refused by name, not read as a later layout
+	std::vector<std::uint8_t> future = save.data();
+	future.front() = 3;
+	XferLoad bad(future);
+	CHECK_THROWS_AS(m->xfer(bad), XferException);
 }
 
 TEST_CASE("PORT-17 neighbor: the skirmish AI's own finder still leaves structures out, which is the one difference from a map area's finder")

@@ -37,7 +37,8 @@ const char *const kStop =
 	"[S-7184] ThreatFinderUpdate (PORT 17, ported: create RW 0x64F96A, slot 45 RW 0x7EDECE, update RW 0x7EDDB6, TheThreatFinderManager RW 0xDE8888, "
 	"the script action RW 0x7C68AA): NOT ported: the condition that reads the same finders (RW 0x608BCA), which is ScriptConditions.cpp's (PORT 16), so "
 	"a map script can set a counter from a named threat area but cannot test the area in a condition; INFERENCE: the record's category comes from "
-	"ThreatBreakdown's AIKindOf through the ported RotWK reader (AIThreatFinder::threatCategory, RW 0x530)";
+	"ThreatBreakdown's AIKindOf through the ported RotWK reader (AIThreatFinder::threatCategory, RW 0x530); a save written before the port (the "
+	"module's block version 1, an unported shell) loads with no finder, so its map's named areas answer nothing until the map is started again";
 } // namespace
 
 // ---- the module ----------------------------------------------------------------------------------------------------------------------------
@@ -125,13 +126,28 @@ void ThreatFinderUpdate::crc(StateHasher &h) const
 	}
 }
 
-// RW 0x7EDF70: version (1, 1), UpdateModule::xfer, then the finder (INFERENCE BFME2 0x003ECED5). Retail's own stream makes the finder on a load without
+// RW 0x7EDF70: retail's version (1, 1), UpdateModule::xfer, then the finder (INFERENCE BFME2 0x003ECED5). Retail's own stream makes the finder on a load without
 // asking, which is only symmetric for a module that has one; the port writes that one bit first (OpenBFME native, S-4190), so a module built on a plot (RW
 // 0x858A94: no finder) round-trips as it is
+//
+// Version 2 is that layout. Version 1 is the block an OpenBFME build wrote while the class was an unported shell (UnportedUpdateModule::xfer: the
+// UpdateModule block and the shell's call count); such a game never had a finder, so it loads with none (S-7184) and the call count is dropped
 void ThreatFinderUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x); // RW 0x850C60
+	if (v.current < 2)
+	{
+		std::uint32_t shellCalls = 0; // UnportedUpdateModule's m_calls, a report counter
+		x.xferUnsignedInt(&shellCalls);
+		if (m_finder)
+		{
+			m_finder->removeFromManager(getObject()->logic()); // as the destructor RW 0x7EDF5B does
+			m_finder.reset();
+		}
+		return;
+	}
 	bool hasFinder = m_finder != nullptr;
 	x.xferBool(&hasFinder);
 	if (hasFinder && x.isLoading())

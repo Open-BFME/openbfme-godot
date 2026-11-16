@@ -2472,6 +2472,94 @@ TEST_CASE("retail strategic setup (WOTR-1): War of the Ring's Skirmish.apt shows
 	CHECK(fx.sink.messages[0].game.slots[1].startPos == 10);
 }
 
+TEST_CASE("retail strategic HUD widescreen: panels preserve proportions, anchors, animation and mouse input through resizing")
+{
+	retailtest::Mount *retail = nullptr;
+	SUBCASE("RotWK") { retail = retailtest::pureMount(); }
+	SUBCASE("BFME2") { retail = retailtest::bfme2Mount(); }
+	if (!retail)
+	{
+		retailtest::printSkip("strategic HUD widescreen");
+		return;
+	}
+	REQUIRE_MESSAGE(retail->fs, retail->error);
+	AptRetail mount{ *retail->fs };
+	LobbyFx fx(mount, false);
+	AptStrategicHUD hud(*fx.wm, *fx.shell, fx.environment);
+	fx.tick(90);
+	AptSpriteInst *root = fx.wm->apt().level(hud.level());
+	REQUIRE(root);
+	struct Panel
+	{
+		const char *path;
+		float anchor;
+	};
+	const Panel panels[] = { { "main.globe", 0 }, { "main.selectionDetails", 0 }, { "main.stats", 0 },
+		{ "main.checklist", 512 }, { "main.endTurnButton", 1024 }, { "dlgFrame", 512 }, { "newTurnIndicator", 512 } };
+	std::map<std::string, AptMatrix> authored;
+	for (const Panel &panel : panels)
+	{
+		AptCharacterInst *clip = fx.wm->apt().resolvePath(root, panel.path);
+		REQUIRE_MESSAGE(clip, panel.path);
+		authored[panel.path] = clip->matrix;
+	}
+	struct Viewport
+	{
+		int width, height;
+		float correction;
+	};
+	for (const Viewport &view : { Viewport{ 1024, 768, 1 }, Viewport{ 1280, 720, 0.75f }, Viewport{ 2560, 1080, 0.5625f },
+		Viewport{ 7680, 4320, 0.75f }, Viewport{ 800, 768, 1 }, Viewport{ 1024, 768, 1 }, Viewport{ 1280, 720, 0.75f } })
+	{
+		INFO(view.width, "x", view.height);
+		hud.setViewportSize(view.width, view.height);
+		for (const Panel &panel : panels)
+		{
+			INFO(panel.path);
+			AptCharacterInst *clip = fx.wm->apt().resolvePath(root, panel.path);
+			REQUIRE(clip);
+			CHECK(clip->matrix.a == authored.at(panel.path).a);
+			CHECK(clip->matrix.tx == authored.at(panel.path).tx);
+			CHECK(clip->matrix.ty == authored.at(panel.path).ty);
+			CHECK(clip->viewportTransform.a == view.correction);
+			CHECK(clip->viewportTransform.tx == panel.anchor * (1.0f - view.correction));
+			CHECK(clip->viewportTransform.d == 1.0f);
+			float x, y;
+			clip->viewportTransform.apply(panel.anchor, 0, x, y);
+			CHECK(x == panel.anchor);
+		}
+		for (const char *path : { "helpBox", "radialMenuStage" })
+		{
+			AptCharacterInst *clip = fx.wm->apt().resolvePath(root, path);
+			REQUIRE(clip);
+			CHECK(clip->viewportTransform.a == 1.0f);
+			CHECK(clip->viewportTransform.tx == 0.0f);
+		}
+		AptButtonInst *button = firstButtonIn(fx.wm->apt().resolvePath(root, "main.endTurnButton"));
+		REQUIRE(button);
+		float left, top, right, bottom, x, y;
+		REQUIRE(button->contentBounds(left, top, right, bottom));
+		button->globalMatrix().apply((left + right) * 0.5f, (top + bottom) * 0.5f, x, y);
+		CHECK(fx.wm->apt().input().hitTestButtons(x, y) == button);
+	}
+	// A real click after resizing still reaches the engine. END PHASE's own click animation removes its button briefly.
+	AptButtonInst *button = firstButtonIn(fx.wm->apt().resolvePath(root, "main.endTurnButton"));
+	REQUIRE(button);
+	hud.takeRequests();
+	clickButton(fx, *button);
+	const auto requests = hud.takeRequests();
+	CHECK(std::count(requests.begin(), requests.end(), "end_turn") == 1);
+	// Fit already scales both axes equally; toggling it must remove the stretch correction.
+	hud.setViewportSize(1280, 720, true);
+	for (const Panel &panel : panels)
+	{
+		AptCharacterInst *clip = fx.wm->apt().resolvePath(root, panel.path);
+		REQUIRE(clip);
+		CHECK(clip->viewportTransform.a == 1.0f);
+		CHECK(clip->viewportTransform.tx == 0.0f);
+	}
+}
+
 TEST_CASE("retail strategic HUD (WOTR-2): StrategicHUD.apt reports its nine parts; the stats, checklist and battle prompt records; END PHASE and AutoResolve reach the engine")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
