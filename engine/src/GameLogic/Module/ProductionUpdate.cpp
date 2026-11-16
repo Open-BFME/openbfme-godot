@@ -610,6 +610,7 @@ void ProductionUpdate::completeUpgrade(ProductionEntry *entry, Player *player)
 		}
 	}
 	removeFromProductionQueue(entry); // RW 0x8A22D9
+	m_exitingObjectID = INVALID_ID;   // RW 0x8A2343 (DONOR BFME2 0x0049EB45)
 }
 
 // RW 0x8A0CF2
@@ -793,6 +794,27 @@ void ProductionUpdate::cancelAllProduction()
 		}
 	}
 	m_cancellingAll = false;
+}
+
+// RW 0x8A1666 .. 0x8A16FF (ProductionUpdateInterface vtable 0xC67DB0 slot 16 at +0x40; DONOR BFME2 0x0049DEC8 in ProductionUpdateQueue.cpp:1421):
+// cancels every queued entry (slot 15, RW 0x8A05B2), pushes out an already-spawned non-respawn doorway unit (m_exitingObjectID at +0x120) via
+// exitObjectViaDoor(exiting, DOOR_1) (ExitInterface slot 2 at +0x08, RW 0x8A16E4), and calls releaseLastExit() (ExitInterface slot 11 at +0x2C, RW 0x8A16EF)
+void ProductionUpdate::cancelAndReleaseAllProduction()
+{
+	cancelAllProduction(); // RW 0x8A1676 -> 0x8A05B2
+	ExitInterface *exit = getObject()->getObjectExitInterface(); // RW 0x8A167C -> 0x68BF9F
+	if (m_exitingObjectID != INVALID_ID) // RW 0x8A1681: module + 0x120 ([esi + 0x110] with esi = module + 0x10)
+	{
+		Object *exiting = getObject()->logic().findObjectByID(m_exitingObjectID); // RW 0x8A1694 -> 0x628EBF
+		if (exiting && !exiting->findModule("RespawnUpdate") && exit) // RW 0x8A169D .. 0x8A16D8
+		{
+			exit->exitObjectViaDoor(exiting, DOOR_1); // RW 0x8A16E4: ExitInterface vslot +0x08(exiting, 0)
+		}
+	}
+	if (exit) // RW 0x8A16E7
+	{
+		exit->releaseLastExit(); // RW 0x8A16EF: ExitInterface vslot +0x2C
+	}
 }
 
 // RW 0x8A072F

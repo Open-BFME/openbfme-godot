@@ -184,7 +184,7 @@ TEST_CASE("save4d weather (RW 0x71A2E3) and large group audio: the blocks carry 
 
 	const std::vector<std::uint8_t> weather = blockBytes(*a.logic, "obfme:Weather");
 	// retail's order: version 4, the weather, the affect kind, the filter (the port's layout, S-4251), the name, the category word 0, the mask, the
-	// weather frames, the modifier frames, the anti mask's names; then the OpenBFME trailer (version 1, the burn decay)
+	// weather frames, the modifier frames, the anti mask's names; then the OpenBFME trailer (version 2, the burn decay, TheTaintManager's grid)
 	const size_t p = payloadOf("obfme:Weather");
 	CHECK(weather[p] == 4);
 	CHECK(std::vector<std::uint8_t>(weather.begin() + (std::ptrdiff_t)p + 1, weather.begin() + (std::ptrdiff_t)p + 9) ==
@@ -194,7 +194,11 @@ TEST_CASE("save4d weather (RW 0x71A2E3) and large group audio: the blocks carry 
 		8, 'D', 'a', 'r', 'k', 'n', 'e', 's', 's', 0, 0, 0, 0,     // the name, the category word (always 0 when saving)
 		bob, 0, 0, 0, 40, 0, 0, 0, 30, 0, 0, 0,                    // the player mask, the weather frames, the modifier frames
 		1, 2, 0, 0, 0, 5, 'S', 'P', 'E', 'L', 'L', 4, 'S', 'T', 'U', 'N', // BitFlags<15>: version 1, two names in bit order (3 SPELL, 9 STUN)
-		1, 7, 0, 0, 0,                                             // the OpenBFME trailer: version 1, the burn decay
+		2, 7, 0, 0, 0,                                             // the OpenBFME trailer: version 2 (lane TAINTAREA-1), the burn decay
+		// TheTaintManager (RW 0xAD4B80, retail's CHUNK_TaintManager layout): its version 1, the grid's version 1, the region (0, 0, 0) .. (1, 1, 0), the cell
+		// size 1.0 and its inverse, 1 x 1 cells, the checksum word 0, the cell: version 2, kind 0x80, value 0, owner -1 (the constructor's grid)
+		1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x3F, 0, 0, 0x80, 0x3F, 0, 0, 0, 0, 0, 0, 0x80, 0x3F, 0, 0, 0x80, 0x3F, 1, 0, 0, 0, 1, 0, 0, 0,
+		0, 0, 0, 0, 2, 0x80, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF,
 	};
 	CHECK(std::vector<std::uint8_t>(weather.end() - 7 - (std::ptrdiff_t)expectTail.size(), weather.end() - 7) == expectTail); // 7: the end token
 	logictest::LogicWorld b;
@@ -225,7 +229,7 @@ TEST_CASE("save4d weather (RW 0x71A2E3) and large group audio: the blocks carry 
 
 	// T5: an anti category the list lacks, a version above the current and below the earliest, retail's messages
 	std::vector<std::uint8_t> badName = weather;
-	const size_t spell = weather.size() - 7 - 5 - 5 - 5; // the 'S' of "SPELL"
+	const size_t spell = weather.size() - 7 - 56 - 5 - 5 - 5; // the 'S' of "SPELL" (56: the taint grid of TAINTAREA-1's trailer version 2)
 	REQUIRE(badName[spell] == 'S');
 	badName[spell] = 'X';
 	CHECK(loadError(*b.logic, { "obfme:Weather" }, badName) == "block 'obfme:Weather': AntiCategory flags: no flag named 'XPELL'");

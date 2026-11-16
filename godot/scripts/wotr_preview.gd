@@ -66,6 +66,8 @@ func tick() -> void:
 
 func _set_preview_visible(shown: bool) -> void:
 	view.visible = shown
+	if not shown:
+		pressed_button = -1 # a press before a covering dialog must not become a pick after it closes
 	if vp != null:
 		# Presentation only (both editions): hiding the TextureRect does not stop an
 		# UPDATE_ALWAYS viewport. Keep its scene and animation clocks, but draw only
@@ -236,6 +238,8 @@ func _set_hover(r: int) -> void:
 
 
 func _on_view_input(event: InputEvent) -> void:
+	if not view.visible:
+		return
 	if event is InputEventMouseMotion:
 		_set_hover(pick(event.position))
 	elif event is InputEventMouseButton and (event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT):

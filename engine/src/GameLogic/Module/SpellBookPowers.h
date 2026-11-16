@@ -24,12 +24,15 @@
 //         every ObjectSpacing over the extent of TerrainLogic vslot 0x20 (RW 0x462637), RW 0x8C8A88: two logic draws per retail sunbeam), RW 0x8C8A3B (every object the AttributeModifierAffects filter allows
 //         for the caster's player: its outermost container's fire is put out, RW 0x68F383 -> 0x8B4E75: S-921), then the burn decay value = 0;
 //       - TaintSpecialPower (RW 0x8C8D4F; table RW 0xC741A0: TaintObject + 0x7C, TaintRadius + 0x80, TaintFX + 0x84, TaintOCL + 0x88): AtLocation
-//         RW 0x8C8FF5: not disabled and a TaintObject name: the base, then RW 0x8C8E67: the terrain's taint area (RW 0x67F6F0 / 0x67D4CE, kind 1:
-//         S-921), TaintFX at the location, TaintOCL at the location (source: the object), the TaintObject made on the neutral team at the location
-//         (RW 0x8C8DF9: one creation draw; its RW 0x69954A call with the caster's + 0x31C: S-921) and the terrain decals (RW 0xAD4C10, client);
+//         RW 0x8C8FF5: not disabled and a TaintObject name: the base, then RW 0x8C8E67: the terrain's tree tint and ground decal (RW 0x67F6F0 /
+//         0x67D4CE, kind 1: TheTerrainVisual, the client's, not sent), TaintFX at the location, TaintOCL at the location (source: the object), the
+//         TaintObject made at the location (RW 0x8C8DF9: one creation draw) and put on the caster's team (RW 0x69954A with the caster's + 0x31C), then
+//         TheTaintManager (lane TAINTAREA-1): RW 0xAD4C10(loc, TaintRadius * 1.25, 0x80, absolute, -1) clears the area, RW 0xAD4C10(loc, TaintRadius,
+//         0x00, absolute, the object's id) paints it taint;
 //       - ElvenWoodSpecialPower (RW 0x8C7B48; table RW 0xC73C98: ElvenGroveObject + 0x88, ElvenNumObjects + 0x8C, ElvenWoodObject (name, real)
 //         pairs + 0x7C, ElvenWoodRadius + 0x90, ElvenWoodFX + 0x94, ElvenWoodOCL + 0x98): AtLocation RW 0x8C7FA2: not disabled and an
-//         ElvenGroveObject name: the base, then RW 0x8C7DBA: the same steps as Taint with kind 2, the grove object (RW 0x8C7C22) gets status 0x54.
+//         ElvenGroveObject name: the base, then RW 0x8C7DBA: the same steps as Taint with kind 2 and ElvenWoodRadius, the grove object (RW 0x8C7C22)
+//         gets status 0x54, and the paint's amount is 0xFF (elven wood).
 //   * ProductionSpeedBonus (RW 0x8C70FC; table RW 0xC73620: NumberOfFrames + 0x7C, SpeedMulitplier + 0x80, Type + 0x84 a name list): doSpecialPower
 //     RW 0x8C7171: for each Type name, the player's production bonus (RW 0x6AF3C8: name -> NumberOfFrames and (mult - 1.0) / (mult * -1.0), x87
 //     doubles RW 0xBD2C98 / 0xBDFC10); then, not disabled, the base AtLocation at the object's position. The production side is not ported (S-921).
@@ -134,8 +137,9 @@ public:
 protected:
 	// RW 0xDE46A8 + 0x98 = 0 after the base (Darkness, CloudBreak)
 	void zeroBurnDecay();
-	// RW 0x8C8E67 / 0x8C7DBA: the terrain area, FX, OCL and the area object of Taint / ElvenWood; returns the object made (null: none)
-	Object *seedArea(const Coord3D &loc, const std::string &fx, const std::string &ocl, const std::string &objectName);
+	// RW 0x8C8E67 / 0x8C7DBA: FX, OCL, the area object of Taint / ElvenWood (on the caster's team) and its circle in TheTaintManager (lane TAINTAREA-1):
+	// `amount` 0x00 taint / 0xFF elven wood, `groveStatus` the status the object gets (-1 none); returns the object made (null: none)
+	Object *seedArea(const Coord3D &loc, float radius, const std::string &fx, const std::string &ocl, const std::string &objectName, int amount, int groveStatus);
 	// the FX at the centre of the terrain's extent (RW 0x8C931C / 0x8C9104 / 0x8C8ADA); castLoc: its z (null: the ground height there)
 	void emitCentreFX(const std::string &fx, const Coord3D *castLoc);
 };
@@ -180,6 +184,7 @@ public:
 	TaintSpecialPower(Thing *thing, const TaintSpecialPowerModuleData *data) : WeatherFamilySpecialPower(thing, data), m_data(data) {}
 	void doSpecialPowerAtLocation(const Coord3D &loc, unsigned options) override; // RW 0x8C8FF5
 	ObjectID lastAreaObject() const { return m_lastObject; }
+	const TaintSpecialPowerModuleData *data() const { return m_data; }
 
 private:
 	const TaintSpecialPowerModuleData *m_data;
@@ -192,6 +197,7 @@ public:
 	ElvenWoodSpecialPower(Thing *thing, const ElvenWoodSpecialPowerModuleData *data) : WeatherFamilySpecialPower(thing, data), m_data(data) {}
 	void doSpecialPowerAtLocation(const Coord3D &loc, unsigned options) override; // RW 0x8C7FA2
 	ObjectID lastAreaObject() const { return m_lastObject; }
+	const ElvenWoodSpecialPowerModuleData *data() const { return m_data; }
 
 private:
 	const ElvenWoodSpecialPowerModuleData *m_data;
