@@ -4,9 +4,9 @@
 //
 //   * the sale's call: RW 0x796804 `mov ecx, [esi + 0x258]` (the contain interface, the object's ContainModuleInterface pointer), `mov eax, [ecx]`, RW 0x796806
 //     `call dword ptr [eax + 0x64]` — contain vslot 0x64, no argument. It is the only thing the sale leaves to the contain.
-//   * slot 0x64 is NOT overridden by any contain class: the same body RW 0x86561F sits at + 0x64 of all 16 contain tables of 2.01 (OpenContain RW 0xC59AF0
+//   * slot 0x64 is overridden only by TunnelContain (RW 0xC5DCE0 + 0x64 = RW 0x8812A8, the network leave): the same body RW 0x86561F sits at + 0x64 of the others (OpenContain RW 0xC59AF0
 //     -> 0xC59B54, TransportContain 0xC5A690 -> 0xC5A6F4, HordeTransportContain 0xC5C370 -> 0xC5C3D4, GarrisonContain 0xC5C698 -> 0xC5C6FC,
-//     HordeGarrisonContain 0xC5C9F0 -> 0xC5CA54, SiegeEngineContain 0xC5D668, HordeSiegeEngineContain 0xC5DA10, TunnelContain and the rest). BFME2's
+//     HordeGarrisonContain 0xC5C9F0 -> 0xC5CA54, SiegeEngineContain 0xC5D668, HordeSiegeEngineContain 0xC5DA10 and the rest). BFME2's
 //     GarrisonContain::onSelling (removeAllContained first) is not in RotWK.
 //   * RW 0x86561F: `mov eax, [ecx]; push 2 (CMD_FROM_AI); mov byte ptr [ecx + 0xC1], 0 (module + 0xE1); call dword ptr [eax + 0x80]` (contain vslot 0x80,
 //     orderAllPassengersToExit). So the sale clears the kill-on-death byte and then orders the riders out — through the virtual, so a horde garrison answers

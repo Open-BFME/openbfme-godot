@@ -128,6 +128,10 @@ public:
 	                          bool ignoreToppled, int mode);
 	// lane TREES1: RW 0x684BCA, removeTreesForConstruction: the trees the geometry overlaps go (no topple, no lumber); the number removed
 	int removeTreesForConstruction(const Coord3D &position, const std::vector<ObjectGeometry::Shape> &shapes, float angle);
+	// lane TAINTAREA-1: RW 0x67F63F (BFME2 Rva0027F1DDRetire.cpp, tier A), the radius clear's trees: every record with a client id whose 2D distance
+	// from `position` (x87 sqrt of the SSE deltas, RW 0x405482) is at most `radius` is cleared at once (TheTerrainVisual slot 0x58: REMOVE_NOW); the
+	// number retired. The fire grid's removal of the tree (TheFireLogicSystem RW 0x686B2E) is not ported (S-5260)
+	int retireTreesInRadius(const Coord3D &position, float radius);
 
 	// TerrainLogic + 0x1918, the topple speed the client is given (Devastation sets it around its loop)
 	void setToppleSpeed(float s) { m_toppleSpeed = s; }

@@ -463,6 +463,40 @@ int TerrainTrees::removeTreesForConstruction(const Coord3D &position, const std:
 	return removed;
 }
 
+// RW 0x67F63F (lane TAINTAREA-1)
+int TerrainTrees::retireTreesInRadius(const Coord3D &position, float radius)
+{
+	int retired = 0;
+	for (Record &t : m_records) // RW 0x67F649: the record list in order (no buckets)
+	{
+		if (t.clientId == 0)
+		{
+			continue;
+		}
+		// RW 0x67F667 .. 0x67F6A1: SSE deltas position - tree, then RW 0x405482: x87 sqrt(dy * dy + dx * dx); `fld radius; fcomip; jc`: radius below it
+		// (or unordered) skips
+		const float dx = SimMath::subf32(position.x, t.position.x);
+		const float dy = SimMath::subf32(position.y, t.position.y);
+		const double length = SimMath::sqrtPC24(SimMath::pc24AddW(SimMath::pc24MulW(dy, dy), SimMath::pc24MulW(dx, dx)));
+		if (!((double)radius >= length))
+		{
+			continue;
+		}
+		// RW 0x67F6A3 .. 0x67F6B4: the fire grid (TheFireLogicSystem RW 0xDE46A8 -> 0x686B2E) is not ported (S-5260)
+		keepStart();
+		Event e;
+		e.kind = Event::REMOVE_NOW; // RW 0x67F6C9: TheTerrainVisual slot 0x58 with the client id
+		e.clientId = t.clientId;
+		e.frame = m_logic.getFrame();
+		m_events.push_back(e);
+		clearRecord(t); // RW 0x67F6BB -> 0x67D3C2
+		markChanged(t);
+		m_changedFrame = m_logic.getFrame(); // RW 0x67F6D4: TerrainLogic + 0x1910
+		++retired;
+	}
+	return retired;
+}
+
 void TerrainTrees::crc(StateHasher &h) const
 {
 	h.addU32((std::uint32_t)m_changed);

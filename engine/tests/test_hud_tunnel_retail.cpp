@@ -9,6 +9,7 @@
 #include "Common/Player.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/InGameHud.h"
+#include "GameLogic/BuildAssistantSell.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -209,6 +210,130 @@ TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of 
 	std::printf("  info: both shafts dead: the horde %s, %zu of %zu goblins alive\n", horde->getContainedBy() ? "still inside" : "out", alive, members.size());
 	CHECK(horde->getContainedBy() == nullptr);
 	CHECK(alive > 0u);
+}
+
+// Destroying a shaft keeps the riders that entered by another one inside; only the last shaft's death lets the
+// whole network out (RW 0x8FA4E8 reads the entry shaft from the rider's containedBy). A sale is the same leave: see the next test.
+TEST_CASE("tunnel retail: destroying a shaft keeps the riders of another inside; the last shaft releases the network")
+{
+	if (!haveWorld("tunnel retail"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s);
+	Player *enemy = r.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	const Coord3D c0 = gridSpot(r, 0.3f, 0.5f, 350.0f);
+	const Coord3D c1 = gridSpot(r, 0.6f, 0.5f, 350.0f);
+	const Coord3D c2 = gridSpot(r, 0.45f, 0.75f, 350.0f);
+	Object *a = r.make("WildMineShaft", c0.x, c0.y, enemy);
+	Object *b = r.make("WildMineShaft", c1.x, c1.y, enemy);
+	Object *c = r.make("WildMineShaft", c2.x, c2.y, enemy);
+	Object *horde = r.make("GoblinFighterHorde", c0.x + 200.0f, c0.y, enemy);
+	r.frame(3);
+	REQUIRE(a != nullptr);
+	REQUIRE(b != nullptr);
+	REQUIRE(c != nullptr);
+	REQUIRE(horde != nullptr);
+	a->friend_onBuildComplete();
+	b->friend_onBuildComplete();
+	c->friend_onBuildComplete();
+	TunnelContain *ta = tunnelOf(*a), *tb = tunnelOf(*b), *tc = tunnelOf(*c);
+	REQUIRE(ta != nullptr);
+	REQUIRE(tb != nullptr);
+	REQUIRE(tc != nullptr);
+	REQUIRE(enter(r, *horde, *a, 400));
+	CHECK(horde->getContainedBy() == a);
+	const unsigned tunnels = enemy->tunnelTracker().tunnelCount();
+	REQUIRE(tunnels >= 3u); // tolerance: the map shaft count is data; at least three are needed for the test
+	// destroy C: it never held the horde
+	c->kill(DAMAGE_UNRESISTABLE, 0);
+	r.frame(10);
+	CHECK(horde->getContainedBy() == a);
+	CHECK(enemy->tunnelTracker().tunnelCount() == tunnels - 1u);
+	CHECK(ta->getContainCount() == 1u);
+	// destroy B: the horde still entered by A
+	b->kill(DAMAGE_UNRESISTABLE, 0);
+	r.frame(10);
+	CHECK(horde->getContainedBy() == a);
+	CHECK(enemy->tunnelTracker().tunnelCount() == 1u);
+	// A is the last shaft: its death lets the whole network out (retail's cave-in rule)
+	a->kill(DAMAGE_UNRESISTABLE, 0);
+	int out = -1;
+	for (int f = 0; f < 60 && out < 0; ++f)
+	{
+		r.frame(1);
+		if (!horde->getContainedBy())
+		{
+			out = f;
+		}
+	}
+	REQUIRE_MESSAGE(out >= 0, "the last shaft did not let the horde out"); // tolerance: the shaft index is non-negative; the exact shaft follows the map order
+}
+
+// The sale (MSG_SELL -> BuildAssistant::sellObject RW 0x7966BB -> contain slot 0x64): the tunnel table answers RW 0x8812A8 = the network leave RW 0x88121A, not
+// OpenContain's order-out RW 0x86561F. Selling a shaft that is not the last keeps its riders in the network (they now count as entered by the first shaft left,
+// RW 0x8FA4E8 / 0x6901AE); selling the last shaft lets everyone out
+TEST_CASE("tunnel retail: selling a shaft that is not the last keeps its riders inside; selling the last lets them out")
+{
+	if (!haveWorld("tunnel retail"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s);
+	Player *enemy = r.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	const Coord3D c0 = gridSpot(r, 0.3f, 0.5f, 350.0f);
+	const Coord3D c1 = gridSpot(r, 0.6f, 0.5f, 350.0f);
+	Object *a = r.make("WildMineShaft", c0.x, c0.y, enemy);
+	Object *b = r.make("WildMineShaft", c1.x, c1.y, enemy);
+	Object *horde = r.make("GoblinFighterHorde", c0.x + 200.0f, c0.y, enemy);
+	r.frame(3);
+	REQUIRE(a != nullptr);
+	REQUIRE(b != nullptr);
+	REQUIRE(horde != nullptr);
+	a->friend_onBuildComplete();
+	b->friend_onBuildComplete();
+	const ObjectID aId = a->getID(), bId = b->getID(), hordeId = horde->getID();
+	REQUIRE(enter(r, *horde, *a, 400));
+	REQUIRE(horde->getContainedBy() == a);
+	const unsigned tunnels = enemy->tunnelTracker().tunnelCount();
+	REQUIRE(tunnels >= 2u); // tolerance: the map's own shafts count too; two are needed
+	// sell A (it holds the horde, another shaft is left): nobody is ordered out
+	r.logic().sellList().sellObject(a);
+	for (int f = 0; f < 90 && r.logic().findObjectByID(aId); ++f)
+	{
+		r.frame(1);
+	}
+	REQUIRE(r.logic().findObjectByID(aId) == nullptr);
+	r.frame(60);
+	horde = r.logic().findObjectByID(hordeId);
+	REQUIRE(horde != nullptr);
+	CHECK(enemy->tunnelTracker().tunnelCount() == tunnels - 1u);
+	REQUIRE(horde->getContainedBy() != nullptr);
+	CHECK(horde->getContainedBy()->getID() == enemy->tunnelTracker().tunnelIds().front());
+	CHECK(enemy->tunnelTracker().isInContainer(horde));
+	if (tunnels != 2u)
+	{
+		return; // the map's own shafts are the player's too: B is not the last one
+	}
+	// sell B, the last shaft: the network comes out
+	CHECK(horde->getContainedBy()->getID() == bId);
+	r.logic().sellList().sellObject(b);
+	int out = -1;
+	for (int f = 0; f < 120 && out < 0; ++f)
+	{
+		r.frame(1);
+		horde = r.logic().findObjectByID(hordeId);
+		if (horde && !horde->getContainedBy())
+		{
+			out = f;
+		}
+	}
+	CHECK_MESSAGE(out >= 0, "selling the last shaft did not let the horde out"); // tolerance: the frame the last shaft dies follows the sale list
+	CHECK(enemy->tunnelTracker().tunnelCount() == 0u);
 }
 
 // TUNNEL-1: the player's flow on the HUD. A Goblin player right-clicks a mine shaft with a horde selected (MSG_ENTER), selects the OTHER shaft: its

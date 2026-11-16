@@ -199,7 +199,7 @@ bool AIUpdateInterface::findNearestLabeledContactPointOnTarget(const Object &tar
 	// RW 0x667C76: the labels of module data + 0x58 in order, the first success wins
 	for (const std::string &label : m_combat.specialContactPoints)
 	{
-		if (ObjectGeometry::worldspaceBestContactPoint(target, callerPos, label, preferred, out))
+		if (ObjectGeometry::worldspaceBestContactPoint(target, callerPos, label, 0, preferred, out))
 		{
 			return true;
 		}

@@ -474,7 +474,7 @@ TEST_CASE("draw runtime: without a Skeleton the AnimationName is the registry na
 	r.start();
 	CHECK(r.draw->errors().empty());
 	CHECK(clipIs(r.draw->frame().tracks[0], "ABUNIT_SKL.ABUNIT_IDLA"));
-	// the undotted name with no skeleton is not a registry name: reported
+	// The undotted name with no skeleton is not a registry name: reported before the S-5920 movement repair.
 	r.draw->setModelConditionFlags(flagsOf({ "MOVING" }));
 	REQUIRE(!r.draw->errors().empty());
 	CHECK(r.draw->errors().back().find("not registered") != std::string::npos);
@@ -1312,4 +1312,287 @@ TEST_CASE("draw runtime: a model animation prefix change refreshes the shared id
 	CHECK(r.draw->frame().tracks[0].clipName == "abunit_skl.ABUNIT_IDLA");
 	r.draw->setModelConditionFlags(flagsOf({ "USER_1" }));
 	CHECK(r.draw->frame().tracks[1].clipName == "abunit_skl.ABOTHER_IDLA");
+}
+
+// Owner-requested presentation repair, S-5920 (all editions). RW 0x4BEC9B..0x4BECA6 / BFME2's
+// W3DScriptedModelDrawAnimationFrameCount.cpp::adjustAnimation leave the old track when every clip is missing.
+// A completed idle then stays frozen under MOVING. The replacement must come from this module's matching
+// movement states, without entering their scripts or changing the requested state / model conditions.
+TEST_CASE("draw runtime: a missing movement clip uses a reported compatible cycle and its timing")
+{
+	const std::string text = std::string(kDefaultState) +
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+		"AnimationState = MOVING BACKING_UP\n StateName = Backing\n" + anim("ABUNIT_MISSING", "ONCE") + "End\n"
+		"AnimationState = MOVING\n StateName = Running\n BeginScript\n MUST_NOT_RUN\n EndScript\n" +
+		anim("ABUNIT_RUN", "LOOP", " Distance = 20\n AnimationSpeedFactorRange = 2 2\n") + "End\nEnd\n";
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 } }, text);
+	W3DScriptedModelDraw::Options options;
+	options.objectSpeed = [] { return 2.0f; };
+	r.start(true, false, options);
+	r.draw->advance(2000.0);
+	const auto flags = flagsOf({ "MOVING", "BACKING_UP" });
+	r.draw->setModelConditionFlags(flags);
+	r.draw->advance(200.0); // 30 fps * factor 2; the blend completes and Distance sync becomes 0.5.
+	const auto first = r.draw->frame();
+	CHECK(first.tracks[0].clipName == "abunit_skl.ABUNIT_RUN");
+	CHECK(first.tracks[0].mode == W3D_ANIM_MODE_LOOP);
+	// tolerance: render frames use binary32 milliseconds * 0.001, which rounds the mathematical frame by one ULP here.
+	CHECK(first.tracks[0].frame == doctest::Approx(12.0f).epsilon(0.000001));
+	CHECK(r.draw->speedMultiplier() == 0.5f);
+	CHECK(r.draw->currentAnimationState()->stateName == "Backing");
+	CHECK(r.draw->currentAnimationIndex() == 0);
+	CHECK(r.scripts.ran.empty());
+	REQUIRE(r.draw->errors().size() == 1);
+	CHECK(r.draw->errors()[0] == "animation ABUNIT_MISSING of state Backing: animation ABUNIT_MISSING (skeleton abunit_skl) is not registered");
+	CHECK(hasStop(*r.draw, "S-5920"));
+	for (const auto &stop : r.draw->stops())
+	{
+		if (stop.Id == "S-5920") CHECK(stop.Message == "[S-5920] missing movement animation for MOVING BACKING_UP on model ABUNIT_SKN; using declared movement cycle abunit_skl.ABUNIT_RUN (presentation repair, not retail animation parity)");
+	}
+	// Refreshing the same requested state must retain the repaired cycle's Distance / speed metadata.
+	r.draw->setModelConditionFlags(flags);
+	r.draw->advance(100.0);
+	// tolerance: the second binary32 render step accumulates the first step's one-ULP rounding.
+	CHECK(r.draw->frame().tracks[0].frame == doctest::Approx(15.0f).epsilon(0.000001));
+	CHECK(r.draw->speedMultiplier() == 0.5f);
+	CHECK(r.draw->errors().size() == 1);
+}
+
+TEST_CASE("draw runtime: movement repair refuses a dying object and a cycle on another hierarchy")
+{
+	{
+		Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 } }, std::string(kDefaultState) +
+			"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+			"AnimationState = MOVING BACKING_UP\n" + anim("ABUNIT_MISSING") + "End\n"
+			"AnimationState = MOVING\n" + anim("ABUNIT_RUN") + "End\nEnd\n");
+		r.start();
+		r.draw->setModelConditionFlags(flagsOf({ "MOVING", "BACKING_UP", "DYING" }));
+		CHECK_FALSE(hasStop(*r.draw, "S-5920"));
+		CHECK(clipIs(r.draw->track(0), "abunit_skl.ABUNIT_IDLA"));
+	}
+	{
+		Rig r({ { "ABUNIT_IDLA", 30 } },
+			"DefaultModelConditionState\n Model = ABUNIT_SKN\nEnd\n"
+			"IdleAnimationState\n" + anim("ABUNIT_SKL.ABUNIT_IDLA", "ONCE") + "End\n"
+			"AnimationState = MOVING BACKING_UP\n" + anim("ABUNIT_SKL.ABUNIT_MISSING") + "End\n"
+			"AnimationState = MOVING\n" + anim("OTHER_SKL.OTHER_RUN") + "End\nEnd\n");
+		r.fs.Add("art\\w3d\\ot\\other_run.w3d", rawAnimChunk("OTHER_RUN", "OTHER_SKL", 30, 30,
+			{ { ANIM_CHANNEL_Z, 1, 0, 1, { 0 } } }));
+		r.start();
+		r.draw->setModelConditionFlags(flagsOf({ "MOVING", "BACKING_UP" }));
+		CHECK_FALSE(hasStop(*r.draw, "S-5920"));
+		CHECK(clipIs(r.draw->track(0), "ABUNIT_SKL.ABUNIT_IDLA"));
+	}
+}
+
+TEST_CASE("draw runtime: repaired movement sync uses the incoming cycle throughout an idle blend")
+{
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 60 } }, std::string(kDefaultState) +
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+		"AnimationState = MOVING BACKING_UP\n" + anim("ABUNIT_MISSING") + "End\n"
+		"AnimationState = MOVING\n" + anim("ABUNIT_RUN", "LOOP", " Distance = 20\n") + "End\nEnd\n");
+	W3DScriptedModelDraw::Options options;
+	options.objectSpeed = [] { return 2.0f; };
+	r.start(true, false, options);
+	r.draw->setModelConditionFlags(flagsOf({ "MOVING", "BACKING_UP" }));
+	REQUIRE(r.draw->frame().trackCount == 2);
+	CHECK(clipIs(r.draw->track(0), "abunit_skl.ABUNIT_IDLA"));
+	CHECK(clipIs(r.draw->track(1), "abunit_skl.ABUNIT_RUN"));
+	// The run lasts 60 / 30 = 2 seconds and covers 20 / 2 * 200 ms = 2 seconds: sync stays 1,
+	// even while the outgoing idle lasts only 30 / 30 = 1 second. Sync is computed after each step.
+	r.draw->advance(50.0);
+	CHECK(r.draw->frame().blending);
+	CHECK(r.draw->speedMultiplier() == 1.0f);
+	r.draw->advance(100.0);
+	CHECK(r.draw->frame().blending);
+	CHECK(r.draw->speedMultiplier() == 1.0f);
+	// tolerance: binary32 milliseconds * 0.001 rounds these 30 fps render-frame advances by one ULP.
+	CHECK(r.draw->track(1).frame == doctest::Approx(4.5f).epsilon(0.000001));
+	r.draw->advance(50.0); // 6 frames total exceeds the 5-frame blend, promoting RUN to track 0.
+	CHECK_FALSE(r.draw->frame().blending);
+	CHECK(clipIs(r.draw->track(0), "abunit_skl.ABUNIT_RUN"));
+	CHECK(r.draw->speedMultiplier() == 1.0f);
+	// tolerance: the three binary32 render steps accumulate their one-ULP rounding.
+	CHECK(r.draw->track(0).frame == doctest::Approx(6.0f).epsilon(0.000001));
+}
+
+TEST_CASE("draw runtime: ordinary movement retains retail track zero duration during a blend")
+{
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 60 } }, std::string(kDefaultState) +
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+		"AnimationState = MOVING\n" + anim("ABUNIT_RUN", "LOOP", " Distance = 20\n") + "End\nEnd\n");
+	W3DScriptedModelDraw::Options options;
+	options.objectSpeed = [] { return 2.0f; };
+	r.start(true, false, options);
+	r.draw->setModelConditionFlags(flagsOf({ "MOVING" }));
+	r.draw->advance(50.0);
+	CHECK(r.draw->frame().blending);
+	CHECK(r.draw->speedMultiplier() == 0.5f); // RW 0x4B67D4 uses the outgoing idle's 1-second duration.
+	r.draw->advance(100.0);
+	CHECK(r.draw->frame().blending);
+	CHECK(r.draw->speedMultiplier() == 0.5f);
+	r.draw->advance(200.0);
+	CHECK_FALSE(r.draw->frame().blending);
+	CHECK(r.draw->speedMultiplier() == 1.0f); // RUN is now track 0: its duration is 2 seconds.
+	CHECK_FALSE(hasStop(*r.draw, "S-5920"));
+}
+
+TEST_CASE("draw runtime: queued movement repair preserves visible timing until it blends in")
+{
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_ATTACK", 60 }, { "ABUNIT_RUN", 90 } }, std::string(kDefaultState) +
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+		"AnimationState = ATTACKING\n" + anim("ABUNIT_ATTACK", "LOOP", " AnimationMustCompleteBlend = Yes\n") + "End\n"
+		"AnimationState = MOVING BACKING_UP\n" + anim("ABUNIT_MISSING") + "End\n"
+		"AnimationState = MOVING\n" + anim("ABUNIT_RUN", "LOOP", " Distance = 30\n AnimationSpeedFactorRange = 3 3\n") + "End\nEnd\n");
+	W3DScriptedModelDraw::Options options;
+	options.objectSpeed = [] { return 6.0f; };
+	r.start(true, false, options);
+	r.draw->setModelConditionFlags(flagsOf({ "ATTACKING" }));
+	r.draw->setModelConditionFlags(flagsOf({ "MOVING", "BACKING_UP" }));
+	REQUIRE(r.draw->frame().trackCount == 3);
+	CHECK(clipIs(r.draw->track(2), "abunit_skl.ABUNIT_RUN"));
+	// Visible idle / attack use factor 1 and sync 1. RUN's factor 3 and Distance sync 3 must wait:
+	// its 90 / 30 = 3-second duration covers Distance 30 / speed 6 * 200 ms = 1 second.
+	r.draw->advance(50.0);
+	CHECK(r.draw->speedMultiplier() == 1.0f);
+	r.draw->advance(50.0);
+	REQUIRE(r.draw->frame().trackCount == 3);
+	CHECK(r.draw->speedMultiplier() == 1.0f);
+	// tolerance: binary32 milliseconds * 0.001 rounds the two 30 fps render steps by one ULP.
+	CHECK(r.draw->track(1).frame == doctest::Approx(3.0f).epsilon(0.000001));
+	r.draw->advance(100.0); // finish the original 5-frame blend at its original speed
+	REQUIRE(r.draw->frame().trackCount == 2);
+	CHECK(clipIs(r.draw->track(1), "abunit_skl.ABUNIT_RUN"));
+	CHECK(r.draw->speedMultiplier() == 3.0f);
+	// tolerance: the three binary32 steps accumulate their one-ULP rounding.
+	CHECK(r.draw->track(0).frame == doctest::Approx(6.0f).epsilon(0.000001));
+	r.draw->advance(50.0); // RUN is visible now: factor 3 * sync 3 adds 13.5 frames, ending its blend.
+	REQUIRE(r.draw->frame().trackCount == 1);
+	CHECK(clipIs(r.draw->track(0), "abunit_skl.ABUNIT_RUN"));
+	CHECK(r.draw->speedMultiplier() == 3.0f);
+	// tolerance: the accumulated binary32 frame is within one ULP of 6 + 13.5.
+	CHECK(r.draw->track(0).frame == doctest::Approx(19.5f).epsilon(0.000001));
+}
+
+TEST_CASE("draw runtime: movement repair does not borrow a different model or an unrelated state")
+{
+	for (const char *candidate : {
+		"AnimationState = MOVING\n Animation\n AnimationName = ABUNIT_RUN\n AnimationMode = ONCE\n End\nEnd\n",
+		"AnimationState = MOVING\n Animation\n AnimationName = ABUNIT_STILL\n End\nEnd\n",
+		"AnimationState = MOVING\n Animation\n AnimationName = ABUNIT_RUN\n AnimationSpeedFactorRange = 0 0\n End\nEnd\n",
+		"AnimationState = MOVING USER_1\n Animation\n AnimationName = ABUNIT_RUN\n End\nEnd\n",
+		"TransitionState = Running\n Animation\n AnimationName = ABUNIT_RUN\n End\nEnd\n" })
+	{
+		Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 }, { "ABUNIT_STILL", 1 } }, std::string(kDefaultState) +
+			"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+			"AnimationState = MOVING BACKING_UP\n" + anim("ABUNIT_MISSING") + "End\n" + candidate + "End\n");
+		r.start();
+		r.draw->setModelConditionFlags(flagsOf({ "MOVING", "BACKING_UP" }));
+		CHECK(clipIs(r.draw->track(0), "abunit_skl.ABUNIT_IDLA"));
+		CHECK_FALSE(hasStop(*r.draw, "S-5920"));
+		CHECK(r.draw->errors().size() == 1);
+	}
+	// A mounted model may use the same hierarchy as the foot model; model identity still excludes the foot cycle.
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 } }, std::string(kDefaultState) +
+		"ModelConditionState = MOUNTED\n Model = ABUNIT_DEAD\nEnd\n"
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+		"AnimationState = MOUNTED MOVING BACKING_UP\n" + anim("ABUNIT_MISSING") + "End\n"
+		"AnimationState = MOVING\n" + anim("ABUNIT_RUN") + "End\nEnd\n");
+	r.start();
+	r.draw->setModelConditionFlags(flagsOf({ "MOUNTED", "MOVING", "BACKING_UP" }));
+	CHECK_FALSE(hasStop(*r.draw, "S-5920"));
+	CHECK(r.draw->frame().modelName == "ABUNIT_DEAD");
+}
+
+TEST_CASE("draw runtime: a missing nonmoving clip keeps its error without movement repair")
+{
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 } }, std::string(kDefaultState) +
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+		"AnimationState = ATTACKING\n" + anim("ABUNIT_MISSING") + "End\n"
+		"AnimationState = MOVING\n" + anim("ABUNIT_RUN") + "End\nEnd\n");
+	r.start();
+	r.draw->setModelConditionFlags(flagsOf({ "ATTACKING" }));
+	CHECK(clipIs(r.draw->track(0), "abunit_skl.ABUNIT_IDLA"));
+	CHECK_FALSE(hasStop(*r.draw, "S-5920"));
+	CHECK(r.draw->errors().size() == 1);
+}
+
+TEST_CASE("draw runtime: movement repair qualifies a bare loop with the displayed hierarchy")
+{
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_BACK", 30 }, { "ABUNIT_RUN", 30 } },
+		"DefaultModelConditionState\n Model = ABUNIT_SKN\nEnd\n"
+		"IdleAnimationState\n" + anim("ABUNIT_SKL.ABUNIT_IDLA", "ONCE") + "End\n"
+		"AnimationState = MOVING BACKING_UP\n StateName = Backing\n" + anim("ABUNIT_BACK", "LOOP_BACKWARDS") + "End\n"
+		"AnimationState = MOVING\n" + anim("ABUNIT_RUN") + "End\nEnd\n");
+	r.start();
+	r.draw->advance(2000.0);
+	r.draw->setModelConditionFlags(flagsOf({ "MOVING", "BACKING_UP" }));
+	r.draw->advance(200.0);
+	const auto first = r.draw->frame();
+	CHECK(clipIs(first.tracks[0], "ABUNIT_SKL.ABUNIT_BACK")); // retain the declared directional clip, rather than substituting RUN
+	CHECK(first.tracks[0].mode == W3D_ANIM_MODE_LOOP_BACKWARDS);
+	CHECK(r.draw->currentAnimationState()->stateName == "Backing");
+	CHECK(r.draw->currentModelState()->skeleton.empty()); // no mutation of the parsed model binding
+	CHECK(r.draw->errors().size() == 1);
+	CHECK(hasStop(*r.draw, "S-5920"));
+	r.draw->advance(100.0);
+	CHECK(r.draw->track(0).frame != first.tracks[0].frame);
+}
+
+TEST_CASE("draw runtime: movement repair can use a plain mounted cycle on the identical default model")
+{
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 } }, std::string(kDefaultState) +
+		"ModelConditionState = MOUNTED\n Model = ABUNIT_SKN\nEnd\n"
+		"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+		"AnimationState = MOVING PANICKING\n StateName = Panic\n" + anim("ABUNIT_MISSING") + "End\n"
+		"AnimationState = MOVING MOUNTED\n BeginScript\n MUST_NOT_RUN\n EndScript\n" + anim("ABUNIT_RUN") + "End\nEnd\n");
+	r.start();
+	r.draw->advance(2000.0);
+	const auto flags = flagsOf({ "MOVING", "PANICKING" });
+	r.draw->setModelConditionFlags(flags);
+	r.draw->advance(200.0);
+	const auto first = r.draw->frame();
+	CHECK(clipIs(first.tracks[0], "abunit_skl.ABUNIT_RUN"));
+	CHECK(r.draw->currentAnimationState()->stateName == "Panic");
+	CHECK_FALSE(r.draw->currentModelState()->conditions.any());
+	CHECK(r.scripts.ran.empty());
+	CHECK(r.draw->errors().size() == 1);
+	CHECK(hasStop(*r.draw, "S-5920"));
+	r.draw->advance(100.0);
+	CHECK(r.draw->track(0).frame != first.tracks[0].frame);
+}
+
+TEST_CASE("draw runtime: additional movement repairs respect explicit skeletons models and state flags")
+{
+	for (const char *binding : {
+		"ModelConditionState = MOUNTED\n Model = ABUNIT_DEAD\nEnd\n",
+		"ModelConditionState = MOUNTED\n Skeleton = OTHER_SKL\nEnd\n",
+		"ModelConditionState = MOUNTED\n ModelAnimationPrefix = OTHER\nEnd\n" })
+	{
+		Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 } }, std::string(kDefaultState) + binding +
+			"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+			"AnimationState = MOVING PANICKING\n" + anim("ABUNIT_MISSING") + "End\n"
+			"AnimationState = MOVING MOUNTED\n" + anim("ABUNIT_RUN") + "End\nEnd\n");
+		r.start();
+		r.draw->setModelConditionFlags(flagsOf({ "MOVING", "PANICKING" }));
+		CHECK_FALSE(hasStop(*r.draw, "S-5920"));
+		CHECK(clipIs(r.draw->track(0), "abunit_skl.ABUNIT_IDLA"));
+	}
+	for (const char *conditions : { "MOVING MOUNTED USER_1", "MOVING USER_1", "MOVING MOUNTED" })
+	{
+		Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 } }, std::string(kDefaultState) +
+			"IdleAnimationState\n" + anim("ABUNIT_IDLA", "ONCE") + "End\n"
+			"AnimationState = MOVING PANICKING\n" + anim("ABUNIT_MISSING") + "End\n"
+			"AnimationState = " + conditions + "\n" + anim("ABUNIT_RUN") + "End\nEnd\n");
+		r.start();
+		r.draw->setModelConditionFlags(flagsOf({ "MOVING", "PANICKING" }));
+		CHECK_FALSE(hasStop(*r.draw, "S-5920"));
+	}
+	// A missing explicit Skeleton is an error, not permission to replace it with the model's hierarchy.
+	Rig r({ { "ABUNIT_IDLA", 30 }, { "ABUNIT_RUN", 30 } },
+		"DefaultModelConditionState\n Model = ABUNIT_SKN\n Skeleton = OTHER_SKL\nEnd\n"
+		"AnimationState = MOVING\n" + anim("ABUNIT_RUN") + "End\nEnd\n");
+	r.start();
+	r.draw->setModelConditionFlags(flagsOf({ "MOVING" }));
+	CHECK_FALSE(hasStop(*r.draw, "S-5920"));
 }
