@@ -990,6 +990,7 @@ add_executable(openbfme_tests
     tests/test_lua_runtime.cpp
     tests/test_lua_events.cpp
     tests/test_lua_engine.cpp
+    tests/test_stunned_ai_update.cpp
     tests/test_lua_retail.cpp
     tests/test_lua_draw.cpp
     tests/test_lua_binary_facts.cpp
@@ -1025,7 +1026,8 @@ add_executable(openbfme_tests
     tests/test_econ_resources.cpp
     tests/test_econ_hash.cpp
     tests/test_econ_retail.cpp
-    tests/test_falsedef_retail.cpp)
+    tests/test_falsedef_retail.cpp
+    tests/test_capcrash1.cpp)
 target_sources(openbfme_tests PRIVATE
     tests/test_coverage_online_shell.cpp
     tests/test_coverage_simple_screens.cpp
