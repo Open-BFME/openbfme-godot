@@ -101,10 +101,13 @@ bool BuildCommands::foundationConstruct(GameLogic &logic, const GameMessage &m)
 		refuse(m, "the plot is not the issuing player's");
 		return true;
 	}
-	const CanMakeType can = BuildAssistant::canMakeUnit(*plot, a.tmpl, -1);
-	if (can != CANMAKE_OK)
+	// RW 0x77A91B: Player::canBuild (RW 0x6AAA2E) must accept. PORT-212 (fork issue 502): the case asks Player::canBuild and not
+	// BuildAssistant::canMakeUnit, so the maximum of the template (MaxSimultaneousOfType, canMakeUnit RW 0x794054), its queue and the
+	// command points do not gate a plot's construction; the plot pays in constructOnPlot (RW 0x858AB3, a withdraw that stops at the
+	// money there is, RW 0x7B1809). RotWK therefore builds any number of a plot structure whose INI limit is 1.
+	if (!BuildAssistant::playerCanBuild(*owner, a.tmpl, logic))
 	{
-		refuse(m, "canMakeUnit " + std::to_string((int)can));
+		refuse(m, "Player::canBuild (RW 0x6AAA2E) refuses the template");
 		return true;
 	}
 	FoundationAIUpdate *foundation = nullptr;
@@ -342,6 +345,6 @@ std::vector<std::string> BuildCommands::acceptanceStops()
 {
 	return {
 		"[S-305] build commands: MSG_FOUNDATION_CONSTRUCT / MSG_DOZER_CONSTRUCT / MSG_DOZER_CANCEL_CONSTRUCT / MSG_RESUME_CONSTRUCTION follow the dispatcher cases read at RW 0x77A91B / 0x77B011 / 0x77B1A0 / "
-		"0x77AE9F; Player::canBuild (RW 0x6AAA2E) is stood for by BuildAssistant::canMakeUnit; the Dozer construct body's legality gate (RW 0x88C2A5, flags 0x49F) is ported (DozerAIUpdate::siteIsLegal); MSG_DO_REPAIR sends the selected dozers to repair (DozerAIUpdate::repair; the dispatcher case of MSG_DO_REPAIR was not read: S-656)",
+		"0x77AE9F; Player::canBuild (RW 0x6AAA2E) is stood for by BuildAssistant::playerCanBuild (allowedToBuild RW 0x6AC856, Buildable, the prerequisites), and in the MSG_DOZER_CONSTRUCT case by BuildAssistant::canMakeUnit (S-305) the Dozer construct body's legality gate (RW 0x88C2A5, flags 0x49F) is ported (DozerAIUpdate::siteIsLegal); MSG_DO_REPAIR sends the selected dozers to repair (DozerAIUpdate::repair; the dispatcher case of MSG_DO_REPAIR was not read: S-656)",
 	};
 }

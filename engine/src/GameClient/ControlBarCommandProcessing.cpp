@@ -115,10 +115,9 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			return true;
 		}
 		case GUI_COMMAND_DOZER_CONSTRUCT:
-		case GUI_COMMAND_FOUNDATION_CONSTRUCT:
 		{
 			// ZH processCommandUI: a build button asks the user interface for a site (placeBuildAvailable); the PlaceEventTranslator sends the construct message when the
-			// player clicks a legal one. A plot's button (FOUNDATION_CONSTRUCT) builds on the plot itself: the message goes out at once with the plot's own place
+			// player clicks a legal one
 			const ThingTemplate *tt = b.getThingTemplate();
 			const CanMakeType make = BuildAssistant::canMakeUnit(*obj, tt, -1);
 			if (make == CANMAKE_MAXED_OUT_FOR_PLAYER)
@@ -130,15 +129,25 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			{
 				return false;
 			}
-			if (b.m_command == GUI_COMMAND_FOUNDATION_CONSTRUCT)
-			{
-				ClientMessage &m = m_ctx.stream.append(MSG_FOUNDATION_CONSTRUCT);
-				m.appendInteger((int)tt->getTemplateID());
-				m.appendLocation(*obj->getPosition());
-				m.appendReal(0.0f);
-				return true;
-			}
 			m_ctx.ui.placeBuildAvailable(tt->getName(), obj->getID(), &b); // RW 0x940AA1, then the button as the GUI command (RW 0x94089B; see InGameUI.h)
+			return true;
+		}
+		case GUI_COMMAND_FOUNDATION_CONSTRUCT:
+		{
+			// PORT-212 (fork issue 502): a plot's button builds on the plot itself: the message goes out at once with the plot's own place, so
+			// no per-click canMakeUnit runs (that query belongs to the placement translator, RW 0x83E771) and the production limits the arm
+			// used to apply here (maximum / queue / command points) are not this command's in RotWK (RW 0x942733 arm 1, see ControlBar.cpp).
+			// The gates that do stand are the ones before the switch (the button's availability: Buildable, Player::canBuild RW 0x6AAA2E,
+			// the price) and the message's own case in the logic (RW 0x77A91B).
+			const ThingTemplate *tt = b.getThingTemplate();
+			if (!tt)
+			{
+				return false;
+			}
+			ClientMessage &m = m_ctx.stream.append(MSG_FOUNDATION_CONSTRUCT);
+			m.appendInteger((int)tt->getTemplateID());
+			m.appendLocation(*obj->getPosition());
+			m.appendReal(0.0f);
 			return true;
 		}
 		case GUI_COMMAND_SET_STANCE:
