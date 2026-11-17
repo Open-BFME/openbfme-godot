@@ -201,6 +201,7 @@ include(cmake/Port13.cmake) # PORT-13: AIData/AttackMoveUsesFormations and the f
 include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the collide pickup (OPENBFME_PORT9_TESTS)
 include(cmake/Port7.cmake) # PORT-7: AnimalAIUpdate's enemy scan (OPENBFME_PORT7_TESTS)
 include(cmake/Port58.cmake) # PORT-58: SpecialAbilityUpdate/ApproachUntilMembersInRange (OPENBFME_PORT58_TESTS)
+include(cmake/Port217.cmake) # PORT-217: a builder turns to face the structure it builds or repairs (OPENBFME_PORT217_TESTS)
 include(cmake/Port10.cmake) # PORT-10: FlammableUpdate/RunToWater (issue #65; OPENBFME_PORT10_TESTS)
 include(cmake/Port17.cmake) # PORT-17: ThreatFinderUpdate + the threat-finder script action (issue #73; appends to OPENBFME_SIM_SOURCES; OPENBFME_PORT17_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
@@ -769,6 +770,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT9_TESTS}
     ${OPENBFME_PORT7_TESTS}
     ${OPENBFME_PORT58_TESTS}
+    ${OPENBFME_PORT217_TESTS}
     ${OPENBFME_PORT10_TESTS}
     ${OPENBFME_PORT17_TESTS}
     ${OPENBFME_PLAY4_TESTS}

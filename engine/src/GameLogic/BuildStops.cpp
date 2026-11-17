@@ -65,7 +65,7 @@ std::vector<std::string> BuildStops::lines()
 	              "(RW 0xAD350E); a call without `preferred` runs its overlap test (lane AIMAIM-1); the label compare is taken as exact bytes (RW 0x406585)");
 	out.push_back("[S-1282] dozer machine gaps (lane BUILD-3): not ported: the selection removed when a porter goes into the structure it builds (RW 0x88C51B; "
 	              "its drawable's fade out / in over BuilderFadeOutTime / BuilderFadeInTime is ported, lane PORTERFOG-1; a snapshot loaded while it works "
-	              "makes the drawable again without the fade, so it is drawn until it comes out), the face command 0x26 before the work (AI state 36), the bridge tower branch of the dock position "
+	              "makes the drawable again without the fade, so it is drawn until it comes out), the bridge tower branch of the dock position "
 	              "(RW 0x88CC08), the bored wander of an AI player's idle dozer (RW 0x88E17F), the ActionManager's canRepairObject / canResumeConstructionOf (RW "
 	              "0x82D7F2 / 0x82C84C: the owner's finished resp. unfinished structure stands for them), the script engine's note at the arrival (RW 0x756C87); the "
 	              "idle worker list is the dozer's marked flag (TheInGameUI vslots 0x1A4 / 0x1A8); the primary machine reset after a PLAYER command runs before the "
