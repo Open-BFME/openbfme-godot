@@ -58,20 +58,21 @@ float toAngle(float x, float y)
 
 unsigned PlaceEventTranslator::ghostOptions()
 {
-	// RW 0x6A39D6: 0x48F = 0x0F | 0x80 | 0x400; 0x0F are ZH's TERRAIN_RESTRICTIONS | CLEAR_PATH | NO_OBJECT_OVERLAP | USE_QUICK_PATHFIND (S-306: 0x80, 0x400 not identified)
-	return LLF_TERRAIN_RESTRICTIONS | LLF_CLEAR_PATH | LLF_NO_OBJECT_OVERLAP | LLF_USE_QUICK_PATHFIND;
+	// RW 0x6A39B1: 0x48F = terrain, clear path, object overlap, quick pathfind, fogged objects ignored (0x80) and the pending structures (0x400); lane BUILDCLEAR-1
+	// identified the two RotWK bits (RW 0x796810 / 0x796D37)
+	return LLF_TERRAIN_RESTRICTIONS | LLF_CLEAR_PATH | LLF_NO_OBJECT_OVERLAP | LLF_USE_QUICK_PATHFIND | LLF_IGNORE_FOGGED | LLF_PENDING_STRUCTURES;
 }
 
 unsigned PlaceEventTranslator::placeOptions()
 {
-	// RW 0x83E80D: 0x49F, the ghost's plus 0x10 (ZH's SHROUD_REVEALED)
-	return ghostOptions() | LLF_SHROUD_REVEALED;
+	// RW 0x83E815: 0x49F, the ghost's plus 0x10 (ZH's SHROUD_REVEALED; neither RW 0x796810 nor RW 0x796D37 tests it)
+	return ghostOptions() | LLF_UNREAD_0x10;
 }
 
 const char *PlaceEventTranslator::cantBuildLabel(int code)
 {
-	// RW 0x69CCEC by the code's meaning (RotWK numbers the codes 2 no clear path, 3 too close to supplies, 4 shroud, 5 not flat, 6 restricted terrain,
-	// 8 objects in the way; BuildPlacement keeps ZH's enum order)
+	// RW 0x69CCEC: RotWK numbers the codes 2 no clear path, 3 too close to supplies, 4 shroud, 5 not flat, 6 restricted terrain, 8 objects in the way (BuildPlacement's
+	// LegalBuildCode carries these values since lane BUILDCLEAR-1); any other code, 9 included, is "GUI:CantBuildThere"
 	switch ((LegalBuildCode)code)
 	{
 		case LBC_NO_CLEAR_PATH: return "GUI:CantBuildNoClearPath";
