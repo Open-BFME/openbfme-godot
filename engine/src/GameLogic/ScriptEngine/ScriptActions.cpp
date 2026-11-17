@@ -84,6 +84,9 @@ const std::set<int> &clientActions()
 			// lane MODCOMPAT-AI: RW 0x7CAFA5 case 0x14E: GlobalData + 0x950 = the real parameter (movss), the camera's far clip multiplier that
 			// setCameraTransform reads (RW 0x48B7B1: far = + 0x950 * 1800); nothing else in the logic (client, not saved)
 			"SET_CAMERA_CLIP_DEPTH_MULTIPLIER",
+			// lane PORT-439: RW 0x7CAFA5 case 0x185 (RW 0x7CB6FB) -> RW 0x7BB627(focal, seconds * 1000, easeIn * 1000, easeOut * 1000) ->
+			// TheTacticalView vslot 0xF0 = View::setFocalLength RW 0x48885E: the view's own camera animation (client, not saved)
+			"FOCAL_LENGTH_CAMERA",
 		};
 		std::set<int> out;
 		for (const char *n : names)
@@ -297,6 +300,11 @@ void ScriptActions::clientRequest(ScriptEngine &engine, const ScriptActionRec &a
 	ScriptClientRequest r;
 	r.action = ScriptTemplates::action(a.resolved)->name;
 	r.params = a.params;
+	if (r.action == "FOCAL_LENGTH_CAMERA")
+	{
+		// lane PORT-439: RW 0x7CB6FB reads param 0's real (the focal length in millimetres) and hands it to RW 0x7BB627's view call
+		r.focalMm = a.params.empty() ? 0.0f : a.params[0].realValue;
+	}
 	if (r.action == "HERO_SELECT_BUTTON_FLASH")
 	{
 		if (a.params.size() != 2)

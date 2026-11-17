@@ -63,6 +63,12 @@ void parseSecondsToMilliseconds(INI *ini, void *instance, void *store, const voi
 	static_cast<State *>(instance)->seen |= (unsigned long long)(std::uintptr_t)userData;
 }
 
+// lane PORT-439: GlobalData + 0x9A4, parseBool RW 0x42E558; written through the settings (the State's member)
+void parseDisableCameraMovements(INI *ini, void *instance, void *, const void *)
+{
+	INI::parseBool(ini, nullptr, &static_cast<State *>(instance)->values.disableCameraMovements, nullptr);
+}
+
 // lane PLAY-1: MoveHintName (GlobalData + 0x10, parseAsciiString RW 0x42EE5E): written through the instance (the settings hold a std::string)
 void parseMoveHintName(INI *ini, void *instance, void *, const void *)
 {
@@ -199,6 +205,7 @@ FieldParse kFields[] = {
 	{ "KeyboardDefaultScrollSpeedFactor", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_KBDEFAULT), CS_OFF(keyboardDefaultScrollSpeedFactor) },
 	{ "KeyboardCameraRotateSpeed", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_KBROTATE), CS_OFF(keyboardCameraRotateSpeed) },
 	{ "PartitionCellSize", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_PARTITION), CS_OFF(partitionCellSize) },
+	{ "DisableCameraMovements", parseDisableCameraMovements, nullptr, 0 }, // lane PORT-439: GlobalData + 0x9A4 (row RW 0xC000C0)
 	{ "MoveHintName", parseMoveHintName, nullptr, 0 },
 	{ "DownwindAngle", parseDownwindAngle, nullptr, 0 },
 	{ "ShowObjectHealth", parseShowObjectHealth, nullptr, 0 },

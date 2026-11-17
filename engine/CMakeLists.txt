@@ -335,6 +335,7 @@ include(cmake/Weather1.cmake)   # WEATHER-1: snow, rain, darkness, lightning, th
 include(cmake/Bldfx1.cmake)     # FEAT-BLDFX-1: the FXList nugget sinks, scorches, decals, light pulses, camera shakers (OPENBFME_BLDFX1_SOURCES / _TESTS)
 include(cmake/Decompfix1109.cmake) # DECOMPFIX-1109: FLEECHASE-1, ENTERADJUST-1, REQTHROTTLE-1 (OPENBFME_DECOMPFIX1109_TESTS)
 include(cmake/Port5.cmake)      # PORT-5: the bird's deferred ability target (OPENBFME_PORT5_TESTS)
+include(cmake/Port439.cmake)    # PORT-439: the script action FOCAL_LENGTH_CAMERA (the view's focal length; OPENBFME_PORT439_TESTS)
 include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elven wood grid (appends to OPENBFME_SIM_SOURCES; OPENBFME_TAINTAREA1_TESTS)
 include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
 add_library(openbfme_core STATIC
@@ -747,6 +748,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PATH2_TESTS}
     ${OPENBFME_XP_TESTS}
     ${OPENBFME_FACTB_TESTS}
+    ${OPENBFME_PORT439_TESTS}
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_PORT54_TESTS}
     ${OPENBFME_PORT4_TESTS}
