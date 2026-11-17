@@ -652,7 +652,9 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 {
 	std::unique_ptr<AIStateMachine> m = std::make_unique<AIStateMachine>(*this, machineName());
 	// B1 AIStateMachineConstructor.cpp (ids), ZH AIStates.cpp (states and their success / failure transitions: the move states fall back to idle)
-	m->defineState(AI_IDLE, std::make_unique<AIIdleState>(*m), AI_IDLE, AI_IDLE);
+	// RW 0x7537E0 .. 0x7537EE: the idle state's failure goes to 0x4E, AIGoingIdleState (onEnter RW 0x743864 tells the StancesBehavior onMoveEnd and fails on
+	// to idle); the idle state's stance countdown (RW 0x7553AB) is what fails it
+	m->defineState(AI_IDLE, std::make_unique<AIIdleState>(*m), AI_IDLE, AI_GOING_IDLE);
 	// lane PLAY-4: RotWK's move states 1 and 0x1A end in AIGoingIdleState 0x4E (RW 0x753755), which tells the stances the move ended, then goes idle
 	m->defineState(AI_MOVE_TO, std::make_unique<AIMoveToMachineState>(*m), AI_GOING_IDLE, AI_GOING_IDLE);
 	m->defineState(AI_FOLLOW_PATH, std::make_unique<AIFollowPathState>(*m, false), AI_IDLE, AI_IDLE);

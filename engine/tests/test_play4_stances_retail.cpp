@@ -167,7 +167,6 @@ struct Chase
 	float speed = 0.0f;      // the horde's locomotor speed per frame (curLocomotorSpeed)
 	float radius = 0.0f;     // the horde's bounding circle radius (Object + 0xB8, part of RW 0x6FF412's range)
 	bool noted3802 = false;
-	bool noted5148 = false;  // stop S-5148: the idle state's stance failure (RW 0x7553AB / 0x7537E0) is not ported
 	unsigned lastState = 0;
 	bool sawOuter = false, sawReturn = false;
 	bool sawFaceObject = false; // the temporary FACE_OBJECT state (59, RW 0x75638B) of the TAUNT / POINT emotion
@@ -277,7 +276,6 @@ Chase runChase(starttest::Shared *st, int stance)
 	for (const auto &kv : logic.notedStopHits())
 	{
 		out.noted3802 = out.noted3802 || kv.first == guardStopLine();
-		out.noted5148 = out.noted5148 || kv.first == idleStanceStopLine();
 	}
 	return out;
 }
@@ -387,7 +385,7 @@ TEST_CASE("play4 stances retail: a fleeing enemy is chased out of the guarded sp
 	// bounding circle, measured centre to centre (RW 0x7006D7, distance type 1). At contact the struck horde's FACE_OBJECT state (59) runs the mood scan; the
 	// attacker's centre is within that range, and the target it finds is a plain attack that replaces the guard and follows it (RW 0x66C536 -> 0x66BD33):
 	// RotWK's chase when struck (neither the idle update nor the scan reads the guard mode), not a port bug. The port's chase has no StopChaseDistance
-	// (S-325) and is not ended by the idle state's re-guard (S-5148), so how far it goes is the port's
+	// (S-325) and the idle state's re-guard (RW 0x7553AB) does not reach a chase, so how far it goes is the port's
 	// tolerance: the float rounding of 1 + (-0.9) and of the product (FighterHordeStanceHoldGround: VISION -90%, a tenth of the vision range)
 	CHECK(hold.guardRange - hold.radius == doctest::Approx((battle.guardRange - battle.radius) * 0.1f).epsilon(0.001));
 	CHECK(hold.sawFaceObject);          // the FACE_OBJECT emotion at contact
@@ -396,8 +394,8 @@ TEST_CASE("play4 stances retail: a fleeing enemy is chased out of the guarded sp
 	CHECK(hold.rangeAtAttack == hold.guardRange);
 	CHECK_FALSE(hold.sawReturn);
 	CHECK(hold.lastState == (unsigned)AI_ATTACK_OBJECT);
-	// stop S-5148: an idle stanced unit is not guarded again by the idle state's failure (Aggressive's horde idles and scans)
-	CHECK(aggressive.noted5148);
+	// the idle state's stance countdown (RW 0x7553AB / 0x7537E0) guards a Battle / HoldGround / Porcupine unit again and leaves an Aggressive one on its
+	// plain mood scan: Aggressive's horde still idles and scans
 	CHECK(battle.maxFromSpot <= battle.outerRange + battle.speed * brakingFrames);  // the outer state's leash: the vision range around the spot
 	CHECK(aggressive.maxFromSpot > battle.outerRange);                             // Aggressive: no guard, the plain attack follows the enemy without a leash
 	// stop S-3802 (only the LOCATION guard of the stances is ported) is reported by every game whose units guard; Aggressive does not guard
