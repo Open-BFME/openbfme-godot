@@ -28,6 +28,10 @@ strategic messages or save layouts change.
   removes ambient handles. Unsupported zoom-conditioned sounds and
   NO_KILL/FADE_IN flags are reported by name.
 - Reuse movement-line materials and avoid rebuilding unchanged line geometry.
+  Keep unchanged building/plot nodes across strategic refreshes: native instance
+  IDs are not reused, so recreating them each lockstep frame would retain
+  tombstones throughout a long war. Appearance transitions replace only the
+  affected icon.
 
 ## Source evidence
 

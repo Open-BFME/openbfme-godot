@@ -17,6 +17,14 @@ class Renderer extends Node3D:
 	func remove_instance(id: int) -> void:
 		removed.append(id)
 
+class BuildingMap extends "res://scripts/wotr.gd":
+	var icon_builds := 0
+	func _icon_node(_icon: Dictionary, _size: int, _construction: bool, _owner := -1, _moving := false, _producing := false) -> Node3D:
+		icon_builds += 1
+		return Node3D.new()
+	func _ground(_x: float, _y: float) -> float:
+		return 0.0
+
 class Audio extends Node:
 	var removed: Array = []
 	var played: Array = []
@@ -91,6 +99,31 @@ func run() -> void:
 
 	check(WarMap._building_producing({"production": [{"slot": 2}]}, 2), "production marker uses the region's queued building slot")
 	check(not WarMap._building_producing({"production": [{"slot": 2}]}, 1), "another building's queue does not show a production marker")
+	var buildings := BuildingMap.new()
+	buildings.state = {"players": [{"template": "Player"}], "regions": [{"owner": 0, "buildings": [{"template": "Farm", "slot": 0, "turns_left": 0}], "production": []}]}
+	buildings.data = {"player_templates": [{"name": "Player", "build_plot_icon": "Plot"}], "buildings": [{"name": "Farm", "icon": "FarmIcon"}],
+		"icons": [{"kind": 1, "name": "FarmIcon"}, {"kind": 2, "name": "Plot"}]}
+	buildings.regions = [{"building_spots": [Vector2(1, 2), Vector2(3, 4)]}]
+	buildings.map_root = Node3D.new()
+	buildings.add_child(buildings.map_root)
+	root.add_child(buildings)
+	buildings._place_buildings()
+	check(buildings.icon_builds == 2, "building and empty plot each create one icon")
+	var initial_building: Node = buildings.building_nodes[0]
+	var initial_plot: Node = buildings.building_nodes[1]
+	for i in 100:
+		buildings._place_buildings()
+	check(buildings.icon_builds == 2, "unchanged refreshes create no native instance tombstones")
+	check(buildings.building_nodes[0] == initial_building and buildings.building_nodes[1] == initial_plot, "unchanged building and plot keep their nodes")
+	buildings.state.regions[0].production = [{"slot": 0}]
+	buildings._place_buildings()
+	check(buildings.icon_builds == 3, "production transition rebuilds only its building")
+	check(buildings.building_nodes[1] == initial_plot, "production transition retains the empty plot")
+	buildings.state.regions[0].owner = -1
+	buildings._place_buildings()
+	check(buildings.building_nodes.size() == 1, "unowned region loses its empty plot icon")
+	buildings.free()
+
 	var game := Game.new()
 	var war := WarMap.new()
 	war.init(game)

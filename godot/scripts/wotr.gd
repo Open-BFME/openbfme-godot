@@ -2193,8 +2193,11 @@ static func _building_producing(region: Dictionary, slot: int) -> bool:
 	return false
 
 func _place_buildings() -> void:
-	for n in building_nodes:
-		n.queue_free()
+	# W3DInstancer IDs are not reused. Keep unchanged plot/building nodes across
+	# state refreshes instead of adding native tombstones every lockstep frame.
+	var previous := {}
+	for node in building_nodes:
+		previous[Vector2i(int(node.get_meta("region")), int(node.get_meta("slot")))] = node
 	building_nodes.clear()
 	for i in range(state.regions.size()):
 		var rs: Dictionary = state.regions[i]
@@ -2204,12 +2207,8 @@ func _place_buildings() -> void:
 			if spots.is_empty():
 				continue
 			var p: Vector2 = spots[int(b.slot) % spots.size()]
-			var node := _icon_node(_icon(1, _building_icon(b.template)), 0, int(b.turns_left) > 0, int(rs.owner), false, _building_producing(rs, int(b.slot)))
-			node.position = _w3d(p.x, p.y, _ground(p.x, p.y))
-			node.set_meta("region", i)
-			node.set_meta("slot", int(b.slot))
-			map_root.add_child(node)
-			building_nodes.append(node)
+			var icon_name := _building_icon(b.template)
+			_keep_building_icon(previous, i, int(b.slot), p, 1, icon_name, int(b.turns_left) > 0, int(rs.owner), _building_producing(rs, int(b.slot)))
 			used[int(b.slot)] = true
 		# WOTR2 milestone 7: LivingWorldBuildPlot's icon (its ctor: the region owner's LivingWorldPlayerTemplate BuildPlotIconName -> CreateIcon, BFME2
 		# LivingWorldBuildPlot.cpp; LivingWorldBuildPlotIcon ctor 0x59E10F) on every plot of an owned region; a plot with a building shows the building
@@ -2224,12 +2223,28 @@ func _place_buildings() -> void:
 			if used.has(slot):
 				continue
 			var p: Vector2 = spots[slot]
-			var node := _icon_node(icon, 0, false, owner)
-			node.position = _w3d(p.x, p.y, _ground(p.x, p.y))
-			node.set_meta("region", i)
-			node.set_meta("slot", slot)
-			map_root.add_child(node)
-			building_nodes.append(node)
+			_keep_building_icon(previous, i, slot, p, 2, plot_icon, false, owner, false)
+	for obsolete in previous.values():
+		obsolete.queue_free()
+
+
+func _keep_building_icon(previous: Dictionary, region: int, slot: int, point: Vector2, kind: int, icon_name: String,
+	under_construction: bool, owner: int, producing: bool) -> void:
+	var key := Vector2i(region, slot)
+	var appearance := [kind, icon_name, under_construction, owner, producing]
+	var node: Node3D = previous.get(key)
+	previous.erase(key)
+	if node != null and node.get_meta("lw_appearance", []) != appearance:
+		node.queue_free()
+		node = null
+	if node == null:
+		node = _icon_node(_icon(kind, icon_name), 0, under_construction, owner, false, producing)
+		node.set_meta("region", region)
+		node.set_meta("slot", slot)
+		node.set_meta("lw_appearance", appearance)
+		map_root.add_child(node)
+		node.position = _w3d(point.x, point.y, _ground(point.x, point.y))
+	building_nodes.append(node)
 
 
 # ---- the map's overlay layer ------------------------------------------------------------------------------------------------------------------
