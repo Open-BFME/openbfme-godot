@@ -177,7 +177,7 @@ void BuildAssistantSell::sellObject(Object *obj)
 	if (ContainModuleInterface *c = obj->getContain())
 	{
 		// RW 0x796804 .. 0x796806: the contain's vslot 0x64 with no argument (the contain at object + 0x258). RW 0x86561F, the body of that slot in every
-		// contain table of 2.01: the kill-on-death byte is cleared, then every rider is ordered out with CMD_FROM_AI (contain vslot 0x80)
+		// contain table of 2.01 but TunnelContain's (RW 0x8812A8, the network leave): the kill-on-death byte is cleared, then every rider is ordered out with CMD_FROM_AI (contain vslot 0x80)
 		c->onSelling();
 	}
 	m_logic.noteStop(acceptanceStops()[0]); // S-1980: the sale's client part (the animation loop and the cash text) is not ported

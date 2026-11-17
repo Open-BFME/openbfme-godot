@@ -642,6 +642,12 @@ bool CastleBehavior::unpack(bool instant)
 		}
 		buildAreas(*layout); // lane CASTLEAREA-1: RW 0x79BF0C -> RW 0x79B881 (the template form only)
 	}
+	// lane TAINTAREA-1: RW 0x79BF1B .. 0x79BF36 (both forms): with TheTerrainLogic, RW 0x683955(the castle's position, MaxCastleRadius (RW 0x797ED7: data
+	// + 0x2C)): the TAINT objects within it are destroyed and their taint, the TAINTEFFECT objects and the trees within it cleared (GameLogic/Map/TerrainTaint.cpp)
+	if (logic.terrain())
+	{
+		logic.clearTaintObjects(*castle->getPosition(), m_data->m_maxCastleRadius);
+	}
 	// lane CASTLE-1: RW 0x79BF76 .. 0x79BFF7: the unpack frame (+ 0x48, the crew's clock) and every member of the lists learns the keep (member + 0x14, RW 0x7990D9: the port
 	// keeps a pad's occupant in its occupantId, see S-952; lane DECOMP-2: the keep goes to the member's keepId, which Object::updateUpgradeModules reads)
 	for (const std::vector<ObjectID> *list : { &m_foundations, &m_members, &m_defenseFoundations }) // RW + 0x50, + 0x5C, + 0x74 (RW 0x79BF3B .. 0x79BF5A)
@@ -1537,8 +1543,8 @@ std::vector<std::string> CastleBehavior::stopLines()
 		"RW 0x625E0A, the camp EVA (RW 0x799440), the button's readiness clock and the client fades / decals; reached at runtime they are noted",
 		"[S-952] castle: inference in the ported states: the capture scan and the push out run on ThePartitionManager (types 0 and 3, S-1020), the "
 		"push out's geometry overlap filter (RW 0x67C5F3 -> RW 0xAD2CE0) and the horde's slot 0x1C8 test (RW 0x79C88F) are not ported, a plot's occupant counts while the object exists (retail clears the "
-		"plot's + 0x28 in the plot's own update RW 0x8584DB), a packed castle's upgrades are not reset (RW 0x68E083); FilterValidOwnedEntries unset is taken as accepting everything; RW 0x683955 of the "
-		"unpack was not read; retail's member + 0x14 is the keep's id (RW 0x7990D9 / 0x79A09D), the port keeps a pad's occupant there (RW 0x79A518's keep test is not ported)",
+		"plot's + 0x28 in the plot's own update RW 0x8584DB), a packed castle's upgrades are not reset (RW 0x68E083); FilterValidOwnedEntries unset is taken as accepting everything; "
+		"retail's member + 0x14 is the keep's id (RW 0x7990D9 / 0x79A09D), the port keeps a pad's occupant there (RW 0x79A518's keep test is not ported)",
 	};
 }
 

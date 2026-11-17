@@ -93,6 +93,9 @@ public:
 	AptStrategicHUD(WindowManager &windows, Shell &shell, ShellEnvironment &environment);
 	~AptStrategicHUD() override;
 
+	// Presentation correction shared with the battle HUD (docs/HUD_SCALING.md), not a verified retail transform rule.
+	void setViewportSize(int width, int height, bool fit = false);
+
 	static const std::vector<std::string> &partNames(); // Checklist, EndTurnButton, HelpBox, ...
 
 	bool initialized() const { return commandCalls("StrategicHUD::OnInitialized") > 0; }

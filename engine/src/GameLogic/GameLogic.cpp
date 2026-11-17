@@ -11,6 +11,7 @@
 #include "Common/Snapshot.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Combat/CombatState.h"
@@ -29,6 +30,8 @@
 #include "GameLogic/Combat/ObjectWeapons.h" // lane PERF-WS: the final list's weapon status conditions on the pool
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Map/TerrainTrees.h"
+#include "GameLogic/System/ThreatFinder.h" // PORT 17
+#include "GameLogic/System/TaintManager.h"
 #include "GameLogic/Module/ObjectHelper.h"
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Module/UnportedModule.h"
@@ -71,6 +74,8 @@ GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &p
 	, m_invisibility(std::make_unique<InvisibilityManager>(*this))
 	, m_dot(std::make_unique<DOTManager>(*this)) // lane DECOMP-1
 	, m_trees(std::make_unique<TerrainTrees>(*this)) // lane SPELL-3
+	, m_threatFinders(std::make_unique<ThreatFinderManager>()) // PORT 17: RW 0xDE8888
+	, m_taint(std::make_unique<TaintManager>()) // lane TAINTAREA-1 (BFME2 0x6C08F0 / RW 0xAD4A50)
 	, m_scriptEngine(std::make_unique<ScriptEngine>(*this)) // lane SCRIPT-1
 {
 	buildPhaseWorkTable();
@@ -992,11 +997,17 @@ void GameLogic::processDestroyList()
 		}
 		// the module destructors run at RW's delete: GettingBuiltBehavior's (RW 0x85750D) first kills the worker the structure spawned (RW 0x85730B, lane AI-2 r6).
 		// Called before the object leaves the lists so the builder is still found by id; the dead worker goes on this same list (the loop walks its growth)
+		// lane TAINTAREA-1: AttributeModifierAuraUpdate's (RW 0x89EE67): a TAINT object's radius clear (its cells, its TAINTEFFECT objects, the trees). In
+		// the module order of the object (the destructors' order)
 		for (const std::unique_ptr<BehaviorModule> &m : obj->modules())
 		{
 			if (GettingBuiltBehavior *gb = dynamic_cast<GettingBuiltBehavior *>(m.get()))
 			{
 				gb->killSpawnedWorkerOnDelete();
+			}
+			else if (AttributeModifierAuraUpdate *aura = dynamic_cast<AttributeModifierAuraUpdate *>(m.get()))
+			{
+				aura->onDeleteClearTaint();
 			}
 		}
 		// the pathfinder's map removal (RW 0x6E85FB): not ported (PATH-1 hooks in through the object's modules)
@@ -1086,6 +1097,8 @@ void GameLogic::reset()
 	m_buildableOverrides.clear(); // lane BFME2CAMP1 (review): a new game starts without the script's overrides (ZH GameLogic::reset clears its map; donor)
 	m_campaignCarryover.reset();  // lane BFME2CAMP1: the mission's start sets it again
 	m_showBehindBuildingMarkers = true; // lane OCCLUDE-1: GameLogic::reset RW 0x62D3D6 (+ 0x99 = 1)
+	m_rankLevelLimit = kDefaultRankLevelLimit; // PORT-43: RW 0x62A20D (startNewGame's init helper RW 0x62A11A; GameLogic::reset RW 0x62D232 leaves +0x118 untouched)
+	m_rankLevelLimitScripted = false;
 	m_nextObjectID = 1;
 	m_sharedProductionID = 0;
 	m_objectCount = 0;
@@ -1107,6 +1120,8 @@ void GameLogic::reset()
 	m_invisibility->reset();
 	m_dot->reset(); // lane DECOMP-1
 	m_trees->reset(); // lane SPELL-3
+	m_threatFinders->reset(); // PORT 17: the map's named threat areas go with their objects
+	m_taint->reset(); // lane TAINTAREA-1: GameLogic::reset RW 0x62D2FF -> RW 0xAD4BB0 (the grid shrinks to one cell; its cell size stays)
 	m_scriptEngine->reset(); // lane SCRIPT-1
 }
 
@@ -1324,6 +1339,12 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 			x.addU32(0xCA4401u);
 			m_campaignCarryover->crc(x);
 		}
+		// PORT-43: GameLogic + 0x118 (m_rankLevelLimit) when scripted by PLAYER_SET_RANKLEVELLIMIT (RW 0x7BB04E); an unscripted game derives +0x118 from
+		// EconomySettings::powerLimit / EconomyContext::gameMode (already hashed by Economy::crc) and keeps its existing hashes (retail's XferCRC skips +0x118 at RW 0x630ADF)
+		if (m_rankLevelLimitScripted)
+		{
+			x.addI32(m_rankLevelLimit);
+		}
 		x.addU32(m_nextObjectID);
 		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedUniqueProductionId))
 		{
@@ -1409,6 +1430,11 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	{
 		// lane SPELL-3: only once a tree toppled or was harvested, or (RAI-POW-3) a tree killer marked a cluster: a game without keeps its hash
 		section("terrain trees", [&](StateHasher &x) { m_trees->crc(x); });
+	}
+	if (m_taint->anyNonDefault())
+	{
+		// lane TAINTAREA-1: retail's GameLogic::getCRC (RW 0x625886) transfers TheTaintManager; here only while a cell is painted (a game without keeps its hash)
+		section("taint manager", [&](StateHasher &x) { m_taint->crc(x); });
 	}
 	section("large group audio", [&](StateHasher &x) { m_largeGroupAudio.crc(x); }); // lane AUDIO-4: TheLargeGroupAudio's gate (+ 0x38 / + 0x3C)
 	if (m_scriptEngine->loaded())
@@ -1854,3 +1880,33 @@ GameLogic::Report GameLogic::report() const
 	}
 	return r;
 }
+
+void GameLogic::initRankLevelLimit()
+{
+	// PORT-43: RW 0x62A20D (startNewGame's init helper RW 0x62A11A, called at RW 0x631555) sets GameLogic + 0x118 = 1000 (0x3E8);
+	// RW 0x631420 .. 0x631436 (startNewGame's tail helper RW 0x6311ED, called at RW 0x6315A7) tests RW 0x625456 (isInSkirmishOrMultiplayerGame,
+	// Economy::isMultiplayerGame) and on true copies GlobalData + 0xE94 (PowerLimit, row RW 0xC00C00, EconomySettings::powerLimit) into GameLogic + 0x118.
+	const EconomySettings &s = m_economy->settings();
+	if (!s.loaded)
+	{
+		throw std::logic_error("GameLogic::initRankLevelLimit: GameData's economy values are not loaded (EconomySettings::load)");
+	}
+	m_rankLevelLimit = m_economy->isMultiplayerGame() ? s.powerLimit : kDefaultRankLevelLimit;
+	m_rankLevelLimitScripted = false;
+}
+
+void GameLogic::setRankLevelLimit(int limit)
+{
+	// PORT-43: RW 0x7BB04E .. 0x7BB060 (called via RW 0x7BD1A8 from script action 279 PLAYER_SET_RANKLEVELLIMIT at RW 0x7CE020):
+	// cmp eax, 1; jge; mov eax, 1; mov [ecx + 0x118], eax.
+	m_rankLevelLimit = limit < 1 ? 1 : limit;
+	m_rankLevelLimitScripted = true;
+}
+
+void GameLogic::resetRankLevelLimitFromEconomy()
+{
+	const EconomySettings &s = m_economy->settings();
+	m_rankLevelLimit = (s.loaded && m_economy->isMultiplayerGame()) ? s.powerLimit : kDefaultRankLevelLimit;
+	m_rankLevelLimitScripted = false;
+}
+

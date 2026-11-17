@@ -27,9 +27,13 @@ experience effect is attached to this callback. Other systems' palette
 assignment/propagation, such as castle and strategic-map color handling, are
 outside this recruitment path.
 
-OpenBFME stores/hashes the BFME1 index and writes Object snapshot version 3.
-BFME2/RotWK still write version 2 and do not add this field to their hashes.
-Loading old BFME1 objects initializes the previously absent index to -1.
+OpenBFME stores/hashes the BFME1 index, introduced in Object snapshot version 3.
+The current BFME1 base layout is version 4 (also retaining collision-ignore and
+firing IDs); version 5 additionally carries an armed shared script threat cache.
+BFME2/RotWK write version 2 without that cache or their own version 3 with it;
+they never transfer or hash the BFME1 index. Older BFME1 versions 3/4 keep their
+original layouts and load with a cleared shared threat cache. Versions 1/2 also
+initialize the previously absent index to -1.
 
 ## Rank and member adoption
 

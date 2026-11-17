@@ -942,7 +942,10 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q53 (measured once on the merged tree and at each merge point; #303's formation attack march for the AI's attack teams moves them, #299 /
 	// #287 / #301 / #302 / #305 keep them): seed 2 ends with Mordor's defeat at 4297 (4267), its table unchanged up to the 4000 window, seed 7 with Mordor's
 	// defeat at 2667 (3121); seed 1234 stays open at 9000. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 4297 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 2667 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Merge queue q56 (measured once on the merged tree and at each merge point; #323's stunned units halting their AI, RW 0x669652, moves them, #321
+	// keeps them): seed 2 ends with Mordor's defeat at 3109 (4297), its table unchanged up to the 2000 window, seed 7 with Mordor's defeat at 2557
+	// (2667); seed 1234 stays open at 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 3109 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 2557 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -1000,11 +1003,12 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// merge queue q52 (measured once on the merged tree and at each merge point; see above): a new table from the first window on; the game ends
 			// with Mordor's defeat at 4267
 			// merge queue q53 (measured once on the merged tree and at each merge point; see above): the same table; the game ends with Mordor's defeat at 4297
+			// merge queue q56 (measured once on the merged tree and at each merge point; see above): the same table up to the 2000 window; the game ends with
+			// Mordor's defeat at 3109
 			CHECK(run.progress ==
 		"frame 1000: [0 attacks 0 built 71u/7s destroyed 19u/1s] [1 attacks 1 built 91u/8s destroyed 43u/2s]\n"
 		"frame 2000: [0 attacks 1 built 191u/9s destroyed 83u/1s] [1 attacks 1 built 167u/11s destroyed 157u/6s]\n"
-		"frame 3000: [0 attacks 1 built 212u/13s destroyed 190u/1s] [1 attacks 2 built 300u/13s destroyed 214u/11s]\n"
-		"frame 4000: [0 attacks 1 built 213u/14s destroyed 227u/1s] [1 attacks 3 built 386u/18s destroyed 238u/16s]\n");
+		"frame 3000: [0 attacks 1 built 213u/12s destroyed 167u/1s] [1 attacks 3 built 275u/15s destroyed 228u/11s]\n");
 		}
 	}
 }

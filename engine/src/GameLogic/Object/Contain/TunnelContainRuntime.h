@@ -21,7 +21,8 @@
 //   * the die interface RW 0x881272 (when the DieMux applies) and onDelete RW 0x881298 (OpenContain's RW 0x86708F first) leave the network (RW 0x88121A): the
 //     tracker's onTunnelDestroyed RW 0x8FA4E8 (the count, the id; the riders that entered by this tunnel now count as entered by the first tunnel left); the
 //     last tunnel lets every rider out (removeAllContained: RotWK's cave-in does not kill, ZH's did); otherwise a HORDE rider whose AI goal is this tunnel and
-//     whose members are all in (horde slot 0xF4) is let out here (RW 0x881105).
+//     whose members are not all in yet (horde slot 0xF4 false) is let out here (RW 0x881105). A sale is the same leave (contain slot 0x64 RW 0x8812A8,
+//     below): riders of a sold shaft that is not the last stay in the network.
 // TunnelTracker (RW Player + 0x308): the tunnel ids + 0x8, the riders + 0x10 (count + 0x18), the tunnel count + 0x1C, the nemesis + 0x20 / + 0x24.
 // NOT PORTED (stop S-1107, TunnelContain::stopLine()): the tracker's nemesis (RW 0x8FA702 / 0x8FA451: read by the AI's tunnel network guard state, not ported),
 // the unload sound (the safe occlusion frame + 0x444 is set since lane OCCLUDE-1), the tunnel network guard AI, the exposed stealth units.
@@ -91,6 +92,10 @@ public:
 	// ---- BehaviorModule ----
 	CreateModuleInterface *getCreate() override { return this; }
 	void onDelete() override;                // RW 0x881298
+	// contain slot 0x64, the sale's call (RW 0x796806): the tunnel table RW 0xC5DCE0 holds RW 0x8812A8 there, not OpenContain's RW 0x86561F: `add ecx, -0x20;
+	// jmp 0x88121A`, the same leave as the death (BFME2 TunnelContain::onSelling 0x0047E00F tail-jumps to 0x0047DF81 too). Nobody is ordered out and the
+	// kill-on-death byte is left alone: a sold shaft's riders move to the first shaft left, the last shaft lets everyone out
+	void onSelling() override;
 	void crc(StateHasher &hasher) const override;
 	UpdateSleepTime update() override;       // RW 0x8812B0
 	// ---- CreateModuleInterface (RW 0xC5DC9C) ----

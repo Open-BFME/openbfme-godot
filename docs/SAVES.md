@@ -790,7 +790,9 @@ and review counts describe those runs, not fixed counts for every build.
     The Lua state is not saved: retail saves none either (S-4256).
   - `obfme:Victory`: native (retail does not save VictoryConditions, S-4254); the peer's own slot is not in the bytes.
   - `obfme:Weather`: retail's GlobalWeatherSystem order and window (RW 0x71A2E3, (1, 4); the AntiCategory mask by name, RW 0x71A1A7) without the
-    client's audio handle, the filter in the port's layout, the burn decay in a trailer (S-4251).
+    client's audio handle, the filter in the port's layout, the burn decay in a trailer (S-4251). The trailer's version 2 (lane TAINTAREA-1) also holds
+    TheTaintManager's grid in retail's `CHUNK_TaintManager` layout (RW 0xAD4B80 / 0xAD50B0 / 0xAD57E0, versions (1, 1), (1, 1), (1, 2) per cell); a
+    version 1 trailer loads every cell neutral (the builds before it never painted the grid). Hash section "taint manager", present while a cell is painted.
   - `obfme:Economy`: the GameData settings' hash checked, the game context, the TerrainResourceManager in retail's DoXfer layout (RW 0x75C7AE, (1, 3))
     plus the complete flags retail drops (S-4253).
   - `obfme:CreateAHero`: retail's record (RW 0x80B4F5, (1, 8)) per player with the game's validity and flags, and the choices (S-4255).
@@ -975,6 +977,7 @@ blocks). The three can run in parallel: their blocks do not overlap, and each bl
 | SAVE-4b | `obfme:Objects` | every object and its modules ("objects"; the object count of "frame, object ids, RNG") | the object list order and ids (`m_objectsById`), objects created after the START made again and the START's destroyed ones removed; each object's team set before the TeamFactory post-process runs (it checks it); modules keyed by tag inside a BLOK, as retail's Object::xfer (RW 0x697F28, (1, 29)) does; the module runtimes' xfers, in retail order where they are 1:1 ports (the AI update family is 4c's); the per-template caches (`m_templateInfo`, `m_crushInfo`) are rebuilt, named |
 | SAVE-4b | `obfme:UpdateScheduler` | "scheduler" | the four phase vectors and the sleeping vector in their order, each module's next call frame (the order is state: it decides module order) |
 | SAVE-4b | `obfme:TunnelTracker` | part of "objects" | Player + 0x308 (retail TunnelTracker::xfer RW 0x8FA569, (1, 1)): its tunnels and riders as ids |
+| PORT 17 | part of `obfme:Objects` | part of "objects" | `ThreatFinderUpdate::xfer` (RW 0x7EDF70, retail (1, 1); OpenBFME version 2): a bool saying whether the module has a finder, then the finder's own xfer (twenty records of 18 floats, the name, the position, the radius, the last scan's frame, the "no structures" flag). On a load the finder is made again from the object's name and registered in TheThreatFinderManager (RW 0xDE8888), which holds no state of its own and is therefore not a hash section; the bool is the port's (S-4190) because retail's load always makes a finder and a module built on a plot (RW 0x858A94) has none. Version 1 is the block of the unported shell (UnportedUpdateModule::xfer: the UpdateModule block and a call count) that saves from before PORT 17 hold: it loads with no finder (S-7184) |
 | SAVE-4b | `obfme:Combat`, `obfme:SellList`, `obfme:Experience`, `obfme:Invisibility`, `obfme:DamageOverTime` | "combat", "sell list", "experience", "invisibility", "damage over time" | the invisibility manager's state changes every frame even without objects (seen by the core test) |
 | SAVE-4c | `obfme:Partition` | "partition manager" | the trees' link order is state |
 | SAVE-4c | `obfme:Emotions` | "emotion system" | the scary / hero list in order |
@@ -1068,6 +1071,15 @@ and T3 (Linux and Windows bytes equal) cover it.
     failed save's error there too); no log-only fallback.
 - **War of the Ring battles:** not supported by this build (no War of the Ring battle start), so not in T1.
 - **Stops:** S-5010 .. S-5014.
+
+### THREATLEVEL-1: the map scripts' threat caches
+
+Written only once a threat question armed the cache, so games without UNIT_THREAT_LEVEL / TEAM_THREAT_LEVEL / SET_COUNTER_TO_*_THREAT keep their old bytes and hashes.
+
+| Where | Block / class | Version | Field (type) | An older save loads with |
+|---|---|---|---|---|
+| `Team.cpp` | Team | 5 (written with an armed cache) | the cached threat (real, + 0x120) and its deadline frame (unsigned, + 0x124), retail Team::xfer RW 0x7A5C06's order | versions 1 to 4: 0, 0 |
+| `Object.cpp` | Object | BFME2/RotWK 3; BFME1 5 (written with an armed shared cache) | the deadline frame (unsigned, + 0x468) and the cached threat (real, + 0x464), BFME2 1.06's order (ObjectDoXfer.cpp:715-716); RotWK's RW 0x697F28 does not save them (S-7184) | BFME2/RotWK versions 1/2 and BFME1 versions 1..4: 0, 0; BFME1 retains its distinct version 3/4 indicator and collision/firing fields |
 
 ### BFME2CAMP1: the campaign, tutorial and rebuild-hole state (lane BFME2CAMP1, PR #137)
 

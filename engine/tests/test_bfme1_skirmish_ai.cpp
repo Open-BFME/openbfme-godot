@@ -2398,3 +2398,92 @@ TEST_CASE("bfme1 ai: shared gate pass does not dispatch native contact pairs twi
 		}
 	}
 }
+
+TEST_CASE("bfme1 ai: object snapshot versions preserve native fields and the shared threat cache")
+{
+	struct LayoutSave : XferSave
+	{
+		std::vector<std::size_t> blockEnds;
+		std::uint32_t beginBlock() override
+		{
+			blockEnds.push_back(data().size() + 4); // BLOK followed by its absolute end offset
+			return XferSave::beginBlock();
+		}
+	};
+	std::size_t laterBaseSize = 0;
+	for (bool bfme1 : {false, true})
+	{
+		movetest::MoveWorld f(100, 100, "Object SnapshotProbe\n KindOf = SELECTABLE\nEnd\n", bfme1);
+		Object *obj = f.make("SnapshotProbe", f.teamOf("Alice")); REQUIRE(obj);
+		if (bfme1)
+		{
+			obj->setBfme1IndicatorColorIndex(7);
+			obj->setBfme1CollisionIgnoreID(0x12345678u);
+			obj->setBfme1FiringTarget(0x76543210u);
+		}
+		LayoutSave base; obj->xfer(base);
+		REQUIRE_FALSE(base.data().empty());
+		CHECK(base.data().front() == (bfme1 ? 4 : 2));
+		if (!bfme1) laterBaseSize = base.data().size();
+		else CHECK(base.data().size() == laterBaseSize + 12); // native indicator and two ObjectIDs; no threat payload in legacy version 4
+
+		obj->setScriptThreatCache(12.5f, 1234u);
+		XferSave armed; obj->xfer(armed);
+		CHECK(armed.data().front() == (bfme1 ? 5 : 3));
+		CHECK(armed.data().size() == base.data().size() + 8); // deadline u32 and cached float
+		StateHasher before; obj->crc(before);
+		obj->setScriptThreatCache(99.0f, 9999u);
+		if (bfme1) obj->setBfme1IndicatorColorIndex(2);
+		XferLoad load(armed.data()); obj->xfer(load);
+		CHECK(obj->scriptThreatCache() == 12.5f);
+		CHECK(obj->scriptThreatDeadline() == 1234u);
+		StateHasher after; obj->crc(after); CHECK(after.value() == before.value());
+		XferSave again; obj->xfer(again); CHECK(again.data() == armed.data());
+		if (bfme1)
+		{
+			CHECK(obj->bfme1IndicatorColorIndex() == 7);
+			CHECK(obj->bfme1CollisionIgnoreID() == 0x12345678u);
+			CHECK(obj->takeBfme1FiringTarget() == 0x76543210u);
+		}
+		XferLoad oldLoad(base.data()); obj->xfer(oldLoad);
+		CHECK(obj->scriptThreatCache() == 0.0f);
+		CHECK(obj->scriptThreatDeadline() == 0u);
+		if (bfme1)
+		{
+			CHECK(obj->bfme1IndicatorColorIndex() == 7);
+			CHECK(obj->bfme1CollisionIgnoreID() == 0x12345678u);
+			// BFME1 version 3 had the indicator but neither collision/firing ID.
+			auto legacy = base.data();
+			const std::vector<std::uint8_t> ids{0x78, 0x56, 0x34, 0x12, 0x10, 0x32, 0x54, 0x76};
+			auto at = std::search(legacy.begin(), legacy.end(), ids.begin(), ids.end());
+			REQUIRE(at != legacy.end());
+			const auto cut = (std::size_t)(at - legacy.begin());
+			legacy.erase(at, at + ids.size()); legacy.front() = 3;
+			// Xfer blocks hold absolute end offsets: removing the two IDs also shifts every later block.
+			for (std::size_t word : base.blockEnds)
+			{
+				if (word >= cut) word -= ids.size();
+				std::uint32_t end = 0;
+				for (int n = 0; n < 4; ++n) end |= (std::uint32_t)legacy[word + n] << (8 * n);
+				if (end >= cut) end -= (std::uint32_t)ids.size();
+				for (int n = 0; n < 4; ++n) legacy[word + n] = (std::uint8_t)(end >> (8 * n));
+			}
+			obj->setScriptThreatCache(77.0f, 555u);
+			XferLoad legacyLoad(legacy); obj->xfer(legacyLoad);
+			CHECK(obj->bfme1IndicatorColorIndex() == 7);
+			CHECK(obj->bfme1CollisionIgnoreID() == 0u);
+			CHECK(obj->takeBfme1FiringTarget() == 0u);
+			CHECK(obj->scriptThreatCache() == 0.0f);
+			CHECK(obj->scriptThreatDeadline() == 0u);
+		}
+		else
+		{
+			for (std::uint8_t version : {4, 5})
+			{
+				auto native = base.data(); native.front() = version;
+				XferLoad otherEdition(native);
+				CHECK_THROWS_WITH(obj->xfer(otherEdition), "BFME1 object snapshot loaded into another edition");
+			}
+		}
+	}
+}

@@ -3427,6 +3427,158 @@ TEST_CASE("bfme2camp1 menu retail: RotWK's Solo Play list gets BFME2's Evil Camp
 		CHECK(sp.nav->asSprite()->childByName(good ? "GoodCampaign" : "EvilCampaign") == nullptr); // the list closed with its rows
 	}
 }
+// Both menu styles: the added campaign rows must grow the invisible panel as well as the artwork. RotWK's MainMenu.apt has 35.5 row spacing but
+// 35-unit hit meshes: the half-unit gaps must hit the panel, whose release action is inert while hovering, rather than the stage-wide close button.
+TEST_CASE("solo hover retail: moving between every expanded Solo Play row keeps the list open; leaving still closes it (both styles and channels)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	retailtest::Mount *bfme2 = retailtest::bfme2Mount();
+	REQUIRE(bfme2);
+	REQUIRE_MESSAGE(bfme2->fs, bfme2->error);
+	AptRetail bfme2Only{ *bfme2->fs };
+	for (AptRetail *movie : { &mount, &bfme2Only })
+	{
+		for (bool strategic : { true, false })
+		{
+			INFO("RotWK style: " << (movie == &mount));
+			INFO("War of the Ring offered: " << strategic);
+			ShellFx fx(*movie, "");
+			fx.environment.warOfTheRingOffered = strategic;
+			SoloPlay sp = openSoloPlay(fx);
+			std::vector<std::array<float, 4>> bounds;
+			for (const char *name : { "Skirmish", "WarOfTheRing", "EvilCampaign", "GoodCampaign", "Expansion1Campaign", "BonusCampaign", "LoadGame" })
+			{
+				INFO(name);
+				AptCharacterInst *row = sp.rows[name];
+				REQUIRE(row);
+				if (!row->globallyVisible())
+				{
+					continue;
+				}
+				AptButtonInst *button = firstButtonUnder(row);
+				std::array<float, 4> b;
+				if (button)
+				{
+					REQUIRE(button->hitBounds(b.data()));
+				}
+				else
+				{
+					// BFME2's locked Epilogue is a disabled face without a button; hovering past it must also keep the list open.
+					REQUIRE(std::string(name) == "BonusCampaign");
+					REQUIRE(WindowManager::stageBounds(*row, b.data()));
+				}
+				bounds.push_back(b);
+			}
+			REQUIRE(bounds.size() == (strategic ? 7 : 6));
+			const float x = (bounds.front()[0] + bounds.front()[2]) * 0.5f;
+			// Cross each boundary in both directions, pausing long enough for any unwanted close animation to remove the rows.
+			for (int direction : { 1, -1 })
+			{
+				for (std::size_t i = 1; i < bounds.size(); ++i)
+				{
+					const std::size_t below = direction == 1 ? i : bounds.size() - i;
+					const auto &a = bounds[below - 1];
+					const auto &b = bounds[below];
+					const float start = direction == 1 ? (a[1] + a[3]) * 0.5f : (b[1] + b[3]) * 0.5f;
+					fx.wm->apt().input().postMouseMove(x, start);
+					fx.tick(2);
+					fx.wm->apt().input().postMouseMove(x, (a[3] + b[1]) * 0.5f);
+					fx.tick(60);
+					REQUIRE(sp.nav->asSprite()->childByName("Skirmish") == sp.rows["Skirmish"]);
+				}
+			}
+			fx.wm->apt().input().postMouseMove(900.0f, 200.0f);
+			fx.tick(60);
+			CHECK(sp.nav->asSprite()->childByName("Skirmish") == nullptr);
+		}
+	}
+}
+
+// PR #310 follow-up. MOVIE FACTS (RotWK 2.01 and BFME2 1.06 MainMenu.apt): Options is the OptionsNav opener, then its Settings row; it is not a
+// root-level Settings button. Start with Solo Play open so an overgrown panel or closing surround cannot silently swallow the other nav's input.
+TEST_CASE("solo click retail: from the expanded Solo Play list Options and Settings receive the pointer and open Options.apt (both styles and channels)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	retailtest::Mount *bfme2 = retailtest::bfme2Mount();
+	REQUIRE(bfme2);
+	REQUIRE_MESSAGE(bfme2->fs, bfme2->error);
+	AptRetail bfme2Only{ *bfme2->fs };
+	for (AptRetail *movie : { &mount, &bfme2Only })
+	{
+		for (bool strategic : { true, false })
+		{
+			INFO("RotWK style: " << (movie == &mount));
+			INFO("War of the Ring offered: " << strategic);
+			ShellFx fx(*movie, "");
+			fx.environment.warOfTheRingOffered = strategic;
+			SoloPlay sp = openSoloPlay(fx);
+			REQUIRE(sp.rows["Skirmish"]);
+			CHECK(sp.rows["WarOfTheRing"]->globallyVisible() == strategic);
+			AptSpriteInst *root = fx.wm->apt().level(fx.shell->top()->level());
+			AptCharacterInst *optionsNav = root->childByName("OptionsNav");
+			REQUIRE(optionsNav);
+			clickButton(fx, firstButtonUnder(optionsNav));
+			fx.tick(60);
+			CHECK(sp.nav->asSprite()->childByName("Skirmish") == nullptr);
+			AptCharacterInst *settings = findClip(root, "OptionsNav.Settings");
+			REQUIRE(settings);
+			clickButton(fx, firstButtonUnder(settings));
+			fx.tick(60);
+			REQUIRE(fx.shell->top());
+			CHECK(fx.shell->top()->filename() == "Options.apt");
+			auto *options = dynamic_cast<AptOptionsScreen *>(fx.shell->top());
+			REQUIRE(options);
+			REQUIRE(options->gadget("MusicVolume")); // the basic Settings action, not AdvancedSettings
+			CHECK(GadgetSliderGetPosition(options->gadget("MusicVolume")) == 55);
+		}
+	}
+}
+
+// MOVIE FACTS (both editions' MainMenu.apt): the back flow from a campaign's difficulty choice is LevelOfDifficulty.cancelButton (caption $Cancel).
+// Neither Solo Play list authors a button named Back. Exercise the actual campaign -> CANCEL -> main menu flow, then reopen Solo Play by pointer.
+TEST_CASE("solo click retail: a campaign from the expanded list returns through the authored difficulty CANCEL without starting it (both styles and channels)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	retailtest::Mount *bfme2 = retailtest::bfme2Mount();
+	REQUIRE(bfme2);
+	REQUIRE_MESSAGE(bfme2->fs, bfme2->error);
+	AptRetail bfme2Only{ *bfme2->fs };
+	for (AptRetail *movie : { &mount, &bfme2Only })
+	{
+		for (bool strategic : { true, false })
+		{
+			INFO("RotWK style: " << (movie == &mount));
+			INFO("War of the Ring offered: " << strategic);
+			ShellFx fx(*movie, "");
+			fx.environment.warOfTheRingOffered = strategic;
+			SoloPlay sp = openSoloPlay(fx);
+			REQUIRE(sp.rows["Expansion1Campaign"]);
+			CHECK(sp.rows["WarOfTheRing"]->globallyVisible() == strategic);
+			fx.services.requests.clear();
+			clickButton(fx, firstButtonUnder(sp.rows["Expansion1Campaign"]));
+			fx.tick(60);
+			AptSpriteInst *root = fx.wm->apt().level(fx.shell->top()->level());
+			REQUIRE(findClip(root, "LevelOfDifficulty.Easy"));
+			AptCharacterInst *cancel = findClip(root, "LevelOfDifficulty.cancelButton");
+			REQUIRE(cancel);
+			clickButton(fx, firstButtonUnder(cancel));
+			fx.tick(60);
+			CHECK(findClip(root, "LevelOfDifficulty.cancelButton") == nullptr);
+			CHECK(findClip(root, "LevelOfDifficulty.Easy") == nullptr);
+			REQUIRE(fx.shell->top());
+			CHECK(fx.shell->top()->filename() == "MainMenu.apt");
+			CHECK(fx.services.requests.empty());
+			// The return can re-place the nav; resolve its current instance instead of keeping the pre-difficulty one.
+			AptCharacterInst *soloNav = root->childByName("SoloPlayNav");
+			REQUIRE(soloNav);
+			clickButton(fx, firstButtonUnder(soloNav));
+			fx.tick(60);
+			REQUIRE(soloNav->asSprite()->childByName("Skirmish"));
+			CHECK(soloNav->asSprite()->childByName("Skirmish")->globallyVisible());
+		}
+	}
+}
+
 // lane STABLEQA-1 (owner, 2026-10-30): a Stable build (ShellEnvironment::warOfTheRingOffered false) hides War of the Ring's Solo Play row in both menu
 // styles: the row is not drawn and takes no click, Skirmish moves down into its place (where War of the Ring sits in a Nightly build), the other rows
 // stay where a Nightly build has them; a WarOfTheRing command that still arrives sends no request and shows the Stable box

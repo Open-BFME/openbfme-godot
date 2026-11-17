@@ -849,7 +849,7 @@ void OpenContain::orderAllPassengersToExit(int source)
 	}
 }
 
-// RW 0x86561F (contain vslot 0x64, the sale's call at RW 0x796806; the same body in every contain table of 2.01, so no class overrides it):
+// RW 0x86561F (contain vslot 0x64, the sale's call at RW 0x796806; the same body in every contain table of 2.01 but TunnelContain's RW 0x8812A8):
 //   mov eax, [ecx]              ; the contain's vtable
 //   push 2                      ; CMD_FROM_AI
 //   mov byte ptr [ecx + 0xC1], 0 ; module + 0xE1, the kill-on-death byte (set to 1 by the constructor, RW 0x86806C; read by RW 0x86588C)

@@ -18,6 +18,7 @@
 #include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameClient/MapChunks.h"
@@ -1080,9 +1081,15 @@ void Object::setCapturedTeam(Team *team)
 	{
 		return;
 	}
-	// RW 0x699733 .. 0x6997A7: the production module's vslot 0x40 (its queue cancelled), the score keeper's structure counts, RW 0x68B303 and the firing tracker
+	// RW 0x69973D .. 0x69974D (DONOR BFME2 0x00298C76 in ObjectDefect.cpp:133, lane LOCAL-62): cancel and release all production on the previous owner's team
+	// before changing the building's team (ProductionUpdateInterface vslot +0x40, RW 0x8A1666)
+	if (ProductionUpdateInterface *pu = getProductionUpdate()) // RW 0x699740: RW 0x68C327(0)
+	{
+		pu->cancelAndReleaseAllProduction(); // RW 0x69974D -> RW 0x8A1666
+	}
+	// RW 0x699733 .. 0x6997A7: the score keeper's structure counts, RW 0x68B303 and the firing tracker
 	// RW 0x8E3ABB are not ported (S-1225); the selection, radar and EVA messages after the change are the client's
-	m_logic.noteStop("[S-1225] Object::setCapturedTeam: the production cancel, score counts and RW 0x68B303 / 0x8E3ABB of a capture are not ported");
+	m_logic.noteStop("[S-1225] Object::setCapturedTeam: the score counts and RW 0x68B303 / 0x8E3ABB of a capture are not ported");
 	setTeam(team); // RW 0x69954A
 	if (AIUpdateInterface *ai = getAIUpdateInterface())
 	{
@@ -2570,6 +2577,12 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 	{
 		h.addU32(0x4A5Bu); // lane MODCOMPAT-MOD1: hashed only when set (a game without rebuild holes keeps its hash)
 	}
+	if (m_scriptThreatDeadline != 0)
+	{
+		h.addU32(0x7E4A0000u); // lane THREATLEVEL-1: the script threat cache, hashed once a refresh armed it (a game without threat scripts keeps its hash)
+		h.addU32(m_scriptThreatDeadline);
+		h.addFloat(m_scriptThreat);
+	}
 	if (m_geometrySource) // lane MODCOMPAT-MOD1: another template's GeometryInfo (setGeometryInfoFrom), hashed when set
 	{
 		h.addU32(0x6E100000u | m_geometrySource->getTemplateID());
@@ -2784,8 +2797,14 @@ void Object::setScriptStatus(std::uint8_t bits, bool set)
 // (the Objects block's order) and the team links (the TeamFactory's post-process).
 void Object::xfer(Xfer &x)
 {
-	XferVersion version{ 1, (std::uint8_t)(x.isLoading() || getTemplate()->bfme1Data() ? 4 : 2) }; // 4: BFME1 collision-ignore and take-once firing IDs; later editions still write 2.
+	// lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4). Lane THREATLEVEL-1: version 3 the script threat cache (+ 0x464 /
+	// + 0x468) in BFME2/RotWK, written only once a refresh armed it. BFME1 already uses versions 3/4 for indicator color and collision/firing IDs:
+	// keep those layouts, and use version 5 only when its object also has the new shared threat cache. These are OpenBFME snapshot versions (S-4190).
+	const bool bfme1 = getTemplate()->bfme1Data();
+	const bool threatArmed = m_scriptThreatDeadline != 0 || m_scriptThreat != 0.0f;
+	XferVersion version{ 1, (std::uint8_t)(x.isLoading() ? 5 : (bfme1 ? (threatArmed ? 5 : 4) : (threatArmed ? 3 : 2))) };
 	x.xferVersion(version);
+	if (!bfme1 && version.current >= 4) throw XferException("BFME1 object snapshot loaded into another edition");
 	// a load never reads its destination: the save-side values are built from the members only when saving (SAVES.md, rules for xfer authors)
 	const bool saving = !x.isLoading();
 	ObjectID id = saving ? m_id : (ObjectID)INVALID_ID;
@@ -2852,13 +2871,12 @@ void Object::xfer(Xfer &x)
 	}
 	x.xferObjectID(&m_speechLeader);
 	x.xferBool(&m_receivingDifficultyBonus);
-	if (version.current >= 3)
+	if (bfme1 && version.current >= 3)
 	{
-		if (!getTemplate()->bfme1Data()) throw XferException("BFME1 object snapshot loaded into another edition");
 		x.xferInt(&m_bfme1IndicatorColorIndex);
 	}
 	else if (x.isLoading()) m_bfme1IndicatorColorIndex = -1;
-	if(version.current>=4){x.xferObjectID(&m_bfme1CollisionIgnore);x.xferObjectID(&m_bfme1FiringTarget);}
+	if(bfme1 && version.current>=4){x.xferObjectID(&m_bfme1CollisionIgnore);x.xferObjectID(&m_bfme1FiringTarget);}
 	else if(x.isLoading()){m_bfme1CollisionIgnore=INVALID_ID;m_bfme1FiringTarget=INVALID_ID;}
 	x.xferByte(&m_legendaryFactor);
 	SnapshotXfer::checkRange(m_legendaryFactor, LegendaryHeroes::kOff, LegendaryHeroes::kMax, "an object's Legendary Heroes factor");
@@ -2891,6 +2909,19 @@ void Object::xfer(Xfer &x)
 	else if (x.isLoading())
 	{
 		m_campaignCarryover = false;
+	}
+	// lane THREATLEVEL-1 (Sol review): the script threat cache. RotWK's Object::xfer (RW 0x697F28) does not write it (a retail load starts from the
+	// constructor's cleared pair); BFME2 1.06's does (+ 0x448 then + 0x444, ObjectDoXfer.cpp:715-716). The OpenBFME snapshot keeps it in both editions:
+	// the state hash covers it, and a load must give the saved hash back (CommandLogLoad::beginSnapshot refuses anything else)
+	if (version.current >= (bfme1 ? 5 : 3))
+	{
+		x.xferUnsignedInt(&m_scriptThreatDeadline);
+		x.xferReal(&m_scriptThreat);
+	}
+	else if (x.isLoading())
+	{
+		m_scriptThreat = 0.0f;
+		m_scriptThreatDeadline = 0;
 	}
 	x.xferBool(&m_scriptSelectable);
 	x.xferBool(&m_masked); // lane MODCOMPAT-MOD1: RW + 0x459 bit 1
