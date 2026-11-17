@@ -36,7 +36,9 @@ public:
 
 	// RW 0x7EE1F4 getThreatForPlayer: the records rescanned when 3 s passed (RW 0xBDD42C, as RW 0x7EE166 does), then the element-wise sum over the players whose
 	// relationship to `player` is ENEMIES (mode 0) or ALLIES (mode 1); every other mode is the empty record (retail's switch)
-	AIThreatFinder::ThreatRecord threatForPlayer(GameLogic &logic, const Player &player, int mode);
+	// lane THREATLEVEL-1: `player` may be null (SET_COUNTER_TO_UNIT_THREAT asks for a unit's controlling player): RW 0x7EE166 still rescans, then the
+	// player test (param 3 == 0) skips the sum and answers the cleared record (RW 0x7ED8A3)
+	AIThreatFinder::ThreatRecord threatForPlayer(GameLogic &logic, const Player *player, int mode);
 	// RW 0x7EE057: the records cleared, then the objects in the radius around the position, as AIThreatFinder::scan reads them (INFERENCE BFME2 0x003ECFBC)
 	void scan(GameLogic &logic);
 	// RW 0x7EDF70's tail (INFERENCE BFME2 0x003ECBF8): version (1, 1), the twenty records of 18 floats, the name, the position, the radius, the frame, the flag

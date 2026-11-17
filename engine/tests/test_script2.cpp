@@ -485,8 +485,10 @@ TEST_CASE("script2 coverage: the share of the retail script uses (skirmish, camp
 	// (hunt, attitude, the building / science availability, the waypoint paths, HAS_FINISHED_AUDIO, CAN_BUILD_AT_BASE, the script volumes)
 	// lane SCRIPT-4: the guard / idle / stand-ground orders, the team moves, recruiting, garrisons, the command-button abilities, the special powers at a
 	// waypoint, the timed model condition and twelve conditions: 3008 -> 1528 action uses (5.3 %), 981 -> 463 condition uses (3.2 %)
-	CHECK(a.uncovered <= 1528); // tolerance: the pins only shrink as cases are ported
-	CHECK(c.uncovered <= 463);  // tolerance: as above
+	// lane THREATLEVEL-1 (measured on archive a910b91b6: 925 action uses, 288 condition uses): SET_COUNTER_TO_TEAM_THREAT (13 uses) and
+	// UNIT_THREAT_LEVEL / TEAM_THREAT_LEVEL (84 + 108) -> 912 action uses (3.1 %), 96 condition uses (0.7 %)
+	CHECK(a.uncovered <= 912); // tolerance: the pins only shrink as cases are ported
+	CHECK(c.uncovered <= 96);  // tolerance: as above
 }
 
 namespace

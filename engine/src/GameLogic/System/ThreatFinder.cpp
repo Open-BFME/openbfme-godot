@@ -39,7 +39,7 @@ void ThreatFinder::scan(GameLogic &logic)
 }
 
 // RW 0x7EE1F4: the answer for one player and one relationship, the records rescanned first when the scan is 3 s old
-AIThreatFinder::ThreatRecord ThreatFinder::threatForPlayer(GameLogic &logic, const Player &player, int mode)
+AIThreatFinder::ThreatRecord ThreatFinder::threatForPlayer(GameLogic &logic, const Player *player, int mode)
 {
 	const unsigned now = logic.getFrame();
 	// (frame - last) * LOGICFRAMES_PER_SECOND >= 3.0: RW 0x7EE166's own test (RW 0xBDD42C), the frames' difference as an int times the rate (INFERENCE BFME2
@@ -51,11 +51,11 @@ AIThreatFinder::ThreatRecord ThreatFinder::threatForPlayer(GameLogic &logic, con
 		m_lastFrame = now;
 	}
 	// retail's switch: 0 isEnemy, 1 isAlly, everything else returns the empty record (RW 0x7EE166's own modes, INFERENCE BFME2 0x003ED0C4)
-	if (mode != 0 && mode != 1)
+	if (!player || (mode != 0 && mode != 1)) // lane THREATLEVEL-1: no player (RW 0x7EE1C3 .. 0x7EE1C6: cmp player, 0; jz) is the cleared record too
 	{
 		return AIThreatFinder::ThreatRecord{};
 	}
-	return AIThreatFinder::sumRecords(logic, m_records, player, mode); // RW 0x7EE166
+	return AIThreatFinder::sumRecords(logic, m_records, *player, mode); // RW 0x7EE166
 }
 
 // INFERENCE BFME2 0x003ECBF8: version (1, 1), the twenty records of 18 floats, the name, the position, the radius, the frame, the flag
