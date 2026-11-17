@@ -501,6 +501,7 @@ public:
 enum LocomotorFlags
 {
 	LOCOMOTOR_FLAG_BRAKING = 0x01,      // RW 0x5E5970 sets, 0x5E5911 clears
+	LOCOMOTOR_FLAG_ALLOW_INVALID_POSITION = 0x02, // RW 0x7516D7 sets it in AIEnterState::onEnter (ZH setAllowInvalidPosition)
 	LOCOMOTOR_FLAG_BIT2 = 0x04,         // cleared by the dispatcher on entry (RW 0x5E8875); set by maintainCurrentPosition with the held position (RW 0x5E7D2A, lane EXIT-1)
 	LOCOMOTOR_FLAG_NO_BRAKE = 0x10,     // moveForward does not start braking while it is set (setter not located)
 	LOCOMOTOR_FLAG_OVER_WATER = 0x20,   // the HOVER mover's last water test (RW 0x5E745D, ZH OVER_WATER; lane SHIP-1)
@@ -578,6 +579,13 @@ public:
 	void setSpeedTowards(const LocomotorHost &host, float v);
 	unsigned flags() const { return m_flags; }              // +0x44
 	void setFlags(unsigned f) { m_flags = f; }
+	// RW 0x7516D7 (AIEnterState::onEnter): the enter move may end on a position the pathfinder calls invalid (the container's entry).
+	bool allowsInvalidPosition() const { return (m_flags & LOCOMOTOR_FLAG_ALLOW_INVALID_POSITION) != 0; }
+	void setAllowInvalidPosition(bool on)
+	{
+		if (on) m_flags |= LOCOMOTOR_FLAG_ALLOW_INVALID_POSITION;
+		else m_flags &= ~LOCOMOTOR_FLAG_ALLOW_INVALID_POSITION;
+	}
 	const LocomotorMatrix &matrix() const { return m_matrix; } // +0x68
 	LocomotorMatrix &matrix() { return m_matrix; }
 	int turnDirection() const { return m_turnDirection; }   // +0xA8: -1 right, 0 none, 1 left
