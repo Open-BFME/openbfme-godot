@@ -124,10 +124,10 @@ func _build(campaign_name: String) -> bool:
 					or (not text_layer.is_empty() and sub.get_slice(".", 1) == text_layer):
 				hidden.append(str(so.name))
 		instancer.set_instance_hidden_subobjects(inst, hidden)
-	var fx: Dictionary = data.region_effects[0] if data.region_effects.size() > 0 else {}
+	var fx: Dictionary = preload("res://scripts/wotr_region_fx.gd").definition_for(data, campaign_name)
 	region_fx = preload("res://scripts/wotr_region_fx.gd").new()
 	vp.add_child(region_fx)
-	region_fx.build(game._fs, regions, fx)
+	region_fx.build(game._fs, regions, fx, true)
 	shell_start_color = fx.get("shell_start_color", Color(0.95, 0.95, 0.95))
 	_bind_fills(region_fx.fill_meshes())
 	cam = Camera3D.new()

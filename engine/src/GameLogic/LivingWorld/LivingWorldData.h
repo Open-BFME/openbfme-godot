@@ -367,13 +367,45 @@ struct MapInfo
 	    armyHilightedFadeOutTime = 0;
 };
 
-// LivingWorldRegionEffects: only the name and the region pick object are read (the effect curves are presentation, S-1322)
+// Presentation data only. RW 0xC78E28 / BFME2 0x00C62148: effect geometry, opacity and curves.
+// The client timing/easing remains S-1335; retain every authored point instead of discarding it.
+struct RegionEffectPoint
+{
+	Coord3D position;
+	float angle = 0.0f, time = 0.0f, easeIn = 0.5f, easeOut = 0.5f;
+};
+struct RegionEffect
+{
+	std::string name;
+	std::vector<std::string> geometry;
+	std::vector<RegionEffectPoint> points, transformPoints;
+	float opacity = 1.0f;
+	bool loadInShell = true;
+};
 struct RegionEffects
 {
 	std::string name;
 	std::string regionObject;
 	RGBColor neutralRegionColor{ 0, 0, 0 }, regionBorderColor{ 0, 0, 0 }, shellStartPositionColor{ 0, 0, 0 };
 	bool shouldShowRegionBorders = false;
+	std::vector<RegionEffect> effects;
+};
+
+// Presentation-only blocks: RW 0xC4DDD0 / BFME2 0x00C37938, and
+// RW 0xC4E170 / BFME2 0x00C37CD8. The interactive EyeTower is separate (S-1321).
+struct MapSound
+{
+	std::string name, sound;
+	Coord3D position;
+	Coord2D zoomLow, zoomHigh;
+	std::uint32_t flags = 0;
+};
+struct MapAnimObject
+{
+	std::string name, model, shadow;
+	Coord3D position;
+	float frame = 0.0f, orientAngle = 0.0f;
+	bool hasAnim = false, xfer = false;
 };
 
 // LivingWorldArmyIcon / LivingWorldBuildingIcon / LivingWorldBuildPlotIcon "Object <Name>" sub-blocks: the base table RW 0xC84998 plus the
@@ -415,7 +447,7 @@ struct IconTemplate
 };
 
 // Every War of the Ring store.  registerBlocks() installs the real parsers for the blocks above; the other presentation blocks (LivingWorldObject,
-// LivingWorldSound, LivingWorldAnimObject, StrategicHUD) stay with the recording stubs (S-1322); the AutoResolve blocks parse into `autoResolve`
+// LivingWorldObject) stays with the recording stubs (S-1320); sound/anim-object and StrategicHUD blocks parse as presentation data; AutoResolve parses into `autoResolve`
 // (LivingWorldAutoResolveData.h, lane WOTR-2).
 // WOTR2 milestone 5: the ArmySummaryDescription block (Data\INI\ArmySummaryDescription.ini; RW 0x6209AE, fields RW 0xBFCE9C / 0xBFCE40): the heroes
 // listed by name (HeroFilter) and the unit categories counted in the army help (RW 0x620B6A; presentation, never read by the logic)
@@ -451,6 +483,8 @@ public:
 	std::vector<std::unique_ptr<Campaign>> campaigns;
 	MapInfo mapInfo;
 	std::vector<RegionEffects> regionEffects;
+	std::vector<MapSound> mapSounds;
+	std::vector<MapAnimObject> mapAnimObjects;
 	StrategicHudData strategicHud; // lane WOTR-2: the StrategicHUD block (presentation; never read by the logic)
 	ArmySummaryDescription armySummaryDescription; // WOTR2 milestone 5 (presentation)
 	std::vector<IconTemplate> icons; // army, building and build-plot icons, file order
@@ -475,6 +509,8 @@ public:
 	void parseCampaign(INI *ini);
 	void parseMapInfo(INI *ini);
 	void parseRegionEffects(INI *ini);
+	void parseMapSound(INI *ini);
+	void parseMapAnimObject(INI *ini);
 	void parseIcon(INI *ini, IconTemplate::Kind kind);
 
 private:
