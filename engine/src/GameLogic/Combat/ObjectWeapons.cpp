@@ -1632,9 +1632,15 @@ bool ObjectWeapons::fireCurrentWeapon(Object *victim, const Coord3D *pos)
 	}
 	ObjectWeaponDelivery delivery(*m_owner, *this, t, *w);
 	const bool reloaded = w->privateFireWeapon(host(), delivery, args);
-	if (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu)
+	// RW 0x6920AD .. 0x69212B (disassembled): after 0x6CF34B -> 0x6CEF6D (privateFireWeapon) the release (0x68DF11(1) at RW 0x69212B) is gated
+	// only by that call's reloaded answer (`cmp [ebp-1], bl; je` at RW 0x692122). The ZH-era `|| IdleAfterFiringDelay == -1` clause is not in
+	// RW's function: it released the ordered FIRE_WEAPON lock at the strike's shot, the next chooseBestWeaponForTarget re-picked the SECONDARY
+	// (a ready weapon while the fired one reloads), and the attack left at RW 0x751482's weapon-changed gate before the run-through could run
+	// (fork issue 395 Q2: "the charge does not happen"). ClipSize 0 is unlimited (0x7FFFFFFF at reloadWithBonus), so a clipless weapon never
+	// answers reloaded and keeps its lock until the state releases it (RW 0x74D8D2 at the charge exit).
+	if (reloaded)
 	{
-		releaseWeaponLock(LOCKED_TEMPORARILY); // ZH: unlock when loaded; RW: IdleAfterFiringDelay == -1 releases it after every shot
+		releaseWeaponLock(LOCKED_TEMPORARILY);
 	}
 	m_tracker.shotFired(*m_trackerHost, *w, victim ? victim->getID() : 0u, args.target.victimPosition, false);
 	// RW 0x8E3411 .. 0x8E34DD (inside FiringTracker::shotFired): the weapon's FireSound (template + 0xC8) attached to the shooter, looped while it keeps
