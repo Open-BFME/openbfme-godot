@@ -58,6 +58,7 @@ var hud: CanvasLayer
 var last_pending_battle := -1   # WOTR2 milestone 4: the battle the camera last went to
 var last_event_count := 0
 var apt_hud := false              # WOTR-2: StrategicHUD.apt is up
+var apt_player_status_open := false
 var apt_hud_parts := 0
 var apt_prompt_battle := -1      # the battle the APT prompt shows
 var hud_requests_seen := 0       # the HUD requests handled so far (the scripted run waits on it)
@@ -804,7 +805,7 @@ func _sync_apt_hud() -> void:
 	# points, attack, defense, experience, resource, power points, treasury income); a region click opens the territory page
 	# the armies page: the local player's armies with members in the region (at most 5, RegionDetailsArmiesPage WB 0x1630220): a hero's ButtonImage or
 	# the garrison portrait, the faction icon, the name (the hero's, else GarrisonDisplayNameTag), command points against the player's limit
-	# (INFERENCE S-1334: the caller of ShowCommandPoints was not read)
+	# The army's own tactical limit is used (GetMaxCommandPoints), rather than the player's world limit.
 	var panel_armies := []
 	if selected_region >= 0:
 		for a in state.armies:
@@ -822,7 +823,7 @@ func _sync_apt_hud() -> void:
 				portrait = str(a.get("garrison_portrait", ""))
 				army_name = _text(str(a.get("garrison_name_tag", "")))
 			panel_armies.append({"id": int(a.id), "portrait": portrait, "type_image": str(a.get("type_image", "")), "name": army_name,
-				"cp": int(a.cp), "max_cp": int(me.cp_limit)})
+				"cp": int(a.cp), "max_cp": int(a.max_cp)})
 	# the structures page: one slot per build plot (the region's BuildingSpots), the building in it (its ConstructButtonImage and Type, turns left)
 	var panel_plots := []
 	var plot_name := ""
@@ -899,6 +900,9 @@ func _sync_apt_hud() -> void:
 			else:
 				request["battle_prompt"] = {"region": _region_name(int(pb.region)), "auto_resolve": (opts & 2) != 0, "real_time": (opts & 8) != 0,
 					"retreat": (opts & 4) != 0, "ally": state.players[local_player].name, "enemy": state.players[enemy].name if enemy >= 0 else ""}
+				var sides := _battle_prompt_players(pb)
+				request.battle_prompt["allies"] = sides[0]
+				request.battle_prompt["enemies"] = sides[1]
 		else:
 			request["battle_prompt"] = {}
 	# WOTR2 milestone 5: the palantir's region stats tray for the selection's region (RegionDisplay RW 0x9DAD60: a region, an army's, a building's)
@@ -907,6 +911,11 @@ func _sync_apt_hud() -> void:
 		var sa := _army(selected_army)
 		stats_region = int(sa.region) if not sa.is_empty() else -1
 	request["region_stats"] = lw.region_stats(local_player, stats_region) if stats_region >= 0 else {}
+	var selected := _army(selected_army) if selected_army >= 0 else {}
+	var selected_portrait := ""
+	if not selected.is_empty():
+		selected_portrait = str(selected.garrison_portrait) if bool(selected.garrison) else str(lw.template_field(game._world, str(selected.hero), "ButtonImage"))
+	request["selection_cp"] = {"current": int(selected.cp), "maximum": int(selected.max_cp), "portrait": selected_portrait} if not selected.is_empty() else {}
 	var rows := _checklist_rows()
 	var rows_key := JSON.stringify(rows)
 	if rows_key != checklist_key:
@@ -918,6 +927,7 @@ func _sync_apt_hud() -> void:
 		apt_command_key = command_key
 		request["command_buttons"] = buttons
 	var r: Dictionary = game._shell.strategic_hud(request)
+	apt_player_status_open = bool(r.get("player_status_open", false))
 	apt_army_selected = r.get("army_selected", [])
 	apt_army_leader = bool(r.get("army_leader_selected", false))
 	if notice_up and not bool(r.get("notice_shown", false)):
@@ -993,12 +1003,82 @@ func _sync_apt_hud() -> void:
 			var res: Dictionary = lw.choose_retreat(apt_prompt_battle, local_player)
 			_say("retreat from battle %d: %s" % [apt_prompt_battle, "ok" if res.ok else res.error])
 			_run_logic()
+		elif req == "player_status":
+			var opened: Dictionary = game._shell.strategic_hud({"player_status": _player_status()})
+			apt_player_status_open = bool(opened.get("player_status_open", false))
+			if not apt_player_status_open:
+				push_error("WotR: " + str(opened.get("error", "StrategicPlayerStatus did not open [S-1334]")))
 	# WOTR-2: the retail selection details tray (StrategicDetailsTray, opened and closed by the HUD and the palantir's magnifier) holds the details
 	details_hidden = int(r.get("details_tray_state", -1)) in [0, 3]
 	var parts: Dictionary = r.get("parts", {})
 	if parts.size() != apt_hud_parts:
 		apt_hud_parts = parts.size()
 		_say("StrategicHUD parts %s" % JSON.stringify(parts))
+
+
+func _battle_prompt_players(pb: Dictionary) -> Array:
+	var result := [[], []]
+	var participants := []
+	for side in pb.sides:
+		for p in side.players:
+			participants.append(int(p.player))
+	# The local player's special page is first in the ally strip.
+	participants.erase(local_player)
+	participants.push_front(local_player)
+	for index in participants:
+		var player: Dictionary = state.players[index]
+		var armies := []
+		for id in pb.armies:
+			var army := _army(int(id))
+			if army.is_empty() or int(army.owner) != index:
+				continue
+			var portrait := str(army.garrison_portrait)
+			if not bool(army.garrison):
+				portrait = str(lw.template_field(game._world, str(army.hero), "ButtonImage"))
+			armies.append({"name": _army_display_name(int(id)), "portrait": portrait, "garrison": bool(army.garrison),
+				"categories": army.summary_categories.duplicate()})
+		if int(state.regions[int(pb.region)].owner) == index:
+			var garrison := -1
+			for i in armies.size():
+				if bool(armies[i].garrison):
+					garrison = i
+			if garrison < 0:
+				var template := _player_template(index)
+				garrison = armies.size()
+				armies.append({"name": _text(str(template.get("garrison_name", ""))), "portrait": str(template.get("garrison_portrait", "")),
+					"garrison": true, "categories": [0, 0, 0, 0, 0, 0, 0, 0, 0]})
+			armies[garrison].categories[6] += int(state.regions[int(pb.region)].prompt_fortresses)
+		var color := 0
+		if int(player.color) >= 0 and int(player.color) < data.colors.size():
+			color = int(data.colors[int(player.color)].rgb)
+		var side := 0 if int(player.team) == int(state.players[local_player].team) else 1
+		result[side].append({"name": str(player.name), "faction": str(player.faction_icon), "color": color,
+			"local": index == local_player, "armies": armies})
+	return result
+
+
+func _player_status() -> Dictionary:
+	# Retail StrategicPlayerStatus shows territories and army-summary quantities (the record is
+	# named Regions in the movie), not the number of unified bonus regions. BFME2 CountOwnedUnits RVA 0x2E0D02.
+	var result := {"players": []}
+	for key in ["scenario", "objectives", "fiction", "game_type"]:
+		var label := str(state.get("status_labels", {}).get(key, ""))
+		result[key] = _text(label) if not label.is_empty() else ""
+	for i in state.players.size():
+		var p: Dictionary = state.players[i]
+		var units := 0
+		for army in state.armies:
+			if int(army.owner) == i:
+				for member in army.members:
+					units += int(member.quantity)
+		var color_index := int(p.color)
+		var color := 0
+		if color_index >= 0 and color_index < data.colors.size():
+			color = int(data.colors[color_index].get("rgb", 0))
+		result.players.append({"name": str(p.name), "faction": str(p.faction_icon), "color": color,
+			"territories": int(p.regions), "regions": units, "allied": int(p.team) == int(state.players[local_player].team),
+			"defeated": bool(p.defeated)})
+	return result
 
 
 func _player_template(p: int) -> Dictionary:
@@ -1188,6 +1268,8 @@ func _process(delta: float) -> void:
 		_sync_apt_hud() # the HUD's button presses
 	if region_fx != null:
 		region_fx.update_gamma() # WOTR-2: the camera's gamma-space composite comes with the map's W3DInstancer (RENDER-3)
+	if apt_player_status_open:
+		return
 	var pan := Vector3.ZERO
 	if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A):
 		pan.x -= 1
@@ -1210,7 +1292,7 @@ func _clamp_camera() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not active or battle_stage != "" or game._quit_open: # WOTR2 milestone 3: the quit menu is over the map
+	if not active or battle_stage != "" or game._quit_open or apt_player_status_open: # a modal screen owns input
 		return
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -1639,7 +1721,8 @@ func _recruit_buttons(rec: Dictionary, r: int, slot: int) -> Array:
 	var buttons := []
 	for a in rec.armies:
 		var idx := int(a.index)
-		buttons.append({"image": str(a.image), "enabled": bool(lw.can_recruit(local_player, r, slot, idx)), "count": int(counts.get(idx, 0))})
+		buttons.append({"image": str(a.image), "title": str(a.title), "help": str(a.help),
+			"enabled": bool(lw.can_recruit(local_player, r, slot, idx)), "count": int(counts.get(idx, 0))})
 	return buttons
 
 
@@ -1706,7 +1789,9 @@ func _open_build_radial(r: int, plot: int) -> void:
 		return
 	var buttons := []
 	for bname in names:
-		buttons.append({"image": str(_building_template(str(bname)).get("button_image", "")), "enabled": true})
+		var bt := _building_template(str(bname))
+		buttons.append({"image": str(bt.get("button_image", "")), "title": str(bt.get("button_title", "")),
+			"help": str(bt.get("button_help", "")), "enabled": true})
 	var p: Vector2 = spots[plot]
 	var at := camera.unproject_position(_w3d(p.x, p.y, _ground(p.x, p.y)))
 	radial_buildings = names.duplicate()

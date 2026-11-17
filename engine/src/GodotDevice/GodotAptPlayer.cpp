@@ -48,6 +48,7 @@
 #include "GameClient/GUI/AptScreens/AptStrategicConflictResults.h"
 #include "GameClient/GUI/AptScreens/AptBannerUI.h"
 #include "GameClient/GUI/AptScreens/AptStrategicHUD.h"
+#include "GameClient/GUI/AptScreens/AptStrategicPlayerStatus.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
 #include "GameClient/GUI/Gadget.h"
 #include "GameClient/GUI/Gadgets.h"
@@ -716,6 +717,7 @@ struct ShellMode
 	CampaignMenuContext campaignMenu;   // lane CAMPSAVE-1: what CampaignMenu.apt shows
 	std::unique_ptr<AptQuitMenu> quitMenu; // lane END-2: QuitMenu.apt, an in-game overlay (RW 0x75E3B7), not on the shell stack
 	std::unique_ptr<AptStrategicHUD> strategicHud; // lane WOTR-2: StrategicHUD.apt over the strategic map (loaded by RW 0x839B32, not on the shell stack)
+	std::unique_ptr<AptStrategicPlayerStatus> strategicPlayerStatus;
 	std::unique_ptr<AptStrategicConflictResults> conflictResults; // WOTR2 milestone 5: the battle statistics after an autoresolve (while active)
 	std::unique_ptr<InGameNotificationBoxMovieClip> notificationBox; // lane CAMPUI-1: InGameNotificationBox.apt (InGameUI + 0x9CC), a game's level
 	NotificationBoxSettings notificationSettings;                     // lane CAMPUI-1: Data\INI\InGameNotificationBox.ini
@@ -771,6 +773,8 @@ struct ShellMode
 		quitMenu.reset();
 		notificationBox.reset(); // lane CAMPUI-1
 		cursorTooltip.reset();
+		strategicPlayerStatus.reset();
+		conflictResults.reset();
 		strategicHud.reset();
 		guiFX.reset();
 		shell.reset();
@@ -4026,7 +4030,8 @@ int AptMenuPlayer::tick(double delta)
 			// lane HOVER-1: Mouse::drawTooltip once a frame (RW 0x5EE7A8) at the pointer's stage position
 			const std::size_t before = m->shell->cursorTooltip->calls().size();
 			const Vector2 window = windowSize();
-			m->shell->cursorTooltip->update((std::uint32_t)Time::get_singleton()->get_ticks_msec(), window.x, window.y, *m->shell->metrics);
+			m->shell->cursorTooltip->update((std::uint32_t)Time::get_singleton()->get_ticks_msec(), window.x, window.y, *m->shell->metrics,
+				m->shell->strategicHud ? m->shell->strategicHud->cursorTooltipLabel() : std::string());
 			if (m->shell->cursorTooltip->calls().size() != before)
 			{
 				m->dirty = true;
@@ -9291,7 +9296,39 @@ Dictionary AptMenuPlayer::strategic_hud(const Dictionary &request)
 	else if (kind == "close")
 	{
 		sm.conflictResults.reset();
+		sm.strategicPlayerStatus.reset();
 		sm.strategicHud.reset();
+	}
+	if (sm.strategicPlayerStatus && sm.strategicPlayerStatus->closed()) sm.strategicPlayerStatus.reset();
+	if (sm.strategicHud && request.has("player_status") && !sm.strategicPlayerStatus)
+	{
+		const Dictionary in = request["player_status"];
+		StrategicPlayerStatusData data;
+		data.scenarioName = toNative(String(in.get("scenario", "")));
+		data.objectives = toNative(String(in.get("objectives", "")));
+		data.fiction = toNative(String(in.get("fiction", "")));
+		data.gameType = toNative(String(in.get("game_type", "")));
+		const Array players = in.get("players", Array());
+		for (int i = 0; i < players.size(); ++i)
+		{
+			const Dictionary p = players[i];
+			StrategicPlayerStatusData::Player row;
+			row.name = toNative(String(p.get("name", "")));
+			row.factionImage = toNative(String(p.get("faction", "")));
+			row.color = (std::uint32_t)(int64_t)p.get("color", 0);
+			row.territories = (int)(int64_t)p.get("territories", 0);
+			row.regions = (int)(int64_t)p.get("regions", 0);
+			row.allied = (bool)p.get("allied", false);
+			row.defeated = (bool)p.get("defeated", false);
+			row.left = (bool)p.get("left", false);
+			data.players.push_back(row);
+		}
+		sm.strategicPlayerStatus = std::make_unique<AptStrategicPlayerStatus>(*sm.wm, *sm.shell, data, sm.environment.gameText);
+		if (sm.strategicPlayerStatus->level() < 0)
+		{
+			sm.strategicPlayerStatus.reset();
+			out["error"] = "StrategicPlayerStatus.apt could not be loaded [S-1334]";
+		}
 	}
 	if (sm.strategicHud && request.has("stats"))
 	{
@@ -9320,6 +9357,36 @@ Dictionary AptMenuPlayer::strategic_hud(const Dictionary &request)
 			sm.strategicHud->openBattlePrompt(toNative(String(bp.get("region", ""))), (bool)bp.get("auto_resolve", true), (bool)bp.get("real_time", true),
 				(bool)bp.get("retreat", false), toNative(String(bp.get("ally", ""))), toNative(String(bp.get("enemy", ""))),
 				toNative(String(bp.get("real_time_reason", "")))); // WOTR2 milestone 8
+			if (bp.has("allies") && bp.has("enemies"))
+			{
+				auto playersOf = [](const Array &players) {
+					std::vector<AptStrategicHUD::PromptPlayer> out;
+					for (int i = 0; i < players.size(); ++i)
+					{
+						const Dictionary p = players[i];
+						AptStrategicHUD::PromptPlayer player;
+						player.name = toNative(String(p.get("name", "")));
+						player.factionImage = toNative(String(p.get("faction", "")));
+						player.color = (std::uint32_t)(int64_t)p.get("color", 0);
+						player.local = (bool)p.get("local", false);
+						const Array armies = p.get("armies", Array());
+						for (int a = 0; a < armies.size(); ++a)
+						{
+							const Dictionary in = armies[a];
+							AptStrategicHUD::PromptArmy army;
+							army.name = toNative(String(in.get("name", "")));
+							army.portrait = toNative(String(in.get("portrait", "")));
+							army.garrison = (bool)in.get("garrison", false);
+							const Array counts = in.get("categories", Array());
+							for (int type = 0; type < 9 && type < counts.size(); ++type) army.categories[type] = (int)(int64_t)counts[type];
+							player.armies.push_back(army);
+						}
+						out.push_back(player);
+					}
+					return out;
+				};
+				sm.strategicHud->setBattlePromptPlayers(playersOf(bp["allies"]), playersOf(bp["enemies"]));
+			}
 		}
 	}
 	// WOTR2 milestone 8: a network war's phase timer (seconds, -1 none) and the "waiting for other players" message
@@ -9330,6 +9397,12 @@ Dictionary AptMenuPlayer::strategic_hud(const Dictionary &request)
 	if (sm.strategicHud && request.has("wait_message"))
 	{
 		sm.strategicHud->setWaitMessage((bool)request["wait_message"]);
+	}
+	if (sm.strategicHud && request.has("selection_cp"))
+	{
+		const Dictionary cp = request["selection_cp"];
+		sm.strategicHud->setSelectionCommandPoints(!cp.is_empty(), (int)(int64_t)cp.get("current", 0), (int)(int64_t)cp.get("maximum", -1),
+			toNative(String(cp.get("portrait", ""))));
 	}
 	if (sm.strategicHud && request.has("region_panel"))
 	{
@@ -9404,6 +9477,8 @@ Dictionary AptMenuPlayer::strategic_hud(const Dictionary &request)
 				b.image = toNative(String(bd.get("image", "")));
 				b.enabled = (bool)bd.get("enabled", true);
 				b.productionCount = (int)(int64_t)bd.get("count", 0);
+				b.title = toNative(String(bd.get("title", "")));
+				b.help = toNative(String(bd.get("help", "")));
 				buttons.push_back(b);
 			}
 			// {update: true}: the shown ring's buttons change in place (a queued unit's count), no new ring
@@ -9679,7 +9754,23 @@ Dictionary AptMenuPlayer::strategic_hud(const Dictionary &request)
 		out["level"] = h.level();
 		out["initialized"] = h.initialized();
 		out["battle_prompt_open"] = h.battlePromptOpen();
+		out["player_status_open"] = sm.strategicPlayerStatus != nullptr;
+		out["player_status_level"] = sm.strategicPlayerStatus ? sm.strategicPlayerStatus->level() : -1;
 		out["battle_prompt_loaded"] = h.battlePromptLoaded();
+		Array promptTabs, promptPages, promptSelected;
+		for (int side = 0; side < 2; ++side)
+		{
+			promptTabs.push_back(toGodot(h.battlePromptTabs(side)));
+			promptSelected.push_back(h.battlePromptSelected(side));
+			Array pages;
+			for (int i = 0; !h.battlePromptPage(side, i).empty(); ++i) pages.push_back(toGodot(h.battlePromptPage(side, i)));
+			promptPages.push_back(pages);
+		}
+		out["prompt_tabs"] = promptTabs;
+		out["prompt_pages"] = promptPages;
+		out["prompt_selected"] = promptSelected;
+		out["checklist_rows"] = h.checklistRowCount();
+		out["checklist_scroll"] = toGodot(h.checklistScrollPath());
 		out["details_tray_state"] = h.detailsTrayState(); // lane WOTR-2: 0 closed, 1 opening, 2 open, 3 closing, -1 not loaded
 		out["build_queue_loaded"] = h.buildQueuePanelLoaded();
 		out["army_panel_loaded"] = h.armyPanelLoaded();

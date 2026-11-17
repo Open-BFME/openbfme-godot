@@ -12,6 +12,7 @@
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
 #include "GameClient/GUI/AptScreens/AptStrategicHUD.h"
+#include "GameClient/GUI/AptScreens/AptStrategicPlayerStatus.h"
 #include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h"
 #include "GameClient/GUI/Gadgets.h"
 #include "GameClient/GUI/Shell/Shell.h"
@@ -3257,6 +3258,136 @@ TEST_CASE("retail strategic HUD (WOTR-2): StrategicHUD.apt reports its nine part
 	fx.tick(2);
 	CHECK(hud.checklistRowCount() == 0);
 	CHECK(noItems->visible);
+}
+
+TEST_CASE("retail strategic HUD gaps: checklist scrolling, stat help, selected army CP and player status")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount, false);
+	LivingWorldShellInfo info;
+	info.strategicHud.checklist.itemVerticalSpacing = 3;
+	info.strategicHud.statsDisplay["TreasuryIncomeRowTitle"] = "TEST:IncomeTitle";
+	info.strategicHud.statsDisplay["TreasuryIncomeRowHelp"] = "TEST:IncomeHelp";
+	fx.text.set("TEST:IncomeTitle", "Income title");
+	fx.text.set("TEST:IncomeHelp", "Income help");
+	fx.text.set("STRATEGICHUD:ArmyUnitSwapperCP", "CP: %d/%d");
+	fx.text.set("TEST:Task", "Task");
+	fx.environment.livingWorld = &info;
+	AptStrategicHUD hud(*fx.wm, *fx.shell, fx.environment);
+	fx.tick(90);
+	const std::string prefix = "_level" + std::to_string(hud.level()) + ".";
+	const std::string stats = prefix + "main.stats";
+	REQUIRE(fx.wm->invokeCallback(stats + "_OnStatRollOver", "6"));
+	REQUIRE(hud.helpBox().help());
+	CHECK(hud.helpBox().help()->name() == u"Income title");
+	CHECK(hud.helpBox().help()->longText() == u"Income help");
+	// A stale rollout from a different row must preserve the newly hovered help.
+	const auto *incomeHelp = hud.helpBox().help();
+	CHECK(fx.wm->invokeCallback(stats + "_OnStatRollOut", "0"));
+	CHECK(hud.helpBox().help() == incomeHelp);
+	CHECK(fx.wm->invokeCallback(stats + "_OnStatRollOver", "7"));
+	CHECK(hud.helpBox().help() == incomeHelp);
+
+	hud.setSelectionCommandPoints(true, 120, 500);
+	fx.tick(30);
+	AptCharacterInst *selection = fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), "main.globe.selectionUI");
+	REQUIRE(selection);
+	REQUIRE(selection->asSprite());
+	CHECK(selection->asSprite()->frame == 19); // authored shown stop; the hidden parent's stop is frame 9
+	bool cpWritten = false;
+	for (const auto &record : hud.statRecords())
+	{
+		if (record.first.size() >= 3 && record.first.substr(record.first.size() - 3) == "_CP")
+		{
+			CHECK(record.second == "CP: 120/500");
+			cpWritten = true;
+		}
+	}
+	CHECK(cpWritten);
+	AptStrategicHUD::PromptArmy garrison;
+	garrison.name = "Garrison";
+	garrison.portrait = "UPGondor_Army";
+	garrison.garrison = true;
+	garrison.categories[0] = 4;
+	AptStrategicHUD::PromptPlayer local;
+	local.name = "Local"; local.factionImage = "IconMenStrategic"; local.local = true; local.armies = { garrison };
+	AptStrategicHUD::PromptPlayer ally = local;
+	ally.name = "Ally"; ally.local = false;
+	AptStrategicHUD::PromptPlayer enemy = ally;
+	enemy.name = "Enemy"; enemy.factionImage = "IconMordorStrategic";
+	hud.setBattlePromptPlayers({ local, ally }, { enemy });
+	hud.openBattlePrompt("Rohan", true, true, true, "Local", "Enemy");
+	fx.tick(180);
+	REQUIRE_FALSE(hud.battlePromptPage(0, 0).empty());
+	REQUIRE_FALSE(hud.battlePromptPage(0, 1).empty());
+	REQUIRE_FALSE(hud.battlePromptPage(1, 0).empty());
+	CHECK(hud.battlePromptSelected(0) == 0);
+	REQUIRE(fx.wm->invokeCallback(prefix + hud.battlePromptTabs(0) + "_OnTabClicked", "1"));
+	fx.tick(90);
+	CHECK(hud.battlePromptSelected(0) == 1);
+	CHECK(*fx.wm->aptText("APT:" + prefix + hud.battlePromptTabs(0) + "_PlayerName") == "Ally");
+	hud.closeBattlePrompt();
+	fx.tick(30);
+
+	std::vector<AptStrategicHUD::ChecklistItem> rows;
+	for (int i = 0; i < 30; ++i) rows.push_back({ "task:" + std::to_string(i), "TEST:Task", {}, 1, false });
+	hud.setChecklistItems(rows);
+	for (int i = 0; i < 25; ++i) { hud.checklistUpdate(); fx.tick(1); }
+	REQUIRE(hud.checklistRowCount() == 30);
+	const std::string rowPath = hud.checklistRowPath(29);
+	const std::string list = rowPath.substr(0, rowPath.rfind(".it.ems"));
+	AptCharacterInst *last = fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), rowPath);
+	AptCharacterInst *items = fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), list + ".it.ems");
+	REQUIRE(last);
+	REQUIRE(items);
+	std::string scroll;
+	for (const auto &line : hud.commandLog())
+	{
+		const std::string start = "Checklist_OnScrollBarLoaded(";
+		if (line.rfind(start, 0) == 0) scroll = line.substr(start.size(), line.size() - start.size() - 1);
+	}
+	REQUIRE_FALSE(scroll.empty());
+	if (scroll.rfind(prefix, 0) == 0) scroll = scroll.substr(prefix.size());
+	REQUIRE(firstButtonIn(fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), scroll + ".downButton")));
+	std::string error;
+	REQUIRE(fx.wm->invokeASAtValues(hud.level(), scroll, "SetPos", { AptValue::number(0.25) }, &error));
+	CHECK(hud.commandCalls(prefix + scroll + "_OnPosChanged") == 1);
+	// SetPos reports its thumb-travel conversion. Independently exercise the engine callback
+	// with a known content fraction (RW 0x984D27), using the movie's measured row geometry.
+	REQUIRE(fx.wm->invokeCallback(prefix + scroll + "_OnPosChanged", "0.25"));
+	AptValue y, height, offset;
+	REQUIRE(last->getProperty("_y", y));
+	REQUIRE(last->getProperty("_height", height));
+	REQUIRE(items->getProperty("_y", offset));
+	const float expectedOffset = -((float)y.toNumberWide() + (float)height.toNumberWide() + 3.0f) * 0.25f;
+	CHECK(offset.toNumberWide() == (double)expectedOffset);
+	hud.flagIncompleteChecklistItems();
+	REQUIRE(items->getProperty("_y", offset));
+	CHECK(offset.toNumberWide() == 0.0);
+	hud.setChecklistItems({});
+	hud.checklistUpdate();
+
+	fx.text.set("GUI:PlayerAlive", "Alive");
+	fx.text.set("GUI:PlayerDead", "Dead");
+	StrategicPlayerStatusData status;
+	status.scenarioName = "Scenario";
+	status.objectives = "Objectives";
+	status.players = { { "Local", "IconMenStrategic", 0x112233, 4, 12, true, false, false },
+		{ "Enemy", "IconMordorStrategic", 0x445566, 2, 7, false, true, false } };
+	AptStrategicPlayerStatus screen(*fx.wm, *fx.shell, status, &fx.text);
+	fx.tick(90);
+	CHECK(*fx.wm->aptText("Allied:Name_0") == "Local");
+	CHECK(*fx.wm->aptText("Enemy:Regions_0") == "7");
+	CHECK(*fx.wm->aptText("Enemy:Status_0") == "Dead");
+	CHECK(*fx.wm->aptText("StrategicPlayerStatus:Objectives") == "Objectives");
+	std::string count;
+	fx.wm->getExtern("StrategicPlayerStatus::NumAlliedPlayers", count);
+	CHECK(count == "1");
+	fx.wm->getExtern("StrategicPlayerStatus::EnemyColor_0", count);
+	CHECK(count == std::to_string((std::int32_t)0xFF445566u));
+	CHECK_FALSE(screen.closed());
+	REQUIRE(fx.wm->invokeCallback("StrategicPlayerStatus::OnCloseWindow", ""));
+	CHECK(screen.closed());
 }
 
 TEST_CASE("skirmish controller: shoulder tabs and explicit dropdown confirmation")
