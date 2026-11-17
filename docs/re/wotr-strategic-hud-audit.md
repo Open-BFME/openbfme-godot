@@ -77,10 +77,12 @@ These requested gaps remain open; S-1334 is not closed by this restoration.
 - Built the macOS arm64 extension and C++ tests in an independent checkout.
 - With the original RotWK/BFME2 mounts, the strategic/hover group passed 16
   cases and 6,884 assertions. After the input-discovered fixes, the focused
-  strategic controls/cursor tests passed 2 cases and 55 assertions.
+  strategic controls/cursor tests passed 2 cases and 59 assertions.
 - The original-APT GPU test passed at 1024x768, 1280x720 and 1680x720, using
   real mouse input for checklist scrolling, ally-tab selection and status
-  screen tabs/Resume. It also destroys a shell with the status screen open.
+  screen tabs/Resume. It also replaces an open battle prompt with different
+  player sides, checks that status blocks END PHASE input, and destroys a shell
+  with the status screen open.
 - The existing HUD viewport/input test passed its 4:3, 16:9 and wider checks.
 - The original-data smoke test passed on the combined RotWK/BFME2 mount;
   the BFME1 startup test passed separately with BFME1 data present.

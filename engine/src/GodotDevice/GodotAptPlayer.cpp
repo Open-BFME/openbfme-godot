@@ -9354,6 +9354,9 @@ Dictionary AptMenuPlayer::strategic_hud(const Dictionary &request)
 		}
 		else
 		{
+			// A new pending battle owns new player pages, even when there was no intervening
+			// empty prompt request (for example two consecutive retreat decisions).
+			if (bp.has("allies") && bp.has("enemies")) sm.strategicHud->closeBattlePrompt();
 			sm.strategicHud->openBattlePrompt(toNative(String(bp.get("region", ""))), (bool)bp.get("auto_resolve", true), (bool)bp.get("real_time", true),
 				(bool)bp.get("retreat", false), toNative(String(bp.get("ally", ""))), toNative(String(bp.get("enemy", ""))),
 				toNative(String(bp.get("real_time_reason", "")))); // WOTR2 milestone 8

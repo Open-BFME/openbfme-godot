@@ -3505,6 +3505,7 @@ void AptStrategicHUD::closeBattlePrompt()
 		return;
 	}
 	m_promptWanted = false;
+	m_cursorTooltip.clear();
 	if (m_promptHelp && m_helpBox.help() == m_promptHelp.get())
 	{
 		m_helpBox.hideSoon(); // WOTR2 milestone 8: the Real Time reason goes with the prompt

@@ -97,6 +97,15 @@ func exercise(fs: RefCounted, world: Node, size: Vector2i, folder: String) -> vo
 		click(shell, level, str(state.prompt_tabs[0]) + ".1")
 		check(shell.strategic_hud({}).prompt_selected[0] == 1, "ally tab switches through real input")
 		await capture(shell, viewport, "%dx%d-prompt-ally" % [size.x, size.y])
+	if not baseline:
+		# No empty prompt between these battles: the old player pages must be replaced.
+		shell.strategic_hud({"battle_prompt": {"region": "Next battle", "auto_resolve": true, "real_time": true,
+			"allies": [local], "enemies": [enemy, ally]}})
+		tick(shell, 180)
+		state = shell.strategic_hud({})
+		check(state.prompt_pages[0].size() == 1 and state.prompt_pages[1].size() == 2, "consecutive battle replaces old player pages")
+		click(shell, level, str(state.prompt_tabs[1]) + ".1")
+		check(shell.strategic_hud({}).prompt_selected[1] == 1, "replacement enemy tab receives real input")
 	shell.strategic_hud({"battle_prompt": {}})
 	tick(shell)
 	var status := {"scenario": "Strategic HUD check", "objectives": "Review the strategic situation.", "fiction": "Original retail interface.", "game_type": "War of the Ring",
@@ -107,6 +116,8 @@ func exercise(fs: RefCounted, world: Node, size: Vector2i, folder: String) -> vo
 	state = shell.strategic_hud({})
 	if not baseline:
 		check(state.get("player_status_open", false), "status screen opens")
+		var blocked := click(shell, level, "main.endTurnButton")
+		check(not blocked.has("end_turn"), "status screen blocks the underlying END PHASE button")
 	await capture(shell, viewport, "%dx%d-status" % [size.x, size.y])
 	if not baseline:
 		click(shell, int(state.player_status_level), "Main.TabsMain.TabObjectives")

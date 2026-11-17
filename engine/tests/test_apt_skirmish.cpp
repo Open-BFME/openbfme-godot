@@ -3326,7 +3326,19 @@ TEST_CASE("retail strategic HUD gaps: checklist scrolling, stat help, selected a
 	fx.tick(90);
 	CHECK(hud.battlePromptSelected(0) == 1);
 	CHECK(*fx.wm->aptText("APT:" + prefix + hud.battlePromptTabs(0) + "_PlayerName") == "Ally");
+	std::function<AptCharacterInst *(AptCharacterInst *)> findGarrison = [&](AptCharacterInst *inst) -> AptCharacterInst * {
+		if (!inst) return nullptr;
+		if (inst->instName() == "garrison") return inst;
+		if (auto *sprite = inst->asSprite()) for (auto *child : sprite->children())
+			if (auto *found = findGarrison(child)) return found;
+		return nullptr;
+	};
+	auto *panel = findGarrison(fx.wm->apt().resolvePath(fx.wm->apt().level(hud.level()), hud.battlePromptPage(0, 1)));
+	REQUIRE(panel);
+	REQUIRE(fx.wm->invokeCallback(panel->targetPath() + "_OnUnitIconRollOver", "0"));
+	CHECK(hud.cursorTooltipLabel() == "STRATEGICHUD:InfantryUnitArchetypeTooltip");
 	hud.closeBattlePrompt();
+	CHECK(hud.cursorTooltipLabel().empty());
 	fx.tick(30);
 
 	std::vector<AptStrategicHUD::ChecklistItem> rows;
