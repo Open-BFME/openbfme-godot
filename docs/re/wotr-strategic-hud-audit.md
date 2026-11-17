@@ -86,7 +86,8 @@ These requested gaps remain open; S-1334 is not closed by this restoration.
 - The existing HUD viewport/input test passed its 4:3, 16:9 and wider checks.
 - The original-data smoke test passed on the combined RotWK/BFME2 mount;
   the BFME1 startup test passed separately with BFME1 data present.
-- The stop-count and tolerance-gate Python tests passed (40 tests).
+- The stop-count and tolerance-gate Python tests passed (40 tests); the
+  asset-free GDScript inventory/runner passed all 21 checks.
 
 Before/after captures are kept outside the repository for attachment to the pull request.
 The baseline capture run intentionally demonstrates the three missing checklist
