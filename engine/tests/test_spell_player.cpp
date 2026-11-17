@@ -11,6 +11,8 @@
 #include "Common/Science.h"
 #include "Common/ScoreKeeper.h"
 #include "Common/StateHash.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/RankInfo.h"
 #include "GameLogic/SpellStores.h"
 
@@ -254,4 +256,47 @@ TEST_CASE("SPELL-1 PlayerScience: point arithmetic wraps like the 32-bit registe
 	CHECK(p.getSciencePurchasePoints() == -1);
 	CHECK(p.setRankLevel(2));
 	CHECK(p.getSciencePurchasePoints() == 0); // -1 + -1 = -2, clamped
+}
+
+// RW 0x7827D9 -> RW 0x6B34EE; BFME2 SciencePurchasePointTracker RVA 0x38030D -> selector RVA 0x2B2AFD.
+TEST_CASE("wotr battles: the Living World rank ceiling overrides both template caps and survives a snapshot")
+{
+    World w;
+    w.men.m_maxLevelMP = 1;
+    w.men.m_maxLevelSP = 1;
+    PlayerScience battle;
+    battle.bind(&w.men, SpellGameMode{ false, false, 2 }, nullptr);
+    battle.reset();
+    CHECK(battle.getMaxRankLevel() == 2);
+    CHECK(battle.addSkillPoints(1000.0f, false));
+    CHECK(battle.getRankLevel() == 2);
+    CHECK(battle.getSkillPoints() == 60.0f);
+    CHECK(battle.earnedSpellPoints() == 6);
+    XferSave save;
+    battle.xfer(save);
+    CHECK(save.data().front() == 2);
+    PlayerScience loaded;
+    loaded.bind(&w.men, SpellGameMode{}, nullptr);
+    XferLoad load(save.data());
+    loaded.xfer(load);
+    CHECK(load.atEnd());
+    CHECK(loaded.mode().livingWorldMaxRank == 2);
+    CHECK(loaded.getMaxRankLevel() == 2);
+    CHECK(loaded.getRankLevel() == 2);
+    StateHasher a, b;
+    battle.crc(a);
+    loaded.crc(b);
+    CHECK(a.value() == b.value());
+    // A normal game keeps the version-1 layout and template ceiling.
+    PlayerScience normal;
+    normal.bind(&w.men, SpellGameMode{}, nullptr);
+    normal.reset();
+    CHECK(normal.getMaxRankLevel() == 1);
+    XferSave old;
+    normal.xfer(old);
+    CHECK(old.data().front() == 1);
+    XferLoad oldLoad(old.data());
+    loaded.xfer(oldLoad);
+    CHECK(loaded.mode().livingWorldMaxRank == -1);
+    CHECK(loaded.getMaxRankLevel() == 1);
 }

@@ -1741,7 +1741,7 @@ TEST_CASE("wotr6 retreat: a human's hero army with several friendly regions wait
 	CHECK(l.retreatList().empty()); // cleared at the turn change (RW 0x6B87E9)
 }
 
-TEST_CASE("wotr6 retreat: a human's heroless army in the list goes to the first friendly region by itself (retail could never order it)")
+TEST_CASE("wotr6 retreat: a human's heroless army with several friendly exits retains its reported unresolved destination")
 {
 	LivingWorldLogic l(stores(), units);
 	std::string err;
@@ -1770,6 +1770,9 @@ TEST_CASE("wotr6 retreat: a human's heroless army in the list goes to the first 
 	armies = { g, w };
 	A::prepareRetreat(l, g.id);
 	A::enterRetreatPhase(l);
-	CHECK(l.findArmy(g.id)->destination == 0); // B's first connection, A
+	CHECK(l.findArmy(g.id)->destination == -1); // RW 0x6BABA8 leaves multiple exits pending; no first-connection rule was established.
+	CHECK(l.retreatList() == std::vector<int>{ g.id });
 	CHECK_FALSE(l.orderMove(0, g.id, 2, &err)); // no order for a heroless army in the retreat phase
+	CHECK_FALSE(l.endPhase(0, &err));
+	CHECK(err == "[S-1329] a human's heroless army has several retreat regions; its destination rule is unverified");
 }

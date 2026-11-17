@@ -90,6 +90,7 @@ public:
 	Dictionary order_destroy_building(int64_t player, int64_t region, int64_t building_slot);              // orderDestroyBuilding
 	int64_t pending_human_battle() const;
 	Dictionary choose_auto_resolve(int64_t battle);
+	Dictionary resolve_region_award(int64_t region, int64_t winner);
 	Dictionary choose_retreat(int64_t battle, int64_t player);   // WOTR-2
 	int64_t resolution_options(int64_t battle, int64_t player) const; // WOTR-2: RESOLVE_AUTO 2 | RESOLVE_RETREAT 4 | RESOLVE_REAL_TIME 8
 	// { ok, error, battle, region, map, players, spawns: [{ player, army, member, template, quantity }], buildings, starting_cash, starting_cash_with_fort }

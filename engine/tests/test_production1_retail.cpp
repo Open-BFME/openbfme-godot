@@ -26,6 +26,8 @@
 #include "GameLogic/Module/ProductionExitModules.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/SpawnBehavior.h"
+#include "GameLogic/Construction.h"
+#include "GameLogic/LivingWorld/BattleResultCapture.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
 
@@ -96,6 +98,70 @@ Player &human(buildtest::Game &g)
 	return *p;
 }
 } // namespace
+
+TEST_CASE("wotr battles retail: construction and trained troops retain the maker's army in the returned roster")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::string error;
+	buildtest::Game g;
+	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 1719, g, &error), error);
+	GameLogic &logic = g.live->logic();
+	Player &owner = human(g);
+	owner.getMoney()->deposit(10000u, false);
+	Object *builder = make(logic, "MenPorter", owner, nearStart(logic, owner, 400.0f, 0.0f));
+	LivingWorldBattleTags &tags = logic.livingWorldTags();
+	tags.active = true;
+	tags.objects[builder->getID()] = { 701, "army-entry", 902 };
+	const ThingTemplate *barracksTemplate = logic.things().findTemplate("GondorBarracks");
+	REQUIRE(barracksTemplate);
+	const Coord3D at = nearStart(logic, owner, 700.0f, 0.0f);
+	Object *barracks = Construction::buildObjectNow(logic, builder, *barracksTemplate, at, 0.0f, owner);
+	REQUIRE(barracks);
+	const LivingWorldBattleTags::Tag *buildingTag = tags.object(barracks->getID());
+	REQUIRE(buildingTag);
+	CHECK(buildingTag->armyId == 701);
+	CHECK(buildingTag->spawnId.empty());
+	CHECK(buildingTag->buildingId == 0);
+	const Coord3D phantomAt = nearStart(logic, owner, 700.0f, 600.0f);
+	Object *phantom = Construction::constructByDozer(*builder, *barracksTemplate, phantomAt, 0.0f, owner);
+	REQUIRE(phantom);
+	const LivingWorldBattleTags::Tag *phantomTag = tags.object(phantom->getID());
+	REQUIRE(phantomTag);
+	CHECK(phantomTag->armyId == 701);
+	CHECK(phantomTag->buildingId == 0);
+	ProductionUpdateInterface *production = barracks->getProductionUpdate();
+	REQUIRE(production);
+	const ThingTemplate *horde = logic.things().findTemplate("GondorFighterHorde");
+	REQUIRE(horde);
+	REQUIRE(production->queueCreateUnit(horde, -1, production->requestUniqueUnitID(), -1, false, "", false));
+	for (int i = 0; i < 600 && production->getProductionCount() != 0; ++i)
+	{
+		logic.runLogicFrame();
+	}
+	REQUIRE(production->getProductionCount() == 0);
+	int hordeCount = 0;
+	for (const Object *o : madeBy(logic, *barracks))
+	{
+		if (o->getTemplate()->getName() != "GondorFighterHorde") continue;
+		++hordeCount;
+		const LivingWorldBattleTags::Tag *tag = tags.object(o->getID());
+		REQUIRE(tag);
+		CHECK(tag->armyId == 701);
+		CHECK(tag->spawnId.empty());
+		CHECK(tag->buildingId == 0);
+	}
+	CHECK(hordeCount == 1);
+	LivingWorld::BattleResult result;
+	REQUIRE_MESSAGE(ReadBattleResult(logic, { { g.live->report().startSlotPlayers[0], 0, 702 } }, nullptr, result, &error), error);
+	int returnedHordes = 0;
+	for (const LivingWorld::BattleSurvivor &survivor : result.survivors)
+	{
+		if (survivor.thingTemplate != "GondorFighterHorde") continue;
+		++returnedHordes;
+		CHECK(survivor.armyId == 701); // the old untagged fallback incorrectly returned it to garrison 702
+	}
+	CHECK(returnedHordes == 1);
+}
 
 TEST_CASE("production1 retail: the Forbidden Pool earns the BuildCost of what it trains and levels to rank 3 (RW 0x8A27F9 .. 0x8A283B)")
 {

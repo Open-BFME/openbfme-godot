@@ -170,10 +170,11 @@ constexpr size_t kEventMin = 4 * 2 + 1;
 
 void LivingWorldLogic::xfer(Xfer &x)
 {
-	XferVersion v{ 5, 7 }; // 2 (WOTR2 milestone 4): building ids, the entry keys and homes, the retreat list; 3: the command point counters;
+	XferVersion v{ 5, 9 }; // 2 (WOTR2 milestone 4): building ids, the entry keys and homes, the retreat list; 3: the command point counters;
 	                       // 4 (milestone 5): the entries' upgrade sets, ranks and marks, the armories' counts; 5 (milestone 7): the players' sciences
 	                       // and upgrades (LivingWorldPlayer + 0x1F8 / + 0x204); 6 (milestone 8 step 4): the network clock L + 0x100 / + 0x104 (a LAN
 	                       // war's save, retail's mode 6). A version-5 save loads as before: the clock keeps the values a fresh logic has (0, 0);
+	                       // 8: unresolved allied territory awards; older saves have none. 9: revival record rank/base rank.
 	                       // 7 (Sol wotr2m8s4 follow-up 1): the save request's serial (a version-6 save loads with serial 0 and no pending request)
 	x.xferVersion(v);
 
@@ -320,13 +321,23 @@ void LivingWorldLogic::xfer(Xfer &x)
 			}
 		}
 		xferScoreKeeper(x, p.score); // the player's xfer (RW 0x6E445E) holds its score keeper
-		xferSize(x, p.buildableHeroes, kRevivalMin);
+		xferSize(x, p.buildableHeroes, v.current >= 9 ? kRevivalMin + 8 : kRevivalMin);
 		for (RevivalUnit &r : p.buildableHeroes)
 		{
 			x.xferAsciiString(&r.spawnId);
 			x.xferAsciiString(&r.thing);
 			x.xferReal(&r.experience);
 			x.xferBool(&r.dead);
+			if (v.current >= 9)
+			{
+				xferIntField(x, &r.rank);
+				xferIntField(x, &r.baseRank);
+			}
+			else if (x.isLoading())
+			{
+				if (r.dead || r.experience != 0.0f) throw XferException("legacy War of the Ring hero record lacks its rank/base rank");
+				r.rank = r.baseRank = -1; // a new purchase record still resolves its own template's initial rank
+			}
 		}
 	}
 
@@ -427,6 +438,30 @@ void LivingWorldLogic::xfer(Xfer &x)
 		}
 		xferIntField(x, &b.winningSide);
 		x.xferBool(&b.resultsCounted);
+		if (v.current >= 8)
+		{
+			xferIntVector(x, b.retreatedPlayers);
+		}
+		else if (x.isLoading())
+		{
+			b.retreatedPlayers.clear();
+		}
+	}
+
+	if (v.current >= 8)
+	{
+		xferIntField(x, &m_hostPlayer);
+		xferSize(x, m_regionAwardDisputes, 8);
+		for (RegionAwardDispute &d : m_regionAwardDisputes)
+		{
+			xferIntField(x, &d.region);
+			xferIntVector(x, d.players);
+		}
+	}
+	else if (x.isLoading())
+	{
+		m_hostPlayer = 0; // pre-dispute native saves had no host mapping
+		m_regionAwardDisputes.clear();
 	}
 
 	xferSize(x, m_events, kEventMin);
@@ -435,6 +470,10 @@ void LivingWorldLogic::xfer(Xfer &x)
 		xferIntField(x, &e.turn);
 		xferIntField(x, &e.phase);
 		x.xferAsciiString(&e.text);
+	}
+	if (x.isLoading() && v.current < 8)
+	{
+		log("[S-1324] unverified: this legacy save has no territory-award host mapping; the first strategic player is treated as the host");
 	}
 }
 
@@ -558,7 +597,7 @@ bool LivingWorldLogic::loadState(const GameSetup &data, const std::vector<std::u
 		}
 		for (const RevivalUnit &r : p.buildableHeroes)
 		{
-			if (!finite(r.experience))
+			if (!finite(r.experience) || r.rank < -1 || r.baseRank < -1 || ((r.rank == -1) != (r.baseRank == -1)))
 			{
 				return bad("player " + std::to_string(i) + "'s buildable hero '" + r.thing + "'");
 			}
@@ -710,6 +749,31 @@ bool LivingWorldLogic::loadState(const GameSetup &data, const std::vector<std::u
 			}
 		}
 	}
+	if (!playerOk(m_hostPlayer, true))
+	{
+		return bad("the territory-award host player");
+	}
+	std::vector<int> disputedRegions;
+	for (const RegionAwardDispute &d : m_regionAwardDisputes)
+	{
+		if (m_phase != PHASE_OWNERSHIP || !regionOk(d.region, false) || d.players.size() < 2 ||
+			std::find(disputedRegions.begin(), disputedRegions.end(), d.region) != disputedRegions.end())
+		{
+			return bad("an allied territory award's phase, region or claimants");
+		}
+		disputedRegions.push_back(d.region);
+		std::vector<int> seen;
+		for (int p : d.players)
+		{
+			if (!playerOk(p, false) || std::find(seen.begin(), seen.end(), p) != seen.end() ||
+				(!seen.empty() && hostile(seen.front(), p)))
+			{
+				return bad("an allied territory award names an invalid claimant");
+			}
+			seen.push_back(p);
+		}
+	}
+
 	int fought = 0;
 	for (const Battle &b : m_battles)
 	{
@@ -721,6 +785,15 @@ bool LivingWorldLogic::loadState(const GameSetup &data, const std::vector<std::u
 		if (b.resolution != Battle::PENDING && b.resolution != Battle::RESOLVED && !(battleSave && b.resolution == Battle::RTS_REQUESTED))
 		{
 			return bad("a battle's resolution " + std::to_string(b.resolution));
+		}
+		std::vector<int> retreated;
+		for (int p : b.retreatedPlayers)
+		{
+			if (!playerOk(p, false) || std::find(retreated.begin(), retreated.end(), p) != retreated.end())
+			{
+				return bad("a battle names an invalid retreated player");
+			}
+			retreated.push_back(p);
 		}
 		fought += b.resolution == Battle::RTS_REQUESTED ? 1 : 0;
 		for (int id : b.armies)

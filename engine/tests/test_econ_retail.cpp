@@ -235,6 +235,18 @@ TEST_CASE("econ retail: GameData's economy values of the install")
 	CHECK(es.goodLimit == 300);
 	CHECK(es.evilLimit == 600);
 	CHECK(es.powerLimit == 60);
+	CHECK(es.initialMaxRingLevel == 60); // RotWK _patch201ini.big GameData
+}
+
+TEST_CASE("wotr battles retail: BFME2 GameData still loads the shared InitialMaxRingLevel field")
+{
+	retailtest::Mount *mount = retailtest::bfme2Mount();
+	if (!mount) { retailtest::printSkip("BFME2 InitialMaxRingLevel"); return; }
+	REQUIRE_MESSAGE(mount->fs, mount->error);
+	EconomySettings settings;
+	std::string error;
+	REQUIRE_MESSAGE(EconomySettings::load(*mount->fs, settings, &error), error);
+	CHECK(settings.initialMaxRingLevel == 60); // BFME2 1.06 ini.big GameData
 }
 
 TEST_CASE("econ retail: seven factions, command points and income per minute derived by hand")

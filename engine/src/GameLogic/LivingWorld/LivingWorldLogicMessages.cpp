@@ -121,6 +121,12 @@ bool LivingWorldLogic::dispatchOrder(const ::GameMessage &m, int sender, std::st
 		}
 		return bad("the method " + std::to_string(a0) + " is not 1, 2 or 3");
 	}
+	case MSG_LW_RESOLVE_REGION_AWARD_DISPUTE: // RW 0x6BE6A6 switch 1719; BFME2 LivingWorldLogic.cpp: (region, chosen player)
+		if (!argInt(m, 0, a0) || !argInt(m, 1, a1))
+		{
+			return bad("the arguments are not (region, chosen claimant)");
+		}
+		return resolveRegionAwardDispute(sender, a0, a1, error);
 	case MSG_LW_ARMY_MOVE_REQUEST: // RW 0x6B5847: (army, region, location: the port moves region to region)
 		if (!argInt(m, 0, a0) || !argInt(m, 1, a1))
 		{

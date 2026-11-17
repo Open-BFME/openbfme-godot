@@ -17,8 +17,9 @@ namespace
 const char kMagic[8] = { 'O', 'B', 'F', 'M', 'E', 'R', 'E', 'P' };
 // WOTR2 milestone 6: 12 adds, after the header's network fields, the War of the Ring battle's start (milestone 7: with its building ids, the
 // entries' spawn ids and the players' hero records; format 12 was never released, so it holds them without a new number) (NewGameMessage::livingWorldBattle, which the lobby's
-// wire does not carry). Only a battle's recording is written as 12; every other recording stays 11, byte for byte
-constexpr std::uint32_t kBattleVersion = 12;
+// wire does not carry). Only a battle's recording uses the battle format; every other recording stays 11, byte for byte
+// 14 preserves revival rank/base rank; 13 preserves placement context; older battle starts remain bounded below.
+constexpr std::uint32_t kBattleVersion = 14;
 constexpr std::uint32_t kVersion = 11; // 11 (lane CHEAT-1): the GameInfo's Cheat Mode; 10: the build date; 9: the recording build (version, commit); 8 (lane ANTICHEAT-1): the VIEW record; 7 (lane OWNERFIX-2): the GameInfo slots' handicaps; 6 (lane SAVE-2): the execution profile switch record, duplicate records refused; 2: the profile identity, GameMessage format 2 (u32 argument counts), lost-command records; 3 (lane HERO-2): the GameInfo slots' Create-a-Hero records; 4 (lane RULES-1): the GameInfo's game rules and Legendary Heroes factor; 5 (lane UBER-1): the GameInfo's simulation profile
 enum : std::uint8_t
 {
@@ -102,6 +103,13 @@ void writeLivingWorldBattle(NetByteWriter &w, const LivingWorldBattleStart &b)
 			w.str(p.first);
 			w.str(p.second);
 		}
+		w.i32(a.placement.method);
+		w.i32(a.placement.side);
+		w.u8(a.placement.friendlyOwner ? 1 : 0);
+		w.str(a.placement.originRegion);
+		w.u32((std::uint32_t)a.placement.connections.size());
+		for (const std::string &region : a.placement.connections)
+			w.str(region);
 	}
 	w.i32(b.ownerSlot);
 	w.u32((std::uint32_t)b.ownerBuildings.size());
@@ -144,6 +152,8 @@ void writeLivingWorldBattle(NetByteWriter &w, const LivingWorldBattleStart &b)
 			w.str(h.spawnId);
 			w.f32(h.experience);
 			w.u8(h.dead ? 1 : 0);
+			w.i32(h.rank);
+			w.i32(h.baseRank);
 		}
 		w.f32(st.skillPoints);
 		w.i32(st.bonusPoints);
@@ -162,7 +172,7 @@ void writeLivingWorldBattle(NetByteWriter &w, const LivingWorldBattleStart &b)
 constexpr int kMaxBattleMemberQuantity = 1000;
 constexpr std::uint64_t kMaxBattleObjects = 10000;
 
-bool readLivingWorldBattle(NetByteReader &r, LivingWorldBattleStart &b, std::string *error)
+bool readLivingWorldBattle(NetByteReader &r, LivingWorldBattleStart &b, std::uint32_t version, std::string *error)
 {
 	// every count is bounded by the bytes left (a damaged count never allocates), every slot is one of the game's
 	auto count = [&](std::uint32_t perItem) -> std::uint32_t {
@@ -194,6 +204,19 @@ bool readLivingWorldBattle(NetByteReader &r, LivingWorldBattleStart &b, std::str
 			std::string spawn = r.str();
 			std::string gather = r.str();
 			a.spawnPoints.emplace_back(std::move(spawn), std::move(gather));
+		}
+		if (version >= 13)
+		{
+			a.placement.method = r.i32();
+			a.placement.side = r.i32();
+			const std::uint8_t friendly = r.u8();
+			a.placement.friendlyOwner = friendly != 0;
+			a.placement.originRegion = r.str();
+			const std::uint32_t connections = count(4);
+			if (connections == UINT32_MAX || a.placement.method < LivingWorldArmySpawnPlan::LEGACY || a.placement.method > LivingWorldArmySpawnPlan::WALK_ON || a.placement.side < 0 || a.placement.side >= MAX_SLOTS || friendly > 1)
+				return failWith(error, "the War of the Ring army's spawn plan is damaged");
+			for (std::uint32_t k = 0; k < connections; ++k)
+				a.placement.connections.push_back(r.str());
 		}
 		b.armies.push_back(std::move(a));
 	}
@@ -261,7 +284,7 @@ bool readLivingWorldBattle(NetByteReader &r, LivingWorldBattleStart &b, std::str
 		{
 			st.bonusUnits.push_back(r.str());
 		}
-		const std::uint32_t heroes = count(13);
+		const std::uint32_t heroes = count(version >= 14 ? 21 : 13);
 		if (heroes == UINT32_MAX)
 		{
 			return failWith(error, "the War of the Ring battle's player start " + std::to_string(i) + " is damaged");
@@ -273,7 +296,17 @@ bool readLivingWorldBattle(NetByteReader &r, LivingWorldBattleStart &b, std::str
 			hero.spawnId = r.str();
 			hero.experience = r.f32();
 			hero.dead = r.u8() != 0;
-			if (!std::isfinite(hero.experience))
+			if (version >= 14)
+			{
+				hero.rank = r.i32();
+				hero.baseRank = r.i32();
+			}
+			else if (hero.dead || hero.experience != 0.0f)
+			{
+				return failWith(error, "legacy War of the Ring battle hero record lacks its rank/base rank");
+			}
+			if (!std::isfinite(hero.experience) || hero.rank < -1 || hero.baseRank < -1 || ((hero.rank == -1) != (hero.baseRank == -1)) ||
+				((hero.dead || hero.experience != 0.0f) && hero.rank == -1))
 			{
 				return failWith(error, "the War of the Ring battle's player start " + std::to_string(i) + " is damaged");
 			}
@@ -314,7 +347,7 @@ bool parseReplay(const std::vector<std::uint8_t> &bytes, ReplayFile &out, std::s
 	}
 	NetByteReader r(bytes.data() + sizeof(kMagic), bytes.size() - sizeof(kMagic));
 	const std::uint32_t version = r.u32();
-	if (version != kBattleVersion && version != kVersion && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10)
+	if (version != kBattleVersion && version != 13 && version != 12 && version != kVersion && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10)
 	{
 		// lane SAVE-2: format 6 only adds the profile switch record, so a format 5 replay (UBER-1) still reads (without that record); lane OWNERFIX-2:
 		// format 7 only adds the slots' handicaps, so a format 5 / 6 replay or save still reads (every handicap 0)
@@ -364,7 +397,7 @@ bool parseReplay(const std::vector<std::uint8_t> &bytes, ReplayFile &out, std::s
 	h.network.localSlot = h.recordingSlot;
 	h.network.runAhead = r.i32();
 	h.network.crcInterval = r.i32();
-	if (version >= kBattleVersion && !readLivingWorldBattle(r, h.game.livingWorldBattle, error))
+	if (version >= 12 && !readLivingWorldBattle(r, h.game.livingWorldBattle, version, error))
 	{
 		return false;
 	}

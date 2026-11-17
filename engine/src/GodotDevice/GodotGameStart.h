@@ -23,6 +23,8 @@ struct LoadScreenInfo;
 
 namespace godot
 {
+Dictionary livingWorldArmySpawnToDictionary(const LivingWorldArmySpawnPlan &plan);
+bool livingWorldArmySpawnFromDictionary(const Dictionary &d, LivingWorldArmySpawnPlan &out, std::string *error);
 Dictionary newGameToDictionary(const NewGameMessage &message);
 // false + *error when a field is missing or out of range (never a default)
 bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string *error);

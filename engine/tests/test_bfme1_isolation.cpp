@@ -22,6 +22,7 @@
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/ExperienceWorld.h"
+#include "GameLogic/EconomySettings.h"
 #include "GameLogic/Module/PortalModules.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "GameLogic/Object/ExperienceTracker.h"
@@ -688,6 +689,9 @@ TEST_CASE("bfme1 isolation retail: installed BFME1 object world loads without ab
 		fs.mountArchive(std::move(archive), name, false);
 	}
 	REQUIRE(isBfme1Data(fs));
+	EconomySettings economySettings;
+	REQUIRE_MESSAGE(EconomySettings::load(fs, economySettings, &error), error);
+	CHECK(economySettings.initialMaxRingLevel == 60); // BFME1 INI.big; the shared parser must preserve startup.
 	RetailObjectWorld world(fs);
 	REQUIRE_MESSAGE(world.load(&error), error);
 	for (const auto &failure : world.report().errors)

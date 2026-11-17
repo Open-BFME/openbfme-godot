@@ -50,6 +50,39 @@ std::string toNativeUtf8(const String &s)
 }
 } // namespace
 
+Dictionary livingWorldArmySpawnToDictionary(const LivingWorldArmySpawnPlan &plan)
+{
+	Dictionary d;
+	d["method"] = plan.method;
+	d["side"] = plan.side;
+	d["friendly_owner"] = plan.friendlyOwner;
+	d["origin_region"] = String::utf8(plan.originRegion.c_str());
+	Array connections;
+	for (const std::string &region : plan.connections)
+		connections.push_back(String::utf8(region.c_str()));
+	d["connections"] = connections;
+	return d;
+}
+
+bool livingWorldArmySpawnFromDictionary(const Dictionary &d, LivingWorldArmySpawnPlan &out, std::string *error)
+{
+	LivingWorldArmySpawnPlan plan;
+	plan.method = (int)(int64_t)d.get("method", (int64_t)0);
+	plan.side = (int)(int64_t)d.get("side", (int64_t)0);
+	plan.friendlyOwner = (bool)d.get("friendly_owner", false);
+	plan.originRegion = toNativeUtf8(d.get("origin_region", String()));
+	const Array connections = d.get("connections", Array());
+	if (plan.method < LivingWorldArmySpawnPlan::LEGACY || plan.method > LivingWorldArmySpawnPlan::WALK_ON || plan.side < 0 || plan.side >= MAX_SLOTS || connections.size() > 10000)
+	{
+		if (error) *error = "the War of the Ring army's spawn plan is damaged";
+		return false;
+	}
+	for (int64_t i = 0; i < connections.size(); ++i)
+		plan.connections.push_back(toNativeUtf8(connections[i]));
+	out = std::move(plan);
+	return true;
+}
+
 Dictionary newGameToDictionary(const NewGameMessage &m)
 {
 	Dictionary d;
@@ -120,6 +153,8 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 				hd["spawn_id"] = String::utf8(h.spawnId.c_str());
 				hd["experience"] = h.experience;
 				hd["dead"] = h.dead;
+				hd["rank"] = h.rank;
+				hd["base_rank"] = h.baseRank;
 				heroes.push_back(hd);
 			}
 			sd["heroes"] = heroes;
@@ -141,6 +176,7 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 			ad["army"] = a.armyId;
 			ad["state"] = a.state;
 			ad["arrival_frame"] = a.arrivalFrame;
+			ad["placement"] = livingWorldArmySpawnToDictionary(a.placement);
 			Array points;
 			for (const auto &p : a.spawnPoints)
 			{
@@ -324,6 +360,8 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 			a.armyId = (int)(int64_t)ad.get("army", (int64_t)0);
 			a.state = (int)(int64_t)ad.get("state", (int64_t)4);
 			a.arrivalFrame = (int)(int64_t)ad.get("arrival_frame", (int64_t)0);
+			if (!livingWorldArmySpawnFromDictionary(ad.get("placement", Dictionary()), a.placement, error))
+				return false;
 			const Array points = ad.get("spawn_points", Array());
 			for (int64_t k = 0; k < points.size(); ++k)
 			{
@@ -357,6 +395,8 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 				hero.spawnId = toNativeUtf8(hd.get("spawn_id", String()));
 				hero.experience = (float)(double)hd.get("experience", 0.0);
 				hero.dead = (bool)hd.get("dead", false);
+				hero.rank = (int)(int64_t)hd.get("rank", (int64_t)-1);
+				hero.baseRank = (int)(int64_t)hd.get("base_rank", (int64_t)-1);
 				st.heroes.push_back(hero);
 			}
 			st.skillPoints = (float)(double)sd.get("skill_points", 0.0);

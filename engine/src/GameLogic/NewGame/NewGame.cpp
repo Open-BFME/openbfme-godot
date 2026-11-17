@@ -112,7 +112,8 @@ bool NewGame::prepareNewGame(const NewGameMessage &in, const PlayerTemplateStore
 	{
 		// lane WOTR-2 [S-1329 inference] (review r2): a War of the Ring battle has as many participants as the region's fight (allies too) on a map with its
 		// own number of start positions. When they outnumber the positions, the positions go by side: the k-th team (in slot order) takes position k and
-		// its players share it (allies side by side); more sides than positions is refused by name (retail's placement of a battle's players was not read)
+		// its players share it (allies side by side); more sides than positions is refused by name. The inspected retail free-start search exhausts
+		// to -1 (RW 0x62DA1E..0x62DB39; BFME2 GameLogicInit.cpp RVA 0x24485C), so it establishes no safe third-side placement rule. See docs/re/wotr-battles.md.
 		int participants = 0;
 		std::vector<int> sides; // team numbers, first appearance in slot order
 		for (int i = 0; i < MAX_SLOTS; ++i)

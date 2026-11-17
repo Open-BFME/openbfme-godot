@@ -858,3 +858,29 @@ TEST_CASE("save4a r1: a load never reads its destination: a bool, an enum and a 
 	CHECK(r == ALLIES);
 	CHECK(f == 1.0f);
 }
+
+TEST_CASE("wotr battles: a legacy active-battle snapshot cannot silently load the single-player rank ceiling")
+{
+	logictest::LogicWorld world;
+	world.logic->livingWorldTags().active = true;
+	XferSave legacy;
+	world.logic->xferCore(legacy);
+	CHECK(loadError(legacy.data(), [&](Xfer &x) { world.logic->xferCore(x); }) ==
+		"legacy War of the Ring battle snapshot lacks its InitialMaxRingLevel rank ceiling");
+	for (int i = 0; i < world.players.getPlayerCount(); ++i)
+	{
+		Player *player = world.players.getNthPlayer(i);
+		if (player->getPlayerTemplate()) player->initScience(SpellGameMode{ false, false, 60 });
+	}
+	XferSave modern;
+	world.logic->xferCore(modern);
+	CHECK(loadError(modern.data(), [&](Xfer &x) { world.logic->xferCore(x); }) == "(loaded)");
+	world.logic->livingWorldTags().active = false;
+	for (int i = 0; i < world.players.getPlayerCount(); ++i)
+	{
+		world.players.getNthPlayer(i)->initScience(SpellGameMode{});
+	}
+	XferSave ordinary;
+	world.logic->xferCore(ordinary);
+	CHECK(loadError(ordinary.data(), [&](Xfer &x) { world.logic->xferCore(x); }) == "(loaded)");
+}
