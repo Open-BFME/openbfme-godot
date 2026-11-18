@@ -509,6 +509,7 @@ target_sources(openbfme_core PRIVATE
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.cpp
+    src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.cpp # lane LOCAL-28 (object lights, both editions)
     src/GameClient/MapObjectDrawables.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.cpp)
 # ---- LUA-1 sources (Lua scripting: XML reader, event registry, engine, bindings) ----
@@ -985,6 +986,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail.cpp
     tests/test_w3d_draw_runtime.cpp
     tests/test_w3d_draw_retail_units.cpp
+    # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
+    tests/test_local_28.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp

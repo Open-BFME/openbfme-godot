@@ -517,6 +517,13 @@ void resolveDrawModel(MapDrawModule &m, const ModelConditionFlags &flags, const 
 		return;
 	case W3D_DRAWKIND_NOT_DRAWN:
 	default:
+		if (m.className == "W3DLightDraw")
+		{
+			// lane LOCAL-28: an object's W3DLightDraw makes its light (Drawable::addEntry -> the dynamic light pool, S-687); a map object placed with it
+			// stays an effect draw of this static path, which owns no light pool, so a placed light draws nothing (S-113)
+			m.notDrawnReason = m.className + " is an effect draw on a map object, a placed light is not drawn (S-113, lane LOCAL-28)";
+			return;
+		}
 		m.notDrawnReason = m.className + " is an effect draw (S-113)";
 		return;
 	}
