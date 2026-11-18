@@ -62,7 +62,7 @@ HordeContain::HordeContain(Thing *thing, const HordeContainBehaviorData *data)
 	}
 	else
 	{
-		logic.aiWorld()->noteStop(HordeContain::movementStop());
+		if(!obj->getTemplate()->bfme1Data())logic.aiWorld()->noteStop(HordeContain::movementStop());
 	}
 }
 
@@ -80,6 +80,8 @@ const char *HordeContain::movementStop()
 		"explicit-goal validity check ignores the factory's footprint for that member until the mover clears the ignore (its ignore timer), whatever the member's position";
 }
 
+void registerBfme1HordeVariants(ModuleFactory &modules);
+
 void HordeContain::registerClasses(ModuleFactory &modules)
 {
 	for (const char *name : { "HordeContain", "HorseHordeContain" })
@@ -88,6 +90,7 @@ void HordeContain::registerClasses(ModuleFactory &modules)
 			return std::make_unique<HordeContain>(thing, dynamic_cast<const HordeContainBehaviorData *>(data));
 		});
 	}
+	registerBfme1HordeVariants(modules);
 }
 
 // the slot table is built when the module exists and its object is complete (RW 0x877751, from the contain's creation)
@@ -126,6 +129,7 @@ void HordeContain::setMeleeEngaged(bool on)
 	m_meleeEngaged = on;
 	if (!on)
 	{
+		endNativeMelee(); // BFME1 0x0023D850; also release frozen state on emotion/command exits.
 		m_dirty = true; // endMelee: the survivors walk back to their slots
 	}
 }
@@ -702,6 +706,7 @@ void HordeContain::placeMember(Object *member)
 		float slotAngle = 0.0f;
 		pos = m_core->getSlotWorldPos(member->getID(), owner, &slotAngle);
 	}
+	if(hasVariantMemberPositions())pos=getMemberFormationPosition(member);
 	pos.z = horde->logic().getGroundHeight(pos.x, pos.y); // the same ground-height rule as the object loop (MapObjectDrawables)
 	member->setPosition(&pos);
 	member->setOrientation(owner.angle); // inference: a member faces its horde's angle (S-149)

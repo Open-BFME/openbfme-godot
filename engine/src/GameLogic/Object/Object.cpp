@@ -302,6 +302,7 @@ void Object::friend_setContainedBy(Object *container)
 {
 	const bool left = m_containedBy != nullptr && container == nullptr;
 	m_containedBy = container;
+	if(auto *world=m_logic.aiWorld())world->collisionObjectChanged(*this);
 	// lane PERF-HD (Uber only): the emotion tracker of a contained object sleeps for ever (EmotionTrackerUpdate::update); it is woken when the object
 	// leaves its container, for the next frame (friend_awakenUpdateModule ignores a wake of the running module and one for the frame it already has)
 	if (left && m_logic.uber())
@@ -430,6 +431,7 @@ void Object::reactToTransformChange(const Coord3D *oldPos, float)
 	{
 		shroud->markDirty(*this, false); // RW 0x68B862 -> 0xB4E290 (VIS-1): the shroud record re-covers and re-looks in the next shroud update
 	}
+	if(auto *world=m_logic.aiWorld())world->collisionObjectChanged(*this);
 	m_logic.partition().markDirty(*this); // RW 0x68B862 / 0x68B244 -> 0xA39570 (lane MODULES-2): re-linked in the next partition update
 	if (oldPos && (oldPos->x != getPosition()->x || oldPos->y != getPosition()->y || oldPos->z != getPosition()->z))
 	{
@@ -696,7 +698,7 @@ void Object::geometryChanged(bool pathfind)
 	{
 		shroud->markDirty(*this, true); // + 0x4E4 -> RW 0xB4E2A0
 	}
-	// + 0x4EC -> RW 0xB6C700: the collision manager's dirty list (no collision manager here, S-363 / S-780)
+	if(auto *world=m_logic.aiWorld())world->collisionObjectChanged(*this); // collision source dirty list
 	m_logic.partition().markDirty(*this); // + 0x4E8 -> RW 0xA39570
 	// + 0x84 -> RW 0x6713E6: the drawable's draw modules (vslot 0x9C), client
 	if (pathfind)
@@ -1167,6 +1169,15 @@ void Object::removeFromPlayerCommandPoints()
 		m_logic.economy().objectLost(*owner, *this);
 		m_commandPointsCounted = false;
 	}
+}
+
+void Object::setBfme1IndicatorColorIndex(int index)
+{
+	if (!getTemplate()->bfme1Data()) throw std::logic_error("BFME1 indicator-color callback used on another edition");
+	// 0x001BF2E0 stores even an unchanged value, then 0x001BF2A0
+	// visits every behavior module in array order (no change-only gate).
+	m_bfme1IndicatorColorIndex = index;
+	for (const auto &module : m_modules) module->onBfme1IndicatorColorIndexChanged(index);
 }
 
 void Object::friend_onBuildComplete()
@@ -1886,6 +1897,15 @@ bool Object::affectedByUpgrade(const UpgradeTemplate *upgrade) const
 	return false;
 }
 
+// BFME1 0x001C36B0: clear all object bits, then invoke every mux's
+// removal/clear-latch pair in module order. RW removeUpgrade is unchanged.
+void Object::resetBfme1Upgrades()
+{
+	m_upgradeMask = UpgradeMaskType{};
+	for (const auto &module : m_modules)
+		if (auto *mux = module->getUpgrade()) mux->resetForBfme1Transfer();
+}
+
 void Object::removeUpgrade(const UpgradeTemplate *upgrade)
 {
 	if (!upgrade || upgrade->getMaskBit() < 0)
@@ -2525,6 +2545,9 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 	h.addU32(m_originalTeamID); // lane HERO-2 / BACKLOG4: the team setTeam last recorded
 	h.addU32(m_speechLeader);                                 // lane HERO-2
 	h.addBool(m_receivingDifficultyBonus);                    // lane CAMP-1H
+	if (getTemplate()->bfme1Data()) h.addI32(m_bfme1IndicatorColorIndex);
+	if(m_bfme1CollisionIgnore){h.addU32(0x3A0);h.addU32(m_bfme1CollisionIgnore);}
+	if(m_bfme1FiringTarget){h.addU32(0x1B2D80);h.addU32(m_bfme1FiringTarget);}
 	if (m_legendaryFactor != 1)
 	{
 		h.addI32(m_legendaryFactor); // lane RULES-1: only a legendary hero adds it (every other object keeps its hash)
@@ -2775,10 +2798,13 @@ void Object::setScriptStatus(std::uint8_t bits, bool set)
 void Object::xfer(Xfer &x)
 {
 	// lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4). Lane THREATLEVEL-1: version 3 the script threat cache (+ 0x464 /
-	// + 0x468), written only once a refresh armed it (every other object keeps version 2's block)
+	// + 0x468) in BFME2/RotWK, written only once a refresh armed it. BFME1 already uses versions 3/4 for indicator color and collision/firing IDs:
+	// keep those layouts, and use version 5 only when its object also has the new shared threat cache. These are OpenBFME snapshot versions (S-4190).
+	const bool bfme1 = getTemplate()->bfme1Data();
 	const bool threatArmed = m_scriptThreatDeadline != 0 || m_scriptThreat != 0.0f;
-	XferVersion version{ 1, (std::uint8_t)(x.isLoading() || threatArmed ? 3 : 2) };
+	XferVersion version{ 1, (std::uint8_t)(x.isLoading() ? 5 : (bfme1 ? (threatArmed ? 5 : 4) : (threatArmed ? 3 : 2))) };
 	x.xferVersion(version);
+	if (!bfme1 && version.current >= 4) throw XferException("BFME1 object snapshot loaded into another edition");
 	// a load never reads its destination: the save-side values are built from the members only when saving (SAVES.md, rules for xfer authors)
 	const bool saving = !x.isLoading();
 	ObjectID id = saving ? m_id : (ObjectID)INVALID_ID;
@@ -2845,6 +2871,13 @@ void Object::xfer(Xfer &x)
 	}
 	x.xferObjectID(&m_speechLeader);
 	x.xferBool(&m_receivingDifficultyBonus);
+	if (bfme1 && version.current >= 3)
+	{
+		x.xferInt(&m_bfme1IndicatorColorIndex);
+	}
+	else if (x.isLoading()) m_bfme1IndicatorColorIndex = -1;
+	if(bfme1 && version.current>=4){x.xferObjectID(&m_bfme1CollisionIgnore);x.xferObjectID(&m_bfme1FiringTarget);}
+	else if(x.isLoading()){m_bfme1CollisionIgnore=INVALID_ID;m_bfme1FiringTarget=INVALID_ID;}
 	x.xferByte(&m_legendaryFactor);
 	SnapshotXfer::checkRange(m_legendaryFactor, LegendaryHeroes::kOff, LegendaryHeroes::kMax, "an object's Legendary Heroes factor");
 	x.xferObjectID(&m_capturerID);
@@ -2880,7 +2913,7 @@ void Object::xfer(Xfer &x)
 	// lane THREATLEVEL-1 (Sol review): the script threat cache. RotWK's Object::xfer (RW 0x697F28) does not write it (a retail load starts from the
 	// constructor's cleared pair); BFME2 1.06's does (+ 0x448 then + 0x444, ObjectDoXfer.cpp:715-716). The OpenBFME snapshot keeps it in both editions:
 	// the state hash covers it, and a load must give the saved hash back (CommandLogLoad::beginSnapshot refuses anything else)
-	if (version.current >= 3)
+	if (version.current >= (bfme1 ? 5 : 3))
 	{
 		x.xferUnsignedInt(&m_scriptThreatDeadline);
 		x.xferReal(&m_scriptThreat);
@@ -3035,4 +3068,10 @@ void Object::xfer(Xfer &x)
 		m->xfer(x);
 		x.endBlock();
 	}
+}
+
+void Object::friend_setOutOfCollisionManager(bool out)
+{
+	m_outOfCollisionManager=out;
+	if(auto *world=m_logic.aiWorld())world->collisionObjectChanged(*this);
 }

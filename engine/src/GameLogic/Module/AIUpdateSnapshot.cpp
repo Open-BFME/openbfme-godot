@@ -15,6 +15,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 
 #include "Common/Xfer.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/AI/AIXfer.h"
 #include "Common/PlayerList.h"
@@ -74,7 +75,7 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	// version 4 (lane BFME2CAMP1, M4): the team to guard (AI + 0x68), written only by an AI that has one
 	// version 5 (lane MODCOMPAT-MOD1): the machine kept while a temporary machine runs (RW AI + 0x34, beginTemporaryStateMachine), last, written only
 	// by an AI that keeps one
-	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_temporaryKeptMachine ? 5 : (m_guardTeam != 0 ? 4 : (m_areaToGuard != -1 || m_attackInfoOverride ? 3 : 2))) };
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_nativeMelee.allowedToChase ? 8 : (m_nativeMelee.stopRetaliation ? 7 : (m_nativeMelee.autoTarget ? 6 : (m_temporaryKeptMachine ? 5 : (m_guardTeam != 0 ? 4 : (m_areaToGuard != -1 || m_attackInfoOverride ? 3 : 2)))))) };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	for (std::uint32_t &w : m_luaConditionSnapshot)
@@ -329,6 +330,17 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	{
 		m_temporaryKeptMachine->xfer(x);
 	}
+	if(v.current>=6)x.xferBool(&m_nativeMelee.autoTarget);
+	else if(loading)m_nativeMelee.autoTarget=false;
+	if(loading && m_nativeMelee.autoTarget && !getObject()->getTemplate()->bfme1Data())throw XferException("BFME1 melee acquisition state in a later-edition AI");
+	if(v.current>=7)x.xferBool(&m_nativeMelee.stopRetaliation);
+	else if(loading)m_nativeMelee.stopRetaliation=false;
+	if(loading && m_nativeMelee.stopRetaliation && !getObject()->getTemplate()->bfme1Data())throw XferException("BFME1 retaliation state in a later-edition AI");
+	if(v.current>=8)x.xferBool(&m_nativeMelee.allowedToChase);
+	else if(loading)m_nativeMelee.allowedToChase=false;
+	if(loading && m_nativeMelee.allowedToChase && !getObject()->getTemplate()->bfme1Data())throw XferException("BFME1 allowed-to-chase state in a later-edition AI");
+	if(loading)m_nativeMelee.responding=false; // transient callback stack, never a suspended continuation.
+
 }
 
 void HordeAIUpdate::xferAIStateBody(Xfer &x)

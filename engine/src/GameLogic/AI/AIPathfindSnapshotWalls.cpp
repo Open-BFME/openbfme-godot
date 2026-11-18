@@ -96,7 +96,8 @@ void xferInfo(Xfer &x, Pathfinder::WallState::Info &in)
 void Pathfinder::xferWalls(Xfer &x, WallState &w)
 {
 	const bool loading = x.isLoading();
-	XferVersion v{ 1, 2 }; // 2: the raised layers' wall connect cells (review of #161)
+	bool bridges=false;for(const auto &r:m_raised)bridges=bridges || bool(r.bridge);
+	XferVersion v{ 1, (std::uint8_t)(loading || bridges ? 3 : 2) }; // 2: the raised layers' wall connect cells (review of #161)
 	x.xferVersion(v);
 	const int version = v.current;
 	w.connectsSaved = version >= 2;
@@ -175,6 +176,7 @@ void Pathfinder::xferWalls(Xfer &x, WallState &w)
 		}
 		if (!loading)
 		{
+			r.bridge = mine->bridge;
 			r.areas = mine->areas;
 			r.height = mine->height;
 			r.origin = mine->origin;
@@ -191,6 +193,15 @@ void Pathfinder::xferWalls(Xfer &x, WallState &w)
 		{
 			x.xferUnsignedInt(&area.first);
 			xferSurfaceW(x, area.second);
+		}
+		if(version>=3){
+			bool bridge=bool(r.bridge);x.xferBool(&bridge);
+			if(bridge){
+				if(loading)r.bridge=std::make_shared<Bfme1BridgeGeometry>();
+				auto &b=*r.bridge;b.layer=l;x.xferUnsignedInt(&b.objectID);
+				for(auto *p:{&b.from,&b.to,&b.fromLeft,&b.fromRight,&b.toLeft,&b.toRight}) AIXfer::coord(x,*p);
+				if(loading && (!r.areas.empty() || l<LAYER_TOP || l>LAYER_RAISED_LAST || (m_world && !m_world->usesScalarReservations())))throw XferException("pathfinder: invalid BFME1 Bridge layer");
+			}else r.bridge.reset();
 		}
 		x.xferInt(&r.height);
 		AIXfer::icoord2(x, r.origin);
@@ -501,6 +512,7 @@ void Pathfinder::xferWalls(Xfer &x, WallState &w)
 	}
 	for (const WallState::Raised &r : w.raised)
 	{
+		if(r.bridge && r.bridge->objectID)object(r.bridge->objectID,"the object of a BFME1 Bridge");
 		for (const auto &area : r.areas)
 		{
 			object(area.first, "the owner of a raised area");
@@ -539,6 +551,7 @@ void Pathfinder::applyWalls(WallState &w, bool loaded)
 		{
 			continue;
 		}
+		mine.bridge = std::move(r.bridge);
 		mine.areas = std::move(r.areas);
 		mine.height = r.height;
 		mine.origin = r.origin;

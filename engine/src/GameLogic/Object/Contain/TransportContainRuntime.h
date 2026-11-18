@@ -53,7 +53,7 @@ class ModuleFactory;
 class ThingTemplate;
 struct TransportContainModuleData;
 
-class TransportContain : public OpenContain
+class TransportContain : public OpenContain, public CreateModuleInterface
 {
 public:
 	OBFME_MODULE_XFER(TransportContain) // lane SAVE-4b
@@ -66,6 +66,9 @@ public:
 
 	// ---- BehaviorModule ----
 	void onObjectCreated() override; // the payload (main slot 0x70, INFERENCE S-1103: RW's caller is not located)
+	CreateModuleInterface *getCreate() override;
+	void onCreate() override {} // BFME1 Create interface +0x34, slot 0: 0x0022CDD0 (ret).
+	void onBuildComplete() override; // BFME1 slot 1: 0x0022CDE0 -> virtual createPayload.
 	void crc(StateHasher &hasher) const override;
 	// ---- UpdateModule ----
 	UpdateSleepTime update() override; // RW 0x86B86D
@@ -110,6 +113,7 @@ protected:
 	// the creator RW 0x86A104: one object of `t` for the container's team, its create modules' onBuildComplete, added through `contain` when valid
 	Object *createPayloadObject(const ThingTemplate &t, ContainModuleInterface &contain, bool checkCapacity);
 	// RW 0x86A43E (contain slot 0xEC): the container's WEAPONSTATE_ONE / TWO / THREE of the rider's KindOf; RW 0x86A4E4 (slot 0xF0) clears them
+	void fadePassenger(Object &passenger, bool entering);
 	void setWeaponStateOfRider(const Object &rider);
 	void clearWeaponStates();
 	// RW 0x86A731 (main slot 0x78): the container's PASSENGER_TYPE_ONE / TWO weapon set flags from its riders' KindOf

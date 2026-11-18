@@ -12,6 +12,8 @@
 #include "GameLogic/SnapshotXfer.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AI/AIEditionRules.h"
+#include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 #include "GameLogic/AI/TurretAI.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -234,6 +236,8 @@ public:
 			return CircleDistanceSquared(sourcePos, source.boundingCircleRadius, victim.position, victim.boundingCircleRadius) <= SimMath::mulf32(m_meleeReach, m_meleeReach);
 		}
 		Object &self = m_w.owner();
+		// BFME1 Weapon 0x1E69E0 -> Pathfinder 0x3EA570.
+		if(AIEditionRules::forObject(self).bfme1)return Bfme1Melee::view(self,sourcePos,*const_cast<Object *>(victim.object));
 		const Weapon *cur = m_w.currentWeapon();
 		if (!cur || !cur->getTemplate() || !cur->getTemplate()->m_meleeWeapon)
 		{
@@ -341,6 +345,10 @@ ObjectWeapons::ObjectWeapons(Object &owner)
 	updateWeaponSet();
 	makeCrushWeapons();
 }
+
+ObjectWeapons::ObjectWeapons(Object &owner,RangeContextOnly)
+ :m_owner(&owner),m_host(std::make_unique<Host>(*this)),m_rangeHost(std::make_unique<RangeHost>(*this)),m_trackerHost(std::make_unique<TrackerHost>(*this))
+{}
 
 // lane HORDE-2 (RW 0x693E19-0x693E79): the template's CrushWeapon (+0x610) and CrushRevengeWeapon (+0x614) become weapons of slot 0 owned by the object, loaded at once
 void ObjectWeapons::makeCrushWeapons()
@@ -1321,6 +1329,27 @@ bool ObjectWeapons::isWithinAttackRange(const Object &victim, float extra, bool 
 	return isSlotWithinAttackRange(m_curSlot, victim, extra, checkMin);
 }
 
+bool ObjectWeapons::providedWeaponWithinRange(Object &owner,const Weapon &weapon,const Object &victim)
+{
+ if(!weapon.getTemplate())return false;
+ // Host/RangeHost read their owner through this adapter; no selection,
+ // reload or firing is performed for the representative's weapon.
+ ObjectWeapons *existing=owner.getWeapons();
+ if(existing) {
+  WeaponBonus bonus;weapon.computeBonus(*existing->m_host,0,bonus);
+  const auto src=existing->subjectOf(owner),vic=existing->subjectOf(victim);
+  existing->m_rangeHost->m_meleeReach=WeaponGetAttackRange(*weapon.getTemplate(),bonus,*existing->m_rangeHost,src,SimMath::subf32(vic.position.z,src.position.z));
+  return WeaponIsWithinAttackRange(*weapon.getTemplate(),bonus,*existing->m_rangeHost,src,src.position,&vic,vic.position,0,true);
+ }
+ // A horde without a WeaponSet still owns a native WeaponSet and its
+ // range context. Construct only those three host views, without weapons.
+ ObjectWeapons adapter(owner,RangeContextOnly{});
+ WeaponBonus bonus;weapon.computeBonus(*adapter.m_host,0,bonus);
+ const auto src=adapter.subjectOf(owner),vic=adapter.subjectOf(victim);
+ adapter.m_rangeHost->m_meleeReach=WeaponGetAttackRange(*weapon.getTemplate(),bonus,*adapter.m_rangeHost,src,SimMath::subf32(vic.position.z,src.position.z));
+ return WeaponIsWithinAttackRange(*weapon.getTemplate(),bonus,*adapter.m_rangeHost,src,src.position,&vic,vic.position,0,true);
+}
+
 bool ObjectWeapons::isSlotWithinAttackRange(int slot, const Object &victim, float extra, bool checkMin) const
 {
 	const Weapon *w = weaponInSlot(slot);
@@ -1635,6 +1664,10 @@ bool ObjectWeapons::fireCurrentWeapon(Object *victim, const Coord3D *pos)
 	if (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu)
 	{
 		releaseWeaponLock(LOCKED_TEMPORARILY); // ZH: unlock when loaded; RW: IdleAfterFiringDelay == -1 releases it after every shot
+	}
+	// BFME1 FiringTracker 0x1B3510: only a HORDE_MEMBER shot replaces +0x38.
+	if(m_owner->getTemplate()->bfme1Data() && victim && victim->testStatus((unsigned)CombatNames::status("HORDE_MEMBER"))) {
+		Object *horde=victim->getHordeObject(false);m_owner->setBfme1FiringTarget(horde?horde->getID():INVALID_ID);
 	}
 	m_tracker.shotFired(*m_trackerHost, *w, victim ? victim->getID() : 0u, args.target.victimPosition, false);
 	// RW 0x8E3411 .. 0x8E34DD (inside FiringTracker::shotFired): the weapon's FireSound (template + 0xC8) attached to the shooter, looped while it keeps

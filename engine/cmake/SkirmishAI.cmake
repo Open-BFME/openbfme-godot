@@ -2,6 +2,7 @@
 # Included from engine/CMakeLists.txt so the lane's file lists stay out of the shared list. Every source here is simulation code (the audit manifest).
 
 set(OPENBFME_SKIRMISH_AI_SOURCES
+    src/GameLogic/SkirmishAI/Bfme1SkirmishAI.cpp
     src/GameLogic/SkirmishAI/SkirmishAIData.cpp
     src/GameLogic/SkirmishAI/SkirmishAIManager.cpp
     src/GameLogic/SkirmishAI/AIBaseBuilder.cpp
@@ -12,6 +13,7 @@ set(OPENBFME_SKIRMISH_AI_SOURCES
     src/GameLogic/SkirmishAI/AIUpgrade.cpp)
 
 set(OPENBFME_SKIRMISH_AI_TESTS
+    tests/test_bfme1_skirmish_ai.cpp
     tests/test_skirmish_ai_data.cpp
     tests/test_skirmish_ai_manager.cpp
     tests/test_skirmish_ai_base.cpp

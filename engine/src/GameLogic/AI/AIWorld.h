@@ -46,6 +46,7 @@
 class ArchiveFileSystem;
 class AIUpdateInterface;
 class GameLogic;
+class Bfme1ContactManager;
 class Object;
 class StateHasher;
 class ThingTemplate;
@@ -103,6 +104,7 @@ public:
 	float getFenceWidth() const override;
 	float getFenceXOffset() const override;
 	float getPathfindDiameter() const override;
+	unsigned containedMemberCount() const override;
 	int getSlopeLimitIndex() const override;
 	bool canPathThroughGates() const override;
 	bool isRubble() const override;
@@ -237,6 +239,10 @@ public:
 	// the overlap pass of the collision manager for mobile units: every pair of AI units whose footprints overlap meets in
 	// AIUpdateInterface::onCollide (RW 0x66E233), both ways, in id order (phase 2, RW 0x62E93B)
 	void processCollisions();
+	void collisionObjectChanged(Object &);
+	bool usesNativeContacts() const { return m_bfme1Contacts != nullptr; }
+	const Bfme1ContactManager *nativeContacts() const { return m_bfme1Contacts.get(); }
+	bool usesScalarReservations() const override { return m_bfme1Contacts!=nullptr; }
 	// lane MODCOMPAT-MOD1 (S-260 / S-780): RotWK's collision manager also holds the objects without an AI (every object whose KindOf has no NO_COLLIDE and no
 	// HORDE, RW 0x68E31F -> 0xB6C470); the overlap pass above has only the AI units, so the crates (objects with a crate collide, CrateCollide::isCrate) get
 	// their own pass after it in the same row: each live crate in id order meets the AI objects (no NO_COLLIDE, no HORDE) whose shapes overlap its own,
@@ -304,6 +310,7 @@ private:
 	std::unique_ptr<INIEnvironment> m_env;
 	std::unique_ptr<Pathfinder> m_pathfinder;
 	std::unique_ptr<AIMoveWorld> m_moveWorld;
+	std::unique_ptr<Bfme1ContactManager> m_bfme1Contacts;
 	std::vector<std::unique_ptr<ObjectPathfindAdapter>> m_adapters; // index = object id
 	std::map<PathfindObjectID, AIUpdateInterface *> m_ais;
 	std::map<const ThingTemplate *, std::unique_ptr<ObjectMovementInfo>> m_info;

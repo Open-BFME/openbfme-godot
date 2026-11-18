@@ -93,147 +93,7 @@ MapObjectLoopResult MapObjectLoop::create(GameLogic &logic, const LoadedMap &map
 			}
 			obj->friend_onBuildComplete(); // RW 0x62E176: a map object is complete at birth (the claim of a resource building, ...)
 			team->setActive();             // lane CAMP-1H: RW 0x62E17B .. 0x62E185: its team is activated (its OnCreate script runs at the next team update)
-			// updateObjValuesFromMapProperties (RW 0x695A06): the properties this layer applies
-			bool exists = false;
-			const std::string objName = o.m_properties.getAsciiString("objectName", &exists);
-			if (exists)
-			{
-				obj->setName(objName);
-			}
-			const int health = o.m_properties.getInt("objectInitialHealth", &exists);
-			if (exists)
-			{
-				if (BodyModuleInterface *b = obj->getBodyModule())
-				{
-					b->setInitialHealth(health);
-					++result.initialHealthApplied;
-				}
-				else if (health != 100)
-				{
-					++result.unportedKeys["objectInitialHealth (the object has no body module)"];
-				}
-			}
-			// lane SCRIPT-2: RW 0x695C43 .. 0x695D19, each when the dict has the key: objectEnabled -> script status 1 = !value, objectPowered -> 2 = !value
-			// (Object::setScriptStatus, RW 0x69317D), objectIndestructible -> the body's setIndestructible (vslot 0x88), objectUnsellable -> 4 = value,
-			// objectTargetable -> 0x10 = value (then the drawable's vslot 0x34: client)
-			{
-				const struct
-				{
-					const char *key;
-					std::uint8_t bit;
-					bool inverted;
-				} statusKeys[] = { { "objectEnabled", 1, true }, { "objectPowered", 2, true } };
-				for (const auto &k : statusKeys)
-				{
-					const bool v = o.m_properties.getBool(k.key, &exists);
-					if (exists)
-					{
-						obj->setScriptStatus(k.bit, k.inverted ? !v : v);
-					}
-				}
-			}
-			// lane SCRIPT-3: RW 0x695B35 .. 0x695B5C: objectAggressiveness -> the AI's attitude (RW 0x66E12A)
-			const int aggressiveness = o.m_properties.getInt("objectAggressiveness", &exists);
-			if (exists && obj->getAIUpdateInterface())
-			{
-				obj->getAIUpdateInterface()->setAttitude(aggressiveness);
-			}
-			const bool indestructible = o.m_properties.getBool("objectIndestructible", &exists);
-			if (exists)
-			{
-				if (BodyModuleInterface *b = obj->getBodyModule())
-				{
-					b->setIndestructible(indestructible);
-					result.indestructibleApplied += indestructible ? 1 : 0;
-				}
-				// RW 0x86A104 / 0x86B169 (the contain's payload creation): a member made for an indestructible container is made indestructible before it
-				// enters. Retail creates a horde's payload after these properties (its first update); this port makes it with the object, so the members
-				// the payload already holds take the flag here (the same end state)
-				ContainModuleInterface *c = obj->getContain();
-				if (indestructible && c && c->getContainedItemsList())
-				{
-					for (Object *m : *c->getContainedItemsList())
-					{
-						if (m && m->getBodyModule())
-						{
-							m->getBodyModule()->setIndestructible(true);
-						}
-					}
-				}
-			}
-			{
-				const struct
-				{
-					const char *key;
-					std::uint8_t bit;
-				} statusKeys[] = { { "objectUnsellable", 4 }, { "objectTargetable", 0x10 } };
-				for (const auto &k : statusKeys)
-				{
-					const bool v = o.m_properties.getBool(k.key, &exists);
-					if (exists)
-					{
-						obj->setScriptStatus(k.bit, v);
-					}
-				}
-			}
-			for (const char *key : kUnportedKeys)
-			{
-				if (o.m_properties.known(key))
-				{
-					++result.unportedKeys[key];
-				}
-			}
-			// lane UPGRADE-1. RW 0x695D87 .. 0x695E41: objectGrantUpgrade0, 1, ... ("%s%d", RW 0xC1222C) while the value is not empty; every name that is an upgrade
-			// is given (Object::giveUpgrade, RW 0x69388B)
-			for (int i = 0;; ++i)
-			{
-				const std::string name = o.m_properties.getAsciiString("objectGrantUpgrade" + std::to_string(i), &exists);
-				if (name.empty())
-				{
-					break;
-				}
-				if (const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(name) : nullptr)
-				{
-					obj->giveUpgrade(u);
-					++result.upgradesGranted;
-				}
-			}
-			// RW 0x6946DA -> 0x693A9A: objectUpgradesList, whitespace separated names; an upgrade of a non-HORDE object is given (RW 0x69388B); a HORDE keeps it in
-			// its contain (slots 0xB4 / 0xB8 of RW 0x68C866's interface), which is not ported (S-483): counted
-			const std::string list = o.m_properties.getAsciiString("objectUpgradesList", &exists);
-			if (exists)
-			{
-				static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE"); // RW 0x693AC6: tt + 0x115 & 0x20
-				size_t pos = 0;
-				while (pos < list.size())
-				{
-					const size_t b = list.find_first_not_of(" \t\r\n", pos);
-					if (b == std::string::npos)
-					{
-						break;
-					}
-					size_t e = list.find_first_of(" \t\r\n", b);
-					if (e == std::string::npos)
-					{
-						e = list.size();
-					}
-					pos = e;
-					const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(list.substr(b, e - b)) : nullptr;
-					if (!u)
-					{
-						continue;
-					}
-					if (kHorde >= 0 && obj->isKindOf((unsigned)kHorde))
-					{
-						++result.unportedKeys["objectUpgradesList on a HORDE (its contain keeps the upgrade, S-483)"];
-					}
-					else
-					{
-						obj->giveUpgrade(u);
-						++result.upgradesGranted;
-					}
-				}
-			}
+			applyProperties(*obj,o.m_properties,result);
 			if (AIWorld *ai = logic.aiWorld())
 			{
 				// lane WALL-4, RW 0x62E14C .. 0x62E15F (BFME2 decomp GameLogicInit.cpp:5574): once its properties are applied the object takes the layer
@@ -310,4 +170,150 @@ std::vector<std::string> MapObjectLoop::stopLines()
 	return {
 		"[S-150] live map objects: the order (IsBridge / WALK_ON_TOP_OF_WALL objects first, then the list order), the team lookup without the skirmish name remapping of RW 0x6A9031 (an owner that names no team gets the neutral default team), the application of objectInitialHealth through the body, and the unported property keys are inference or not ported (UPGRADE-1 applies objectGrantUpgrade<n> and objectUpgradesList, RW 0x695D87 / 0x693A9A; a HORDE's list stays with its contain in RW and is counted here, S-483); horde members are made by a live HordeContain (S-149)",
 	};
+}
+
+void MapObjectLoop::applyProperties(Object &object,const Dict &properties,MapObjectLoopResult &result)
+{
+	auto *obj=&object;
+	// updateObjValuesFromMapProperties (RW 0x695A06): the properties this layer applies
+	bool exists = false;
+	const std::string objName = properties.getAsciiString("objectName", &exists);
+	if (exists)
+	{
+		obj->setName(objName);
+	}
+	const int health = properties.getInt("objectInitialHealth", &exists);
+	if (exists)
+	{
+		if (BodyModuleInterface *b = obj->getBodyModule())
+		{
+			b->setInitialHealth(health);
+			++result.initialHealthApplied;
+		}
+		else if (health != 100)
+		{
+			++result.unportedKeys["objectInitialHealth (the object has no body module)"];
+		}
+	}
+	// lane SCRIPT-2: RW 0x695C43 .. 0x695D19, each when the dict has the key: objectEnabled -> script status 1 = !value, objectPowered -> 2 = !value
+	// (Object::setScriptStatus, RW 0x69317D), objectIndestructible -> the body's setIndestructible (vslot 0x88), objectUnsellable -> 4 = value,
+	// objectTargetable -> 0x10 = value (then the drawable's vslot 0x34: client)
+	{
+		const struct
+		{
+			const char *key;
+			std::uint8_t bit;
+			bool inverted;
+		} statusKeys[] = { { "objectEnabled", 1, true }, { "objectPowered", 2, true } };
+		for (const auto &k : statusKeys)
+		{
+			const bool v = properties.getBool(k.key, &exists);
+			if (exists)
+			{
+				obj->setScriptStatus(k.bit, k.inverted ? !v : v);
+			}
+		}
+	}
+	// lane SCRIPT-3: RW 0x695B35 .. 0x695B5C: objectAggressiveness -> the AI's attitude (RW 0x66E12A)
+	const int aggressiveness = properties.getInt("objectAggressiveness", &exists);
+	if (exists && obj->getAIUpdateInterface())
+	{
+		obj->getAIUpdateInterface()->setAttitude(aggressiveness);
+	}
+	const bool indestructible = properties.getBool("objectIndestructible", &exists);
+	if (exists)
+	{
+		if (BodyModuleInterface *b = obj->getBodyModule())
+		{
+			b->setIndestructible(indestructible);
+			result.indestructibleApplied += indestructible ? 1 : 0;
+		}
+		// RW 0x86A104 / 0x86B169 (the contain's payload creation): a member made for an indestructible container is made indestructible before it
+		// enters. Retail creates a horde's payload after these properties (its first update); this port makes it with the object, so the members
+		// the payload already holds take the flag here (the same end state)
+		ContainModuleInterface *c = obj->getContain();
+		if (indestructible && c && c->getContainedItemsList())
+		{
+			for (Object *m : *c->getContainedItemsList())
+			{
+				if (m && m->getBodyModule())
+				{
+					m->getBodyModule()->setIndestructible(true);
+				}
+			}
+		}
+	}
+	{
+		const struct
+		{
+			const char *key;
+			std::uint8_t bit;
+		} statusKeys[] = { { "objectUnsellable", 4 }, { "objectTargetable", 0x10 } };
+		for (const auto &k : statusKeys)
+		{
+			const bool v = properties.getBool(k.key, &exists);
+			if (exists)
+			{
+				obj->setScriptStatus(k.bit, v);
+			}
+		}
+	}
+	for (const char *key : kUnportedKeys)
+	{
+		if (properties.known(key))
+		{
+			++result.unportedKeys[key];
+		}
+	}
+	// lane UPGRADE-1. RW 0x695D87 .. 0x695E41: objectGrantUpgrade0, 1, ... ("%s%d", RW 0xC1222C) while the value is not empty; every name that is an upgrade
+	// is given (Object::giveUpgrade, RW 0x69388B)
+	for (int i = 0;; ++i)
+	{
+		const std::string name = properties.getAsciiString("objectGrantUpgrade" + std::to_string(i), &exists);
+		if (name.empty())
+		{
+			break;
+		}
+		if (const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(name) : nullptr)
+		{
+			obj->giveUpgrade(u);
+			++result.upgradesGranted;
+		}
+	}
+	// RW 0x6946DA -> 0x693A9A: objectUpgradesList, whitespace separated names; an upgrade of a non-HORDE object is given (RW 0x69388B); a HORDE keeps it in
+	// its contain (slots 0xB4 / 0xB8 of RW 0x68C866's interface), which is not ported (S-483): counted
+	const std::string list = properties.getAsciiString("objectUpgradesList", &exists);
+	if (exists)
+	{
+		static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE"); // RW 0x693AC6: tt + 0x115 & 0x20
+		size_t pos = 0;
+		while (pos < list.size())
+		{
+			const size_t b = list.find_first_not_of(" \t\r\n", pos);
+			if (b == std::string::npos)
+			{
+				break;
+			}
+			size_t e = list.find_first_of(" \t\r\n", b);
+			if (e == std::string::npos)
+			{
+				e = list.size();
+			}
+			pos = e;
+			const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(list.substr(b, e - b)) : nullptr;
+			if (!u)
+			{
+				continue;
+			}
+			if (kHorde >= 0 && obj->isKindOf((unsigned)kHorde))
+			{
+				++result.unportedKeys["objectUpgradesList on a HORDE (its contain keeps the upgrade, S-483)"];
+			}
+			else
+			{
+				obj->giveUpgrade(u);
+				++result.upgradesGranted;
+			}
+		}
+	}
 }

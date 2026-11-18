@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/Combat/CombatState.h.
 
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 
@@ -101,6 +102,7 @@ void CombatState::noteFlyingProjectile(std::uint32_t objectId)
 // HORDE objects (KindOf 109) are not candidates: retail's manager leaves them out and canCollideWith refuses them. The geometry is the pathfinder's (an AIWorld).
 void CombatState::processProjectileContacts()
 {
+	if(m_logic.aiWorld() && m_logic.aiWorld()->usesNativeContacts())return;
 	if (!m_logic.aiWorld())
 	{
 		return;

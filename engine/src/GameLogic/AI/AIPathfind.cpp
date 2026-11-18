@@ -360,11 +360,14 @@ void Pathfinder::newMap(const PathfindTerrain &terrain, const std::vector<Pathfi
 	m_waypointCounter = 0x40000000;
 	m_portalHops.clear();
 	note(pathstops::kSlopeAndConfig);
-	note(pathstops::kLayers);
+	if(!(m_world && m_world->usesScalarReservations()))note(pathstops::kLayers);
 	note(pathstops::kZoneProfiles);
 	note(pathstops::kNumerics);
 	setLogicalExtentFromTerrain();
 	classifyMap();
+	// BFME1 0x3D5850: layer allocation follows authored order; terrain's list is newest first.
+	if (const auto *bridges=terrain.bfme1Bridges())
+		for(auto it=bridges->rbegin();it!=bridges->rend();++it) addBfme1Bridge(*it);
 	m_buildingMap = true;
 	if (objects)
 	{

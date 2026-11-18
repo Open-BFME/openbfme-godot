@@ -101,6 +101,12 @@ struct ObjectSnapshot
 	bool phantomStructure = false;
 	// lane COMBAT-4: the object this one is contained in (Object + 0x27C; INVALID_ID when none): the drawable of a rider / crew member takes its container's
 	// DependencySharedModelFlags (RW 0x4BF2D8, DrawableManager::syncTransforms)
+	// BFME1 client attachment (0x007629F0): the selected passenger bone,
+	// including soldiers whose horde is inside a transport. Values only.
+	ObjectID containerBoneParent = INVALID_ID;
+	std::string containerBone;
+	bool containerBoneCanAim = false, containerBoneHasTarget = false;
+	Coord3D containerBoneTarget{};
 	ObjectID containedBy = INVALID_ID;
 	float stealthOpacityMin = 1.0f, stealthOpacityMax = 1.0f; ///< the friend's pulse range (InvisibilityManager::clientOpacityRange)
 	float stealthCycleSeconds = 1.0f;                      ///< the pulse / blend cycle in seconds (InvisibilityManager::clientOpacityRange)

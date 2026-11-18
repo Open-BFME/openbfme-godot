@@ -4,6 +4,7 @@
 // TransportContain / HordeTransportContain at runtime. See GameLogic/Object/Contain/TransportContainRuntime.h for the target facts and the stops. Lane GARRISON-2.
 
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
+#include "GameLogic/Object/Contain/ContainEditionRules.h"
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/NumericState.h"
@@ -28,6 +29,9 @@
 #include "GameLogic/Object/Contain/TunnelContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/ObjectFilterMatch.h"
+#include "GameLogic/WeaponStores.h"
+#include "GameLogic/Weapon.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -46,6 +50,7 @@ const char *const kStopTransport =
 	"PassengersInTurret, the arming of the falling riders (slot 0xF8: no caller located)";
 
 const char *const kHordeTransportCpp = "HordeTransportContain.cpp"; // RW 0xC5C568
+const char *const kStopBfme1Transport = "[S-5017] BFME1 containers: general pathfinder equivalence, mesh-backed Bridge heights/damage, contested-building mood callbacks, contact coordinates and rampage completion remain unverified";
 const char *const kOpenContainCpp = "OpenContain.cpp";             // RW 0xC59A10
 
 int statusBit(const char *name)
@@ -114,7 +119,7 @@ TransportContain::TransportContain(Thing *thing, const ModuleData *data, const T
 		m_pendingUpgradeTriggers.push_back(e.first);
 	}
 	setWakeFrame(getObject(), UPDATE_SLEEP_NONE); // RW 0x86B86D answers OpenContain's 1: every frame
-	getObject()->logic().noteStop(kStopTransport);
+	getObject()->logic().noteStop(ContainEditionRules::forObject(*getObject()).bfme1 ? kStopBfme1Transport : kStopTransport);
 }
 
 TransportContain::~TransportContain() = default;
@@ -166,6 +171,15 @@ bool TransportContain::forceOrientationContainer() const
 // RW 0x69029B: the template's TransportSlotCount (a signed byte, + 0x601); a contain whose slot 0x14 answers true sums its riders' (none of the ported classes)
 int TransportContain::transportSlotCount(const Object &obj)
 {
+	if (ContainEditionRules::forObject(obj).bfme1)
+		if (auto *contain = obj.getContain(); contain && contain->isSpecialZeroSlotContainer())
+		{
+			// BFME1 0x001C2F90: recursive payload sum replaces the
+			// wrapper's own signed-byte TransportSlotCount, even if empty.
+			int total = 0;
+			if (auto *items = contain->getContainedItemsList()) for (Object *rider : *items) total += transportSlotCount(*rider);
+			return total;
+		}
 	const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj.getTemplate())->getFinalOverride();
 	if (const FieldValue *v = tt->findField("TransportSlotCount"))
 	{
@@ -190,16 +204,23 @@ bool TransportContain::isValidContainerFor(const Object &obj, bool checkCapacity
 	{
 		return false; // RW 0x86A02A: ConditionForEntry (data + 0x14C)
 	}
-	if (!openContainAllows(obj))
+	const Object *checked = &obj;
+	if (ContainEditionRules::forObject(*getObject()).bfme1)
+		if (auto *contain = obj.getContain(); contain && contain->isSpecialZeroSlotContainer())
+			if (auto *items = contain->getContainedItemsList(); items && !items->empty() && items->front()) checked = items->front();
+	if (!openContainAllows(*checked))
 	{
 		return false; // RW 0x86A06A: OpenContain RW 0x86603B
 	}
 	(void)checkPath;
-	if (obj.isKindOf((unsigned)chunkVendor) && m_transport->m_canGrabStructure)
+	if (checked->isKindOf((unsigned)chunkVendor) && m_transport->m_canGrabStructure)
 	{
 		return (unsigned)getContainCount() < (unsigned)getContainMax(); // RW 0x86A07D: CanGrabStructure (data + 0x13D)
 	}
-	const int slots = transportSlotCount(obj);
+	// BFME1 0x22DC25 replaces the candidate with its first rider; 0x22DC76
+	// queries that SAME object for capacity. onContaining (0x22DD72) still
+	// accounts for the whole wrapper. Preserve this native overfill quirk.
+	const int slots = transportSlotCount(*checked);
 	if (slots == 0)
 	{
 		return false;
@@ -240,49 +261,70 @@ void TransportContain::onContaining(Object *obj, bool wasSelected)
 		const ObjectStatusMaskType *m = cc ? cc->getObjectStatusOfContained() : nullptr;
 		mayFire = m && maskTest(*m, canAttack);
 	}
-	const int riderCondition = (mayFire && !obj->isKindOf((unsigned)workingPassenger)) ? 90 : passenger;
+	const int riderCondition = (mayFire && !obj->isKindOf((unsigned)workingPassenger)) ? CombatNames::modelCondition("TRANSPORT_STOPPED") : passenger;
 	setCondition(*obj, riderCondition, true);
 	setWeaponStateOfRider(*obj);                           // contain slot 0xEC (RW 0x86A43E)
 	onRiderPlaced(obj, ridersFireFromContainer());          // contain slot 0x6C (rider, the ENCLOSED bit)
-	// RW 0x86AA4B .. 0x86AAA2 (lane PORT-62): GrabWeapon (data + 0x144, a WeaponTemplate POINTER that INI::parseWeaponTemplate RW 0x6CBADE resolved
-	// while the INI was read, null when the INI names none or a name the store did not know THEN) fires when the rider is not an ALLIES of the container
-	// (RW 0x86AA54 .. 0x86AA60: Object::getRelationship RW 0x68D7AB, 2 = ALLIES).
-	// The pointer is the parse-time answer, so this reads StoreReference::resolved and not a fresh lookup: a GrabWeapon whose weapon block comes after
-	// the transport's own block leaves retail's +0x144 null for the life of the module data, and the grab never fires — the store knows the name only
-	// later, and a late definition must not resurrect the pointer. SlowDeathBehavior's Weapon parse (0x861672 -> 0x6CC5DF) is the same rule in this
-	// port: only a resolved name sets the mask bit.
-	// TheWeaponStore (RW 0xDE4A1C) makes the temporary weapon and fires it (RW 0x86AA76 .. 0x86AA8A -> RW 0x6CF530) from the container at the container's own
-	// position (Object + 0x38, RW 0x86AA79). FireGrabWeaponOnVictim (data + 0x148) is read twice, at RW 0x86AA62 and RW 0x86AA8F: when it is false the rider
-	// is UNATTACKABLE (status 0x3C, Object::setStatus RW 0x62684D) for the duration of that one fire (RW 0x86AA6B .. 0x86AA71) and the status comes off again
-	// right after it (RW 0x86AA98 .. 0x86AA9E). Both branches reach the fire: the flag brackets it, it does not skip it. The bracket is not inert either — the
-	// body's damage acceptance refuses an UNATTACKABLE victim (RW 0x8C3FFB .. 0x8C400C: only damage type 8, UNRESISTABLE, gets through), so with the flag off
-	// everything in the grab's area takes the damage except the rider the transport just grabbed.
-	const StoreReference &grabRef = m_transport->m_grabWeapon;
-	if (!grabRef.name.empty() && !grabRef.resolved)
+	if (ContainEditionRules::forObject(*container).bfme1)
 	{
-		// retail is silent here (the null pointer simply fails the RW 0x86AA4B test); the port reports the name once per world, like an unknown warhead
-		// (WeaponDelivery.cpp) or an unknown armour (ActiveBody.cpp), because a misspelt or forward-named GrabWeapon is a data error that must reach the
-		// report rather than look like "this transport has no grab". GameLogic::reportError dedupes the text, so this is one line per name, not one per rider
-		container->logic().reportError("TransportContain of '" + container->getTemplate()->getName() + "': the GrabWeapon '" + grabRef.name +
-		                               "' was not in the WeaponStore when the object was parsed (a later definition or a misspelling); retail's +0x144 stays null "
-		                               "and the grab never fires (RW 0x86AA4B)");
-	}
-	else if (grabRef.resolved)
-	{
-		// resolved at parse: retail's pointer is the template the store held then, and the store cannot lose a template after the load
-		const WeaponTemplate *grab = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(grabRef.name) : nullptr;
-		if (grab && container->getRelationship(*obj) != ALLIES) // RW 0x86AA4B (the template) and RW 0x86AA5D (ALLIES = 2)
+		if (!m_transport->m_grabWeapon.name.empty())
 		{
-			static const int unattackable = statusBit("UNATTACKABLE"); // 0x3C
-			const bool shieldVictim = !m_transport->m_fireGrabWeaponOnVictim;
-			if (shieldVictim)
+			if (container->getRelationship(*obj) != ALLIES)
 			{
-				obj->setStatus((unsigned)unattackable, true); // RW 0x86AA6B .. 0x86AA71
+				// BFME1 0x0022DEAC..0x0022DF06: fire at the container's
+				// POSITION. Unless FireGrabWeaponOnVictim, make the new
+				// passenger temporarily UNATTACKABLE around that area shot.
+				const auto *weapon = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(m_transport->m_grabWeapon.name) : nullptr;
+				if (!weapon) throw std::logic_error("BFME1 transport: unresolved GrabWeapon '" + m_transport->m_grabWeapon.name + "'");
+				const auto unattackable = (unsigned)statusBit("UNATTACKABLE");
+				if (!m_transport->m_fireGrabWeaponOnVictim) obj->setStatus(unattackable, true);
+				ObjectWeapons::createAndFireTempWeapon(weapon, container, *container->getPosition());
+				if (!m_transport->m_fireGrabWeaponOnVictim) obj->setStatus(unattackable, false);
 			}
-			ObjectWeapons::createAndFireTempWeapon(grab, container, *container->getPosition()); // RW 0x86AA8A -> RW 0x6CF530
-			if (shieldVictim)
+		}
+	}
+	else
+	{
+		// RW 0x86AA4B .. 0x86AAA2 (lane PORT-62): GrabWeapon (data + 0x144, a WeaponTemplate POINTER that INI::parseWeaponTemplate RW 0x6CBADE resolved
+		// while the INI was read, null when the INI names none or a name the store did not know THEN) fires when the rider is not an ALLIES of the container
+		// (RW 0x86AA54 .. 0x86AA60: Object::getRelationship RW 0x68D7AB, 2 = ALLIES).
+		// The pointer is the parse-time answer, so this reads StoreReference::resolved and not a fresh lookup: a GrabWeapon whose weapon block comes after
+		// the transport's own block leaves retail's +0x144 null for the life of the module data, and the grab never fires — the store knows the name only
+		// later, and a late definition must not resurrect the pointer. SlowDeathBehavior's Weapon parse (0x861672 -> 0x6CC5DF) is the same rule in this
+		// port: only a resolved name sets the mask bit.
+		// TheWeaponStore (RW 0xDE4A1C) makes the temporary weapon and fires it (RW 0x86AA76 .. 0x86AA8A -> RW 0x6CF530) from the container at the container's own
+		// position (Object + 0x38, RW 0x86AA79). FireGrabWeaponOnVictim (data + 0x148) is read twice, at RW 0x86AA62 and RW 0x86AA8F: when it is false the rider
+		// is UNATTACKABLE (status 0x3C, Object::setStatus RW 0x62684D) for the duration of that one fire (RW 0x86AA6B .. 0x86AA71) and the status comes off again
+		// right after it (RW 0x86AA98 .. 0x86AA9E). Both branches reach the fire: the flag brackets it, it does not skip it. The bracket is not inert either — the
+		// body's damage acceptance refuses an UNATTACKABLE victim (RW 0x8C3FFB .. 0x8C400C: only damage type 8, UNRESISTABLE, gets through), so with the flag off
+		// everything in the grab's area takes the damage except the rider the transport just grabbed.
+		const StoreReference &grabRef = m_transport->m_grabWeapon;
+		if (!grabRef.name.empty() && !grabRef.resolved)
+		{
+			// retail is silent here (the null pointer simply fails the RW 0x86AA4B test); the port reports the name once per world, like an unknown warhead
+			// (WeaponDelivery.cpp) or an unknown armour (ActiveBody.cpp), because a misspelt or forward-named GrabWeapon is a data error that must reach the
+			// report rather than look like "this transport has no grab". GameLogic::reportError dedupes the text, so this is one line per name, not one per rider
+			container->logic().reportError("TransportContain of '" + container->getTemplate()->getName() + "': the GrabWeapon '" + grabRef.name +
+			                               "' was not in the WeaponStore when the object was parsed (a later definition or a misspelling); retail's +0x144 stays null "
+			                               "and the grab never fires (RW 0x86AA4B)");
+		}
+		else if (grabRef.resolved)
+		{
+			// resolved at parse: retail's pointer is the template the store held then, and the store cannot lose a template after the load
+			const WeaponTemplate *grab = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(grabRef.name) : nullptr;
+			if (grab && container->getRelationship(*obj) != ALLIES) // RW 0x86AA4B (the template) and RW 0x86AA5D (ALLIES = 2)
 			{
-				obj->setStatus((unsigned)unattackable, false); // RW 0x86AA98 .. 0x86AA9E
+				static const int unattackable = statusBit("UNATTACKABLE"); // 0x3C
+				const bool shieldVictim = !m_transport->m_fireGrabWeaponOnVictim;
+				if (shieldVictim)
+				{
+					obj->setStatus((unsigned)unattackable, true); // RW 0x86AA6B .. 0x86AA71
+				}
+				ObjectWeapons::createAndFireTempWeapon(grab, container, *container->getPosition()); // RW 0x86AA8A -> RW 0x6CF530
+				if (shieldVictim)
+				{
+					obj->setStatus((unsigned)unattackable, false); // RW 0x86AA98 .. 0x86AA9E
+				}
 			}
 		}
 	}
@@ -290,7 +332,8 @@ void TransportContain::onContaining(Object *obj, bool wasSelected)
 	{
 		m_throwOutFrame = m_transport->m_throwOutPassengersDelay + container->logic().getFrame(); // RW 0x86AA97: data + 0x154
 	}
-	// RW 0x86AAAE .. 0x86ABCB: FadePassengerOnEnter (client side)
+	// BFME1 0x0022DF06..0x0022E05C; RW 0x86AAAE remains S-1104.
+	if (ContainEditionRules::forObject(*container).bfme1) fadePassenger(*obj, true);
 }
 
 // RW 0x86ABDC TransportContain::onRemoving
@@ -324,6 +367,7 @@ void TransportContain::onRemoving(Object *obj)
 	}
 	setCondition(*obj, passenger, false);                // RW 0x86ACDC .. 0x86ACF5 (+ 0x117 bit 0)
 	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (ai && ContainEditionRules::forObject(*container).bfme1) ai->aiIdle(CMD_FROM_SCRIPT); // BFME1 0x0022E340: drop the passenger's previous order.
 	if (m_transport->m_goAggressiveOnExit && ai)
 	{
 		ai->setAttitude(2); // RW 0x86AD06: the AI's attitude AGGRESSIVE (RW 0x66E12A(2), lane GATEPUSH-1)
@@ -334,12 +378,36 @@ void TransportContain::onRemoving(Object *obj)
 	}
 	if (m_transport->m_resetMoodCheckTimeOnExit && ai)
 	{
-		ai->wakeUpNow(); // RW 0x86AD2D: RW 0x662DB3 (the mood check now)
+		if (ContainEditionRules::forObject(*container).bfme1) ai->wakeUpAndAttemptToTarget(); // BFME1 0x0026F9D0: now, randomly offset, when idle.
+		else ai->wakeUpNow(); // Established shared runtime.
 	}
 	m_frameExitNotBusy = m_transport->m_exitDelay + logic.getFrame(); // RW 0x86AD3F: data + 0xAC
-	// RW 0x86AD48 .. 0x86AD8A: the drawables' bone release with ReleaseSnappyness (client side)
+	if (ContainEditionRules::forObject(*container).bfme1 && !obj->testStatus((unsigned)statusBit("RIDER_IS_PILOT")))
+		if (auto *client = obj->clientHooks()) client->releaseContainerBone(*obj, m_transport->m_releaseSnappyness); // BFME1 0x0022E3FF..0x0022E445.
 	clearWeaponStates(); // contain slot 0xF0 (RW 0x86A4E4)
-	// RW 0x86AD95 .. 0x86AEA1: FadePassengerOnExit (client side)
+	if (ContainEditionRules::forObject(*container).bfme1) fadePassenger(*obj, false); // BFME1 0x0022E450..0x0022E557.
+}
+
+void TransportContain::fadePassenger(Object &passenger, bool entering)
+{
+	const bool enabled = entering ? m_transport->m_fadePassengerOnEnter : m_transport->m_fadePassengerOnExit;
+	const float milliseconds = entering ? m_transport->m_enterFadeTime : m_transport->m_exitFadeTime;
+	if (!enabled || milliseconds == 0.0f || !ObjectFilterMatch::allows(getObject()->logic(), m_transport->m_fadeFilter, passenger, nullptr)) return;
+	// Native x87 multiplication followed by _ftol2, not a logic-frame duration.
+	const auto frames = (UnsignedInt)SimMath::ftol2(SimMath::pc24MulW((double)milliseconds, (double)0.03f));
+	auto fade = [&](Object &object) {
+		if (auto *client = object.clientHooks())
+		{
+			if (entering && m_transport->m_fadeReverse) client->fadeOut(object, frames);
+			else client->fadeIn(object, frames);
+		}
+	};
+	if (hordeOf(passenger))
+	{
+		if (const auto *members = passenger.getContain()->getContainedItemsList())
+			for (Object *member : *members) if (member) fade(*member);
+	}
+	else fade(passenger);
 }
 
 // RW 0x86B77B (contain slot 0x6C): the rider's drawable hidden as asked (its bone attachment is the client's)
@@ -489,8 +557,10 @@ void TransportContain::scatterToNearbyPosition(Object *rider)
 bool TransportContain::isSpecificRiderFreeToExit(const Object &rider) const
 {
 	const Object *container = getObject();
+	const auto &rules = ContainEditionRules::forObject(*container);
 	// RW 0x86A2E8: the container's AI slot 0x1A8 (rider) is not identified: taken as 0 (S-1103)
 	const AIUpdateInterface *cai = container->getAIUpdateInterface();
+	if (rules.bfme1 && cai && !cai->isPassengerFreeToExit(rider)) return false;
 	if (cai && cai->curLocomotor() && (cai->curLocomotor()->getTemplate().m_surfaces & (unsigned)LOCOMOTORSURFACE_AIR))
 	{
 		return true; // RW 0x68BEED: the container's locomotor (+ 0x1F0) has the AIR surface (template + 0x14 bit 3)
@@ -500,7 +570,7 @@ bool TransportContain::isSpecificRiderFreeToExit(const Object &rider) const
 	{
 		return false; // RW 0x86A31A: the rider's locomotor (+ 0x1F0)
 	}
-	if (isShipOnWater(*container))
+	if (!rules.bfme1 && isShipOnWater(*container))
 	{
 		// RW 0x86A34B .. 0x86A3AC (lane SHIP-1): a SHIP in water lets the rider out when RW 0x6EFBB8 finds a shore spot for its position; a ship on dry ground takes
 		// the ground test below
@@ -509,6 +579,14 @@ bool TransportContain::isSpecificRiderFreeToExit(const Object &rider) const
 	}
 	// RW 0x86A36C: RW 0x6E8707 (ZH Pathfinder::validMovementTerrain) for the rider's locomotor at the container's position on the ground layer (RW 0x68BBE0: the
 	// layer of the position; 2.01 maps have no bridge layers)
+	if (rules.bfme1)
+	{
+		// BFME1 0x0022D0E0 passes the CONTAINER'S layer to
+		// validMovementTerrain; its routine has no BFME2 ship branch.
+		auto &world = const_cast<AIUpdateInterface &>(*ai).world();
+		const int layer = world.adapterFor(*getObject()).getLayer();
+		return OpenContain::validMovementTerrain(const_cast<AIUpdateInterface &>(*ai), *container->getPosition(), layer);
+	}
 	return OpenContain::validMovementTerrain(const_cast<AIUpdateInterface &>(*ai), *container->getPosition());
 }
 
@@ -547,11 +625,25 @@ int TransportContain::reserveDoorForExit(const Object &obj)
 
 void TransportContain::onObjectCreated()
 {
+	if (ContainEditionRules::forObject(*getObject()).bfme1) return;
 	if (!m_payloadCreated)
 	{
 		m_payloadCreated = true;
 		createPayload();
 	}
+}
+
+CreateModuleInterface *TransportContain::getCreate()
+{
+	return ContainEditionRules::forObject(*getObject()).bfme1 ? this : nullptr;
+}
+
+void TransportContain::onBuildComplete()
+{
+	// The BFME1 constructor installs Create vtable 0x00CAD1EC at
+	// +0x34. Slot 1 (0x0022CDE0) re-dispatches createPayload, while
+	// slot 0 (0x0022CDD0) does nothing. A half-built carrier has no payload.
+	if (!m_payloadCreated) { m_payloadCreated = true; createPayload(); }
 }
 
 // RW 0x86A1FA
@@ -601,6 +693,8 @@ Object *TransportContain::createPayloadObject(const ThingTemplate &t, ContainMod
 	if (contain.isValidContainerFor(*o, checkCapacity, false))
 	{
 		// RW 0x86A19C .. 0x86A1D2: an indestructible container (body slot 0x8C) makes the payload indestructible (body slot 0x88(1)): not in the port's bodies (S-1103)
+		if (ContainEditionRules::forObject(*container).bfme1 && container->getBodyModule() && container->getBodyModule()->isIndestructible())
+			if (auto *body = o->getBodyModule()) body->setIndestructible(true);
 		contain.addToContain(o);
 	}
 	else
@@ -696,7 +790,8 @@ UpdateSleepTime TransportContain::update()
 	static const int transportMoving = CombatNames::modelCondition("TRANSPORT_MOVING");
 	Object *container = getObject();
 	GameLogic &logic = container->logic();
-	if (m_transport->m_shouldThrowOutPassengers && m_throwOutFrame <= logic.getFrame())
+	const auto &rules = ContainEditionRules::forObject(*container);
+	if (!rules.bfme1 && m_transport->m_shouldThrowOutPassengers && m_throwOutFrame <= logic.getFrame())
 	{
 		++m_stats.unported; // RW 0x86B885: main slot 0x74 (RW 0x86A530, the physics throw: S-1103)
 	}
@@ -709,13 +804,12 @@ UpdateSleepTime TransportContain::update()
 			BodyModuleInterface *body = r->getBodyModule();
 			if (body && body->getHealth() < body->getMaxHealth())
 			{
-				const double amount = SimMath::mulD(SimMath::mulD(SimMath::mulD((double)body->getMaxHealth(), (double)m_transport->m_healthRegenPercentPerSec), (double)0.2f), (double)0.01f);
-				r->attemptHealing((float)amount, container); // RW 0x690532
+				r->attemptHealing(rules.healingPerFrame(body->getMaxHealth(), m_transport->m_healthRegenPercentPerSec), container);
 				++m_stats.healed;
 			}
 		}
 	}
-	processUpgradeCreationTriggers(); // RW 0x86B925
+	if (!rules.bfme1) processUpgradeCreationTriggers(); // RW 0x86B925; absent in BFME1 0x0022D660.
 	// RW 0x86B92C .. 0x86B9DE: the container's MOVING mirrored onto the riders' TRANSPORT_MOVING when it changes
 	const bool isMoving = container->testModelCondition(moving);
 	if (isMoving != m_moving)
@@ -727,7 +821,7 @@ UpdateSleepTime TransportContain::update()
 		}
 	}
 	const UpdateSleepTime s = OpenContain::update(); // RW 0x86B9DE
-	letRidersUpgradeWeaponSet();                     // main slot 0x78
+	if (!rules.bfme1) letRidersUpgradeWeaponSet();     // Absent from BFME1's tail call to OpenContain::update.
 	return s;
 }
 
@@ -1146,7 +1240,11 @@ int HordeTransportContain::throwMemberOff(Object *member, HordeContainInterface 
 	}
 	if (PhysicsBehavior *phys = PhysicsBehavior::find(*member))
 	{
-		const float k = (float)logic.random().getValue(lo, hi, kHordeTransportCpp, line);
+		// BFME1 sequential throw 0x0024D04D uses site 0x2FD;
+		// the shared runtime's corresponding call is site 0x2BE.
+		const auto &rules = ContainEditionRules::forObject(*container);
+		const bool originalFall = rules.bfme1 && line == 0x2BE;
+		const float k = (float)logic.random().getValue(lo, hi, originalFall ? rules.fallingSource() : kHordeTransportCpp, originalFall ? 0x2FD : line);
 		const float *m = member->getBasis();
 		setCondition(*member, stunnedFlailing, true); // RW 0x87ABA6 .. 0x87ABBB (+ 0x118 bit 31)
 		phys->fling(Coord3D{ SimMath::mulf32(m[0], k), SimMath::mulf32(m[3], k), k });
@@ -1164,7 +1262,7 @@ UpdateSleepTime HordeTransportContain::update()
 		GameLogic &logic = getObject()->logic();
 		if (m_fallTimer == -1000)
 		{
-			m_fallTimer = logic.random().getValue(3, 5, kHordeTransportCpp, 0x35A);
+			m_fallTimer = logic.random().getValue(3, 5, ContainEditionRules::forObject(*getObject()).fallingSource(), ContainEditionRules::forObject(*getObject()).fallingSite(true));
 			// RW 0x87AC9A: every member whose drawable is hidden (or that has none) leaves its horde and this contain, is killed and stays hidden
 			const std::vector<Object *> riders(m_contained.begin(), m_contained.end());
 			for (Object *r : riders)
@@ -1209,7 +1307,7 @@ UpdateSleepTime HordeTransportContain::update()
 					throwMemberOff(first, h, -1, 3, 8, 0x2BE);
 				}
 			}
-			m_fallTimer = logic.random().getValue(0, 4, kHordeTransportCpp, 0x367);
+			m_fallTimer = logic.random().getValue(0, 4, ContainEditionRules::forObject(*getObject()).fallingSource(), ContainEditionRules::forObject(*getObject()).fallingSite(false));
 		}
 		--m_fallTimer;
 	}

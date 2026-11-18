@@ -220,6 +220,11 @@ std::unique_ptr<AIStateMachine> AIAttackState::createAttackMachine()
 			return m;
 		}
 	}
+	// BFME1 0x1846D7: CanFireWhileCharging chooses kind 6 before melee.
+	if(owner().getTemplate()->bfme1Data()){
+		const auto *w=owner().getWeapons();const auto *cur=w?w->currentWeapon():nullptr;
+		if(cur && cur->getTemplate() && cur->getTemplate()->m_canFireWhileCharging){m_machineMade=MADE_BFME1_CHARGING;return makeBfme1ChargeMachine(a);}
+	}
 	// lane PHYS-1: attack kind 2 of RW 0x74CED6 makes the melee machine RW 0x744B71 (AIAttackMelee.cpp); the weapon is already chosen
 	m_meleeMachine = AttackUsesMeleeMachine(owner(), m_isAttackingObject ? machine().goalObject() : nullptr, m_isAttackingObject);
 	if (m_meleeMachine)

@@ -8,6 +8,8 @@
 #include "GameClient/EndGame.h"
 
 #include "GameLogic/Module/ProjectileModules.h"
+#include "GameLogic/Object/Contain/OpenContainRuntime.h"
+#include "GameLogic/Object/Contain/ContainEditionRules.h"
 
 #include "Common/BuildAssistant.h"
 #include "Common/ModelState.h"
@@ -27,6 +29,7 @@
 #include "Common/JobSystem.h"           // lane PERF-SNAP: the records on the logic job pool
 #include "Common/Thing/ThingTemplate.h" // lane PERF-SNAP: the templates' final overrides, warmed in the caches before the pool reads them
 #include "GameLogic/AI/AIWorld.h"       // lane PERF-SNAP: the AIWorld whose movement info the radar's bounding radii read
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Combat/CombatQueries.h" // lane PERF-SNAP: the bounding radii warmed before the pool reads them
 #include "GameLogic/Object/PristinePose.h"  // lane PERF-SNAP: the canonical floating-point environment for the pool's build
 
@@ -262,6 +265,28 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
 	{
 		list.push_back(o);
+		// BFME1 0x0075F210: freeze the aiming gate and AI goal before
+		// worker capture. Range queries may warm shared combat caches.
+		snap->objects.emplace_back();
+		auto &s = snap->objects.back();
+		for (const Object *parent = o->getContainedBy(); parent; parent = parent->getContainedBy())
+		{
+			if (!ContainEditionRules::forObject(*parent).bfme1) break;
+			if (auto *contain = dynamic_cast<const OpenContain *>(parent->getContain()))
+			{
+				const std::string bone = contain->riderBone(o->getID());
+				if (!bone.empty()) { s.containerBoneParent = parent->getID(); s.containerBone = bone;
+					s.containerBoneCanAim = contain->isPassengerAllowedToFire();
+					if (auto *brain = o->getAIUpdateInterface(); s.containerBoneCanAim && brain)
+						if (auto *victim = brain->currentVictim())
+							if (auto *weapons = o->getWeapons(); weapons && weapons->isWithinAttackRange(*victim))
+							{
+								s.containerBoneHasTarget = true;
+								s.containerBoneTarget = brain->stateMachine().goalPosition();
+							}
+					break; }
+			}
+		}
 		const ThingTemplate *tt = o->getTemplate();
 		if (!tt)
 		{
@@ -358,6 +383,7 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 		s.effectivelyDead = o->isEffectivelyDead(); // lane VISUAL-2
 		s.occlusion = RTS3DSceneOcclusion::eligibility(RTS3DSceneOcclusion::factsOf(*o), occlusionFrame); // lane OCCLUDE-1 (RW 0x470DD2 .. 0x470EC5)
 		s.containedBy = o->getContainedBy() ? o->getContainedBy()->getID() : (ObjectID)INVALID_ID; // lane COMBAT-4
+
 		s.stealthLook = InvisibilityManager::clientLook(*o, local); // lane STEALTH-1
 		if (teamVision && s.stealthLook == 5)
 		{

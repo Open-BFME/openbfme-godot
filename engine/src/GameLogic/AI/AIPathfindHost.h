@@ -18,6 +18,7 @@
 #pragma once
 
 #include "Common/INIDataTypes.h"
+#include "GameLogic/Map/Bfme1BridgeGeometry.h"
 
 #include <cstddef> // size_t (GLIBC-1: GCC 11 does not reach it through <vector>)
 #include <cstdint>
@@ -274,6 +275,8 @@ public:
 	// lane MOVE-3: RW 0x6F1584's horde scale: the contain answers slot 0x7C (a horde contain) and slot 0x70 (the module data's Slots, + 0x98) is positive; `count`
 	// is slot 0x114(0) (the contain list's size, interface + 0x38). False for anything else
 	virtual bool hordeFill(int &count, int &slots) const { (void)count; (void)slots; return false; }
+	// BFME1 0x003E9755: cached contain count, independent of slot capacity.
+	virtual unsigned containedMemberCount() const { return 0; }
 	// lane MOVE-3: Object + 0x458 bit 0 (effectively dead): RW 0x8E24D3 leaves such an object's goal alone
 	virtual bool isEffectivelyDead() const { return false; }
 	// lane ATTACKPATH-1: RW 0x6E82C8 (BFME2 decomp Rva002E6E9F.cpp): the first behaviour module's SlavedUpdate interface (behaviour interface slot 0x68), its
@@ -315,6 +318,8 @@ public:
 	virtual PathfindObject *findObjectByID(PathfindObjectID id) const = 0;
 	// TheGameLogic->getFrame()
 	virtual unsigned getFrame() const = 0;
+	// BFME1 has scalar cell owners; BFME2/RotWK retain occupant chains.
+	virtual bool usesScalarReservations() const { return false; }
 	// lane WALL-2: RW 0x6E8454, after portals were removed: every object (the logic's list order) whose AI has a path that names a waypoint no longer there
 	// (RW 0x76573F) is told so (RW 0x668AF8 notifyPathHasInvalidPortals). No AI world: nothing
 	virtual void onPathsLostPortals() const {}
@@ -347,6 +352,7 @@ public:
 	// TerrainLogic::isUnderwater(x, y, &waterZ, &terrainZ)
 	virtual bool isUnderwater(float x, float y, float *waterZ, float *terrainZ) const = 0;
 	virtual float getGroundHeight(float x, float y) const = 0;
+	virtual const std::vector<Bfme1BridgeGeometry> *bfme1Bridges() const { return nullptr; }
 };
 
 // Locomotor data the searches need (ZH LocomotorSet::getValidSurfaces / isDownhillOnly).

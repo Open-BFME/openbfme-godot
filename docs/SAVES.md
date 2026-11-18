@@ -1079,7 +1079,7 @@ Written only once a threat question armed the cache, so games without UNIT_THREA
 | Where | Block / class | Version | Field (type) | An older save loads with |
 |---|---|---|---|---|
 | `Team.cpp` | Team | 5 (written with an armed cache) | the cached threat (real, + 0x120) and its deadline frame (unsigned, + 0x124), retail Team::xfer RW 0x7A5C06's order | versions 1 to 4: 0, 0 |
-| `Object.cpp` | Object | 3 (written with an armed cache) | the deadline frame (unsigned, + 0x468) and the cached threat (real, + 0x464), BFME2 1.06's order (ObjectDoXfer.cpp:715-716); RotWK's RW 0x697F28 does not save them (S-7184) | versions 1 and 2: 0, 0 |
+| `Object.cpp` | Object | BFME2/RotWK 3; BFME1 5 (written with an armed shared cache) | the deadline frame (unsigned, + 0x468) and the cached threat (real, + 0x464), BFME2 1.06's order (ObjectDoXfer.cpp:715-716); RotWK's RW 0x697F28 does not save them (S-7184) | BFME2/RotWK versions 1/2 and BFME1 versions 1..4: 0, 0; BFME1 retains its distinct version 3/4 indicator and collision/firing fields |
 
 ### BFME2CAMP1: the campaign, tutorial and rebuild-hole state (lane BFME2CAMP1, PR #137)
 

@@ -177,7 +177,8 @@ void Locomotor::xfer(Xfer &x)
 	if (x.isLoading())
 	{
 		AIXfer::inRange(m_turnDirection, -1, 1, "locomotor: the turn direction");
-		if (m_flags & ~(unsigned)(LOCOMOTOR_FLAG_BRAKING | LOCOMOTOR_FLAG_BIT2 | LOCOMOTOR_FLAG_NO_BRAKE | LOCOMOTOR_FLAG_BACKING_UP | LOCOMOTOR_FLAG_CLOSE_ENOUGH_DIST_3D))
+		// BFME1 AIMoveAndDeleteState (RVA 0x0017A530) also sets bit 1.
+		if (m_flags & ~(unsigned)(LOCOMOTOR_FLAG_BRAKING | 2u | LOCOMOTOR_FLAG_BIT2 | LOCOMOTOR_FLAG_NO_BRAKE | LOCOMOTOR_FLAG_BACKING_UP | LOCOMOTOR_FLAG_CLOSE_ENOUGH_DIST_3D))
 		{
 			throw XferException("locomotor: the flags 0x" + std::to_string(m_flags) + " hold bits no mover sets");
 		}

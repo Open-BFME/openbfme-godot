@@ -167,6 +167,10 @@ public:
 	void addObjectBuilt(GameLogic &logic, const Object &obj, int count);
 	void addObjectDestroyed(GameLogic &logic, const Object &victim);
 	void addObjectLost(GameLogic &logic, const Object &victim);
+	// BFME1 0x000EAC60 / 0x000EAA90: explicit template-count corrections,
+	// ungated by live-object filters, scoring/counting flags or alive totals.
+	void bfme1SlaughterLost(const ThingTemplate &type, int count);
+	void bfme1SlaughterDestroyed(const ThingTemplate &type, int victimPlayer, int count);
 	// PORT-55: SlaughterHordeContain's zero-percent ownership transfer calls
 	// these template/count callbacks (RW 0x79F60E / 0x79F430), not addObjectLost.
 	void addSlaughterTransferLost(const std::string &templateName, unsigned count);

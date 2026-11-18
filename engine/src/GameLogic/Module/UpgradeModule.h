@@ -76,6 +76,9 @@ public:
 	void setUpgradeExecuted(bool executed) { m_upgradeExecuted = executed; }        // slot 9
 	// RW 0x8D2688: the removal unless Permanent, then not executed
 	void removeUpgrade();
+	// BFME1 0x002D9A70: call removal while still executed, then clear
+	// the latch, including Permanent modules. Only the BFME1 transfer uses it.
+	void resetForBfme1Transfer() { processUpgradeRemoval(); setUpgradeExecuted(false); }
 	// RW 0x855388
 	void giveSelfUpgrade();
 	// RW 0x8D28F1 / 0x8D28F9 (for the implementations that set the custom anim)

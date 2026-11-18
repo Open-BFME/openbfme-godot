@@ -1063,6 +1063,12 @@ bool HordeAIUpdate::isMeleeTargetReady(Object &targetIn)
 	{
 		return true;
 	}
+	if(auto *hc=hordeContainOf(*horde);hc && hc->usesNativeMelee())
+	{
+		bool ready=hc->nativeTargetReady(targetIn);
+		if(ready){m_cacheTarget=t.getID();m_cacheExpiry=frame()+15;}
+		return ready;
+	}
 	ObjectWeapons *w = horde->getWeapons();
 	Weapon *weapon = w ? w->currentWeapon() : nullptr;
 	if (!weapon || !weapon->getTemplate() || !weapon->getTemplate()->m_meleeWeapon)
@@ -1140,6 +1146,7 @@ void HordeAIUpdate::beginMelee(Object &targetIn)
 	if (HordeContain *hc = hordeContainOf(*horde))
 	{
 		hc->setMeleeEngaged(true);
+		if(hc->beginNativeMelee(t))return;
 	}
 	const unsigned delayUntilIdle = [&]() -> unsigned {
 		if (HordeContain *hc = hordeContainOf(*horde))
@@ -1425,6 +1432,7 @@ void HordeAIUpdate::containMeleeUpdate()
 		endMelee(); // slot 0x138 (RW 0x86C0F9), + 0x2A0 = 0
 		return;
 	}
+	if(auto *hc=hordeContainOf(*getObject());hc && hc->tickNativeMelee(*target))return;
 	meleeTick(*target); // the melee behaviour's slot 0x14
 	// the horde faces the target's container when it has one (target + 0x27C), else the target: its orientation plus the relative angle (RW 0x4B3D8D, 0x70C31E)
 	Object *look = target->getContainedBy() ? target->getContainedBy() : target;

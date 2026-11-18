@@ -260,7 +260,9 @@ bool Pathfinder::validMovementPosition(const PathfindMovement &mv, const Pathfin
 			return true;
 		}
 	}
-	if ((mv.surf & validLocomotorSurfacesForCellType(t)) == 0)
+	// BFME1 0x3D4F90 / table 0xEB49FC has no deep-water cell (type 7 is zero).
+	const bool bfme1=m_world && m_world->usesScalarReservations();
+	if ((mv.surf & (bfme1 && t==PathfindCell::CELL_DEEP_WATER ? 0 : validLocomotorSurfacesForCellType(t))) == 0)
 	{
 		return false;
 	}
@@ -268,7 +270,8 @@ bool Pathfinder::validMovementPosition(const PathfindMovement &mv, const Pathfin
 	{
 		return false;
 	}
-	if (mv.bC && !cell->getBit22() && t == PathfindCell::CELL_OBSTACLE)
+	// BFME1 0x3D5000 proceeds straight to the slope check; RW 0x6E8200 has this crusher exclusion.
+	if (!bfme1 && mv.bC && !cell->getBit22() && t == PathfindCell::CELL_OBSTACLE)
 	{
 		return false;
 	}
@@ -1185,7 +1188,33 @@ void Pathfinder::registerSlot(PathfindObject &obj, Slot &slot)
 	for (const ICoord2D &c : slot.cells)
 	{
 		PathfindCell *cell = getCell(slot.layer, c.x, c.y); // lane WALL-2: a raised walkway's cell when the slot is on one, else the ground grid's
+		// BFME1 cell-info scalar owners (0x003E9720 / 0x003E9D80):
+		// guarded replacement, without RW's linked-list resurrection.
+		if(m_world && m_world->usesScalarReservations())
+		{
+			// 0x003E9BBE: an existing stationary goal (goal == position)
+			// is protected; a passing goal may replace a moving owner's.
+			auto *goal=cell->occupants(OCC_GROUND_GOAL),*pos=cell->occupants(OCC_POSITION);
+			if(slot.kind==OCC_GROUND_GOAL && goal && pos && goal->owner==pos->owner)continue;
+			// 0x003EA195..0x003EA1AB: an existing position can only be
+			// displaced by the owner of this cell's goal. This is stronger
+			// than setPosUnit's own stationary-owner protection (0x003F72C0).
+			if(slot.kind==OCC_POSITION && pos && (!goal || goal->owner!=obj.getID()))continue;
+			while(const auto *old=cell->occupants(slot.kind))cell->removeOccupant(m_pool,slot.kind,old->owner);
+		}
 		cell->addOccupant(m_pool, slot.kind, obj.getID(), c);
+		if(m_world && m_world->usesScalarReservations() && slot.kind==OCC_GROUND_GOAL && !obj.isKindOf(PK_HORDE))
+		{
+			// 0x003E9A69 / 0x003E9BDF: a goal at the current position
+			// also claims position, except for a HORDE. Its existing position
+			// slot covers these same cells and owns their later release.
+			const auto *u=findUnit(obj.getID());
+			if(u && u->pos.occupied && u->pos.cell.x==slot.cell.x && u->pos.cell.y==slot.cell.y)
+			{
+				while(const auto *old=cell->occupants(OCC_POSITION))cell->removeOccupant(m_pool,OCC_POSITION,old->owner);
+				cell->addOccupant(m_pool,OCC_POSITION,obj.getID(),c);
+			}
+		}
 	}
 }
 
@@ -1207,6 +1236,7 @@ void Pathfinder::updateGoalAngle(PathfindObject &obj, const Coord3D *newGoalPos,
 	{
 		return; // RW 0x8E24D3: nothing when the object's + 0x458 bit 0 is set (lane MOVE-3)
 	}
+	if(m_world && m_world->usesScalarReservations() && obj.isKindOf(PK_HORDE) && obj.containedMemberCount()<2)return; // BFME1 0x003E9755..0x003E9777.
 	UnitRecord &u = unit(obj.getID());
 	int angleCode = 0;
 	if (obj.isKindOf(PK_LARGE_RECTANGLE_PATHFIND))
@@ -1222,7 +1252,7 @@ void Pathfinder::updateGoalAngle(PathfindObject &obj, const Coord3D *newGoalPos,
 	{
 		return; // unchanged
 	}
-	if (obj.isKindOf(PK_HORDE))
+	if (obj.isKindOf(PK_HORDE) && !(m_world && m_world->usesScalarReservations()))
 	{
 		// horde goals are never registered: the cell is only remembered
 		releaseSlot(obj.getID(), u.goal);
@@ -1295,7 +1325,9 @@ void Pathfinder::updatePos(PathfindObject &obj)
 		}
 		return;
 	}
-	const PathfindOccupantKind kind = obj.isKindOf(PK_HORDE) ? OCC_HORDE_POSITION : OCC_POSITION;
+	// BFME1 0x003E9D80 has one position scalar (+0x18), including hordes;
+	// RW 0x8E26B7 stores horde positions separately.
+	const PathfindOccupantKind kind = obj.isKindOf(PK_HORDE) && !(m_world && m_world->usesScalarReservations()) ? OCC_HORDE_POSITION : OCC_POSITION;
 	const int angleCode = obj.isKindOf(PK_LARGE_RECTANGLE_PATHFIND) ? angleToCode(obj.getOrientation()) : 0;
 	const ICoord2D c = cellOfPosition(obj, obj.getPosition());
 	const PathfindLayerEnum lyr = obj.getLayer();
