@@ -51,6 +51,28 @@ func _run() -> int:
 	_check(setup.ok, "the object world loads")
 	if not setup.ok:
 		return 1
+	# OpenBFME spawn-plan input policy is checked at the dictionary boundary,
+	# before map placement. Missing waypoint names remain valid input.
+	var spawn_message := _message()
+	var connections: Array = []
+	for i in 64:
+		connections.append("Region%d" % i)
+	spawn_message.living_world_battle = {"armies": [{"slot": 0, "army": 1, "state": 4, "arrival_frame": 0,
+		"placement": {"method": 1, "side": 0, "friendly_owner": false, "origin_region": "Origin", "connections": connections}}]}
+	var bounded: Dictionary = world.prepare_new_game(spawn_message)
+	_check(bounded.ok, "64 distinct spawn connections accepted: %s" % str(bounded.get("errors", [])))
+	if bounded.ok:
+		_check(bounded.resolved.living_world_battle.armies[0].placement.connections == connections, "spawn connection order survives the dictionary round trip")
+	var oversized: Dictionary = spawn_message.duplicate(true)
+	oversized.living_world_battle.armies[0].placement.connections.append("Region64")
+	var denied: Dictionary = world.prepare_new_game(oversized)
+	_check(not denied.ok and denied.errors == ["the War of the Ring army's spawn plan has more than 64 connections (OpenBFME input limit)"],
+		"65 spawn connections rejected by name before placement")
+	var duplicated: Dictionary = spawn_message.duplicate(true)
+	duplicated.living_world_battle.armies[0].placement.connections = ["A", "Missing", "A"]
+	denied = world.prepare_new_game(duplicated)
+	_check(not denied.ok and denied.errors == ["the War of the Ring army's spawn plan has duplicate connections (OpenBFME input policy)"],
+		"duplicate spawn connections rejected by name before placement")
 	# two runs of one message
 	var hashes: Array = []
 	var progress_runs: Array = []

@@ -72,13 +72,23 @@ bool livingWorldArmySpawnFromDictionary(const Dictionary &d, LivingWorldArmySpaw
 	plan.friendlyOwner = (bool)d.get("friendly_owner", false);
 	plan.originRegion = toNativeUtf8(d.get("origin_region", String()));
 	const Array connections = d.get("connections", Array());
-	if (plan.method < LivingWorldArmySpawnPlan::LEGACY || plan.method > LivingWorldArmySpawnPlan::WALK_ON || plan.side < 0 || plan.side >= MAX_SLOTS || connections.size() > 10000)
+	if (plan.method < LivingWorldArmySpawnPlan::LEGACY || plan.method > LivingWorldArmySpawnPlan::WALK_ON || plan.side < 0 || plan.side >= MAX_SLOTS)
 	{
 		if (error) *error = "the War of the Ring army's spawn plan is damaged";
 		return false;
 	}
+	if (const char *why = LivingWorldArmySpawnPlan::connectionCountError((std::size_t)connections.size()))
+	{
+		if (error) *error = why;
+		return false;
+	}
 	for (int64_t i = 0; i < connections.size(); ++i)
 		plan.connections.push_back(toNativeUtf8(connections[i]));
+	if (const char *why = LivingWorldArmySpawnPlan::connectionError(plan.connections))
+	{
+		if (error) *error = why;
+		return false;
+	}
 	out = std::move(plan);
 	return true;
 }

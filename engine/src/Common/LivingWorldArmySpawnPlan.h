@@ -1,6 +1,8 @@
 // OpenBFME. GPL-3.0.
 #pragma once
 
+#include <cstddef>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -25,4 +27,24 @@ struct LivingWorldArmySpawnPlan
 	bool friendlyOwner = false;
 	std::string originRegion;
 	std::vector<std::string> connections; // battle-region connection order, including links without map waypoints
+
+	// OpenBFME native input policy, not a retail graph invariant: cap the
+	// quadratic farthest-pair search at 2,016 pairs per army. Reject duplicate
+	// names instead of deduplicating them, which could change the last-tie
+	// selection. Match names exactly, as TerrainLogic's waypoint lookup does.
+	static constexpr std::size_t kMaxConnections = 64;
+	static const char *connectionCountError(std::size_t count)
+	{
+		return count > kMaxConnections ? "the War of the Ring army's spawn plan has more than 64 connections (OpenBFME input limit)" : nullptr;
+	}
+	static const char *connectionError(const std::vector<std::string> &names)
+	{
+		if (const char *error = connectionCountError(names.size()))
+			return error;
+		std::set<std::string> seen;
+		for (const std::string &name : names)
+			if (!seen.insert(name).second)
+				return "the War of the Ring army's spawn plan has duplicate connections (OpenBFME input policy)";
+		return nullptr;
+	}
 };

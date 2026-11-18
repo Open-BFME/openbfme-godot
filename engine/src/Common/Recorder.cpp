@@ -215,8 +215,12 @@ bool readLivingWorldBattle(NetByteReader &r, LivingWorldBattleStart &b, std::uin
 			const std::uint32_t connections = count(4);
 			if (connections == UINT32_MAX || a.placement.method < LivingWorldArmySpawnPlan::LEGACY || a.placement.method > LivingWorldArmySpawnPlan::WALK_ON || a.placement.side < 0 || a.placement.side >= MAX_SLOTS || friendly > 1)
 				return failWith(error, "the War of the Ring army's spawn plan is damaged");
+			if (const char *why = LivingWorldArmySpawnPlan::connectionCountError(connections))
+				return failWith(error, why);
 			for (std::uint32_t k = 0; k < connections; ++k)
 				a.placement.connections.push_back(r.str());
+			if (const char *why = LivingWorldArmySpawnPlan::connectionError(a.placement.connections))
+				return failWith(error, why);
 		}
 		b.armies.push_back(std::move(a));
 	}

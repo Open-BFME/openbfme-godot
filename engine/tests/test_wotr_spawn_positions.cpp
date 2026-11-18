@@ -2,6 +2,9 @@
 #include "doctest.h"
 
 #include "GameLogic/NewGame/ArmySpawnPositions.h"
+#include "GameLogic/NewGame/NewGame.h"
+#include "Common/NameKeyGenerator.h"
+#include "GameLogic/GameLogic.h"
 #include "RetailTestMount.h"
 #include "GameClient/MapUtil.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -192,4 +195,77 @@ TEST_CASE("wotr battle placement retail: Rohan neutral sides use Helms Deep and 
 	CHECK(out.spawn.y == 2300.0f);
 	CHECK(out.gather.x == 400.0f);
 	CHECK(out.gather.y == 2300.0f);
+}
+
+// OpenBFME input policy, not a retail connection-count rule. This bounds the
+// quadratic selector without sorting, truncating or deduplicating graph data.
+TEST_CASE("wotr battle placement: connection policy accepts 64 ordered names and refuses invalid plans before waypoint lookups")
+{
+	using P = LivingWorldArmySpawnPlan;
+	P plan;
+	plan.method = P::NORMAL_NEUTRAL;
+	SpawnMap map;
+	for (int i = 0; i < 64; ++i)
+	{
+		const std::string name = "Region" + std::to_string(i);
+		plan.connections.push_back(name);
+		map.region(name, { 0, 0, 0 }, { SimMath::sseFromInt32(i), 0, 0 });
+	}
+	CHECK(P::kMaxConnections == 64);
+	CHECK(P::connectionError(plan.connections) == nullptr);
+	const auto original = plan.connections;
+	ArmySpawnPositions::Positions out;
+	REQUIRE(ArmySpawnPositions::farthestPair(map.lookup(), plan.connections, 1, out));
+	CHECK(out.names.first == "WOTRSpawnPoint_Region63_1");
+	CHECK(plan.connections == original);
+	int lookups = 0;
+	const ArmySpawnPositions::Lookup counted = [&](const std::string &) -> const Coord3D * {
+		++lookups;
+		return nullptr;
+	};
+	plan.connections.push_back("Region64");
+	const char *limit = "the War of the Ring army's spawn plan has more than 64 connections (OpenBFME input limit)";
+	CHECK(std::string(P::connectionError(plan.connections)) == limit);
+	CHECK_THROWS_WITH_AS(ArmySpawnPositions::resolve(plan, true, counted, out), limit, std::invalid_argument);
+	CHECK_THROWS_WITH_AS(ArmySpawnPositions::farthestPair(counted, plan.connections, 0, out), limit, std::invalid_argument);
+	CHECK_THROWS_WITH_AS(ArmySpawnPositions::farthestFromStart(counted, plan.connections, out), limit, std::invalid_argument);
+	CHECK(lookups == 0);
+	plan.connections = { "Missing", "A", "Missing" };
+	const char *duplicate = "the War of the Ring army's spawn plan has duplicate connections (OpenBFME input policy)";
+	CHECK(std::string(P::connectionError(plan.connections)) == duplicate);
+	CHECK_THROWS_WITH_AS(ArmySpawnPositions::resolve(plan, true, counted, out), duplicate, std::invalid_argument);
+	CHECK_THROWS_WITH_AS(ArmySpawnPositions::farthestPair(counted, plan.connections, 0, out), duplicate, std::invalid_argument);
+	CHECK_THROWS_WITH_AS(ArmySpawnPositions::farthestFromStart(counted, plan.connections, out), duplicate, std::invalid_argument);
+	CHECK(lookups == 0);
+	// Waypoint names compare case-sensitively; distinct names and absent
+	// points remain valid inputs and retain the existing missing-point rules.
+	plan.connections = { "Missing", "missing", "A" };
+	CHECK(P::connectionError(plan.connections) == nullptr);
+	CHECK_FALSE(ArmySpawnPositions::resolve(plan, true, counted, out));
+	CHECK(lookups == 7); // three absent spawn/gather pairs, then the absent fallback start
+}
+
+TEST_CASE("wotr battle placement: native new-game preparation refuses invalid connections before producing a placement")
+{
+	NewGameMessage message;
+	message.livingWorldBattle.active = true;
+	message.livingWorldBattle.armies.push_back({ 0, 1, 4, 0, {} });
+	auto &plan = message.livingWorldBattle.armies.front().placement;
+	plan.method = LivingWorldArmySpawnPlan::NORMAL_NEUTRAL;
+	NameKeyGenerator keys;
+	PlayerTemplateStore templates(keys);
+	GameLogicSettings settings;
+	NewGameStart out(RandomAlgorithm::ZH_CarryChain);
+	out.mapName = "unchanged";
+	std::string error;
+	plan.connections = { "A", "A" };
+	CHECK_FALSE(NewGame::prepareNewGame(message, templates, settings, {}, RandomAlgorithm::ZH_CarryChain, out, &error));
+	CHECK(error == "the War of the Ring army's spawn plan has duplicate connections (OpenBFME input policy)");
+	CHECK(out.mapName == "unchanged");
+	plan.connections.clear();
+	for (int i = 0; i < 65; ++i)
+		plan.connections.push_back("Region" + std::to_string(i));
+	CHECK_FALSE(NewGame::prepareNewGame(message, templates, settings, {}, RandomAlgorithm::ZH_CarryChain, out, &error));
+	CHECK(error == "the War of the Ring army's spawn plan has more than 64 connections (OpenBFME input limit)");
+	CHECK(out.mapName == "unchanged");
 }

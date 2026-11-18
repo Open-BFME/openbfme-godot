@@ -55,6 +55,12 @@ bool NewGame::prepareNewGame(const NewGameMessage &in, const PlayerTemplateStore
 	{
 		return failWith(error, "only a skirmish new-game message is consumed (a single player map game is the campaign lane's)");
 	}
+	if (in.livingWorldBattle.active)
+	{
+		for (const LivingWorldBattleStart::ArmyStart &army : in.livingWorldBattle.armies)
+			if (const char *why = LivingWorldArmySpawnPlan::connectionError(army.placement.connections))
+				return failWith(error, why);
+	}
 	NewGameStart start(algorithm);
 	start.message = in;
 	SkirmishGameInfo &info = start.message.game;

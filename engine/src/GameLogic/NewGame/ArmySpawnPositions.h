@@ -7,6 +7,7 @@
 #include "Libraries/WWVegas/WWMath/quat.h"
 
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,6 +19,16 @@
 namespace ArmySpawnPositions
 {
 using Lookup = std::function<const Coord3D *(const std::string &)>;
+
+// Replay/dictionary/native preparation validates before placement. Keep this
+// guard for direct C++ callers too: invalid input must not become a failed
+// waypoint lookup followed by retail's fallback to another start position.
+inline void requireConnections(const std::vector<std::string> &connections)
+{
+	if (const char *why = LivingWorldArmySpawnPlan::connectionError(connections))
+		throw std::invalid_argument(why);
+}
+
 struct Positions
 {
 	Coord3D spawn{}, gather{};
@@ -89,6 +100,7 @@ inline float squaredGatherDistance(const Positions &a, const Positions &b)
 // only side 0/1 is accepted. A zero-distance valid pair is still a pair.
 inline bool farthestPair(const Lookup &lookup, const std::vector<std::string> &connections, int side, Positions &out)
 {
+	requireConnections(connections);
 	if (side != 0 && side != 1)
 		return false;
 	bool found = false;
@@ -119,6 +131,7 @@ inline bool farthestPair(const Lookup &lookup, const std::vector<std::string> &c
 // start 0's GATHER coordinate, last equal candidate, strictly positive cost.
 inline bool farthestFromStart(const Lookup &lookup, const std::vector<std::string> &connections, Positions &out)
 {
+	requireConnections(connections);
 	Positions home;
 	if (!start(lookup, 0, home))
 		return false;
@@ -141,6 +154,7 @@ inline bool farthestFromStart(const Lookup &lookup, const std::vector<std::strin
 inline bool resolve(const LivingWorldArmySpawnPlan &plan, bool reinforcement, const Lookup &lookup, Positions &out)
 {
 	using P = LivingWorldArmySpawnPlan;
+	requireConnections(plan.connections);
 	bool found = false;
 	switch (plan.method)
 	{

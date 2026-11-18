@@ -3105,6 +3105,18 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 		}
 		return true;
 	}
+	// RetreatArmiesForPlayer removes the player's active battle record (RW 0x7F806F;
+	// BFME2 LivingWorldBattle.cpp, side RVA 0x3F5E3F). The original attacker/defender
+	// labels remain historical: only the surviving side records may enter the RTS game.
+	auto activePlayer = [&](int player) {
+		return std::any_of(b.sides.begin(), b.sides.end(), [&](const Battle::Side &side) {
+			return std::any_of(side.players.begin(), side.players.end(), [&](const Battle::SidePlayer &sp) { return sp.player == player; });
+		});
+	};
+	b.armies.erase(std::remove_if(b.armies.begin(), b.armies.end(), [&](int id) {
+		const Army *a = findArmy(id);
+		return a && (!activePlayer(a->owner) || a->retreating);
+	}), b.armies.end());
 	b.resolution = Battle::RTS_REQUESTED;
 	// WOTR2 milestone 6: PrepareBattleForLoading RW 0x6B851C pass 1: every battle player (side order, then player order) without a garrison army in the
 	// battle gets an empty one in the region (CreateEmptyGarrisonArmy RW 0x6B7664, battle.AddArmy RW 0x7F8588: appended to the battle's armies). Its
@@ -3204,11 +3216,14 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 		setup->mapName = region.mapName;
 		setup->startingCash = m_campaign->startingCashRTS;
 		setup->startingCashWithFort = m_campaign->startingCashRTSWithFort;
-		setup->players.push_back(b.attacker);
-		if (b.defender >= 0)
-		{
-			setup->players.push_back(b.defender);
-		}
+		auto addPlayer = [&](int player) {
+			if (activePlayer(player) && std::find(setup->players.begin(), setup->players.end(), player) == setup->players.end())
+			{
+				setup->players.push_back(player);
+			}
+		};
+		addPlayer(b.attacker);
+		addPlayer(b.defender);
 		for (int id : b.armies)
 		{
 			const Army *a = findArmy(id);
@@ -3216,10 +3231,7 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 			{
 				continue;
 			}
-			if (std::find(setup->players.begin(), setup->players.end(), a->owner) == setup->players.end())
-			{
-				setup->players.push_back(a->owner);
-			}
+			addPlayer(a->owner);
 			for (size_t m = 0; m < a->members.size(); ++m)
 			{
 				BattleSpawn s;
@@ -3248,6 +3260,7 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 		const int owner = m_regions[(size_t)b.region].owner;
 		for (const std::pair<int, int> &g : garrisons)
 		{
+			addPlayer(g.first); // an active participant may defend with buildings alone
 			// Player::initFromDict RW 0x6B07EF tail: the region owner's battle player gets StartingCashRTSWithFort when the region has a fort, every other
 			// one StartingCashRTS (both deposited, RW 0x7B18B8); then its ExtraStartResources. ArmySummary::Load RW 0x812413 / 0x812492: FreeBuilder > 0
 			// and FreeInnUnits > 0 each add ONE object (LoadArmyEntry RW 0x811104 is called with count 1)

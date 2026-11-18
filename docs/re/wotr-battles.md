@@ -92,6 +92,14 @@ cover missing pairs, ties, owner-dependent retries, and the final start fallback
 Original Rohan map checks pin the independently read Helms Deep/Brown Lands
 neutral pair and Gap of Rohan hostile point; a started battle exercises call-in.
 
+Native replay/dictionary spawn plans reject more than 64 connections and exact
+duplicate connection names before placement. Direct native startup and selector
+calls enforce the same rule. This is an explicit OpenBFME input policy, not a
+retail graph limit: it bounds neutral placement to 2,016 unordered pairs per
+plan without silently truncating or deduplicating the connection order. Waypoint
+lookup remains case-sensitive. A malformed plan is an error, never a reason to
+try another placement method.
+
 **Formation layout remains open:** the four-abreast offsets and individual
 reinforcement move orders are still S-1329 approximations. Reading anchor
 selection does not establish `WalkOnTemplate` formation rotation, optimization,
@@ -132,6 +140,24 @@ preserve these fields. A fresh unbought hero uses the existing template-initial
 constructor; an old dead/experienced record without its ranks is refused by
 name. This does not close the constructor's other S-852 limitations.
 
+## Known native save and replay compatibility limits
+
+These are deliberate named refusals, not a promise that every older native file
+loads:
+
+- Strategic saves before version 9 and battle replays before version 14 do not
+  contain revival rank/base rank. Fresh, unbought hero records still load;
+  strategic records retain their original hash stream. Dead or experienced records are refused because
+  their missing ranks cannot be reconstructed from experience alone, including
+  the valid rank-zero case.
+- Active tactical snapshots whose PlayerScience block lacks the Living World
+  rank ceiling are refused. Ordinary skirmish/campaign snapshots keep their
+  existing version-1 layout and hash stream.
+- Battle replay version 12 has the old non-empty army layout, including named
+  spawn/gather pairs, but no placement plan. It remains readable with the
+  reported S-1329 legacy placement; version 13 adds the placement plan. Both
+  versions are subject to the missing-hero-rank restriction above.
+
 ## Allied territory awards
 
 RW `0x6BBA1C` awards to the winning side's active player records, preserving an
@@ -149,6 +175,10 @@ retail APT presentation remains S-1334. Retreat preparation waits for all awards
 to settle so it observes the final ownership. A withdrawn player is removed
 from active participants (RW `0x7F806F` -> `0x7F7496` / `0x7F7414`, paired
 BFME2 side RVA `0x3F5E3F`) and cannot respawn or claim an ally's subsequent win.
+The original attacker/defender labels remain historical after a retreat; the
+tactical player list filters them through those active participants, as do its
+garrisons and player starts. Regressions withdraw each primary role while its
+ally keeps fighting, then save/load and continue the battle result.
 
 S-1324 still covers the port's phase-4 ownership timing, unresolved absent-host
 case, and explicitly reported legacy host mapping. If a claimant alliance

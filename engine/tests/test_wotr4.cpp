@@ -1776,3 +1776,108 @@ TEST_CASE("wotr6 retreat: a human's heroless army with several friendly exits re
 	CHECK_FALSE(l.endPhase(0, &err));
 	CHECK(err == "[S-1329] a human's heroless army has several retreat regions; its destination rule is unverified");
 }
+
+// RotWK strategic battle handoff: a withdrawn primary is historical, not an active seat.
+// RW 0x7F806F removes its player record (BFME2 LivingWorldBattle.cpp, side RVA 0x3F5E3F).
+TEST_CASE("wotr battles: a primary AI retreat leaves only active players in the RTS setup and its saved continuation")
+{
+	for (const bool primaryDefender : { false, true })
+	{
+		for (const bool staleArmyOwner : { false, true })
+		{
+			CAPTURE(primaryDefender);
+			CAPTURE(staleArmyOwner);
+			GameSetup g = setup("TestAI3", true);
+			SetupSlot ally = g.slots[0];
+			ally.name = "AI ally";
+			ally.human = false;
+			SetupSlot enemy = g.slots[1];
+			enemy.human = true; // the only AI voter is the primary that will retreat
+			g.slots = { g.slots[0], ally, enemy };
+			LivingWorldLogic logic(stores(), units);
+			std::string error;
+			REQUIRE_MESSAGE(logic.start(g, &error), error);
+			auto &armies = A::armies(logic);
+			armies.clear();
+			auto makeArmy = [&](int owner, const std::string &hero, const std::string &soldiers, int count, int movedFrom) {
+				Army a;
+				a.id = A::nextArmyId(logic);
+				a.owner = owner;
+				a.region = 1; // B; the allied A and E are valid retreat regions
+				a.movedFrom = movedFrom;
+				a.heroTemplate = hero;
+				a.members = { { hero, "", 1, 0.0f, 1, 0 }, { soldiers, "", count, 0.0f, 2, 0 } };
+				a.nextKey = 3;
+				armies.push_back(a);
+				return a.id;
+			};
+			// First army in battle order belongs to the AI. The attacker label comes
+			// from movedFrom; the defender label prefers the hostile region owner.
+			makeArmy(1, "GoodHero", "GoodSoldiers", 1, primaryDefender ? -1 : 0);
+			makeArmy(0, "GoodHero", "GoodSoldiers", 1, -1);
+			makeArmy(2, "EvilHero", "EvilOrcs", 40, primaryDefender ? 2 : -1);
+			A::regions(logic)[1].owner = primaryDefender ? 1 : 2;
+			A::toBattles(logic);
+			REQUIRE(logic.battles().size() == 1);
+			CHECK(logic.battles()[0].attacker == (primaryDefender ? 2 : 1));
+			CHECK(logic.battles()[0].defender == (primaryDefender ? 1 : 2));
+			REQUIRE(A::ai(logic).battleChoice(1, logic.battles()[0]) == 2);
+			int staleId = 0;
+			if (staleArmyOwner)
+			{
+				REQUIRE_MESSAGE(logic.chooseRetreat(0, 1, &error), error);
+				REQUIRE(logic.battles()[0].resolution == Battle::PENDING);
+				// A stale army reference must not reintroduce an owner whose active
+				// side record was removed, nor contribute its roster to the battle.
+				staleId = makeArmy(1, "GoodHero", "GoodSoldiers", 1, -1);
+				const_cast<Battle &>(logic.battles()[0]).armies.push_back(staleId);
+			}
+			BattleSetup battle;
+			REQUIRE_MESSAGE(logic.chooseRts(0, &battle, &error, staleArmyOwner), error);
+			CHECK(logic.battles()[0].retreatedPlayers == std::vector<int>{ 1 });
+			CHECK(logic.battles()[0].resolution == Battle::RTS_REQUESTED);
+			CHECK(battle.players == std::vector<int>{ 2, 0 }); // retain the surviving primary's ordering
+			std::vector<int> starts;
+			for (const BattleSetup::PlayerStart &ps : battle.playerStarts) starts.push_back(ps.player);
+			CHECK(starts == std::vector<int>{ 0, 2 }); // active side order; exactly two tactical starts
+			std::vector<int> spawnedOwners, armyOwners;
+			for (const BattleSpawn &spawn : battle.spawns) spawnedOwners.push_back(spawn.player);
+			for (const BattleSetup::ArmyStart &army : battle.armyStarts) armyOwners.push_back(army.player);
+			for (std::vector<int> *owners : { &spawnedOwners, &armyOwners })
+			{
+				std::sort(owners->begin(), owners->end());
+				owners->erase(std::unique(owners->begin(), owners->end()), owners->end());
+				CHECK(*owners == std::vector<int>{ 0, 2 });
+			}
+			if (staleArmyOwner)
+			{
+				CHECK(std::find(logic.battles()[0].armies.begin(), logic.battles()[0].armies.end(), staleId) == logic.battles()[0].armies.end());
+			}
+			std::vector<std::uint8_t> bytes;
+			REQUIRE_MESSAGE(logic.saveState(bytes, &error), error);
+			LivingWorldLogic loaded(stores(), units);
+			REQUIRE_MESSAGE(loaded.loadState(g, bytes, &error, true), error);
+			CHECK(loaded.stateHash() == logic.stateHash());
+			BattleResult result;
+			result.collected = true;
+			result.winner = 0;
+			for (const BattleSpawn &spawn : battle.spawns)
+			{
+				if (spawn.player == 0)
+				{
+					for (int i = 0; i < spawn.quantity; ++i)
+					{
+						result.survivors.push_back({ spawn.armyId, spawn.thingTemplate, spawn.experience, 0, spawn.upgrades, spawn.spawnId });
+					}
+				}
+			}
+			REQUIRE_MESSAGE(logic.applyBattleResult(0, result, &error), error);
+			REQUIRE_MESSAGE(loaded.applyBattleResult(0, result, &error), error);
+			CHECK(loaded.stateHash() == logic.stateHash());
+			CHECK(loaded.battles()[0].resolution == Battle::RESOLVED);
+			logic.update();
+			loaded.update();
+			CHECK(loaded.stateHash() == logic.stateHash());
+		}
+	}
+}

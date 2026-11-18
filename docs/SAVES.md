@@ -682,7 +682,11 @@ and review counts describe those runs, not fixed counts for every build.
   does not require guessing. PlayerScience snapshot version 2 carries the Living
   World `InitialMaxRingLevel` cap. An active tactical battle snapshot lacking that
   cap is refused rather than applying its ordinary single-player rank limit.
-  See [the source audit](re/wotr-battles.md) for edition scope and remaining stops.
+  These are known compatibility limits: not every pre-v9 strategic save,
+  pre-v14 battle replay or older active tactical snapshot can load. Ordinary
+  skirmish/campaign snapshots retain their version-1 science layout and hash
+  stream. See [the source audit](re/wotr-battles.md#known-native-save-and-replay-compatibility-limits)
+  for the exact refusal boundaries, edition scope and remaining stops.
 - **Loading:** like a campaign menu save, no log is replayed, so another build
   may load it when the data identity matches and the scenario exists
   (`GameWorld::wotrSaveVerdict`). The loaded state must hash as the header
