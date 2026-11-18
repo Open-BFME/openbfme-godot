@@ -3102,7 +3102,7 @@ func _start_map_audio() -> void:
 		if (flags & 96) != 0:
 			_say("[S-1335] ambient NO_KILL / FADE_IN flags are unverified: " + str(sound.name))
 			continue
-		if (flags & 3) != 0:
+		if (flags & 7) != 0: # ZOOMED_IN / ZOOMED_OUT / ZOOMING_IN (RW 0xDA6958)
 			# Zoom-region activation needs the retail camera state; never substitute the current camera's distance.
 			_say("[S-1335] zoom-conditioned ambient sound is unverified: " + str(sound.name))
 			continue

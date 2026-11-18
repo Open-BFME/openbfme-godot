@@ -40,6 +40,11 @@ class Audio extends Node:
 class Game extends Node:
 	var _audio := Audio.new()
 
+class AudioMap extends "res://scripts/wotr.gd":
+	var reports: Array = []
+	func _say(text: String) -> void:
+		reports.append(text)
+
 func check(ok: bool, reason: String) -> void:
 	if not ok:
 		failures += 1
@@ -48,12 +53,39 @@ func check(ok: bool, reason: String) -> void:
 func _initialize() -> void:
 	run.call_deferred()
 
+func check_transient_replay(role: String, points: Array) -> void:
+	var fx := Effects.new()
+	fx.set_process(false)
+	root.add_child(fx)
+	var first := MeshInstance3D.new()
+	var second := MeshInstance3D.new()
+	fx.add_child(first)
+	fx.add_child(second)
+	var kind := role + ":0"
+	fx.definitions = {kind: {"points": points, "opacity": 1.0}}
+	fx.meshes = {kind: {"ARNOR": first, "GONDOR": second}}
+	fx._show(kind, "ARNOR", Color.RED)
+	fx._show(kind, "GONDOR", Color.RED)
+	var material: Material = first.material_override
+	fx.advance(2.0)
+	check(not first.visible and not second.visible, role + " hides every finished transient")
+	check(fx.active_effects[kind].is_empty(), role + " expires every finished transient")
+	check(fx.material_cache[kind]["ARNOR"] == material, role + " retains the cached material after expiry")
+	fx._show(kind, "ARNOR", Color.RED)
+	fx.advance(0.5)
+	check(first.visible and not second.visible, role + " replays for the same player after expiry")
+	check(material.get_shader_parameter("intensity") == 0.5, role + " replays the authored curve")
+	check(first.material_override == material and fx.overlay_materials.size() == 2, role + " replays without allocating materials")
+	fx.free()
+
 func run() -> void:
 	check(ClassDB.class_has_method("W3DInstancer", "set_instance_scene_fog"), "strategic icon fog binding is available")
 	var points := [{"time": 0.0, "position": Vector3.ZERO}, {"time": 1.0, "position": Vector3.ONE}, {"time": 2.0, "position": Vector3.ZERO}]
 	check(Effects.curve_value(points, 0.5) == 0.5, "ascending curve interpolates")
 	check(Effects.curve_value(points, 1.5) == 0.5, "descending curve interpolates")
 	check(Effects.curve_value(points, 3.0) == 0.0, "curve holds final intensity")
+	check_transient_replay("unified", points)
+	check_transient_replay("mouseout", points)
 	var fx := Effects.new()
 	fx.set_process(false)
 	root.add_child(fx)
@@ -125,7 +157,7 @@ func run() -> void:
 	buildings.free()
 
 	var game := Game.new()
-	var war := WarMap.new()
+	var war := AudioMap.new()
 	war.init(game)
 	war.data = {"map_info": {"enter_map_sound": "Enter"}, "map_sounds": [{"name": "wind", "sound": "Wind", "flags": 8, "position": Vector3(1, 2, 3)}]}
 	war._start_map_audio()
@@ -134,6 +166,20 @@ func run() -> void:
 	check(game._audio.removed == [9], "leaving map stops ambient handle")
 	war._stop_map_audio()
 	check(game._audio.removed == [9], "stopping map audio is idempotent")
+	game._audio.played.clear()
+	war.data = {"map_info": {}, "map_sounds": [
+		{"name": "zoomed_in", "sound": "Wind", "flags": 1, "position": Vector3.ZERO},
+		{"name": "zoomed_out", "sound": "Wind", "flags": 2, "position": Vector3.ZERO},
+		{"name": "zooming_in", "sound": "Wind", "flags": 4, "position": Vector3.ZERO},
+		{"name": "visible_zooming_in", "sound": "Wind", "flags": 12, "position": Vector3.ZERO}]}
+	war._start_map_audio()
+	check(game._audio.played.is_empty() and war.sound_handles.is_empty(), "all zoom conditions prevent unconditional ambient playback")
+	check(war.sounds_started.keys() == ["wind"], "unsupported zoom sounds are not marked started")
+	check(war.reports == [
+		"[S-1335] zoom-conditioned ambient sound is unverified: zoomed_in",
+		"[S-1335] zoom-conditioned ambient sound is unverified: zoomed_out",
+		"[S-1335] zoom-conditioned ambient sound is unverified: zooming_in",
+		"[S-1335] zoom-conditioned ambient sound is unverified: visible_zooming_in"], "each unsupported zoom condition reports its sound by name")
 	war.free()
 	game._audio.free()
 	game.free()

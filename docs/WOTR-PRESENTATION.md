@@ -14,7 +14,9 @@ strategic messages or save layouts change.
   by the renderer. The map uses its campaign's named effect manager.
 - Play selection and hover intensity curves; show territory geometry when
   ownership becomes unified. An unchanged state refresh neither restarts an
-  effect nor retains another material. The setup preview respects LoadInShell.
+  effect nor retains another material. Finished unified/mouseout playback
+  expires so a later flare of the same colour reuses its cached material.
+  The setup preview respects LoadInShell.
 - Draw icon models and banners through the full W3D material/house-colour
   path. UseHouseColor uses LivingWorldBannerColor. Local/allied visibility,
   selection/highlight predicates, sub-object filters, movement/rally helpers
@@ -68,7 +70,8 @@ text-layer opacity and the solid home ring remain presentation inferences.
 The focused native checks load both editions' original presentation INIs,
 check separate curves and all newly retained fields, reject unknown fields,
 and preserve BFME1's recording boundary. The headless Godot regression checks
-effect playback/material reuse, native instance transform/visibility/removal
-and ambient handle cleanup. A fixed-state RotWK GPU comparison uses identical
+effect playback/material reuse (including replay after transient expiry),
+native instance transform/visibility/removal, all three unsupported zoom
+conditions and ambient handle cleanup. A fixed-state RotWK GPU comparison uses identical
 seed, armies and camera; both builds report strategic hash 1227550449.
 Captures belong in the pull request attachments, never this repository.

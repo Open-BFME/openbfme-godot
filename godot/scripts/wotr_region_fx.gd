@@ -183,7 +183,7 @@ func _process(delta: float) -> void:
 
 func advance(delta: float) -> void:
 	for kind in active_effects:
-		for r in active_effects[kind]:
+		for r in active_effects[kind].keys():
 			var effect: Dictionary = active_effects[kind][r]
 			effect.time += delta
 			var points: Array = definitions[kind].points
@@ -197,6 +197,8 @@ func advance(delta: float) -> void:
 			if kind.begins_with("unified:") or kind.begins_with("mouseout:"):
 				if not points.is_empty() and effect.time >= float(points[-1].time):
 					mesh.visible = false
+					# Expire playback, retaining the cached material for a later flare of the same colour.
+					active_effects[kind].erase(r)
 
 ## the fill meshes carry the region pick bodies (the retail pick-boxes are LMR_Fill's sub-objects, RegionObject)
 func fill_meshes() -> Dictionary:
