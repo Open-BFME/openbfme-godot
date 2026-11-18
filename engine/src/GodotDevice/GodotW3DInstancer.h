@@ -25,6 +25,8 @@
 #include "Libraries/WWVegas/WW3D2/w3dstops.h"
 #include "Libraries/WWVegas/WW3D2/w3dsort.h"
 
+#include <cstdint>
+
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
@@ -482,5 +484,9 @@ private:
 	// lane PERF-HD: the instance whose pose (and palette block) `inst` is drawn with
 	const Instance &pose_source(const Instance &inst) const { return inst.ShareLeader >= 0 ? Instances[(size_t)inst.ShareLeader] : inst; }
 };
+
+// S-029 (1) warm-up: the first milliseconds of a game keep opaque pivot fades at 1 instead of the W3D screen-door
+// dither (the dither's black pixels are conspicuous on snowy maps until the first frame settles).
+void W3D_Set_Fade_Warmup(uint64_t untilMs);
 
 } // namespace godot

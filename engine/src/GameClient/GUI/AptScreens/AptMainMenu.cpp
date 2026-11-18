@@ -88,6 +88,16 @@ void AptMainMenu::runInit()
 	{
 		windows().hideBackground(true);
 	}
+	else if (windows().backgroundLevel() >= 0)
+	{
+		// Owner report 2026-11-10: after Skirmish / Quick Match the front-end background the sub-screen asked for
+		// (SetBackground fadein -> Background.apt, the dark ring) stayed over the shell backdrop, so the main menu's
+		// own artwork never came back. Hiding the level's root removes it at once, and unlike hideBackground() it does
+		// not reset the mode: BFME2 and RotWK keep the sub-screen's background state when the main menu returns
+		// (test_apt_shell "returning hides the submenu background without changing BFME2 or RotWK"). A later
+		// SetBackground shows the root again.
+		windows().hideAptWindow(windows().backgroundLevel());
+	}
 }
 
 namespace

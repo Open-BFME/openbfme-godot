@@ -388,7 +388,8 @@ Ref<ImageTexture> HudDevice::grayTextureFor(const std::string &file)
 			uint8_t *p = px.ptrw();
 			for (int64_t i = 0; i + 3 < px.size(); i += 4)
 			{
-				const uint8_t g = (uint8_t)std::lround(p[i] * 0.299f + p[i + 1] * 0.587f + p[i + 2] * 0.114f);
+				// owner report 2026-11-12: the locked spawner icons were too light; darken the greyscale copy.
+				const uint8_t g = (uint8_t)std::lround((p[i] * 0.299f + p[i + 1] * 0.587f + p[i + 2] * 0.114f) * 0.65f);
 				p[i] = p[i + 1] = p[i + 2] = g;
 			}
 			out = ImageTexture::create_from_image(godot::Image::create_from_data(img->get_width(), img->get_height(), img->has_mipmaps(), godot::Image::FORMAT_RGBA8, px));
@@ -649,6 +650,23 @@ void HudDevice::globeProbe()
 
 void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 {
+	// TEMP HUD diagnosis (owner report 2026-11-11, resource bar icons): one line per resource-bar clip, with the kind,
+	// symbol and bounds the movie gave it. Removed when P-02 closes.
+	if (op.path.find("ResourceBar") != std::string::npos || op.path.find("ResourceIcon") != std::string::npos || op.path.find("PlayerFactionIcon") != std::string::npos
+		|| op.path.find("CommandPoints") != std::string::npos)
+	{
+		static std::set<std::string> logged;
+		if (logged.insert(op.path).second)
+		{
+			String vars;
+			for (const auto &kv : op.nativeVars)
+			{
+				vars += String::utf8(kv.first.c_str()) + "=" + String::utf8(kv.second.c_str()) + " ";
+			}
+			UtilityFunctions::print("HUDDBG ", String::utf8(op.path.c_str()), " sym=", String::utf8(op.symbolName.c_str()), " kind=", (int)op.kind, " bounds=[",
+				op.bounds[0], ",", op.bounds[1], ",", op.bounds[2], ",", op.bounds[3], "] vars=", vars);
+		}
+	}
 	if (!hud)
 	{
 		return;
@@ -879,6 +897,48 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		rs->canvas_item_add_triangle_array(item, idx, pts, cols, uvs, PackedInt32Array(), PackedFloat32Array(), tex->get_rid());
 		return;
 	}
+	if (op.symbolName == "ResourceIcon" || op.symbolName == "RenderFactionIcon" || op.symbolName == "PlayerFactionIcon")
+	{
+		// owner report 2026-11-10: the resource bar's icon clips had no handler, so the money / faction icons were blank.
+		// ResourceIcon is the gold icon; the faction clips read the local side's crest from the mapped images.
+		std::string image = op.symbolName == "ResourceIcon" ? std::string("Resource_Icon") : std::string();
+		if (image.empty() && hud->palantir())
+		{
+			const std::string &side = hud->palantir()->localState().faction;
+			if (!side.empty())
+			{
+				// RotWK's resource-bar crests: Gondor/Rohan for Men, Mordor/Isengard for evil; the other sides have no
+				// crest of their own and fall back to the Fellowship art, then to the gold resource icon.
+				std::string crest = side;
+				if (side == "Men") crest = "Gondor";
+				else if (side == "Elves" || side == "Dwarves" || side == "Wild" || side == "Angmar") crest = "Fellowship";
+				image = "ResourceBar_" + crest;
+				if (!images.findImageByName(image))
+				{
+					image = "AptIcon" + side;
+				}
+			}
+		}
+		const ::Image *mapped = images.findImageByName(image);
+		if (!mapped)
+		{
+			mapped = images.findImageByName("Resource_Icon");
+		}
+		if (!mapped)
+		{
+			return;
+		}
+		Ref<ImageTexture> tex = textureFor(mapped->filename);
+		if (tex.is_null())
+		{
+			return;
+		}
+		const float tw = (float)tex->get_width(), th = (float)tex->get_height();
+		const Rect2 src(mapped->uvLo[0] * tw, mapped->uvLo[1] * th, (mapped->uvHi[0] - mapped->uvLo[0]) * tw, (mapped->uvHi[1] - mapped->uvLo[1]) * th);
+		rs->canvas_item_add_texture_rect_region(item, r, tex->get_rid(), src, Color(1, 1, 1, 1));
+		++drawnImages;
+		return;
+	}
 	if (op.symbolName == "RenderImage" || op.symbolName == "RenderImageDisabled")
 	{
 		// lane HUD-2: a RenderImage clip without `_imageMap` (the Palantir portrait, CommandUI.Portrait) finds its image by its own path
@@ -911,6 +971,14 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		{
 			storeImage.image = hud->storeImageForClip(op.path);
 			img = storeImage.image.empty() ? img : &storeImage;
+		}
+		// Owner report 2026-11-11 (P-02): the resource bar's barrel is a RenderImage clip with no `_imageMap`; its path is
+		// `_level< n>.ResourceBar.ResourceIcon.~Enabled`, so the generic RenderImage fallback drew nothing. The mapped image
+		// is the HUD's Resource_Icon (the barrel).
+		if ((!img || img->image.empty()) && op.path.find(".ResourceBar.ResourceIcon") != std::string::npos)
+		{
+			staticImage.image = "Resource_Icon";
+			img = &staticImage;
 		}
 		AptPalantir::NativeImage greyed;
 		if (img && op.symbolName == "RenderImageDisabled")
@@ -981,30 +1049,61 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		}
 		return;
 	}
-	if (op.symbolName == "TimerOverlay")
+	// owner report 2026-11-13: the command buttons of the building's UI use `ButtonTimerOverlay` (libInGameUI.apt; one clip per button), while
+	// `TimerOverlay` is the template class. The handler matched only the latter, so every button timer fell through to the movie's grey placeholder.
+	if (op.symbolName == "TimerOverlay" || op.symbolName == "ButtonTimerOverlay")
 	{
 		const float t = hud->palantir() ? hud->palantir()->timerFor(varOf(op, "_timerId")) : -1.0f;
 		if (t < 0.0f || t >= 1.0f)
 		{
 			return;
 		}
-		// the part of the button still to build is darkened as a pie from the top, clockwise (ZH GadgetButtonDrawInverseClock)
+		// owner report 2026-11-13: the command button's timer must look the same as the building's radial clock: the same two mapped overlays
+		// (RadialClockOverlay1 white fill, RadialClockOverlay2 blue rim), 46/48 of the button, the fill wiped clockwise and the rim full. Clear the
+		// clip's inherited tint / grayscale material first.
+		rs->canvas_item_set_material(item, RID());
+		rs->canvas_item_set_modulate(item, Color(1, 1, 1, 1));
 		const Vector2 c = r.get_center();
-		const float rad = std::max(r.size.x, r.size.y) * 0.5f;
-		PackedVector2Array poly;
-		PackedColorArray cols;
-		poly.push_back(c);
-		const int steps = 24;
-		for (int i = 0; i <= steps; ++i)
-		{
-			const float a = -1.5707963f + 6.2831853f * (t + (1.0f - t) * (float)i / (float)steps);
-			poly.push_back(c + Vector2(std::cos(a), std::sin(a)) * rad);
-		}
-		for (int64_t i = 0; i < poly.size(); ++i)
-		{
-			cols.push_back(Color(0, 0, 0, 0.55f));
-		}
-		rs->canvas_item_add_polygon(item, poly, cols);
+		const float rx = r.size.x * 0.5f, ry = r.size.y * 0.5f; // flush with the button edge (the frame was showing more on one side)
+		const auto drawClock = [&](const char *imageName, float percent, const Color &color) {
+			const ::Image *mapped = images.findImageByName(imageName);
+			if (!mapped)
+			{
+				return;
+			}
+			Ref<ImageTexture> tex = textureFor(mapped->filename);
+			if (tex.is_null())
+			{
+				return;
+			}
+			const float tw = (float)tex->get_width(), th = (float)tex->get_height();
+			const Rect2 src(mapped->uvLo[0] * tw, mapped->uvLo[1] * th, (mapped->uvHi[0] - mapped->uvLo[0]) * tw, (mapped->uvHi[1] - mapped->uvLo[1]) * th);
+			const float done = percent / 100.0f;
+			if (done >= 1.0f)
+			{
+				return;
+			}
+			PackedVector2Array pts, uvs;
+			PackedColorArray cols;
+			pts.push_back(c);
+			uvs.push_back(Vector2((src.position.x + src.size.x * 0.5f) / tw, (src.position.y + src.size.y * 0.5f) / th));
+			cols.push_back(color);
+			const int steps = 32;
+			for (int i = 0; i <= steps; ++i)
+			{
+				const float u = done + (1.0f - done) * (float)i / (float)steps;
+				const float a = u * 6.2831853f - 1.5707963f;
+				const float ux = std::cos(a) * 0.5f + 0.5f, uy = std::sin(a) * 0.5f + 0.5f;
+				pts.push_back(c + Vector2((ux - 0.5f) * 2.0f * rx, (uy - 0.5f) * 2.0f * ry));
+				uvs.push_back(Vector2((src.position.x + ux * src.size.x) / tw, (src.position.y + uy * src.size.y) / th));
+				cols.push_back(color);
+			}
+			rs->canvas_item_add_polygon(item, pts, cols, uvs, tex->get_rid());
+		};
+		const Player *local = hud->controlBar().localPlayer();
+		const bool evil = local && local->getPlayerTemplate() && local->getPlayerTemplate()->m_evil;
+		drawClock("RadialClockOverlay1", t * 100.0f, Color(0.70f, 0.70f, 0.70f, 0.70f));
+		drawClock("RadialClockOverlay2", 0.0f, evil ? Color(1.0f, 0.25f, 0.25f, 1.0f) : Color(0.247f, 0.549f, 1.0f, 1.0f));
 		return;
 	}
 }
@@ -1067,7 +1166,7 @@ void HudDevice::drawIconOps(RID parent)
 			}
 		}
 	}
-	const int fontSize = (int)std::lround(13.0f * k);
+	const int fontSize = (int)std::lround(11.0f * k); // owner report: the construction / icon texts were a few points too large
 	const float line = k;
 	iconOpsDrawn = 0;
 	if (iconsCovered)
