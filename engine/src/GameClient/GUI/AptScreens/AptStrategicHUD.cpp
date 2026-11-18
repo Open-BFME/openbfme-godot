@@ -82,6 +82,16 @@ std::string unitTypeImageOf(const StrategicHudData *hud, int type)
 	return it == hud->typeImages.end() ? std::string() : it->second;
 }
 
+// RW table 0xC916F0: eight archetypes; BFME2 donor StrategicInGameUIGetTypeImage.cpp
+// RVA 0x5F027D/table RVA 0x878C3C has six (no Siege or Support). Type 4 has no tooltip in either table.
+std::string unitTypeTooltip(int type)
+{
+	static const char *const labels[] = { "STRATEGICHUD:InfantryUnitArchetypeTooltip", "STRATEGICHUD:ArcherUnitArchetypeTooltip",
+		"STRATEGICHUD:PikemanUnitArchetypeTooltip", "STRATEGICHUD:CavalryUnitArchetypeTooltip", "", "STRATEGICHUD:HeroUnitArchetypeTooltip",
+		"STRATEGICHUD:FortressStructureArchetypeTooltip", "STRATEGICHUD:SiegeUnitArchetypeTooltip", "STRATEGICHUD:SupportUnitArchetypeTooltip" };
+	return type >= 0 && type < 9 ? labels[type] : "";
+}
+
 // a CSF format with one argument (UnicodeString::format with %d / %s / a float conversion): every conversion takes the one value
 std::string formatOne(const std::string &format, const std::string &intText, double real, bool isReal)
 {
@@ -158,6 +168,7 @@ AptStrategicHUD::AptStrategicHUD(WindowManager &windows, Shell &shell, ShellEnvi
 
 AptStrategicHUD::~AptStrategicHUD()
 {
+	releaseChecklistScroll();
 	clearNotice();
 	for (const ChecklistRow &r : m_rows)
 	{
@@ -283,8 +294,31 @@ void AptStrategicHUD::onPartLoaded(const std::string &part, const std::string &c
 	}
 	else if (part == "StatsDisplay")
 	{
-		add("_OnStatRollOver", [this](const std::string &arg) { m_log.push_back("Stats_OnStatRollOver(" + arg + ")"); }); // RW 0x983BA3 (tooltip: not ported)
-		add("_OnStatRollOut", [this](const std::string &arg) { m_log.push_back("Stats_OnStatRollOut(" + arg + ")"); });   // RW 0x983C22
+		// RW 0x983BA3 / 0x983C22 (BFME2 donor Common/StrategicHUD.cpp, RVA 0x579B81 / 0x579C00).
+		// RW ParseRowNum 0x983611 accepts seven rows; BFME2 RVA 0x579676 accepts six. The
+		// seventh RW row is TreasuryIncome. INI names are kept even for RW's treasury row 0.
+		add("_OnStatRollOver", [this](const std::string &arg) {
+			const int row = std::atoi(arg.c_str());
+			if (row < 0 || row >= 7 || row == m_hoveredStat || !m_env.livingWorld) return;
+			static const char *const names[] = { "CommandPoints", "AttackBonus", "DefenseBonus", "ExperienceBonus", "ResourceMultiplier", "PowerPoints", "TreasuryIncome" };
+			const auto &data = m_env.livingWorld->strategicHud.statsDisplay;
+			const std::string prefix = std::string(names[row]) + "Row";
+			const auto title = data.find(prefix + "Title"), help = data.find(prefix + "Help");
+			if (title == data.end() || help == data.end())
+			{
+				windows().note("missing-data", "StrategicHUD StatsDisplay: no " + prefix + "Title/Help [S-1334]");
+				return;
+			}
+			m_hoveredStat = row;
+			showHelp(title->second, help->second);
+			m_statHelp = m_helpShown;
+		});
+		add("_OnStatRollOut", [this](const std::string &arg) {
+			if (std::atoi(arg.c_str()) != m_hoveredStat) return;
+			if (m_statHelp && m_helpBox.help() == m_statHelp.get()) m_helpBox.hideSoon();
+			m_statHelp.reset();
+			m_hoveredStat = -1;
+		});
 		writeStats();
 	}
 	else if (part == "LoadDialogFrame")
@@ -338,13 +372,12 @@ void AptStrategicHUD::onPartLoaded(const std::string &part, const std::string &c
 				}
 			}
 		});
-		add("_OnScrollBarLoaded", [this](const std::string &arg) { m_log.push_back("Checklist_OnScrollBarLoaded(" + arg + ")"); });   // RW 0x985591 (the item list's scroll bar: not ported)
-		add("_OnScrollBarUnloaded", [this](const std::string &arg) { m_log.push_back("Checklist_OnScrollBarUnloaded(" + arg + ")"); }); // RW 0x984574
+		add("_OnScrollBarLoaded", [this](const std::string &arg) { bindChecklistScroll(arg); }); // RW 0x985591
+		add("_OnScrollBarUnloaded", [this](const std::string &) { releaseChecklistScroll(); }); // RW 0x984574
 		// RW 0x985642: the empty list's message
 		windows().setAptText("APT:StrategicHUDNoChecklistItems", text("STRATEGICHUD:CriticalTasksWillBeDisplayedHere"));
 		writeTurn(false);
 		m_checklistPath = path;
-		windows().note("unported-component", "StrategicHUD part Checklist (" + clip + "): the item list's scroll bar (VerticalScrollBar.swf) is not ported: rows past the list's height stay hidden [S-1334]");
 	}
 	else if (part == "Palantir")
 	{
@@ -406,9 +439,23 @@ void AptStrategicHUD::onPartLoaded(const std::string &part, const std::string &c
 			}
 			m_regionStatsClip.clear();
 		});
-		for (const char *c : { "_OnRegionUILoaded", "_OnRegionUIUnloaded", "_OnSelectionUILoaded",
-				 "_OnSelectionUIUnloaded", "_OnOptionsButtonClicked", "_OnOptionsButtonRollOver", "_OnOptionsButtonRollOut", "_OnObjectivesButtonClicked",
-				 "_OnObjectivesButtonRollOver", "_OnObjectivesButtonRollOut" })
+		add("_OnObjectivesButtonClicked", [this](const std::string &) { m_requests.push_back("player_status"); });
+		for (const char *button : { "Options", "Objectives" })
+		{
+			const std::string name = button;
+			add("_On" + name + "ButtonRollOver", [this, name](const std::string &) {
+				const auto *data = m_env.livingWorld ? m_env.livingWorld->strategicHud.button(name + "Button") : nullptr;
+				if (data) showHelp(data->title, data->help);
+			});
+			add("_On" + name + "ButtonRollOut", [this](const std::string &) { hideHelp(); });
+		}
+		add("_OnSelectionUILoaded", [this](const std::string &clip) {
+			m_selectionClip = relativePath(clip);
+			m_selectionShownSent = -1;
+			writeSelectionCommandPoints();
+		});
+		add("_OnSelectionUIUnloaded", [this](const std::string &) { m_selectionClip.clear(); });
+		for (const char *c : { "_OnRegionUILoaded", "_OnRegionUIUnloaded", "_OnOptionsButtonClicked" })
 		{
 			const std::string cmd = c;
 			add(cmd, [this, cmd](const std::string &arg) { m_log.push_back("Palantir" + cmd + "(" + arg + ")"); });
@@ -479,8 +526,7 @@ void AptStrategicHUD::onPartLoaded(const std::string &part, const std::string &c
 				m_slots[i].want = want;
 			}
 		});
-		windows().note("unported-component", "StrategicHUD part Palantir (" + clip + "): the command UI's slots (0 the toggle selection details "
-			"button, 1..5 the selections' buttons) and the region stats tray are ported; the region UI, the selection UI and the sub menus are not [S-1334]");
+		windows().note("unported-component", "StrategicHUD part Palantir (" + clip + "): the region UI and command submenus remain incomplete; selected-army CP/portrait, command slots and region stats are ported [S-1334]");
 	}
 	else if (part == "SelectionDetails")
 	{
@@ -534,8 +580,6 @@ void AptStrategicHUD::onPartLoaded(const std::string &part, const std::string &c
 			m_panelFrame.clear();
 			m_trayLoading = TRAY_NONE;
 		});
-		windows().note("unported-component", "StrategicHUD part SelectionDetails (" + clip + "): the tray, the region panel (territory, armies, structures) and "
-			"the build queue panel are ported; the army and hero army details and the retinue panels are not [S-1334]");
 	}
 	else if (part == "RadialMenuStage")
 	{
@@ -633,6 +677,7 @@ void AptStrategicHUD::onPartUnloaded(const std::string &part)
 	}
 	if (part == "Checklist")
 	{
+		releaseChecklistScroll();
 		m_checklistState = 0; // the part's object goes with it (a reload makes a new one, RW 0x985642: closed, the arrow not yet sent)
 		m_checklistButtonUp = false;
 	}
@@ -937,7 +982,12 @@ std::vector<std::string> AptStrategicHUD::flagIncompleteChecklistItems()
 	{
 		return keys;
 	}
-	// RW 0x9DCEBB: ScrollToTop (no scroll bar here), Expand (closed: OpenList; closing: open once closed), Flash each incomplete required row
+	// RW 0x9DCEBB: ScrollToTop, Expand (closed: OpenList; closing: open once closed), Flash each incomplete required row
+	if (!m_checklistScroll.empty())
+	{
+		checklistCall(m_checklistScroll, "SetPos", { AptValue::number(0.0) });
+	}
+	scrollChecklist(0.0f);
 	if (m_checklistState == 0)
 	{
 		if (checklistCall(m_checklistPath, "OpenList", {}))
@@ -988,6 +1038,8 @@ void AptStrategicHUD::checklistUpdate()
 			y += r.height;
 		}
 		m_relayout = false;
+		m_checklistHeight = y + spacing; // RW 0x984C68: last top + last height + bottom spacing
+		updateChecklistScroll();
 	}
 	for (ChecklistRow &r : m_rows)
 	{
@@ -1092,6 +1144,67 @@ void AptStrategicHUD::checklistUpdate()
 	}
 }
 
+// RotWK RW 0x985591 / 0x985205 / 0x984D27; BFME2 donor ChecklistUIImplRva0057B16D.cpp,
+// AptWotrPanelCallbacks.cpp (RVA 0x57B4F9 / 0x57B16D / 0x57AC8F). The installed RW image
+// has S-001 provenance limits. Verified locally: view/total page size, 1/row-count line size,
+// and SetItemListY(-total * position). Coordinates here are already in movie stage units.
+void AptStrategicHUD::bindChecklistScroll(const std::string &clip)
+{
+	m_log.push_back("Checklist_OnScrollBarLoaded(" + clip + ")");
+	releaseChecklistScroll();
+	m_checklistScroll = relativePath(clip);
+	const std::string name = "_level" + std::to_string(level()) + "." + m_checklistScroll + "_OnPosChanged";
+	registerCommand(name, [this](const std::string &value) { scrollChecklist((float)std::atof(value.c_str())); });
+	// ChecklistUIImpl::Update enables the newly constructed bar (RW 0x985531;
+	// BFME2 AptWotrPanelCallbacks.cpp RVA 0x57B499). A visible but disabled bar
+	// still answers SetPos, so a programmatic scroll test alone cannot catch this.
+	checklistCall(m_checklistScroll, "SetEnabled", { AptValue::boolean(true) });
+	updateChecklistScroll();
+}
+
+void AptStrategicHUD::releaseChecklistScroll()
+{
+	if (!m_checklistScroll.empty())
+	{
+		windows().unregisterCommand("_level" + std::to_string(level()) + "." + m_checklistScroll + "_OnPosChanged");
+		m_checklistScroll.clear();
+	}
+}
+
+void AptStrategicHUD::scrollChecklist(float position)
+{
+	m_checklistPosition = position;
+	checklistCall(m_checklistPath, "SetItemListY", { AptValue::number(-m_checklistHeight * position) });
+}
+
+void AptStrategicHUD::updateChecklistScroll()
+{
+	if (m_checklistPath.empty() || m_checklistScroll.empty())
+	{
+		return;
+	}
+	const std::string name = "_level" + std::to_string(level()) + "." + m_checklistPath + "_ItemListViewHeight";
+	std::string value;
+	windows().registerProvider(name, [&value](const std::string &, std::string &v, bool setting) {
+		if (setting) value = v;
+		return true;
+	});
+	checklistCall(m_checklistPath, "GetItemListViewHeight", {});
+	windows().unregisterProvider(name);
+	if (value.empty() || (m_checklistViewHeight = (float)std::atof(value.c_str())) <= 0.0f)
+	{
+		windows().note("missing-data", "StrategicChecklist: no positive ItemListViewHeight [S-1334]");
+		return;
+	}
+	const float total = std::max(m_checklistHeight, m_checklistViewHeight);
+	checklistCall(m_checklistScroll, "SetPageSize", { AptValue::number(m_checklistViewHeight / total) });
+	checklistCall(m_checklistScroll, "SetLineSize", { AptValue::number(m_rows.empty() ? 0.0 : 1.0 / (double)m_rows.size()) });
+	checklistCall(m_checklistScroll, "SetVisible", { AptValue::boolean(total > m_checklistViewHeight) });
+	// The movie's SetPageSize clamps its position and reports _OnPosChanged. Reapply the offset
+	// when row heights change even if the normalized position stays the same.
+	scrollChecklist(m_checklistPosition);
+}
+
 void AptStrategicHUD::clearNotice()
 {
 	if (m_noticeBox && m_noticeShown)
@@ -1105,6 +1218,42 @@ void AptStrategicHUD::setRegionStats(const RegionStats &stats)
 {
 	m_regionStats = stats;
 	writeRegionStats(false);
+}
+
+void AptStrategicHUD::setSelectionCommandPoints(bool shown, int current, int maximum, const std::string &portrait)
+{
+	if (shown == m_selectionCpShown && current == m_selectionCp && maximum == m_selectionMaxCp && portrait == m_selectionPortrait) return;
+	m_selectionCpShown = shown;
+	m_selectionCp = current;
+	m_selectionMaxCp = maximum;
+	m_selectionPortrait = portrait;
+	writeSelectionCommandPoints();
+}
+
+// RW 0x9E2F5E / 0x9E2FE2 / 0x9E304D, BFME2 donor Rva005D38C8Fetch.cpp (RVA 0x5D3966),
+// Rva005D39EACpState.cpp (RVA 0x5D39EA / 0x5D3A55). S-001 caveat on the installed RW binary.
+void AptStrategicHUD::writeSelectionCommandPoints()
+{
+	if (m_selectionClip.empty()) return;
+	const std::string record = "APT:_level" + std::to_string(level()) + "." + m_selectionClip + "_CP";
+	const std::string value = m_selectionMaxCp < 0 ? std::string() : loadScreenU16ToUtf8(LivingWorldSetupText::format(
+		fetchOrMissing(m_env.gameText, "STRATEGICHUD:ArmyUnitSwapperCP"),
+		{ LivingWorldSetupText::FormatArg(m_selectionCp), LivingWorldSetupText::FormatArg(m_selectionMaxCp) }));
+	windows().setAptText(record, value);
+	m_statRecords[record] = value;
+	std::string error;
+	// SelectionUIImpl::Show/Hide also controls the parent; SetCPState alone leaves its
+	// text inside a hidden panel. BFME2 donor Rva005D3B26Portrait.cpp RVA 0x5D3CFA,
+	// Rva005D3D4BMethod.cpp RVA 0x5D3D4B. The portrait is the selection's supplied image.
+	windows().setAptImage("_level" + std::to_string(level()) + "." + m_selectionClip + "_Portrait", m_selectionPortrait);
+	if (m_selectionShownSent != (int)m_selectionCpShown)
+	{
+		if (!windows().invokeASAt(level(), m_selectionClip, "SetState", { m_selectionCpShown ? "_show" : "_hide" }, nullptr, &error))
+			windows().note("invoke-failed", "StrategicSelectionUI SetState: " + error);
+		if (!windows().invokeASAt(level(), m_selectionClip, "SetCPState", { m_selectionCpShown ? "_show" : "_hide" }, nullptr, &error))
+			windows().note("invoke-failed", "StrategicSelectionUI SetCPState: " + error);
+		m_selectionShownSent = (int)m_selectionCpShown;
+	}
 }
 
 // RegionDisplay RW 0x9DAD60 -> the tray: SetVisibility (SetState "_show" / "_hide" on a change, RW tray + 0x68) and per value pair a changed text
@@ -1515,6 +1664,7 @@ void AptStrategicHUD::syncTrayContent()
 
 void AptStrategicHUD::unloadTrayContent()
 {
+	m_cursorTooltip.clear();
 	for (const std::string &name : m_regionCommands)
 	{
 		windows().unregisterCommand(name);
@@ -1682,8 +1832,8 @@ void AptStrategicHUD::applyRegionPanel()
 // 0x16573B0 SetArmyNameState / SetCommandPointsState "_show" / "_hide" with "APT:_level%u.%s_ArmyName" / _CommandPoints (STRATEGICHUD:StatsCommandPoints));
 // the slots are the movie's attached IconSlot clips <page>.slots.<i>, their RenderImage records <page> + "_IconSlotPortrait" / "_IconSlotTypeImage"
 // + the slot's name; a slot's click is <page>_OnIconSlotClicked<slot name> (the page's left click selects the army, WB 0x162FCB0)
-// INFERENCE (S-1334): the name / command point lines show the selected army (retail's caller of ShowArmyName was not read); the help box of a
-// hovered slot (StrategicInGameUI::CreateHelpFor) is not ported
+// BFME2 donor StrategicInGameUIRegionDetailsArmiesPage.cpp RVA 0x5E19CA selects the name/CP lines for the selected army.
+// Full hovered-army help remains S-1334.
 void AptStrategicHUD::fillArmiesPage()
 {
 	const std::string &page = m_regionPages[1];
@@ -1715,8 +1865,9 @@ void AptStrategicHUD::fillArmiesPage()
 			add("_OnIconSlotRollOver" + n, [this, n](const std::string &) { m_log.push_back("ArmiesPage_OnIconSlotRollOver(" + n + ")"); }); // the help box: not ported
 			add("_OnIconSlotRollOut" + n, [this, n](const std::string &) { m_log.push_back("ArmiesPage_OnIconSlotRollOut(" + n + ")"); });
 		}
-		add("_OnRollOverCommandPoints", [this](const std::string &arg) { m_log.push_back("ArmiesPage_OnRollOverCommandPoints(" + arg + ")"); });
-		add("_OnRollOutCommandPoints", [this](const std::string &arg) { m_log.push_back("ArmiesPage_OnRollOutCommandPoints(" + arg + ")"); });
+		// BFME2 RegionDetailsArmiesMovieClip::Update RVA 0x5EF366 (AptStateCalls.cpp).
+		add("_OnRollOverCommandPoints", [this](const std::string &) { m_cursorTooltip = "STRATEGICHUD:ArmyCurrentOverMaxCommandPointsTooltip"; });
+		add("_OnRollOutCommandPoints", [this](const std::string &) { hideCursorTooltip("STRATEGICHUD:ArmyCurrentOverMaxCommandPointsTooltip"); });
 	}
 	std::string error;
 	const int n = (int)std::min<size_t>(m_region.armies.size(), 5);
@@ -1907,7 +2058,7 @@ void AptStrategicHUD::fillStructuresPage()
 // The in-progress slot's progress overlay: the engine registers a render callback under "<clip>_ProgressOverlay" (InProgressIconSlot ctor
 // WB 0x166D7xx -> 0x1671FC0; RenderProgressOverlay WB 0x166E2F0: (total - remaining) / total of the slot's rectangle in ProgressOverlayColor),
 // but no clip of the retail StrategicDetailsBuildQueue.swf names it (its constants hold no "_ProgressOverlay"), so retail never draws it and
-// neither does this port. Not ported (S-1334): the help box and the tooltips.
+// neither does this port. Full unit help remains S-1334; back/type/turn cursor tooltips are wired below.
 void AptStrategicHUD::onBuildQueueContentLoaded()
 {
 	m_queueClip = m_trayClip;
@@ -1937,11 +2088,23 @@ void AptStrategicHUD::onBuildQueueContentLoaded()
 			m_requests.push_back("bq_back");
 		}
 	});
-	logOnly("_OnBackButtonRollOver");
-	logOnly("_OnBackButtonRollOut");
+	add("_OnBackButtonRollOver", [this](const std::string &) { showBackTooltip("BuildQueueDetailsPanel"); });
+	add("_OnBackButtonRollOut", [this](const std::string &) { m_cursorTooltip.clear(); });
 	add("_OnInProgressIconSlotClicked", [this](const std::string &) { onQueueSlotClicked(0); });
-	for (const char *suffix : { "_OnInProgressIconSlotRollOver", "_OnInProgressIconSlotRollOut", "_OnInProgressIconSlotTurnsRemainingRollOver",
-			 "_OnInProgressIconSlotTurnsRemainingRollOut", "_OnInProgressIconSlotTypeRollOver", "_OnInProgressIconSlotTypeRollOut" })
+	auto bindSlotTooltips = [&](int index, const std::string &prefix, const std::string &suffix) {
+		for (bool turns : { false, true })
+		{
+			const std::string field = turns ? "TurnsRemaining" : "Type";
+			auto label = [this, index, turns]() -> std::string {
+				if (index >= (int)m_queue.queue.size()) return {};
+				return turns ? "STRATEGICHUD:ConstructionTurnsRemainingTooltip" : unitTypeTooltip(m_queue.queue[(size_t)index].unitType);
+			};
+			add(prefix + field + "RollOver" + suffix, [this, label](const std::string &) { m_cursorTooltip = label(); });
+			add(prefix + field + "RollOut" + suffix, [this, label](const std::string &) { hideCursorTooltip(label()); });
+		}
+	};
+	bindSlotTooltips(0, "_OnInProgressIconSlot", "");
+	for (const char *suffix : { "_OnInProgressIconSlotRollOver", "_OnInProgressIconSlotRollOut" })
 	{
 		logOnly(suffix);
 	}
@@ -1949,8 +2112,8 @@ void AptStrategicHUD::onBuildQueueContentLoaded()
 	{
 		const std::string n = std::to_string(i);
 		add("_OnQueuedIconSlotClicked" + n, [this, i](const std::string &) { onQueueSlotClicked(i + 1); });
-		for (const char *suffix : { "_OnQueuedIconSlotRollOver", "_OnQueuedIconSlotRollOut", "_OnQueuedIconSlotTurnsRemainingRollOver",
-				 "_OnQueuedIconSlotTurnsRemainingRollOut", "_OnQueuedIconSlotTypeRollOver", "_OnQueuedIconSlotTypeRollOut" })
+		bindSlotTooltips(i + 1, "_OnQueuedIconSlot", n);
+		for (const char *suffix : { "_OnQueuedIconSlotRollOver", "_OnQueuedIconSlotRollOut" })
 		{
 			logOnly(suffix + n);
 		}
@@ -2067,8 +2230,8 @@ void AptStrategicHUD::applyBuildQueuePanel()
 // each member a slot: CreateUnitIconSlot(id) (the movie attaches UnitIconSlot into `slots` and writes extern <clip>_NewSlotWidth / _NewSlotHeight),
 // its frame reports <clip>_OnUnitIconSlotLoaded<id>, its content "icon" is ArmyUnitIcon or ArmyHeroIcon (ArmyMemberIconMovieClip WB 0x167CF10);
 // slot i at (column * slot width, row * slot height), columns = floor(stage width / slot width) (UpdateIconSlotPositions WB 0x1662DB0), shown
-// while its row is inside the stage. Not ported (S-1334): the scroll bar (VerticalScrollBar.swf: the first row stays 0), the help box, the
-// type / upgrade tooltips, the upgrade icons, the not-there / disbanding / upgrading overlays (the member moves, disbanding and upgrades)
+// while its row is inside the stage. Not ported (S-1334): the retinue scroll bar (the first row stays 0), full unit help,
+// upgrade tooltips/icons, the not-there / disbanding / upgrading overlays (the member moves, disbanding and upgrades)
 void AptStrategicHUD::showArmyPanel(const ArmyPanel &panel)
 {
 	ArmyPanelView &v = m_armyView;
@@ -2093,6 +2256,17 @@ void AptStrategicHUD::showArmyPanel(const ArmyPanel &panel)
 	{
 		applyArmyPanel(v);
 	}
+}
+
+void AptStrategicHUD::showBackTooltip(const std::string &panel)
+{
+	if (m_env.livingWorld)
+	{
+		const auto &panels = m_env.livingWorld->strategicHud.panels;
+		const auto found = panels.find(panel);
+		if (found != panels.end()) { m_cursorTooltip = found->second.backButtonTooltip; return; }
+	}
+	windows().note("missing-data", "StrategicHUD: no " + panel + " BackButtonTooltip [S-1334]");
 }
 
 void AptStrategicHUD::hideArmyPanel()
@@ -2162,8 +2336,8 @@ void AptStrategicHUD::onArmyContentLoaded(ArmyPanelView &v, const std::string &c
 			m_requests.push_back("army_back");
 		}
 	});
-	logOnly("_OnBackButtonRollOver");
-	logOnly("_OnBackButtonRollOut");
+	add("_OnBackButtonRollOver", [this](const std::string &) { showBackTooltip("ArmyDetailsPanel"); });
+	add("_OnBackButtonRollOut", [this](const std::string &) { m_cursorTooltip.clear(); });
 	add("_OnIconListBackgroundClicked", [this, &v](const std::string &) { // WB 0x16632F0: the left button deselects everything
 		if (windows().pressButton() != 0)
 		{
@@ -2186,8 +2360,8 @@ void AptStrategicHUD::onArmyContentLoaded(ArmyPanelView &v, const std::string &c
 	});
 	logOnly("_OnLeaderIconRollOver");
 	logOnly("_OnLeaderIconRollOut");
-	logOnly("_OnLeaderTypeRollOver");
-	logOnly("_OnLeaderTypeRollOut");
+	add("_OnLeaderTypeRollOver", [this, &v](const std::string &) { m_cursorTooltip = unitTypeTooltip(v.panel.leader.unitType); });
+	add("_OnLeaderTypeRollOut", [this, &v](const std::string &) { hideCursorTooltip(unitTypeTooltip(v.panel.leader.unitType)); });
 	std::string error;
 	if (v.panel.heroArmy && !windows().invokeASAt(level(), v.clip, "SetLayout", { "_hero" }, nullptr, &error))
 	{
@@ -2298,7 +2472,9 @@ void AptStrategicHUD::onArmySlotLoaded(ArmyPanelView &v, int index, const std::s
 	reg(key + "_OnClicked", [this, &v, index](const std::string &) { onArmyIconClicked(v, index); });
 	reg(key + "_OnRollOver", [this, &v, index](const std::string &) { showArmyStats(v, index); });
 	reg(key + "_OnRollOut", [this, &v](const std::string &) { showArmyStats(v, -1); });
-	for (const char *t : { "_OnTypeRollOver", "_OnTypeRollOut", "_OnUpgradeIconRollOver", "_OnUpgradeIconRollOut" })
+	reg(key + "_OnTypeRollOver", [this, &v, index](const std::string &) { m_cursorTooltip = unitTypeTooltip(v.panel.members[(size_t)index].unitType); });
+	reg(key + "_OnTypeRollOut", [this, &v, index](const std::string &) { hideCursorTooltip(unitTypeTooltip(v.panel.members[(size_t)index].unitType)); });
+	for (const char *t : { "_OnUpgradeIconRollOver", "_OnUpgradeIconRollOut" })
 	{
 		const std::string name = key + t;
 		reg(name, [this, name](const std::string &) { m_log.push_back(name); }); // the tooltips: not ported
@@ -2682,8 +2858,12 @@ void AptStrategicHUD::onRadialFrameLoaded(int id, const std::string &frameArg)
 			m_requests.push_back("radial:" + std::to_string(id));
 		}
 	});
-	reg(key + "_OnRollOver", [this, id](const std::string &) { m_log.push_back("RadialButton_OnRollOver(" + std::to_string(id) + ")"); }); // the help box: not ported
-	reg(key + "_OnRollOut", [this, id](const std::string &) { m_log.push_back("RadialButton_OnRollOut(" + std::to_string(id) + ")"); });
+	// Standard command rollover RW 0x9F466E; BFME2 QueueUnitButton::CreateHelp RVA 0x5F8D07,
+	// BuildBuildingButton::CreateHelp RVA 0x5E94A7: the data's title/help in InGameSimpleHelp.
+	reg(key + "_OnRollOver", [this, id](const std::string &) {
+		if (id >= 0 && id < (int)m_radialButtons.size()) showHelp(m_radialButtons[(size_t)id].button.title, m_radialButtons[(size_t)id].button.help);
+	});
+	reg(key + "_OnRollOut", [this](const std::string &) { hideHelp(); });
 }
 
 void AptStrategicHUD::setTurn(int turn, int phase)
@@ -2797,7 +2977,14 @@ void AptStrategicHUD::onContentLoaded(const std::string &clip)
 			m_promptCommands.push_back(base + suffix);
 		}
 	};
-	for (const char *s : { "_OnAllyTabsLoaded", "_OnAllyTabsUnloaded", "_OnEnemyTabsLoaded", "_OnEnemyTabsUnloaded", "_OnOpen", "_OnClosed" })
+	for (int side = 0; side < 2; ++side)
+	{
+		const std::string name = side == 0 ? "Ally" : "Enemy";
+		add("_On" + name + "TabsLoaded", [this, side](const std::string &clip) { bindPromptTabs(side, clip); });
+		add("_On" + name + "TabsUnloaded", [this, side](const std::string &) { m_promptSides[side].tabs.clear(); });
+		createPromptPages(side);
+	}
+	for (const char *s : { "_OnOpen", "_OnClosed" })
 	{
 		const std::string name = s;
 		add(name, [this, name](const std::string &arg) { m_log.push_back("BattlePrompt" + name + "(" + arg + ")"); });
@@ -2814,8 +3001,154 @@ void AptStrategicHUD::onContentLoaded(const std::string &clip)
 		m_log.push_back("BattlePrompt_OnRetreatButtonClicked");
 		m_requests.push_back("battle_retreat");
 	});
-	windows().note("unported-component", "StrategicBattlePrompt: the ally / enemy player pages are not filled [S-1334]");
 	writePrompt();
+}
+
+bool AptStrategicHUD::promptCall(const std::string &clip, const std::string &function, const std::vector<AptValue> &args)
+{
+	std::string error;
+	if (windows().invokeASAtValues(level(), clip, function, args, &error)) return true;
+	windows().note("invoke-failed", "StrategicBattlePrompt " + function + ": " + error);
+	return false;
+}
+
+void AptStrategicHUD::promptCommand(const std::string &name, WindowManager::CommandFn fn)
+{
+	if (registerCommand(name, std::move(fn))) m_promptCommands.push_back(name);
+}
+
+void AptStrategicHUD::setBattlePromptPlayers(const std::vector<PromptPlayer> &allies, const std::vector<PromptPlayer> &enemies)
+{
+	m_promptSides[0].players = allies;
+	m_promptSides[1].players = enemies;
+	if (!m_promptPath.empty()) for (int side = 0; side < 2; ++side) createPromptPages(side);
+}
+
+// Target: RW OnAllyTabsLoaded 0xA0D4D3 / enemy twin 0xA0D5EA, tab properties 0xA11E67,
+// SetTabCount 0xA125EF. Donors: StrategicHUDBattlePromptMovieClip.cpp, Rva005FE047Visibility.cpp,
+// Rva005FEA02Permuted.cpp. The RW image has the S-001 provenance caveat.
+void AptStrategicHUD::bindPromptTabs(int side, const std::string &clip)
+{
+	PromptSide &s = m_promptSides[side];
+	s.tabs = relativePath(clip);
+	promptCall(s.tabs, "SetTabCount", { AptValue::integer((int)s.players.size()) });
+	const std::string base = "_level" + std::to_string(level()) + "." + s.tabs;
+	for (size_t i = 0; i < s.players.size(); ++i)
+	{
+		windows().setAptImage(base + "_Image" + std::to_string(i), s.players[i].factionImage);
+		promptCall(s.tabs, "SetTabColor", { AptValue::integer((int)i), AptValue::number((std::int32_t)(s.players[i].color | 0xFF000000u)) });
+		if (s.players[i].local) windows().setAptText("APT:" + base + "_LocalPlayerName", s.players[i].name);
+	}
+	promptCommand(base + "_OnTabClicked", [this, side](const std::string &index) { selectPromptPage(side, std::atoi(index.c_str())); });
+	if (s.selected >= 0)
+	{
+		const auto &player = s.players[(size_t)s.selected];
+		promptCall(s.tabs, "SetTabState", { AptValue::integer(s.selected), AptValue::string("_selected") });
+		promptCall(s.tabs, "SetPlayerNameVisibility", { AptValue::boolean(!player.local) });
+		windows().setAptText("APT:" + base + "_PlayerName", player.name);
+	}
+}
+
+void AptStrategicHUD::createPromptPages(int side)
+{
+	PromptSide &s = m_promptSides[side];
+	if (!s.pages.empty() || s.players.empty()) return;
+	s.pages.resize(s.players.size());
+	s.states.assign(s.players.size(), 0);
+	const std::string name = side == 0 ? "Ally" : "Enemy";
+	const std::string base = "_level" + std::to_string(level()) + "." + m_promptPath;
+	for (int i = 0; i < (int)s.players.size(); ++i)
+	{
+		const std::string index = std::to_string(i);
+		promptCommand(base + "_On" + name + "PageLoaded" + index, [this, side, i](const std::string &clip) { bindPromptPage(side, i, clip); });
+		promptCommand(base + "_On" + name + "PageFrameOpen" + index, [this, side, i](const std::string &) { m_promptSides[side].states[(size_t)i] = 3; });
+		promptCommand(base + "_On" + name + "PageFrameClosed" + index, [this, side, i](const std::string &) { m_promptSides[side].states[(size_t)i] = 1; });
+		promptCall(m_promptPath, "Add" + name + "Page", { AptValue::integer(i) });
+	}
+}
+
+void AptStrategicHUD::selectPromptPage(int side, int index)
+{
+	PromptSide &s = m_promptSides[side];
+	if (index < 0 || index >= (int)s.players.size() || s.pages[(size_t)index].empty() || index == s.selected) return;
+	if (s.selected >= 0 && s.states[(size_t)s.selected] != 3) return;
+	const std::string name = side == 0 ? "Ally" : "Enemy";
+	if (s.selected >= 0)
+	{
+		promptCall(m_promptPath, "FadeOut" + name + "Page", { AptValue::integer(s.selected) });
+		s.states[(size_t)s.selected] = 4;
+		if (!s.tabs.empty()) promptCall(s.tabs, "SetTabState", { AptValue::integer(s.selected), AptValue::string("_deselect") });
+	}
+	s.selected = index;
+	promptCall(m_promptPath, "FadeIn" + name + "Page", { AptValue::integer(index) });
+	s.states[(size_t)index] = 2;
+	if (!s.tabs.empty())
+	{
+		promptCall(s.tabs, "SetTabState", { AptValue::integer(index), AptValue::string("_selected") });
+		promptCall(s.tabs, "SetPlayerNameVisibility", { AptValue::boolean(!s.players[(size_t)index].local) });
+		windows().setAptText("APT:_level" + std::to_string(level()) + "." + s.tabs + "_PlayerName", s.players[(size_t)index].name);
+	}
+}
+
+void AptStrategicHUD::bindPromptPage(int side, int index, const std::string &clip)
+{
+	PromptSide &s = m_promptSides[side];
+	s.pages[(size_t)index] = relativePath(clip);
+	s.states[(size_t)index] = 1;
+	const PromptPlayer &player = s.players[(size_t)index];
+	const std::string page = s.pages[(size_t)index];
+	const std::string base = "_level" + std::to_string(level()) + "." + page;
+	promptCommand(base + "_OnArmyPanelLoaded", [this, side, index](const std::string &clip) { bindPromptArmy(side, index, clip); });
+	promptCall(page, "SetPlayerColor", { AptValue::number((std::int32_t)(player.color | 0xFF000000u)) });
+	promptCall(page, "SetState", { AptValue::string(player.local ? "_player" : side == 0 ? "_ally" : "_enemy") });
+	// The page's swaps change battle army order (S-1336), which the current resolver does not
+	// expose. Keep those controls disabled and report that prerequisite instead of accepting inert input.
+	for (int i = 0; i < 2; ++i) promptCall(page, "SetSwapButtonState", { AptValue::integer(i), AptValue::boolean(false) });
+	if (player.local && player.armies.size() > 1)
+		windows().note("unported-component", "StrategicBattlePrompt: battle army-order swaps require the unported strategic order [S-1336]");
+	int hero = 0;
+	for (const auto &army : player.armies)
+	{
+		if (!army.garrison && hero == 3)
+		{
+			windows().note("unported-component", "StrategicBattlePrompt: more than three hero armies in a player page [S-1334]");
+			continue;
+		}
+		promptCall(page, "CreateArmyPanel", { AptValue::string(army.garrison ? "garrison" : "hero" + std::to_string(hero++)) });
+	}
+	if (index == 0) selectPromptPage(side, 0);
+}
+
+void AptStrategicHUD::bindPromptArmy(int side, int index, const std::string &clip)
+{
+	const auto &armies = m_promptSides[side].players[(size_t)index].armies;
+	const std::string path = relativePath(clip);
+	const std::string leaf = path.substr(path.rfind('.') + 1);
+	const PromptArmy *army = nullptr;
+	int hero = 0;
+	for (const auto &a : armies)
+	{
+		if (leaf == (a.garrison ? "garrison" : "hero" + std::to_string(hero++))) { army = &a; break; }
+	}
+	if (!army) return;
+	const std::string base = "_level" + std::to_string(level()) + "." + path;
+	promptCall(path, "SetState", { AptValue::string(side == 0 ? "_ally" : "_enemy") });
+	windows().setAptImage(base + "_Portrait", army->portrait);
+	windows().setAptText("APT:" + base + "_ArmyName", army->name);
+	std::vector<int> types;
+	for (int type = 0; type < 9 && types.size() < 6; ++type) if (army->categories[type] > 0) types.push_back(type);
+	promptCall(path, "SetUnitIconCount", { AptValue::integer((int)types.size()) });
+	const auto *data = m_env.livingWorld ? &m_env.livingWorld->strategicHud : nullptr;
+	for (size_t i = 0; i < types.size(); ++i)
+	{
+		windows().setAptImage(base + "_UnitIcon" + std::to_string(i), unitTypeImageOf(data, types[i]));
+		windows().setAptText("APT:" + base + "_UnitQuantity" + std::to_string(i), std::to_string(army->categories[types[i]]));
+	}
+	promptCommand(base + "_OnUnitIconRollOver", [this, types](const std::string &arg) {
+		const int i = std::atoi(arg.c_str());
+		if (i >= 0 && i < (int)types.size()) m_cursorTooltip = unitTypeTooltip(types[(size_t)i]);
+	});
+	promptCommand(base + "_OnUnitIconRollOut", [this](const std::string &) { m_cursorTooltip.clear(); });
 }
 
 void AptStrategicHUD::writePrompt()
@@ -3172,6 +3505,7 @@ void AptStrategicHUD::closeBattlePrompt()
 		return;
 	}
 	m_promptWanted = false;
+	m_cursorTooltip.clear();
 	if (m_promptHelp && m_helpBox.help() == m_promptHelp.get())
 	{
 		m_helpBox.hideSoon(); // WOTR2 milestone 8: the Real Time reason goes with the prompt
@@ -3183,6 +3517,7 @@ void AptStrategicHUD::closeBattlePrompt()
 	}
 	m_promptCommands.clear();
 	m_promptPath.clear();
+	for (auto &side : m_promptSides) side = PromptSide();
 	auto it = m_parts.find("LoadDialogFrame");
 	if (it != m_parts.end())
 	{

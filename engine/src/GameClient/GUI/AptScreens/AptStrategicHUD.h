@@ -58,8 +58,7 @@
 //     <content>_OnClicked / _OnRollOver / _OnRollOut), places it with MoveButton(id, x, y, w, h) (stage units: the display-pixel layout of the in-game
 //     ring, RadialMenuLayout, scaled by the stage's size, ButtonShell::Move WB 0x14F6030) and removes it with DestroyButton(id).
 // INFERENCE (stop S-1334): the path a part's object keeps (RW 0x815563 / 0x8155D9 were not decompiled) is the clip path without its "_levelN."
-// prefix; the stats line order of the constructor (0, 6, 4, 5, 1..3) is kept (the values: RW 0x97E280, LivingWorldLogic::hudStats); the palantir, checklist, selection
-// details (the region / army / structure trays), help box, radial menu and load dialog parts are made and reported but their bodies are not ported.
+// prefix; the stats line order of the constructor (0, 6, 4, 5, 1..3) is kept (the values: RW 0x97E280, LivingWorldLogic::hudStats); the remaining presentation gaps and the restored controls are inventoried in docs/re/wotr-strategic-hud-audit.md.
 
 #pragma once
 
@@ -116,6 +115,25 @@ public:
 	void openBattlePrompt(const std::string &regionName, bool autoResolve, bool realTime, bool retreat, const std::string &ally = std::string(),
 		const std::string &enemy = std::string(), const std::string &realTimeReason = std::string());
 	void closeBattlePrompt();
+	struct PromptArmy
+	{
+		std::string name, portrait;
+		bool garrison = false;
+		int categories[9] = {};
+	};
+	struct PromptPlayer
+	{
+		std::string name, factionImage;
+		std::uint32_t color = 0;
+		bool local = false;
+		std::vector<PromptArmy> armies;
+	};
+	void setBattlePromptPlayers(const std::vector<PromptPlayer> &allies, const std::vector<PromptPlayer> &enemies);
+	std::string battlePromptPage(int side, int index) const {
+		return side >= 0 && side < 2 && index >= 0 && index < (int)m_promptSides[side].pages.size() ? m_promptSides[side].pages[(size_t)index] : std::string();
+	}
+	std::string battlePromptTabs(int side) const { return side >= 0 && side < 2 ? m_promptSides[side].tabs : std::string(); }
+	int battlePromptSelected(int side) const { return side >= 0 && side < 2 ? m_promptSides[side].selected : -1; }
 	// WOTR2 milestone 8: the phase timer (RW 0x97EFB2: the checklist's vslot 0x14 = RW 0x984640 "APT:_level%u.%s_TimeRemaining" formatted with
 	// STRATEGICHUD:TurnTimeRemaining (minutes, the locale's time separator, seconds); vslot 0x18 without a timer: here an empty text); -1 hides it
 	void setTimeRemaining(int seconds);
@@ -148,6 +166,8 @@ public:
 		int values[3][2] = { { 0, 0 }, { 0, 0 }, { 0, 0 } };
 	};
 	void setRegionStats(const RegionStats &stats);
+	// Selected army's Palantir CP line (RW 0x9E2FE2 / 0x9E304D), distinct from regionStats.
+	void setSelectionCommandPoints(bool shown, int current = 0, int maximum = -1, const std::string &portrait = std::string());
 	// WOTR2 milestone 5: a strategic notice in AptStrategicMessageBox (GuiFX's "StrategicMessageBox", RW 0x953007): Notice::Show RW 0x900CBC writes the
 	// title and text, Show("Ok", long) with the notice's state callback (RW 0x900B6D: shown until _OnHidden); the texts are fetched here and formatted
 	// with the args (%ls / %d), each item appended to the text formatted with its own args (LW:AttackRepelledItemText)
@@ -186,6 +206,7 @@ public:
 	std::vector<std::string> flagIncompleteChecklistItems();
 	void checklistUpdate(); // RW 0x985531, once per HUD update: the relayout and each row's update (RW 0x9E3D78)
 	int checklistRowCount() const { return (int)m_rows.size(); }
+	const std::string &checklistScrollPath() const { return m_checklistScroll; }
 	std::string checklistRowPath(int i) const { return i >= 0 && i < (int)m_rows.size() ? m_rows[(size_t)i].path : std::string(); }
 	// WOTR2 milestone 5: the map rollover help (spec O B; Rollover::Update RW 0x97E6DD shows it after 999 ms, the host times it): a region's (RW 0x9737F9:
 	// its DisplayName, the description RW 0x7F2A76), an army's (RW 0x9735D3: the summary's name label; the heroes' names joined with ", ", then a
@@ -223,6 +244,7 @@ public:
 	void showHelp(const std::string &titleLabel, const std::string &helpLabel);
 	void hideHelp();
 	void helpUpdate();
+	const std::string &cursorTooltipLabel() const { return m_cursorTooltip; }
 	const InGameHelpBox &helpBox() const { return m_helpBox; }
 	bool commandButtonShown(int slot) const { return slot >= 1 && slot <= 5 && m_slots[slot].initialized && m_slots[slot].shown; }
 	bool commandButtonEnabled(int slot) const { return slot >= 1 && slot <= 5 && m_slots[slot].enabledShown; }
@@ -347,6 +369,7 @@ public:
 		std::string image; // a mapped image (a LivingWorldBuilding's or an ArmyToSpawn's ConstructButtonImage)
 		bool enabled = true;
 		int productionCount = 0; // QueueUnitButton: ShowProductionCount, the queued entries of its army (0: none)
+		std::string title, help; // ConstructButtonTitle / ConstructButtonHelp labels
 	};
 	// the shown radial's buttons changed in place (a queued unit's count, an enabled state): the same count of buttons, no new ring
 	void updateRadialButtons(const std::vector<RadialButton> &buttons);
@@ -412,6 +435,12 @@ private:
 	std::string m_regionStatsClip;  // RW 0x9827A1: the tray's clip, kept until it unloads
 	RegionStats m_regionStats;      // the host's values
 	RegionStats m_regionStatsShown; // what the tray shows (RW tray + 0x08 .. + 0x1C, + 0x68)
+	std::string m_selectionClip;
+	bool m_selectionCpShown = false;
+	int m_selectionShownSent = -1;
+	int m_selectionCp = 0, m_selectionMaxCp = -1;
+	std::string m_selectionPortrait;
+	void writeSelectionCommandPoints();
 	std::string text(const std::string &label) const;
 
 	ShellEnvironment &m_env;
@@ -440,6 +469,12 @@ private:
 	int m_rowCounter = 0;            // + 0x2C
 	bool m_relayout = false;         // + 0x38
 	bool m_openWhenClosed = false;   // + 0x26
+	std::string m_checklistScroll;
+	float m_checklistViewHeight = 0.0f, m_checklistHeight = 0.0f, m_checklistPosition = 0.0f;
+	void bindChecklistScroll(const std::string &clip);
+	void releaseChecklistScroll();
+	void updateChecklistScroll();
+	void scrollChecklist(float position);
 	void deleteChecklistRow(size_t index);
 	bool checklistCall(const std::string &path, const std::string &fn, const std::vector<AptValue> &args);
 	bool m_checklistButtonUp = false; // RW 0x985642's + 0x25: the expand button's state last sent (RW 0x9849F9)
@@ -458,6 +493,11 @@ private:
 	bool m_helpSettingsTried = false;
 	FontMetricsSource *m_helpMetrics = nullptr;
 	std::shared_ptr<CommandButtonHelp> m_helpShown; // the help the last showHelp gave the box (the hide guard compares it)
+	std::shared_ptr<CommandButtonHelp> m_statHelp;
+	int m_hoveredStat = -1;
+	std::string m_cursorTooltip;
+	void hideCursorTooltip(const std::string &label) { if (m_cursorTooltip == label) m_cursorTooltip.clear(); }
+	void showBackTooltip(const std::string &panel);
 	struct ToggleSlot
 	{
 		bool created = false, initialized = false;
@@ -545,6 +585,22 @@ private:
 	bool m_waitShown = false;
 	std::string m_promptPath;
 	std::vector<std::string> m_promptCommands;
+	struct PromptSide
+	{
+		std::vector<PromptPlayer> players;
+		std::string tabs;
+		std::vector<std::string> pages;
+		std::vector<int> states;
+		int selected = -1;
+	};
+	PromptSide m_promptSides[2];
+	void bindPromptTabs(int side, const std::string &clip);
+	void createPromptPages(int side);
+	void bindPromptPage(int side, int index, const std::string &clip);
+	void bindPromptArmy(int side, int index, const std::string &clip);
+	void selectPromptPage(int side, int index);
+	bool promptCall(const std::string &clip, const std::string &function, const std::vector<AptValue> &args);
+	void promptCommand(const std::string &name, WindowManager::CommandFn fn);
 	bool m_swapWanted = false;
 	int m_swapState = 0;               // the movie clip's + 0x18: 0 loading, 1 open, 2 closing, 3 closed
 	std::string m_swapClip;

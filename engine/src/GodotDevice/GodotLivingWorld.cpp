@@ -477,6 +477,7 @@ Dictionary LivingWorldGame::setup(Object *game_world)
 		d["faction_icon"] = s(t.factionIcon);
 		d["music"] = s(t.music);
 		d["garrison_name"] = s(t.garrisonDisplayNameTag);
+		d["garrison_portrait"] = s(t.garrisonSelectionPortraitName);
 		templates.push_back(d);
 	}
 	out["player_templates"] = templates;
@@ -828,6 +829,23 @@ Dictionary LivingWorldGame::get_strategic_state() const
 	out["finished"] = lw.finished();
 	out["winning_team"] = lw.winningTeam();
 	out["campaign"] = s(lw.campaign().name);
+	if (const Scenario *scenario = lw.campaign().scenario.get())
+	{
+		Dictionary labels;
+		labels["scenario"] = s(scenario->displayName);
+		labels["fiction"] = s(scenario->displayFiction);
+		labels["objectives"] = s(scenario->displayObjectives);
+		labels["game_type"] = s(scenario->displayGameType);
+		if (scenario->useMpRulesVictoryCondition && !lw.campaign().victoryTypes.empty())
+		{
+			const auto &types = lw.campaign().victoryTypes;
+			const int index = lw.victoryType();
+			const VictoryType &type = types[(size_t)(index >= 0 && index < (int)types.size() ? index : 0)]; // RW 0x932BF7
+			labels["objectives"] = s(type.displayObjectives);
+			labels["game_type"] = s(type.displayGameType);
+		}
+		out["status_labels"] = labels;
+	}
 	out["hash"] = (int64_t)lw.stateHash();
 	Array players;
 	for (int p = 0; p < (int)lw.players().size(); ++p)
@@ -878,6 +896,7 @@ Dictionary LivingWorldGame::get_strategic_state() const
 		d["owner"] = rs.owner;
 		d["enabled"] = rs.enabled;
 		d["free_slots"] = lw.freeBuildingSlots(r);
+		int promptFortresses = lw.regionCampaign().regions[(size_t)r].createAutoFort ? 1 : 0;
 		Array buildings;
 		for (const Building &b : rs.buildings)
 		{
@@ -885,9 +904,13 @@ Dictionary LivingWorldGame::get_strategic_state() const
 			bd["template"] = s(b.templateName);
 			bd["turns_left"] = b.turnsLeft;
 			bd["slot"] = b.slot;
+			const BuildingTemplate *definition = m_stores->findBuilding(b.templateName);
+			if (b.turnsLeft == 0 && definition && !definition->battleThingTemplate.empty() && m_units(definition->battleThingTemplate).autoResolveUnitType == 6)
+				++promptFortresses;
 			buildings.push_back(bd);
 		}
 		d["buildings"] = buildings;
+		d["prompt_fortresses"] = promptFortresses; // BFME2 donor BattlePromptArmyPanelBase RVA 0x5FEE09; construction exclusion inferred from the plot flag
 		// each building's queue in order; turns_left is GetBuildTimeAtIndex (WB 0x1643860: the head's BuildTime less its turns spent, the others their
 		// BuildTime), queue_index the entry's place in its building's queue
 		Array production;
@@ -949,6 +972,17 @@ Dictionary LivingWorldGame::get_strategic_state() const
 		d["strength"] = lw.armyStrength(a);
 		d["cp"] = lw.armyCommandPoints(a);
 		d["max_cp"] = lw.armyMaxCommandPoints(a);
+		// BattlePromptArmyPanelBase counts ArmySummary entry quantities by archetype, not the
+		// expanded horde-member quantities used by the retinue icons (BFME2 donor RVA 0x5FED99).
+		Array categories;
+		int counts[9] = {};
+		for (const ArmyMember &member : a.members)
+		{
+			const UnitInfo info = m_units(member.thingTemplate);
+			if (info.autoResolveUnitType >= 0 && info.autoResolveUnitType < 9) counts[info.autoResolveUnitType] += member.quantity;
+		}
+		for (int count : counts) categories.push_back(count);
+		d["summary_categories"] = categories;
 		Array members;
 		for (const ArmyMember &m : a.members)
 		{
@@ -1686,6 +1720,7 @@ Array LivingWorldGame::recruitable_in(int64_t player, int64_t region) const
 			ad["build_time"] = sa.buildTime;
 			ad["image"] = s(sa.constructButtonImage);
 			ad["title"] = s(sa.constructButtonTitle);
+			ad["help"] = s(sa.constructButtonHelp);
 			int cost = 0, cp = 0;
 			int unitType = -1, firstQuantity = 0, firstCp = 0;
 			if (const PlayerArmy *pa = m_stores->findPlayerArmy(sa.playerArmy))

@@ -407,13 +407,14 @@ ShellCursorTooltip::~ShellCursorTooltip()
 	m_windows.clearRenderCallback("ToolTipText");
 }
 
-void ShellCursorTooltip::update(std::uint32_t nowMs, float windowW, float windowH, FontMetricsSource &metrics)
+void ShellCursorTooltip::update(std::uint32_t nowMs, float windowW, float windowH, FontMetricsSource &metrics, const std::string &directLabel)
 {
 	// the pointer: the Apt player's own (the position its last move event set, gApt + 0x74 / + 0x78), the one the hover was found at
 	float stageX = 0.0f, stageY = 0.0f;
 	m_windows.apt().mousePosition(stageX, stageY);
 	// RW 0x6235E2: the label's text, only when the string file has it
-	const std::string label = m_windows.currentTooltipLabel();
+	// Strategic UI controls request Mouse tooltips directly, outside HandleOverButtons' name map.
+	const std::string label = directLabel.empty() ? m_windows.currentTooltipLabel() : directLabel;
 	UnicodeString text;
 	bool exists = false;
 	if (!label.empty())
