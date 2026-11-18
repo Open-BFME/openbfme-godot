@@ -32,6 +32,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Science.h"
+#include "Common/Upgrade.h"
 #include "GameLogic/WeaponSetToggle.h"
 #include "GameClient/PalantirCommandUI.h"
 #include "GameClient/MapClassification.h"
@@ -711,6 +712,7 @@ void InGameHud::update(double seconds)
 	m_iconSettings.snapshot = iconSnap.get();
 	m_iconSettings.shroudDrawn = iconSnap && iconSnap->shroud && iconSnap->shroud->displayed;
 	presentBeacons(); // lane CHAT-1
+	presentUpgradeComplete(); // RW 0x8A2080 .. 0x8A223B: the issuing player's feedback after upgrade completion
 	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, m_input->ui().mouseoverObject(), m_iconOps);
 	updateFloatingText(m_config.view, m_iconSettings.shroudDrawn);
 	m_iconSettings.snapshot = nullptr; // the frame's snapshot goes with this frame
@@ -1618,6 +1620,54 @@ void InGameHud::showMessageLabel(const std::string &label, const std::u16string 
 	}
 	m_messageLines.addMessageText(argument ? InGameChat::formatLine(text, *argument) : text, nullptr, m_messageFrame);
 	++m_guiMessagesShown;
+}
+
+void InGameHud::presentUpgradeComplete()
+{
+	// RW 0x8A2080 .. 0x8A223B: the issuing player's feedback after upgrade completion
+	const Player *local = m_config.game.players().getLocalPlayer();
+	for (const GameLogic::UpgradeCompleteNotice &n : m_config.game.logic().upgradeCompleteNotices())
+	{
+		if (n.seq <= m_upgradeCompleteNoticeSeen)
+		{
+			continue;
+		}
+		m_upgradeCompleteNoticeSeen = n.seq;
+		if (!local || local->getPlayerIndex() != n.playerIndex || !n.upgrade)
+		{
+			continue;
+		}
+
+		// RW 0x8A2094 .. 0x8A211C: format "UPGRADE:UpgradeComplete" with upgrade's DisplayName (+0x28)
+		// Missing label yields MISSING: '<label>' (RW 0x6E7AC0 / GameTextSource::fetchOrMissing)
+		const std::u16string formatStr = fetchOrMissing(m_config.gameText, "UPGRADE:UpgradeComplete");
+		const std::u16string nameStr = fetchOrMissing(m_config.gameText, n.upgrade->m_displayName);
+		const std::u16string messageText = InGameChat::formatLine(formatStr, nameStr);
+		m_messageLines.addMessageText(messageText, nullptr, m_messageFrame);
+		++m_guiMessagesShown;
+
+		// RW 0x8A213F .. 0x8A2212: audio / Eva feedback
+		bool feedbackPlayed = false;
+		if (n.upgrade->m_researchCompleteEvaEvent != -1)
+		{
+			AudioApi::reportEva(n.upgrade->m_researchCompleteEvaEvent, &n.position);
+			feedbackPlayed = true;
+		}
+		if (!n.upgrade->m_researchSound.empty())
+		{
+			AudioApi::playSoundForObject(n.upgrade->m_researchSound, n.producerID, n.playerIndex);
+			feedbackPlayed = true;
+		}
+		if (!feedbackPlayed)
+		{
+			// RW 0x8A21C9: default Eva event 4 (EVA_UPGRADE_COMPLETE, "UpgradeComplete")
+			AudioApi::reportEva(4, &n.position);
+		}
+		if (!n.upgrade->m_unitSpecificSound.empty())
+		{
+			AudioApi::playSoundForObject(n.upgrade->m_unitSpecificSound, n.producerID, n.playerIndex);
+		}
+	}
 }
 
 void InGameHud::presentBeacons()

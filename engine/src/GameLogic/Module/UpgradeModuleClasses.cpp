@@ -928,8 +928,7 @@ std::vector<std::string> UpgradeModuleClasses::stopLines()
 		" texture swaps and " + std::to_string(s.houseRecolorsNotPorted) + " recolours not applied",
 		"[S-486] upgrade research details not ported: the sub upgrade cost skip of UpgradeTemplate::calcCostToBuild (RW 0x694BF8 / slot 0xAC), the castle cost "
 		"record of queueUpgrade (RW 0x8A10A0) (the completion's RW 0x79D322 / 0x79D833 are the producer's experience: PRODUCTION1, S-203), the first and third clauses of Object::affectedByUpgrade (RW 0x6939DF / "
-		"0x693A1A, RW 0x6ABDC2), HordeContain's second member list (+0x150) in the upgrade hand-down (RW 0x87566B) and in Object::hasUpgrade (RW 0x86EC2D: module + 0x170), the research sound, Eva event, UpgradeFX and UI "
-		"messages of the completion",
+		"0x693A1A, RW 0x6ABDC2), HordeContain's second member list (+0x150) in the upgrade hand-down (RW 0x87566B) and in Object::hasUpgrade (RW 0x86EC2D: module + 0x170) (completion UI messages, radar event and sounds are ported: LOCAL-10)",
 		"[S-485] closed: ModelConditionUpgrade RemoveConditionFlagsInRange (RW 0x8BA71A) is ported (the Create-A-Hero model condition upgrades use it)",
 		"[S-5145] DoCommandUpgrade (lane SUMMON-1): SPECIAL_POWER / SPELL_BOOK and TOGGLE_WEAPONSET buttons run (RW 0x696FD2); the other command types (the Hall of "
 		"Twilight's PLAYER_UPGRADE technologies: the queue of RW 0x695338 / production slot 0xC, ...) do nothing: " + std::to_string(s.doCommandsNotPorted) + " met",
