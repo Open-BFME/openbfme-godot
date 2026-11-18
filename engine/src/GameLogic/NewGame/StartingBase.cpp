@@ -2,6 +2,7 @@
 // See GameLogic/NewGame/StartingBase.h for the sources of every rule.
 
 #include "GameLogic/NewGame/StartingBase.h"
+#include "GameLogic/NewGame/ArmySpawnPositions.h"
 
 #include "Common/Player.h"
 #include "Common/Team.h"
@@ -307,9 +308,37 @@ void StartingBase::placeLivingWorldBattle(GameLogic &logic, int slotNum, const S
 		result.errors.push_back("slot " + std::to_string(slotNum) + " (" + player.getPlayerName() + "): the map has no waypoint " + startName + " for its armies");
 		return;
 	}
-	int k = 0;
+	const ArmySpawnPositions::Lookup lookup = [&](const std::string &name) -> const Coord3D * {
+		const Waypoint *wp = terrain->findWaypointByName(name);
+		return wp ? &wp->location : nullptr;
+	};
+	int k = 0, activeArmy = 0;
+	Coord3D anchor = start->location;
+	float facing = 0.0f;
+	auto selectArmy = [&](int armyId) {
+		if (activeArmy == armyId)
+			return;
+		activeArmy = armyId;
+		k = 0;
+		const LivingWorldBattleStart::ArmyStart *as = battle.armyStart(armyId);
+		if (as && as->placement.method != LivingWorldArmySpawnPlan::LEGACY)
+		{
+			ArmySpawnPositions::Positions positions;
+			if (ArmySpawnPositions::resolve(as->placement, false, lookup, positions))
+			{
+				anchor = positions.spawn;
+				facing = (float)SimMath::atan2d(SimMath::subf32(positions.gather.y, anchor.y), SimMath::subf32(positions.gather.x, anchor.x));
+				return;
+			}
+			result.errors.push_back("army " + std::to_string(armyId) + ": the map has no valid War of the Ring spawn/gather placement");
+		}
+		else
+			result.notes.push_back("[S-1329] army " + std::to_string(armyId) + ": legacy battle start has no retail placement context");
+		anchor = start->location;
+		facing = 0.0f;
+	};
 	auto place = [&](const std::string &name, int armyId, int memberIndex, const std::string &spawnId) -> Object * {
-		const Coord3D pos = armySlot(logic, start->location, k);
+		const Coord3D pos = armySlot(logic, anchor, k);
 		++k;
 		if (Object *o = placeObjectAtPosition(logic, player, name, pos, result))
 		{
@@ -319,6 +348,7 @@ void StartingBase::placeLivingWorldBattle(GameLogic &logic, int slotNum, const S
 			pl.position = *o->getPosition();
 			pl.armyId = armyId;
 			pl.memberIndex = memberIndex;
+			o->setOrientation(facing); // RW 0x782188: the same spawn->gather facing for every placed object
 			result.placed.push_back(pl);
 			LivingWorldBattleTags::Tag tag; // WOTR2 milestone 7: ArmySummaryEntry::createObject RW 0x80EDF1 (+ 0x47C the army, + 0x480 the entry's spawn id)
 			tag.armyId = armyId;
@@ -355,7 +385,19 @@ void StartingBase::placeLivingWorldBattle(GameLogic &logic, int slotNum, const S
 		r.playerIndex = player.getPlayerIndex();
 		r.state = 2;
 		r.arrivalFrame = (std::uint32_t)as.arrivalFrame;
-		r.spawnPoints = as.spawnPoints;
+		if (as.placement.method == LivingWorldArmySpawnPlan::LEGACY)
+		{
+			r.spawnPoints = as.spawnPoints;
+			result.notes.push_back("[S-1329] reinforcement " + std::to_string(as.armyId) + ": legacy battle start has no retail placement context");
+		}
+		else
+		{
+			ArmySpawnPositions::Positions positions;
+			if (ArmySpawnPositions::resolve(as.placement, true, lookup, positions))
+				r.spawnPoints.push_back(positions.names);
+			else
+				result.notes.push_back("army " + std::to_string(as.armyId) + ": the map has no valid reinforcement spawn/gather placement (retail places nothing)");
+		}
 		for (const LivingWorldBattleStart::Member &m : battle.members)
 		{
 			if (m.armyId == as.armyId)
@@ -384,6 +426,7 @@ void StartingBase::placeLivingWorldBattle(GameLogic &logic, int slotNum, const S
 		{
 			placeStarting();
 		}
+		selectArmy(m.armyId);
 		for (int q = 0; q < m.quantity; ++q)
 		{
 			Object *o = place(m.thingTemplate, m.armyId, m.memberIndex, m.spawnId);
@@ -395,6 +438,8 @@ void StartingBase::placeLivingWorldBattle(GameLogic &logic, int slotNum, const S
 	}
 	if (!startingDone)
 	{
+		if (activeArmy == 0)
+			selectArmy(ss->garrisonArmyId);
 		placeStarting(); // the first army was the last one (or the empty garrison: RW 0x8125FC still loads it)
 	}
 }
@@ -438,23 +483,27 @@ bool StartingBase::callInLivingWorldArmy(GameLogic &logic, int armyId)
 		return false;
 	}
 	r->state = 4;
-	// getSpawnPositions RW 0x80F754: the first choice the map has (a missing gather point: the spawn point)
-	const Waypoint *spawn = nullptr;
-	const Waypoint *gather = nullptr;
+	// The strategic plan was resolved against this map at load time. Keeping
+	// the selected names preserves the choice across snapshots without adding
+	// strategic metadata to the tactical simulation state.
+	const ArmySpawnPositions::Lookup lookup = [&](const std::string &name) -> const Coord3D * {
+		const Waypoint *wp = terrain->findWaypointByName(name);
+		return wp ? &wp->location : nullptr;
+	};
+	ArmySpawnPositions::Positions positions;
+	bool found = false;
 	for (const auto &choice : r->spawnPoints)
 	{
-		spawn = terrain->findWaypointByName(choice.first);
-		if (spawn)
+		if (ArmySpawnPositions::namedPair(lookup, choice, positions))
 		{
-			gather = terrain->findWaypointByName(choice.second);
+			found = true;
 			break;
 		}
 	}
-	if (!spawn)
-	{
-		return true; // no point at all: retail's placement fails the same way (nothing appears) [S-1329]
-	}
-	const Coord3D target = gather ? gather->location : spawn->location;
+	if (!found)
+		return true; // RW 0x782214 ignores a failed lookup; no objects are placed, with the missing choice reported at load
+	const Coord3D target = positions.gather;
+	const float facing = (float)SimMath::atan2d(SimMath::subf32(target.y, positions.spawn.y), SimMath::subf32(target.x, positions.spawn.x));
 	Result result;
 	int k = 0;
 	const LivingWorldBattleTags::Reinforcement rec = *r; // the records may grow while objects are made
@@ -462,7 +511,7 @@ bool StartingBase::callInLivingWorldArmy(GameLogic &logic, int armyId)
 	{
 		for (int q = 0; q < m.quantity; ++q)
 		{
-			Object *o = placeObjectAtPosition(logic, *player, m.thingTemplate, armySlot(logic, spawn->location, k++), result);
+			Object *o = placeObjectAtPosition(logic, *player, m.thingTemplate, armySlot(logic, positions.spawn, k++), result);
 			if (!o)
 			{
 				continue;
@@ -470,6 +519,7 @@ bool StartingBase::callInLivingWorldArmy(GameLogic &logic, int armyId)
 			LivingWorldBattleTags::Tag tag;
 			tag.armyId = rec.armyId;
 			tag.spawnId = m.spawnId;
+			o->setOrientation(facing); // RW 0x782188
 			logic.livingWorldTags().objects[o->getID()] = tag;
 			carryOver(*o, m.experience, m.upgrades, "reinforcement " + m.thingTemplate, result.errors);
 			AICommand c; // the group move to the gather point (RW 0x76E8B0 in the WalkOnTemplate formation; here each unit to the point)

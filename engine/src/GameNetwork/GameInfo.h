@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "Common/LivingWorldArmySpawnPlan.h"
 #include "Common/CreateAHeroRecord.h"
 #include "Common/MpGameRules.h"
 #include "Common/SimulationProfile.h"
@@ -347,6 +348,7 @@ struct LivingWorldBattleStart
 			std::string spawnId;
 			float experience = 0.0f;
 			bool dead = false;
+			int rank = -1, baseRank = -1;
 		};
 		std::vector<Hero> heroes;
 		// WOTR2 milestone 7 (RW 0x8125FC): the war's skill points, bonus purchase points, sciences and lasting upgrades of the player
@@ -357,14 +359,15 @@ struct LivingWorldBattleStart
 	};
 	std::vector<SlotStart> slotStarts;
 	// WOTR2 milestone 7 (step 5): every battle army's start (RW 0x6B851C): on the field (4) or a reinforcement (2) arriving at a frame, with its walk-on
-	// spawn / gather waypoint choices; members of a state 2 army are placed when it is called in (MSG_CALL_IN_REINFORCEMENTS)
+	// placement plan (RW 0x80F754); members of a state 2 army are placed when it is called in (MSG_CALL_IN_REINFORCEMENTS)
 	struct ArmyStart
 	{
 		int slot = -1;
 		int armyId = 0;
 		int state = 4;
 		int arrivalFrame = 0;
-		std::vector<std::pair<std::string, std::string>> spawnPoints;
+		std::vector<std::pair<std::string, std::string>> spawnPoints; // legacy recording choices
+		LivingWorldArmySpawnPlan placement;
 	};
 	std::vector<ArmyStart> armies;
 	const ArmyStart *armyStart(int armyId) const

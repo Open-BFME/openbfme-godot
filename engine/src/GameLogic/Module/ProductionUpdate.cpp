@@ -1228,6 +1228,9 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 				// RW 0x8A276C .. 0x8A2774: cvtsi2ss [entry + 0x28]; movss [newObject + 0x33C]: the object remembers what the entry cost (RefundDie reads it). The entry's own
 				// cost is the stored one (a horde's entry is zeroed below once the horde exists, so its members remember 0, as retail's do)
 				newObj->setBuildCostPaid(NumericState::sseFromInt32(entry->cost));
+				// RotWK WotR: RW 0x8A277C..0x8A2789 registers a newly trained object under its
+				// producer's army. The revival branch above keeps the hero record's own army instead.
+				logic.livingWorldTags().inheritArmy(newObj->getID(), us->getID());
 			}
 			m_exitingObjectID = newObj->getID();
 			// (RW 0x8A27A3 .. 0x8A27CF: the new drawable is hidden under the local player's shroud: client)

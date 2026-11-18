@@ -164,6 +164,14 @@ void PlayerScience::addSciencePurchasePoints(int delta)
 int PlayerScience::getMaxRankLevel() const
 {
 	const int count = TheRankInfoStore ? TheRankInfoStore->getRankLevelCount() : 0;
+	// A Living World battle's vslot 5 is true (RW 0x602E64), so RW 0x7827D9 calls
+	// RW 0x6B34EE and caps by GlobalData InitialMaxRingLevel, regardless of the player template.
+	// BFME2 follows the same branch (SciencePurchasePointTracker RVA 0x38030D;
+	// selector RVA 0x2B2AFD, Rva002B2AFDSelect.cpp). This mode is supplied only by the WotR start.
+	if (m_mode.livingWorldMaxRank >= 0)
+	{
+		return std::min(count, m_mode.livingWorldMaxRank);
+	}
 	if (!m_template)
 	{
 		return count;
@@ -416,6 +424,10 @@ void PlayerScience::crc(StateHasher &h) const
 	}
 	h.addBool(m_mode.skirmishOrMultiplayer);
 	h.addBool(m_mode.campaign);
+	if (m_mode.livingWorldMaxRank >= 0)
+	{
+		h.addI32(m_mode.livingWorldMaxRank);
+	}
 	h.addFloat(m_skillPoints);
 	h.addFloat(m_skillPointsModifier);
 	h.addI32(m_rankLevel);
@@ -555,7 +567,7 @@ void AcquiredScienceQueue::xfer(Xfer &x, const PlayerScience *player)
 // their name keys, as the state hash has them (identical for an identical install).
 void PlayerScience::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_mode.livingWorldMaxRank >= 0 ? 2 : 1) };
 	x.xferVersion(v);
 	x.xferUnsignedInt(&m_spellBookId);
 	x.xferReal(&m_rechargeDiscount);
@@ -567,6 +579,18 @@ void PlayerScience::xfer(Xfer &x)
 	}
 	x.xferBool(&m_mode.skirmishOrMultiplayer);
 	x.xferBool(&m_mode.campaign);
+	if (v.current >= 2)
+	{
+		x.xferInt(&m_mode.livingWorldMaxRank);
+		if (x.isLoading())
+		{
+			SnapshotXfer::checkRange(m_mode.livingWorldMaxRank, 0, 0x7fffffff, "a Living World rank ceiling");
+		}
+	}
+	else if (x.isLoading())
+	{
+		m_mode.livingWorldMaxRank = -1;
+	}
 	x.xferReal(&m_skillPoints);
 	x.xferReal(&m_skillPointsModifier);
 	x.xferInt(&m_rankLevel);

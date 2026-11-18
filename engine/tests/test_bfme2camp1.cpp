@@ -158,11 +158,20 @@ int gameLogicVersion(const std::vector<std::uint8_t> &stream)
 TEST_CASE("archive x wotr: obfme:GameLogic version 3 is the campaign state and loads with no War of the Ring tags; version 4 adds the tags after it")
 {
 	const std::vector<std::string> core = { "obfme:TeamFactory", "obfme:Players", "obfme:GameLogic", "obfme:Random" };
-	auto world = [] {
+	auto world = [](bool battle = false) {
 		auto w = std::make_unique<logictest::LogicWorld>();
 		LogicModules::registerAll(w->w.modules);
 		REQUIRE(w->w.load(kBuildIni, INI_LOAD_OVERWRITE, "units.ini").empty());
 		w->activateUpgrades();
+		if (battle)
+		{
+			// A modern active battle snapshot includes its Living World rank ceiling in obfme:Players.
+			for (int i = 0; i < w->players.getPlayerCount(); ++i)
+			{
+				Player *player = w->players.getNthPlayer(i);
+				if (player->getPlayerTemplate()) player->initScience(SpellGameMode{ false, false, 60 });
+			}
+		}
 		return w;
 	};
 	auto tag = [](int army) {
@@ -193,7 +202,7 @@ TEST_CASE("archive x wotr: obfme:GameLogic version 3 is the campaign state and l
 	CHECK(loader->logic->buildableStatusOverrides() == std::map<std::string, std::int32_t>{ { "Tower", 2 } });
 	CHECK(loader->logic->computeStateHash() == campaign->logic->computeStateHash());
 	// a War of the Ring battle save: version 4, the campaign state and the tags both come back, and it saves to the same bytes
-	auto battle = world();
+	auto battle = world(true);
 	battle->logic->setBuildableStatusOverride(battle->logic->things().findTemplate("Wall"), 3);
 	battle->logic->livingWorldTags().active = true;
 	battle->logic->livingWorldTags().objects[5] = tag(21);
@@ -212,7 +221,7 @@ TEST_CASE("archive x wotr: obfme:GameLogic version 3 is the campaign state and l
 	back->logic->gameState().saveBlocks(core, again);
 	CHECK(again == v4);
 	// War of the Ring tags without campaign state: still version 4 (the campaign part is written empty)
-	auto tagsOnly = world();
+	auto tagsOnly = world(true);
 	tagsOnly->logic->livingWorldTags().active = true;
 	std::vector<std::uint8_t> v4b;
 	tagsOnly->logic->gameState().saveBlocks(core, v4b);

@@ -8,9 +8,9 @@
 //     (its object's tag on its record), a hero produced from a record (the record's tag on the object);
 //   * a destroyed region building (Object::onDie RW 0x6991F3: + 0x484 != 0) is listed for the strategic region (LivingWorldRegion::DestroyBuilding RW 0x7F32F4).
 // Saved in the snapshot (obfme:GameLogic version 3, written only when the table is in use) and hashed only when it is in use, so a skirmish's snapshot
-// and hashes are byte-identical to before. An object made in the
-// battle by anything else (production, building, hordes) has no tag: the result gives it its player's garrison [S-1329 inference: retail copies the
-// maker's id at each creation site, RotWK sites in spec R 5.1; what a porter or a region building makes is the garrison's]
+// and hashes are byte-identical to before. ProductionUpdate and the plot/dozer/immediate construction paths now inherit the maker's army id.
+// Other module-specific creation paths remain to be audited: an untagged survivor still goes to its player's garrison, explicitly reported as
+// an S-1329 inference (retail registers the army id separately at each creation site; see docs/re/wotr-battles.md).
 
 #pragma once
 
@@ -57,6 +57,18 @@ struct LivingWorldBattleTags
 
 	void clear() { *this = LivingWorldBattleTags(); }
 	bool inUse() const { return active || !objects.empty() || !heroes.empty() || !destroyedBuildings.empty() || !reinforcements.empty(); }
+	// RotWK's ArmySummarySystem object registration (RW 0x625E0A -> 0x80FD9C): a maker's army id,
+	// not its entry spawn id or region-building id. The source tag identifies an already registered army.
+	// Creation sites call this explicitly; setting an object's producer alone does not register it.
+	void inheritArmy(std::uint32_t child, std::uint32_t maker)
+	{
+		const Tag *source = object(maker);
+		if (active && source && source->armyId != 0)
+		{
+			const int armyId = source->armyId;
+			objects[child].armyId = armyId;
+		}
+	}
 	Reinforcement *reinforcement(int armyId)
 	{
 		for (Reinforcement &r : reinforcements)

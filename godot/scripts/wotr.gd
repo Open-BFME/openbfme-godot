@@ -28,6 +28,7 @@ var state := {}                  # LivingWorldGame.get_strategic_state()
 var local_player := 0
 var lobby_message := {}
 var slot_of_player: Array = []   # the lobby slot each strategic player came from
+var award_choice := preload("res://scripts/wotr_award_choice.gd").new()
 var active := false
 const SESSION_VERSION := 3       # WOTR2 milestone 3: the save's session (save_map); 2 (milestone 6): a battle's save adds "battle" and "strategic_hash"; 3 (milestone 8 step 4): a LAN war's save adds "lan" (retail's mode-6 header)
 
@@ -197,6 +198,7 @@ func begin_campaign(message: Dictionary, network := false) -> bool:
 		setup.slots.append({"name": s.name, "faction": faction_names[pt], "human": s.state == SLOT_PLAYER, "ai": s.state, "team": s.team, "color": s.color,
 			"start_region": start_region, "handicap": -int(s.get("handicap", 0))})
 		slot_of_player.append(i)
+	setup.host_player = slot_of_player.find(0) # RegionAwardDispute uses the actual lobby slot 0 (RW 0x900E58).
 	var started: Dictionary = lw.start(setup)
 	if not started.ok:
 		game._fail("War of the Ring: " + started.error)
@@ -1160,6 +1162,7 @@ func _update_camera() -> void:
 
 
 func _process(delta: float) -> void:
+	award_choice.sync(self)
 	if net and battle_stage == "fighting" and net_battle_abort.is_empty() and game._world.lan_war_battle_departed():
 		# retail: a player leaving during a battle (0x448 then 0x6B8) or dropped ends the war for every peer (QuitWar RW 0x6B94C6 -> DoExitMap): every
 		# peer sees the departure at one frame of the battle's lockstep and leaves the battle and the war. (Sol review wotr2m8s3r3) before a waiting
@@ -2527,7 +2530,7 @@ func _launch_battle(setup: Dictionary) -> void:
 	for a in setup.get("army_starts", []):
 		var aslot: int = players.find(int(a.player))
 		if aslot >= 0:
-			army_starts.append({"slot": aslot, "army": int(a.army), "state": int(a.state), "arrival_frame": int(a.arrival_frame), "spawn_points": a.spawn_points})
+			army_starts.append({"slot": aslot, "army": int(a.army), "state": int(a.state), "arrival_frame": int(a.arrival_frame), "spawn_points": a.spawn_points, "placement": a.get("placement", {})})
 	msg.living_world_battle = {"armies": army_starts, "owner_slot": players.find(owner) if owner >= 0 else -1, "owner_buildings": setup.buildings,
 		"owner_building_ids": setup.get("building_ids", []), "members": members, "slot_starts": slot_starts}
 	_say("battle %d in %s on %s: players %s (owner slot %d, %d buildings), %d army members" % [int(setup.battle), regions[int(setup.region)].name, msg.map,

@@ -1018,3 +1018,13 @@ TEST_CASE("command points: the economy's counts and territory products wrap in 3
 	CHECK(fx.economy().livePlayableCount(true) == 0x02000002);
 	CHECK(fx.player("Alice")->commandPoints().getBase() == CpMath::add(100, CpMath::mul(0x02000000, 100)));
 }
+
+TEST_CASE("wotr battles: InitialMaxRingLevel uses the retail default and later GameData overrides")
+{
+    EconomySettings settings;
+    std::string error;
+    REQUIRE_MESSAGE(EconomySettings::scan(econtest::kGameData, settings, &error), error);
+    CHECK(settings.initialMaxRingLevel == 2); // RW 0x6437F9 / BFME2 0x637162
+    REQUIRE_MESSAGE(EconomySettings::scan(std::string(econtest::kGameData) + "GameData\n InitialMaxRingLevel = 7\nEnd\n", settings, &error), error);
+    CHECK(settings.initialMaxRingLevel == 7);
+}

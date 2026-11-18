@@ -16,6 +16,7 @@
 #include "Common/ModEngineFeatures.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "Common/MpGameRules.h"
+#include "Common/Player.h"
 
 #include "Common/GameState.h"
 #include "Common/Snapshot.h"
@@ -353,6 +354,19 @@ void GameLogic::xferCore(Xfer &x)
 	else if (x.isLoading())
 	{
 		resetRankLevelLimitFromEconomy();
+	}
+	if (x.isLoading() && m_livingWorldTags.active)
+	{
+		// obfme:Players precedes this block. Pre-fix PlayerScience v1 snapshots have no
+		// Living World rank ceiling; accepting them would silently apply MaxLevelSP.
+		for (int i = 0; i < m_players.getPlayerCount(); ++i)
+		{
+			const Player *player = m_players.getNthPlayer(i);
+			if (player->getPlayerTemplate() && player->science().mode().livingWorldMaxRank < 0)
+			{
+				throw XferException("legacy War of the Ring battle snapshot lacks its InitialMaxRingLevel rank ceiling");
+			}
+		}
 	}
 }
 

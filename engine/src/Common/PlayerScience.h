@@ -68,6 +68,7 @@ struct SpellGameMode
 {
 	bool skirmishOrMultiplayer = false; ///< GameLogic + 0x110 == 2 or RW 0x441B7C: MP costs, IntrinsicSciencesMP, MaxLevelMP
 	bool campaign = false;              ///< RW 0x5FF924 (SkillPointsNeededCampaign)
+	int livingWorldMaxRank = -1;        ///< RW 0x7827D9 -> 0x6B34EE: InitialMaxRingLevel; -1 outside a Living World battle
 };
 
 class PlayerScience : public ScienceOwner
