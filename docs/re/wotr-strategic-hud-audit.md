@@ -83,6 +83,12 @@ These requested gaps remain open; S-1334 is not closed by this restoration.
   screen tabs/Resume. It also replaces an open battle prompt with different
   player sides, checks that status blocks END PHASE input, and destroys a shell
   with the status screen open.
+- The native battle-path regression starts a retail campaign, attacks an adjacent
+  enemy capital with normal orders, and passes `get_strategic_state()` through
+  `wotr.gd` to the original HUD. It checks repeated sync, both player pages and
+  real Auto-resolve/Real-time/Retreat clicks at all three viewports. Before the
+  side-array fix it failed with the invalid `side.players` access and 24 failed
+  checks; after the fix the complete GPU test passes with zero failures.
 - The existing HUD viewport/input test passed its 4:3, 16:9 and wider checks.
 - The original-data smoke test passed on the combined RotWK/BFME2 mount;
   the BFME1 startup test passed separately with BFME1 data present.

@@ -2,6 +2,12 @@
 ## Optional WOTR_HUD_CAPTURE_DIR writes private captures; no game assets belong in git.
 extends SceneTree
 
+const Wotr := preload("res://scripts/wotr.gd")
+
+class CampaignHost extends Node:
+	var _world: Node
+	var _shell: Node
+
 var failures := 0
 var baseline := OS.get_environment("WOTR_HUD_BASELINE") == "1"
 
@@ -47,7 +53,63 @@ func capture(shell: Node, viewport: SubViewport, name: String) -> void:
 		DirAccess.make_dir_recursive_absolute(folder)
 		check(viewport.get_texture().get_image().save_png(folder.path_join(name + ".png")) == OK, "capture " + name)
 
-func exercise(fs: RefCounted, world: Node, size: Vector2i, folder: String) -> void:
+func make_live_battle(world: Node) -> Dictionary:
+	var logic = ClassDB.instantiate("LivingWorldGame")
+	var data: Dictionary = logic.setup(world)
+	check(bool(data.get("ok", false)), "native LivingWorld setup")
+	if not data.get("ok", false):
+		return {}
+	var started: Dictionary = logic.start({"campaign": "WOTRScenario001", "seed": 5, "slots": [
+		{"name": "Local player", "faction": "FactionMen", "human": true, "team": 1, "color": 0, "start_region": "Amon_Sul"},
+		{"name": "Enemy player", "faction": "FactionMordor", "human": true, "team": 2, "color": 1, "start_region": "Rhudaur"}]})
+	check(bool(started.ok), "native campaign starts: " + str(started.error))
+	if not started.ok:
+		return {}
+	var state: Dictionary = logic.get_strategic_state()
+	check(bool(logic.order_move(0, 1, int(state.players[1].capital)).ok), "normal army order attacks adjacent enemy capital")
+	for player in 2:
+		check(bool(logic.end_turn(player).ok), "native END PHASE for player %d" % player)
+	logic.update()
+	state = logic.get_strategic_state()
+	check(int(state.pending_battle) == 0, "native strategic logic produces pending battle zero")
+	if int(state.pending_battle) != 0:
+		return {}
+	check(state.battles[0].sides == [[{"player": 0, "veterancy": 0, "lost": 0, "destroyed": 0, "heroes_lost": 0}],
+		[{"player": 1, "veterancy": 0, "lost": 0, "destroyed": 0, "heroes_lost": 0}]], "native battle sides are arrays of player records")
+	check(int(logic.resolution_options(0, 0)) == 14, "native battle permits Auto-resolve, Real-time and Retreat")
+	return {"logic": logic, "data": data, "regions": data.region_campaigns[0].regions}
+
+func exercise_live_battle(shell: Node, world: Node, fixture: Dictionary) -> void:
+	if fixture.is_empty():
+		return
+	var host := CampaignHost.new()
+	host._world = world
+	host._shell = shell
+	var controller := Wotr.new()
+	controller.init(host)
+	controller.lw = fixture.logic
+	controller.data = fixture.data
+	controller.regions = fixture.regions
+	controller.state = fixture.logic.get_strategic_state()
+	controller.apt_hud = true
+	# Exercise the complete native snapshot -> wotr.gd -> original HUD path. A second
+	# sync also covers the pending-battle cache which previously hid the first error.
+	controller._sync_apt_hud()
+	tick(shell, 180)
+	controller._sync_apt_hud()
+	var state: Dictionary = shell.strategic_hud({})
+	check(bool(state.battle_prompt_open) and bool(state.battle_prompt_loaded), "native pending battle reaches the HUD on repeated sync")
+	check(state.prompt_pages[0].size() == 1 and state.prompt_pages[1].size() == 1, "native battle player sides populate both HUD pages")
+	for button in [["AutoResolve", "battle_autoresolve"], ["RealTime", "battle_realtime"], ["Retreat", "battle_retreat"]]:
+		var requests := click(shell, int(state.level), "dlgFrame.content.main." + str(button[0]))
+		check(requests == [button[1]], "native battle exposes working " + str(button[0]) + " input")
+	controller.free()
+	host.free()
+	shell.strategic_hud({"kind": "close"})
+	shell.strategic_hud({"kind": "open"})
+	tick(shell)
+
+func exercise(fs: RefCounted, world: Node, size: Vector2i, folder: String, live_battle: Dictionary) -> void:
 	var viewport := SubViewport.new()
 	viewport.size = size
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
@@ -61,6 +123,8 @@ func exercise(fs: RefCounted, world: Node, size: Vector2i, folder: String) -> vo
 	shell.shell_show_shell_map(false)
 	shell.shell_hide_background()
 	tick(shell)
+	if not baseline:
+		exercise_live_battle(shell, world, live_battle)
 	state = shell.strategic_hud({})
 	var level := int(state.level)
 	var rows := []
@@ -147,8 +211,10 @@ func run() -> void:
 	check(world.setup(fs).ok, "world setup")
 	var folder := OS.get_temp_dir().path_join("openbfme-strategic-controls-%d" % OS.get_process_id())
 	DirAccess.make_dir_recursive_absolute(folder)
+	var live_battle := make_live_battle(world) if not baseline else {}
 	for size in [Vector2i(1024, 768), Vector2i(1280, 720), Vector2i(1680, 720)]:
-		await exercise(fs, world, size, folder)
+		await exercise(fs, world, size, folder, live_battle)
+	live_battle.clear()
 	world.free()
 	print("STRATEGIC CONTROLS ", "PASS" if failures == 0 else "FAIL", ": ", failures, " failures")
 	quit(0 if failures == 0 else 1)

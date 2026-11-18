@@ -1019,8 +1019,9 @@ func _sync_apt_hud() -> void:
 func _battle_prompt_players(pb: Dictionary) -> Array:
 	var result := [[], []]
 	var participants := []
+	# LivingWorldGame.get_strategic_state exports each side as an array of player records.
 	for side in pb.sides:
-		for p in side.players:
+		for p in side:
 			participants.append(int(p.player))
 	# The local player's special page is first in the ally strip.
 	participants.erase(local_player)
