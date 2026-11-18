@@ -58,6 +58,13 @@ TEST_CASE("qa2fix walls: a player selects a Gondor wall hub, presses Begin Wall 
 	for (int k = 0; k < 24 && !hub; ++k)
 	{
 		spot = rig.freeSpot(1200.0f + 400.0f * (float)(k % 6), 1000.0f + 500.0f * (float)(k / 6), 420.0f);
+		// lane BUILDCLEAR-1: the span's hub cap is a WALL_HUB build, legal only within MaxBuildoutDistance (1500) of one of the player's COMMANDCENTERs
+		// (RW 0x796C66 / 0x6B00F3); the bare map gives the player none, so a citadel stands beside the first spot
+		if (k == 0)
+		{
+			const Coord3D c = rig.freeSpot(spot.x, spot.y - 700.0f, 300.0f);
+			rig.make("MenFortressCitadel", c.x, c.y);
+		}
 		Object *h = rig.make("MenWallHubSmall", spot.x, spot.y);
 		Coord3D e{ spot.x + 320.0f, spot.y, 0.0f };
 		e.z = logic.getGroundHeight(e.x, e.y);

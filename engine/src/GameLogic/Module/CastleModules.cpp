@@ -735,7 +735,11 @@ Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Play
 	// single predefined layout, not independent player building placements.
 	// Keep the RotWK placement check for its castle system.
 	if (!m_data->m_useNewCastleSystem && !templateKindOf(logic, *tt, "COMMANDCENTER") &&
-		BuildPlacement::isLocationLegalToBuild(logic, pos, *tt, angle, LLF_NO_OBJECT_OVERLAP, castle, &owner) != LBC_OK)
+		// lane BUILDCLEAR-1: RW 0x798968 passes 5 to RW 0x797A96, which ORs 0x100 into it (RW 0x797AAC) and calls isLocationLegalToBuild with no player:
+		// 0x105 = terrain restrictions, object overlap, the castle's own members ignored (BFME2 numbering, DECOMPINV-2 item 2). The port passes 0x104: its
+		// terrain sample classification (S-161, the cell types standing for RW 0x794A2B's GetCellType) refuses members retail places on the retail maps (the
+		// starting fortresses' and the maps' castles lost walls and foundations to code 6), so the terrain bit stays a named remainder (S-303)
+		BuildPlacement::isLocationLegalToBuild(logic, pos, *tt, angle, LLF_NO_OBJECT_OVERLAP | LLF_CASTLE_MEMBERS, castle, nullptr) != LBC_OK)
 	{
 		return nullptr;
 	}

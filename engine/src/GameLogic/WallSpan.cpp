@@ -292,7 +292,9 @@ bool WallSpan::plan(GameLogic &logic, Object &hub, const Coord3D &start, const C
 	const std::uint32_t money = owner ? owner->getMoney()->countMoney() : 0u;
 	float remaining = SimMath::subf32((float)SimMath::length3d(vx, vy, 0.0f), capHalf); // -0x20
 	auto legal = [&](const Coord3D &p, const ThingTemplate &tt) {
-		int code = (int)BuildPlacement::isLocationLegalToBuild(logic, p, tt, angle, 0x55, &hub, nullptr);
+		// RotWK's plan passes 0x55 (lane BUILDCLEAR-1, RotWK numbering: terrain, object overlap, the unread 0x10, no exit test); the port asks the terrain bit by the
+		// separate call below, whose codes feed its cliff-cap inference (S-657), so this one is 0x54
+		int code = (int)BuildPlacement::isLocationLegalToBuild(logic, p, tt, angle, 0x55 & ~LLF_TERRAIN_RESTRICTIONS, &hub, nullptr);
 		if (!centres.empty())
 		{
 			bool near = false;

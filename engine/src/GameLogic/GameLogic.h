@@ -282,6 +282,8 @@ struct GameLogicSettings
 	float supplyBuildBorder = 0.0f;
 	int maxLineBuildObjects = 0;
 	float minDistFromEdgeOfMapForBuild = 0.0f;
+	bool maxCastleRadiusLoaded = false; ///< lane BUILDCLEAR-1: GameData read MaxCastleRadius (BFME1's GameData has no such row)
+	float maxCastleRadius = 0.0f;       ///< GameData MaxCastleRadius (GlobalData + 0x1220): isLocationClearOfObjects' range
 	// lane BUILD-3 (GameData, RW GlobalData + 0x11E4): BuilderMoveFromNewStructureDistance, the walk of a porter out of the structure it built (RW 0x88D6AE); loaded when a block read it
 	bool builderMoveLoaded = false;
 	float builderMoveFromNewStructureDistance = 0.0f;
