@@ -7,7 +7,8 @@
 // buffer, encodes it to the displayed (gamma) value retail's frame buffer holds, clamps it as the D3D9 frame buffer does, samples the 32^3 lookup
 // (LINEAR / CLAMP) at that value, lerps by BlendFactor and decodes back to linear. MapPostEffectsHost (a child of the map root MapTerrainBuilder builds)
 // keeps the effect last in the compositor of the camera showing the map and takes it off when the map leaves the tree. The interface is drawn after
-// the 3D view and is not graded.
+// the 3D view and is not graded. lane GPUPERF-1: when the decode directly precedes it, the host leaves the decode to this pass (one full-screen pass
+// less; GammaComposite::deferDecodeTo), which then grades the gamma-space buffer and decodes once.
 
 #pragma once
 
@@ -16,7 +17,9 @@
 #include <godot_cpp/classes/image_texture3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/render_data.hpp>
+#include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/variant/rid.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 
 #include <atomic>
 #include <cstdint>
@@ -42,6 +45,7 @@ public:
 	// Render-time failures (a shader that does not compile, an unsupported colour buffer): reported, never silent
 	std::string problem() const;
 	int64_t passes() const { return m_passes.load(); }
+	int64_t fusedPasses() const { return m_fusedPasses.load(); } // lane GPUPERF-1
 	void _render_callback(int32_t p_effect_callback_type, RenderData *p_render_data) override;
 
 protected:
@@ -56,6 +60,7 @@ private:
 	bool m_failed = false;
 	std::string m_problem;
 	std::atomic<int64_t> m_passes{ 0 };
+	std::atomic<int64_t> m_fusedPasses{ 0 };
 	std::atomic<bool> m_suppressed{ false };
 };
 
@@ -85,6 +90,7 @@ protected:
 private:
 	void ensureOnCamera();
 	void removeFromCameras();
+	void deferDecode(Viewport *vp, const TypedArray<Ref<CompositorEffect>> &effects); // lane GPUPERF-1
 	Ref<LookupTablePostEffect> m_effect;
 	std::vector<ObjectID> m_cameras;
 };
