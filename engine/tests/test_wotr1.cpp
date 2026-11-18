@@ -11,6 +11,7 @@
 #include "GameLogic/SimMath.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "Common/INI.h"
+#include "Common/INI/INIBlockStubs.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/PlayerTemplate.h"
@@ -2796,4 +2797,141 @@ TEST_CASE("wotr8 messages: the strategic orders as MSG_LW_* messages play the wa
 			CHECK(direct.stateHash() == viaMessages.stateHash());
 		}
 	}
+}
+
+TEST_CASE("wotr presentation: effects retain geometry, colour curves, shell visibility and opacity")
+{
+	LivingWorldStores stores;
+	parseText(stores, R"(
+LivingWorldRegionEffects Test
+ RegionObject = TestFill
+ RegionSelectionEffect
+  Geometry = TestEdge
+  Geometry = TestGlow
+  LoadInShell = No
+  Opacity = 0.25
+  ColorIntensityControlPoint
+   Intensity = 0.75
+   Time = 0.5
+   EaseIn = 0.125
+   EaseOut = 0.875
+  End
+  ControlPoint
+   Position = X:8 Y:16 Z:32
+   Angle = 45
+   Time = 1
+  End
+ End
+End
+)");
+	REQUIRE(stores.regionEffects.size() == 1);
+	REQUIRE(stores.regionEffects[0].effects.size() == 1);
+	const RegionEffect &effect = stores.regionEffects[0].effects[0];
+	CHECK(effect.name == "RegionSelectionEffect");
+	CHECK(effect.geometry == std::vector<std::string>{ "TestEdge", "TestGlow" });
+	CHECK(effect.loadInShell == false);
+	CHECK(effect.opacity == 0.25f);
+	REQUIRE(effect.points.size() == 1);
+	CHECK(effect.points[0].position.x == 0.75f);
+	CHECK(effect.points[0].position.y == 0.75f);
+	CHECK(effect.points[0].position.z == 0.75f);
+	CHECK(effect.points[0].time == 0.5f);
+	CHECK(effect.points[0].easeIn == 0.125f);
+	CHECK(effect.points[0].easeOut == 0.875f);
+	REQUIRE(effect.transformPoints.size() == 1);
+	CHECK(effect.transformPoints[0].position.x == 8.0f);
+	CHECK(effect.transformPoints[0].position.y == 16.0f);
+	CHECK(effect.transformPoints[0].position.z == 32.0f);
+	CHECK(effect.transformPoints[0].angle == 45.0f);
+	CHECK_THROWS_AS(parseText(stores, "LivingWorldRegionEffects Bad\n UnknownEffect\n End\nEnd\n"), INIException);
+}
+
+TEST_CASE("wotr presentation: ambient and decorative object fields are retained and unknown fields refuse")
+{
+	LivingWorldStores stores;
+	parseText(stores, R"(
+LivingWorldSound TestWind
+ Sound = TestWindEvent
+ Position = X:1 Y:2 Z:3
+ Flags = VISIBLE ONCE
+ ZoomRegionLow = X:-4 Y:-8
+ ZoomRegionHigh = X:4 Y:8
+End
+LivingWorldAnimObject TestTower
+ Model = TestModel
+ Pos = X:8 Y:16 Z:32
+ Frame = 0.5
+ HasAnim = Yes
+ Xfer = Yes
+ OrientAngle = 45
+ Shadow = SHADOW_VOLUME
+End
+)");
+	REQUIRE(stores.mapSounds.size() == 1);
+	const MapSound &sound = stores.mapSounds[0];
+	CHECK(sound.name == "TestWind");
+	CHECK(sound.sound == "TestWindEvent");
+	CHECK(sound.position.x == 1.0f);
+	CHECK(sound.position.y == 2.0f);
+	CHECK(sound.position.z == 3.0f);
+	CHECK(sound.flags == 24);
+	CHECK(sound.zoomLow.x == -4.0f);
+	CHECK(sound.zoomHigh.y == 8.0f);
+	REQUIRE(stores.mapAnimObjects.size() == 1);
+	const MapAnimObject &object = stores.mapAnimObjects[0];
+	CHECK(object.model == "TestModel");
+	CHECK(object.position.z == 32.0f);
+	CHECK(object.frame == 0.5f);
+	CHECK(object.hasAnim);
+	CHECK(object.xfer);
+	CHECK(object.orientAngle == 45.0f);
+	CHECK(object.shadow == "SHADOW_VOLUME");
+	CHECK_THROWS_AS(parseText(stores, "LivingWorldSound Bad\n Flags = MISSING_FLAG\nEnd\n"), INIException);
+	CHECK_THROWS_AS(parseText(stores, "LivingWorldAnimObject Bad\n Unsupported = 1\nEnd\n"), INIException);
+	stores.clear();
+	CHECK(stores.mapSounds.empty());
+	CHECK(stores.mapAnimObjects.empty());
+}
+
+TEST_CASE("wotr presentation retail: both editions load effects, ambient and decorative blocks")
+{
+	for (retailtest::Mount *mount : { retailtest::pureMount(), retailtest::bfme2Mount() })
+	{
+		if (!mount)
+		{
+			retailtest::printSkip("wotr presentation retail: edition mount unavailable");
+			continue;
+		}
+		REQUIRE_MESSAGE(mount->fs != nullptr, mount->error);
+		LivingWorldStores stores;
+		INIEnvironment env;
+		env.fileSystem = mount->fs.get();
+		stores.registerBlocks(env.blocks);
+		INIBlockRecorder recorder;
+		RegisterRecordingBlockStubs(env.blocks, recorder, stores.blockKeywords());
+		INI ini(env);
+		CHECK_NOTHROW(ini.load("data\\ini\\livingworld.ini", INI_LOAD_OVERWRITE));
+		CHECK_NOTHROW(ini.load("data\\ini\\livingworldregioneffects.ini", INI_LOAD_OVERWRITE));
+		CHECK(stores.mapSounds.size() == 20);
+		CHECK(stores.mapAnimObjects.size() == 9);
+		REQUIRE(stores.regionEffects.size() == 1);
+		CHECK(stores.regionEffects[0].effects.size() == 6);
+	}
+}
+
+TEST_CASE("wotr presentation: BFME1 keeps its recording boundary")
+{
+	LivingWorldStores stores(true);
+	INIEnvironment env;
+	stores.registerBlocks(env.blocks);
+	CHECK(env.blocks.size() == 0);
+	INIBlockRecorder recorder;
+	RegisterRecordingBlockStubs(env.blocks, recorder, {});
+	INI ini(env);
+	const std::string text = "LivingWorldAnimObject Bfme1Object\n EditionSpecificField = KeptUnverified\nEnd\n";
+	const std::vector<std::uint8_t> bytes(text.begin(), text.end());
+	CHECK_NOTHROW(ini.loadMemory("bfme1-presentation.ini", bytes, INI_LOAD_OVERWRITE));
+	CHECK(stores.mapAnimObjects.empty());
+	CHECK(recorder.records.size() == 1);
+	CHECK(stores.acceptanceStops().size() == 1);
 }

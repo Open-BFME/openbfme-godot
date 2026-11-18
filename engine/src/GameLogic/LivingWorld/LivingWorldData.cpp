@@ -801,31 +801,52 @@ const FieldParse kMapInfoFields[] = {
 #undef MI
 
 // ---- LivingWorldRegionEffects (table RW 0xDA6648) ----
-// The effect sub-blocks (BordersEffect, FilledOwnershipEffect, ...) are named by the data; their rows follow the effect table RW 0xC78E28 (Opacity,
-// ColorIntensityControlPoint / ControlPoint blocks, Geometry, LoadInShell).  The curves are presentation and are consumed, not kept [S-1322].
-void consumeControlPoint(INI *ini, void *, void *, const void *)
-{
-	static const FieldParse kFields[] = { { "Intensity", INI::parseReal, nullptr, 0 }, { "Time", INI::parseReal, nullptr, 4 }, { nullptr, nullptr, nullptr, 0 } };
-	float scratch[2] = { 0, 0 };
-	ini->initFromINI(scratch, kFields);
-}
-void consumeGeometry(INI *ini, void *, void *, const void *)
-{
-	ini->getNextToken();
-}
-void consumeEffectBlock(INI *ini, void *instance, void *, const void *)
+// RW 0xC78E28 / BFME2 0x00C62148; point tables RW 0xC7AB18 / 0xC7AA78.
+// Keep times in authored seconds for the presentation client. Retail quantizes to its client
+// frames (RW 0x909FA5 / 0x909F2D); exact frame quantization and spline easing stay S-1335.
+void parseEffectPoint(INI *ini, void *instance, void *, const void *userData)
 {
 	static const FieldParse kFields[] = {
-		{ "Opacity", INI::parseReal, nullptr, 0 },
-		{ "ColorIntensityControlPoint", consumeControlPoint, nullptr, 0 },
-		{ "ControlPoint", consumeControlPoint, nullptr, 0 },
-		{ "Geometry", consumeGeometry, nullptr, 0 },
-		{ "LoadInShell", INI::parseBool, nullptr, 4 },
+		{ "Intensity", INI::parseReal, nullptr, (int)offsetof(RegionEffectPoint, position) },
+		{ "Position", INI::parseCoord3D, nullptr, (int)offsetof(RegionEffectPoint, position) },
+		{ "Angle", INI::parseReal, nullptr, (int)offsetof(RegionEffectPoint, angle) },
+		{ "Time", INI::parseReal, nullptr, (int)offsetof(RegionEffectPoint, time) },
+		{ "EaseIn", INI::parseReal, nullptr, (int)offsetof(RegionEffectPoint, easeIn) },
+		{ "EaseOut", INI::parseReal, nullptr, (int)offsetof(RegionEffectPoint, easeOut) },
 		{ nullptr, nullptr, nullptr, 0 }
 	};
-	(void)instance;
-	float scratch[2] = { 0, 0 };
-	ini->initFromINI(scratch, kFields);
+	RegionEffectPoint point;
+	ini->initFromINI(&point, kFields);
+	if (userData)
+	{
+		point.position.y = point.position.z = point.position.x;
+	}
+	RegionEffect &effect = *static_cast<RegionEffect *>(instance);
+	(userData ? effect.points : effect.transformPoints).push_back(point);
+}
+void parseEffectGeometry(INI *ini, void *instance, void *, const void *)
+{
+	static_cast<RegionEffect *>(instance)->geometry.push_back(ini->getNextToken());
+}
+void parseEffectBlock(INI *ini, void *instance, void *, const void *userData)
+{
+	static const FieldParse kFields[] = {
+		{ "Opacity", INI::parseReal, nullptr, (int)offsetof(RegionEffect, opacity) },
+		{ "ColorIntensityControlPoint", parseEffectPoint, "intensity", 0 },
+		{ "ControlPoint", parseEffectPoint, nullptr, 0 },
+		{ "Geometry", parseEffectGeometry, nullptr, 0 },
+		{ "LoadInShell", INI::parseBool, nullptr, (int)offsetof(RegionEffect, loadInShell) },
+		{ nullptr, nullptr, nullptr, 0 }
+	};
+	RegionEffect effect;
+	effect.name = static_cast<const char *>(userData);
+	static const char *const names[] = { "BordersEffect", "MouseoverEffectFlareup", "MouseoutEffectFlareup", "ConqueredEffectEvenglow",
+		"ConqueredEffectFlareup", "FilledOwnershipEffect", "HomeRegionHighlight", "RegionSelectionEffect", "UnifiedEffect" }; // RW 0xC4C7C0..0xC4C874
+	bool known = false;
+	for (const char *name : names) known = known || equalsNoCase(effect.name, name);
+	if (!known) throwUnportedField(ini, effect.name.c_str());
+	ini->initFromINI(&effect, kFields);
+	static_cast<RegionEffects *>(instance)->effects.push_back(std::move(effect));
 }
 #define RE(m) (int)offsetof(RegionEffects, m)
 const FieldParse kRegionEffectsFields[] = {
@@ -834,10 +855,35 @@ const FieldParse kRegionEffectsFields[] = {
 	{ "RegionBorderColor", INI::parseRGBColor, nullptr, RE(regionBorderColor) },
 	{ "ShellStartPositionColor", INI::parseRGBColor, nullptr, RE(shellStartPositionColor) },
 	{ "ShouldShowRegionBorders", INI::parseBool, nullptr, RE(shouldShowRegionBorders) },
-	{ nullptr, consumeEffectBlock, nullptr, 0 },               // catch-all: an effect sub-block [inference]
+	{ nullptr, parseEffectBlock, nullptr, 0 },               // catch-all: an effect sub-block [inference]
 	{ nullptr, nullptr, nullptr, 0 }
 };
 #undef RE
+
+// ---- LivingWorldSound / LivingWorldAnimObject presentation tables ----
+const char *const kMapSoundFlags[] = { "ZOOMED_IN", "ZOOMED_OUT", "ZOOMING_IN", "VISIBLE", "ONCE", "NO_KILL", "FADE_IN", nullptr }; // RW 0xDA6958
+#define MS(m) (int)offsetof(MapSound, m)
+const FieldParse kMapSoundFields[] = { // RW 0xC4DDD0 / BFME2 0x00C37938
+	{ "Position", INI::parseCoord3D, nullptr, MS(position) },
+	{ "Sound", INI::parseAsciiString, nullptr, MS(sound) }, // validation at audio use: S-1322
+	{ "Flags", INI::parseBitString32, kMapSoundFlags, MS(flags) },
+	{ "ZoomRegionLow", INI::parseCoord2D, nullptr, MS(zoomLow) },
+	{ "ZoomRegionHigh", INI::parseCoord2D, nullptr, MS(zoomHigh) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+#undef MS
+#define MA(m) (int)offsetof(MapAnimObject, m)
+const FieldParse kMapAnimObjectFields[] = { // RW 0xC4E170 / BFME2 0x00C37CD8
+	{ "Model", INI::parseAsciiString, nullptr, MA(model) },
+	{ "Pos", INI::parseCoord3D, nullptr, MA(position) },
+	{ "Frame", INI::parseReal, nullptr, MA(frame) },
+	{ "HasAnim", INI::parseBool, nullptr, MA(hasAnim) },
+	{ "Xfer", INI::parseBool, nullptr, MA(xfer) },
+	{ "OrientAngle", INI::parseReal, nullptr, MA(orientAngle) },
+	{ "Shadow", INI::parseAsciiString, nullptr, MA(shadow) }, // validation remains S-1322
+	{ nullptr, nullptr, nullptr, 0 }
+};
+#undef MA
 
 // ---- icons (RW 0xC84998 base, army RW 0xC847C8, building RW 0xC84C00; blocks RW 0xC4DC20 / 0xC4E818 / 0xC4E8E0) ----
 const char *const kArmySizeNames[] = { "HERO_ONLY", "SMALL", "MEDIUM", "LARGE", nullptr }; // RW 0xC4FAB8
@@ -1038,7 +1084,7 @@ const std::vector<std::string> &LivingWorldStores::blockKeywords() const
 	if (m_bfme1Data) return unported;
 	static const std::vector<std::string> k = { "LivingWorldPlayerTemplate", "LivingWorldAITemplate", "LivingWorldBuilding", "LivingWorldPlayerArmy",
 		"LivingWorldRegionCampaign", "LivingWorldCampaign", "LivingWorldMapInfo", "LivingWorldRegionEffects", "LivingWorldArmyIcon", "LivingWorldBuildingIcon",
-		"LivingWorldBuildPlotIcon", "AutoResolveWeapon", "AutoResolveArmor", "AutoResolveBody", "AutoResolveCombatChain", "AutoResolveLeadership",
+		"LivingWorldBuildPlotIcon", "LivingWorldSound", "LivingWorldAnimObject", "AutoResolveWeapon", "AutoResolveArmor", "AutoResolveBody", "AutoResolveCombatChain", "AutoResolveLeadership",
 		"AutoResolveHandicapLevel", "AutoResolveReinforcementSchedule", "LivingWorldAutoResolveResourceBonus",
 		"LivingWorldAutoResolveSciencePurchasePointBonus", // the nine before: AutoResolveStores::blockKeywords()
 		"StrategicHUD", // lane WOTR-2: StrategicHUDData
@@ -1067,6 +1113,8 @@ void LivingWorldStores::registerBlocks(INIBlockRegistry &registry)
 	registry.registerBlock("LivingWorldCampaign", [this](INI *ini) { parseCampaign(ini); });
 	registry.registerBlock("LivingWorldMapInfo", [this](INI *ini) { parseMapInfo(ini); });
 	registry.registerBlock("LivingWorldRegionEffects", [this](INI *ini) { parseRegionEffects(ini); });
+	registry.registerBlock("LivingWorldSound", [this](INI *ini) { parseMapSound(ini); });
+	registry.registerBlock("LivingWorldAnimObject", [this](INI *ini) { parseMapAnimObject(ini); });
 	registry.registerBlock("LivingWorldArmyIcon", [this](INI *ini) { parseIcon(ini, IconTemplate::ARMY); });         // RW 0x7FB6DD
 	registry.registerBlock("LivingWorldBuildingIcon", [this](INI *ini) { parseIcon(ini, IconTemplate::BUILDING); }); // RW 0x80472F
 	registry.registerBlock("LivingWorldBuildPlotIcon", [this](INI *ini) { parseIcon(ini, IconTemplate::BUILD_PLOT); }); // RW 0x804A0A
@@ -1088,6 +1136,8 @@ void LivingWorldStores::clear()
 	campaigns.clear();
 	mapInfo = MapInfo();
 	regionEffects.clear();
+	mapSounds.clear();
+	mapAnimObjects.clear();
 	strategicHud.clear();
 	armySummaryDescription = ArmySummaryDescription();
 	icons.clear();
@@ -1209,6 +1259,22 @@ void LivingWorldStores::parseRegionEffects(INI *ini)
 	}
 	ini->initFromINI(&e, kRegionEffectsFields);
 	regionEffects.push_back(e);
+}
+
+void LivingWorldStores::parseMapSound(INI *ini)
+{
+	MapSound sound;
+	sound.name = ini->getNextToken();
+	ini->initFromINI(&sound, kMapSoundFields);
+	mapSounds.push_back(std::move(sound));
+}
+
+void LivingWorldStores::parseMapAnimObject(INI *ini)
+{
+	MapAnimObject object;
+	object.name = ini->getNextToken();
+	ini->initFromINI(&object, kMapAnimObjectFields);
+	mapAnimObjects.push_back(std::move(object));
 }
 
 const PlayerTemplate *LivingWorldStores::findPlayerTemplate(const std::string &name) const

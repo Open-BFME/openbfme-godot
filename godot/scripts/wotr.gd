@@ -10,7 +10,7 @@
 ##
 ## STOPS (docs/STOPS.md): S-1334 the strategic HUD is StrategicHUD.apt with parts of its sub-movies not ported; S-1335 the camera is not
 ## livingworld.txt's camera model; S-1329 the battle start and its end; S-1336 the strategic messages
-## are simplified; region effects (flare-ups, unified territories), sounds, the eye tower and the clouds are not drawn.
+## are simplified; region effects use authored geometry and curves; decorative map objects and ambient sounds are drawn/played. Exact spline timing, the interactive eye tower and clouds remain S-1335.
 extends Node3D
 const L10n := preload("res://scripts/l10n/l10n.gd") # WOTR2 milestone 8: OpenBFME's own text (docs/L10N.md)
 
@@ -38,6 +38,8 @@ var map_bounds := AABB()
 var army_nodes := {}             # army id -> Node3D
 var army_targets := {}           # army id -> its place on the map (Vector3; the node may still be easing there)
 var army_lines: Node3D           # WOTR-2: the move lines (LivingWorldMapInfo ArmyLine*)
+var army_line_materials := {}
+var army_line_key: Array = []
 var army_line_texture: Texture2D
 var building_nodes: Array = []
 var camera: Camera3D
@@ -46,6 +48,10 @@ var cam_dist := 2400.0
 var cam_pitch := deg_to_rad(65.0) # livingworld.txt's second camera row: pitch 65 (the owner's RotWK screenshots open on the whole map at that angle)
 var map_extent := Rect2()
 var builder: RefCounted
+var icon_instancer: Node3D
+var unified_owners := {}
+var sound_handles := {}
+var sounds_started := {}
 var map_instancer: Node3D        # WOTR-2: LivingMap through the W3DInstancer
 var model_cache := {}
 
@@ -449,6 +455,7 @@ func begin_battle_from_save(save: Dictionary) -> String:
 	banner_armies = []
 	banner_arrivals_seen = 0
 	battle_stage = "resuming"
+	_stop_map_audio()
 	visible = false
 	if hud != null:
 		hud.visible = false
@@ -472,6 +479,7 @@ func abandon_battle() -> void:
 	battle_spawned.clear()
 	battle_result = {}
 	active = false
+	_stop_map_audio()
 	visible = false
 
 
@@ -636,6 +644,7 @@ func leave_to_shell() -> void:
 		apt_hud = false
 		apt_hud_parts = 0
 		apt_prompt_battle = -1
+	_stop_map_audio()
 	visible = false
 	if hud != null:
 		hud.visible = false
@@ -760,6 +769,7 @@ func _enter_map() -> void:
 	_open_apt_hud()
 	camera.current = true
 	game._state = game.State.STRATEGIC
+	_start_map_audio()
 	_refresh()
 	if battle.is_empty() and not state.is_empty():
 		focus_region(int(state.players[local_player].capital))
@@ -1037,6 +1047,12 @@ func _build_map() -> void:
 	# which lit the water and the border cloud pink)
 	map_instancer = ClassDB.instantiate("W3DInstancer")
 	map_root.add_child(map_instancer)
+	icon_instancer = ClassDB.instantiate("W3DInstancer")
+	map_root.add_child(icon_instancer)
+	var icon_setup: Dictionary = icon_instancer.setup(game._fs)
+	if not icon_setup.ok:
+		push_error("WotR icon renderer: " + str(icon_setup.errors))
+	icon_instancer.set_house_colors_enabled(true)
 	var su: Dictionary = map_instancer.setup(game._fs)
 	if not su.ok:
 		_say("W3DInstancer setup: %s" % JSON.stringify(su.errors))
@@ -1074,7 +1090,7 @@ func _build_map() -> void:
 			map_instancer.set_instance_hidden_subobjects(text_instance, text_hidden)
 			map_instancer.set_instance_opacity(text_instance, 0.2)
 	# WOTR-2: the region effects of LivingWorldRegionEffects (wotr_region_fx.gd: LMR_Fill, LMR_Border, LMR_Highlight, LMR_Edge with their retail blends)
-	var fx: Dictionary = data.region_effects[0] if data.region_effects.size() > 0 else {}
+	var fx: Dictionary = preload("res://scripts/wotr_region_fx.gd").definition_for(data, region_campaign)
 	region_fx = preload("res://scripts/wotr_region_fx.gd").new()
 	map_root.add_child(region_fx)
 	region_fx.build(game._fs, regions, fx)
@@ -1095,6 +1111,7 @@ func _build_map() -> void:
 	camera.far = 40000.0
 	add_child(camera)
 	_update_camera()
+	_build_map_objects()
 	_build_hud()
 
 
@@ -1186,6 +1203,9 @@ func _process(delta: float) -> void:
 		_hover_tick()
 	if apt_hud and Engine.get_process_frames() % 6 == 0:
 		_sync_apt_hud() # the HUD's button presses
+	if game._audio != null and camera != null:
+		var eye := camera.global_position
+		game._audio.update_microphone(Vector3(eye.x, -eye.z, eye.y), Vector3(cam_target.x, -cam_target.z, cam_target.y), true)
 	if region_fx != null:
 		region_fx.update_gamma() # WOTR-2: the camera's gamma-space composite comes with the map's W3DInstancer (RENDER-3)
 	var pan := Vector3.ZERO
@@ -1286,6 +1306,8 @@ func select_army(id: int) -> void:
 	_deselect_building()
 	selected_region = int(a.region)
 	selected_plot = -1
+	if selected_army != id:
+		_play_map_sound(str(_icon(0, _army_icon_name(a)).get("on_selected_sound", "")))
 	selected_army = id
 	details_army = id
 	army_from_page = false
@@ -1498,6 +1520,14 @@ func _hover_tick() -> void:
 					target = hover_target # the plot icon keeps the current rollover (picker slot 13: a no-op)
 				elif r >= 0:
 					target = "region:%d" % r
+	# Region flare-up follows the map picker immediately, independently of the delayed help box.
+	var hover := pick_region(mouse) if inside and String(game._shell.hit_test_stage(game._shell.window_to_stage(mouse))) == "" else -1
+	if hover >= 0 and not bool(state.regions[hover].enabled):
+		hover = -1
+	var hover_color: Color = region_fx.neutral_color
+	if hover >= 0 and int(state.regions[hover].owner) >= 0:
+		hover_color = _owner_color(int(state.regions[hover].owner))
+	region_fx.set_hover(hover, hover_color)
 	if target != hover_target:
 		if hover_shown:
 			game._shell.strategic_hud({"kind": "sync", "map_help": {}}) # the old rollover's release (RW 0x97E675)
@@ -1768,6 +1798,8 @@ func retreats_pending() -> Array:
 func order_move(army: int, region: int) -> bool:
 	var res: Dictionary = lw.order_move(local_player, army, region)
 	_say("order move army %d -> %s: %s" % [army, regions[region].name, "ok" if res.ok else res.error])
+	if res.ok:
+		_play_map_sound(str(_icon(0, _army_icon_name(_army(army))).get("on_move_planned_sound", "")))
 	_refresh()
 	return res.ok
 
@@ -1781,7 +1813,6 @@ func _refresh() -> void:
 	state = lw.get_strategic_state()
 	_take_notices()
 	# FilledOwnershipEffect in the owner's colour, HomeRegionHighlight on each player's capital, RegionSelectionEffect on the selected region
-	region_fx.clear_regions()
 	var none := Color(0, 0, 0, 0)
 	var capitals := {}
 	for p in range(state.players.size()):
@@ -1797,6 +1828,7 @@ func _refresh() -> void:
 				ring = fill
 		var edge := _owner_color(local_player) if i == selected_region else none
 		region_fx.set_region(i, fill, ring, edge)
+	_update_unified_territories()
 	_place_armies(old_positions)
 	_place_buildings()
 	_refresh_panels()
@@ -1811,11 +1843,15 @@ func _icon(kind: int, icon_name: String) -> Dictionary:
 
 ## The visible objects of an icon template: the base models and (WOTR2 milestone 7) the selection / hilight helpers, hidden until their army, building or
 ## plot is selected / under the mouse (_update_highlights; the icon object predicate RW 0x5C4B26: HideWhenUnselected / HideWhenUnhilighted); the
-## move-order, rally and production helpers are not drawn (S-1335); sub-objects filter the model's meshes.
-func _icon_node(icon: Dictionary, size_bit: int, under_construction: bool) -> Node3D:
+## move-order, rally and production helpers follow their data predicates; sub-objects filter the model's meshes. Exact fades remain S-1335.
+func _icon_node(icon: Dictionary, size_bit: int, under_construction: bool, owner := -1, moving := false, producing := false) -> Node3D:
 	var root := Node3D.new()
 	for o in icon.get("objects", []):
-		if o.show_only_after_move_order or o.display_at_rally_point or o.hide_when_not_producing:
+		if (o.show_only_after_move_order and not moving) or (o.hide_when_not_producing and not producing):
+			continue
+		if o.get("show_only_for_local_player", false) and owner != local_player:
+			continue
+		if o.get("show_only_for_allies", false) and not _allied(owner, local_player):
 			continue
 		if under_construction and o.hide_when_under_construction:
 			continue
@@ -1823,28 +1859,119 @@ func _icon_node(icon: Dictionary, size_bit: int, under_construction: bool) -> No
 			continue
 		if int(o.visible_army_sizes) != 0 and size_bit != 0 and (int(o.visible_army_sizes) & size_bit) == 0:
 			continue
-		var m := _model(o.model)
+		var color := _banner_color(owner) if o.use_house_color else Color.TRANSPARENT
+		var m := _icon_model(str(o.model), color, o.sub_objects)
 		if m == null:
 			continue
-		var subs: PackedStringArray = o.sub_objects
-		if subs.size() > 0:
-			for mesh in m.find_children("*", "MeshInstance3D", true, false):
-				var keep := false
-				for sname in subs:
-					if str(mesh.name).to_upper().ends_with("_" + str(sname).to_upper()):
-						keep = true
-				mesh.visible = keep
 		m.position.y = float(o.z_offset)
 		m.scale = Vector3.ONE * float(o.scale)
-		m.rotation.y = deg_to_rad(float(o.orient_angle))
+		m.rotation.y = deg_to_rad(float(o.orient_angle)) # W3D Z rotation -> Godot Y rotation
 		if o.hide_when_unselected:
 			m.set_meta("lw_hide_unselected", true)
 			m.visible = false
 		if o.hide_when_unhilighted:
 			m.set_meta("lw_hide_unhilighted", true)
 			m.visible = false
+		if o.get("hide_when_selected", false):
+			m.set_meta("lw_hide_selected", true)
+		if o.get("hide_when_hilighted", false):
+			m.set_meta("lw_hide_hilighted", true)
+		if o.display_at_rally_point:
+			m.set_meta("lw_rally", true)
 		root.add_child(m)
 	return root
+
+func _allied(a: int, b: int) -> bool:
+	if a < 0 or b < 0 or a >= state.players.size() or b >= state.players.size():
+		return false
+	return a == b or (int(state.players[a].team) >= 0 and int(state.players[a].team) == int(state.players[b].team))
+
+func _banner_color(owner: int) -> Color:
+	if owner < 0 or owner >= state.players.size():
+		return Color.TRANSPARENT
+	var index := int(state.players[owner].color)
+	if index < 0 or index >= data.colors.size():
+		push_error("[S-1335] WotR: unknown banner colour index %d" % index)
+		return Color.TRANSPARENT
+	var rgb := int(data.colors[index].living_world_banner)
+	return Color8((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255)
+
+func _icon_model(model_name: String, color: Color, sub_objects := PackedStringArray(), has_anim := false, frame := 0.0) -> Node3D:
+	if model_name.is_empty():
+		return null
+	var model := int(icon_instancer.add_model(model_name))
+	if model < 0:
+		push_error("WotR icon model failed: " + model_name)
+		return null
+	var report: Dictionary = icon_instancer.get_model_report(model)
+	if not report.get("errors", []).is_empty():
+		push_error("WotR icon model %s: %s" % [model_name, str(report.errors)])
+	var clip := ""
+	var start := 0.0
+	if has_anim:
+		# LivingWorldAnimObject uses its model's own animation (BFME2 LivingWorldVisual).
+		clip = model_name + "." + model_name
+		var info: Dictionary = icon_instancer.get_clip_info(model, clip)
+		if info.get("ok", false):
+			start = float(info.get("seconds", 0.0)) * frame
+		else:
+			push_error("[S-1335] WotR: animation not found for " + model_name)
+			clip = ""
+	var id := int(icon_instancer.add_instance(model, Transform3D.IDENTITY, clip, start))
+	if id < 0:
+		push_error("WotR icon instance failed: " + model_name)
+		return null
+	icon_instancer.set_instance_house_color(id, color)
+	icon_instancer.set_instance_scene_fog(id, false)
+	icon_instancer.set_instance_cast_shadow(id, false)
+	if not sub_objects.is_empty():
+		var hidden := PackedStringArray()
+		for sub in report.sub_objects:
+			var keep := false
+			for selected in sub_objects:
+				keep = keep or str(sub.name).get_slice(".", 1).to_upper() == str(selected).to_upper()
+			if not keep:
+				hidden.append(str(sub.name))
+		icon_instancer.set_instance_hidden_subobjects(id, hidden)
+	var node: Node3D = preload("res://scripts/wotr_icon_model.gd").new()
+	node.bind(icon_instancer, id)
+	return node
+
+func _build_map_objects() -> void:
+	for object in data.get("map_objects", []):
+		var node := _icon_model(str(object.model), Color.TRANSPARENT, PackedStringArray(), bool(object.has_anim), float(object.frame))
+		if node == null:
+			continue
+		node.name = str(object.name)
+		var p: Vector3 = object.position
+		node.position = _w3d(p.x, p.y, p.z)
+		node.rotation.y = deg_to_rad(float(object.orient_angle))
+		map_root.add_child(node)
+
+func _update_unified_territories() -> void:
+	for campaign in data.region_campaigns:
+		if campaign.name != region_campaign:
+			continue
+		for territory in campaign.get("territories", []):
+			var owner := -1
+			var complete: bool = not territory.regions.is_empty()
+			for name in territory.regions:
+				var index := -1
+				for r in range(regions.size()):
+					if regions[r].name == name:
+						index = r
+						break
+				if index < 0 or not state.regions[index].enabled or int(state.regions[index].owner) < 0:
+					complete = false
+					break
+				var player := int(state.regions[index].owner)
+				if owner >= 0 and player != owner:
+					complete = false
+				owner = player
+			var current := owner if complete else -1
+			if unified_owners.has(territory.name) and current >= 0 and unified_owners[territory.name] != current:
+				region_fx.show_unified(str(territory.effect_name), _owner_color(current))
+			unified_owners[territory.name] = current
 
 
 ## WOTR2 milestone 7: the selection and rollover helpers of the map's icons (the predicate RW 0x5C4B26 per object: hidden while its icon is not selected /
@@ -1865,8 +1992,8 @@ func _set_highlight(node: Node3D, selected: bool, hilighted: bool) -> void:
 	if node == null or not is_instance_valid(node):
 		return
 	for c in node.get_children():
-		if c.has_meta("lw_hide_unselected") or c.has_meta("lw_hide_unhilighted"):
-			c.visible = (not c.has_meta("lw_hide_unselected") or selected) and (not c.has_meta("lw_hide_unhilighted") or hilighted)
+		if c.has_meta("lw_hide_unselected") or c.has_meta("lw_hide_unhilighted") or c.has_meta("lw_hide_selected") or c.has_meta("lw_hide_hilighted"):
+			c.visible = (not c.has_meta("lw_hide_unselected") or selected) and (not c.has_meta("lw_hide_unhilighted") or hilighted) and (not c.has_meta("lw_hide_selected") or not selected) and (not c.has_meta("lw_hide_hilighted") or not hilighted)
 
 
 func _army_icon_name(a: Dictionary) -> String:
@@ -1891,14 +2018,19 @@ func _place_armies(old_positions: Dictionary) -> void:
 		var target := _w3d(p.x, p.y, _ground(p.x, p.y) + 2.0)
 		army_targets[a.id] = target
 		var node: Node3D = army_nodes.get(a.id)
+		var size_bit := 1 if a.members.size() <= 1 else (2 if a.cp < 120 else 4)
+		var appearance := [_army_icon_name(a), size_bit, int(a.owner), int(a.destination) >= 0]
+		if node != null and node.get_meta("lw_appearance", []) != appearance:
+			node.queue_free()
+			node = null
 		if node == null:
-			var size_bit := 1 if a.members.size() <= 1 else (2 if a.cp < 120 else 4)
-			node = _icon_node(_icon(0, _army_icon_name(a)), size_bit, false)
+			node = _icon_node(_icon(0, _army_icon_name(a)), size_bit, false, int(a.owner), int(a.destination) >= 0)
 			if node.get_child_count() == 0:
 				node = _fallback_marker(_owner_color(int(a.owner)))
 			var banner := _banner_node(int(a.owner))
 			if banner != null:
 				node.add_child(banner)
+			node.set_meta("lw_appearance", appearance)
 			node.name = "Army%d" % a.id
 			map_root.add_child(node)
 			army_nodes[a.id] = node
@@ -1908,6 +2040,13 @@ func _place_armies(old_positions: Dictionary) -> void:
 			tw.tween_property(node, "position", target, 1.2).set_trans(Tween.TRANS_SINE)
 		else:
 			node.position = target
+		for child in node.get_children():
+			if child.has_meta("lw_rally"):
+				var destination := int(a.destination)
+				child.visible = destination >= 0
+				if destination >= 0:
+					var rally := _region_center(destination)
+					child.global_position = _w3d(rally.x, rally.y, _ground(rally.x, rally.y))
 	for id in army_nodes.keys():
 		if not seen.has(id):
 			army_nodes[id].queue_free()
@@ -1922,6 +2061,14 @@ func _place_armies(old_positions: Dictionary) -> void:
 ## retail was not read: here a straight ribbon over the ground, added to the map (EXLaser is a grey gradient across, black at the edges), ending in an
 ## arrowhead of four widths (the owner's RotWK 2.01 screenshots show one)
 func _place_army_lines() -> void:
+	var key: Array = []
+	for army in state.armies:
+		var destination := int(army.destination)
+		if destination >= 0 and destination < state.regions.size():
+			key.append([army.id, army_targets.get(army.id), destination, int(state.regions[destination].owner)])
+	if key == army_line_key:
+		return
+	army_line_key = key
 	if army_lines != null:
 		army_lines.queue_free()
 		army_lines = null
@@ -1982,7 +2129,9 @@ func _army_line_mesh(from: Vector2, to: Vector2, width: float, bias: float, poin
 		st.add_vertex(v[0])
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = st.commit()
-	mesh.material_override = region_fx.overlay_material("blend_add, depth_test_disabled", Color(0, 0, 0), Color(0, 0, 0), color, 1.0, army_line_texture, 5)
+	if not army_line_materials.has(color):
+		army_line_materials[color] = region_fx.overlay_material("blend_add, depth_test_disabled", Color.BLACK, Color.BLACK, color, 1.0, army_line_texture, 5)
+	mesh.material_override = army_line_materials[color]
 	return mesh
 
 
@@ -1995,7 +2144,7 @@ func _banner_node(owner: int) -> Node3D:
 	var side := str(pt.get("faction", "")).trim_prefix("Faction")
 	var banners: Dictionary = mi.get("banners", {})
 	var model_name := str(banners.get(side, banners.get("Neutral", "")))
-	var m := _model(model_name)
+	var m := _icon_model(model_name, _banner_color(owner))
 	if m == null:
 		return null
 	m.name = "Banner"
@@ -2037,9 +2186,18 @@ func _building_icon(template_name: String) -> String:
 	return ""
 
 
+static func _building_producing(region: Dictionary, slot: int) -> bool:
+	for order in region.get("production", []):
+		if int(order.slot) == slot:
+			return true
+	return false
+
 func _place_buildings() -> void:
-	for n in building_nodes:
-		n.queue_free()
+	# W3DInstancer IDs are not reused. Keep unchanged plot/building nodes across
+	# state refreshes instead of adding native tombstones every lockstep frame.
+	var previous := {}
+	for node in building_nodes:
+		previous[Vector2i(int(node.get_meta("region")), int(node.get_meta("slot")))] = node
 	building_nodes.clear()
 	for i in range(state.regions.size()):
 		var rs: Dictionary = state.regions[i]
@@ -2049,12 +2207,8 @@ func _place_buildings() -> void:
 			if spots.is_empty():
 				continue
 			var p: Vector2 = spots[int(b.slot) % spots.size()]
-			var node := _icon_node(_icon(1, _building_icon(b.template)), 0, int(b.turns_left) > 0)
-			node.position = _w3d(p.x, p.y, _ground(p.x, p.y))
-			node.set_meta("region", i)
-			node.set_meta("slot", int(b.slot))
-			map_root.add_child(node)
-			building_nodes.append(node)
+			var icon_name := _building_icon(b.template)
+			_keep_building_icon(previous, i, int(b.slot), p, 1, icon_name, int(b.turns_left) > 0, int(rs.owner), _building_producing(rs, int(b.slot)))
 			used[int(b.slot)] = true
 		# WOTR2 milestone 7: LivingWorldBuildPlot's icon (its ctor: the region owner's LivingWorldPlayerTemplate BuildPlotIconName -> CreateIcon, BFME2
 		# LivingWorldBuildPlot.cpp; LivingWorldBuildPlotIcon ctor 0x59E10F) on every plot of an owned region; a plot with a building shows the building
@@ -2069,12 +2223,28 @@ func _place_buildings() -> void:
 			if used.has(slot):
 				continue
 			var p: Vector2 = spots[slot]
-			var node := _icon_node(icon, 0, false)
-			node.position = _w3d(p.x, p.y, _ground(p.x, p.y))
-			node.set_meta("region", i)
-			node.set_meta("slot", slot)
-			map_root.add_child(node)
-			building_nodes.append(node)
+			_keep_building_icon(previous, i, slot, p, 2, plot_icon, false, owner, false)
+	for obsolete in previous.values():
+		obsolete.queue_free()
+
+
+func _keep_building_icon(previous: Dictionary, region: int, slot: int, point: Vector2, kind: int, icon_name: String,
+	under_construction: bool, owner: int, producing: bool) -> void:
+	var key := Vector2i(region, slot)
+	var appearance := [kind, icon_name, under_construction, owner, producing]
+	var node: Node3D = previous.get(key)
+	previous.erase(key)
+	if node != null and node.get_meta("lw_appearance", []) != appearance:
+		node.queue_free()
+		node = null
+	if node == null:
+		node = _icon_node(_icon(kind, icon_name), 0, under_construction, owner, false, producing)
+		node.set_meta("region", region)
+		node.set_meta("slot", slot)
+		node.set_meta("lw_appearance", appearance)
+		map_root.add_child(node)
+		node.position = _w3d(point.x, point.y, _ground(point.x, point.y))
+	building_nodes.append(node)
 
 
 # ---- the map's overlay layer ------------------------------------------------------------------------------------------------------------------
@@ -2170,6 +2340,8 @@ func _region_name(r: int) -> String:
 
 
 func _refresh_panels() -> void:
+	if region_fx != null and not state.is_empty():
+		region_fx.set_selection(selected_region, _owner_color(local_player))
 	if hud == null or state.is_empty():
 		return
 	_sync_apt_hud()
@@ -2532,6 +2704,7 @@ func _launch_battle(setup: Dictionary) -> void:
 		"owner_building_ids": setup.get("building_ids", []), "members": members, "slot_starts": slot_starts}
 	_say("battle %d in %s on %s: players %s (owner slot %d, %d buildings), %d army members" % [int(setup.battle), regions[int(setup.region)].name, msg.map,
 		str(players), msg.living_world_battle.owner_slot, setup.buildings.size(), members.size()])
+	_stop_map_audio()
 	visible = false
 	hud.visible = false
 	if apt_hud:
@@ -2909,3 +3082,45 @@ func overview(seconds: float) -> void:
 		cam_target = center.lerp(back_target, t)
 		cam_dist = lerpf(6000.0, back_dist, t)
 		_update_camera(), 0.0, 1.0, 1.5).set_trans(Tween.TRANS_SINE)
+
+
+func _play_map_sound(event: String) -> int:
+	if event.is_empty() or game == null or game._audio == null:
+		return 0
+	if not game._audio.is_valid_event(event):
+		push_error("[S-1335] WotR: unknown audio event " + event)
+		return 0
+	return int(game._audio.play_sound(event))
+
+func _start_map_audio() -> void:
+	_stop_map_audio()
+	if game._audio == null:
+		return
+	_play_map_sound(str(data.map_info.get("enter_map_sound", "")))
+	for sound in data.get("map_sounds", []):
+		var flags := int(sound.flags)
+		if (flags & 96) != 0:
+			_say("[S-1335] ambient NO_KILL / FADE_IN flags are unverified: " + str(sound.name))
+			continue
+		if (flags & 7) != 0: # ZOOMED_IN / ZOOMED_OUT / ZOOMING_IN (RW 0xDA6958)
+			# Zoom-region activation needs the retail camera state; never substitute the current camera's distance.
+			_say("[S-1335] zoom-conditioned ambient sound is unverified: " + str(sound.name))
+			continue
+		if (flags & 16) != 0 and sounds_started.has(sound.name):
+			continue
+		if not game._audio.is_valid_event(sound.sound):
+			push_error("[S-1335] WotR: unknown ambient event " + str(sound.sound))
+			continue
+		# GameAudio takes SAGE coordinates. Its event definition decides whether the sound is positional.
+		var handle := int(game._audio.play_sound_at(sound.sound, sound.position))
+		sound_handles[sound.name] = handle
+		sounds_started[sound.name] = true
+
+func _stop_map_audio() -> void:
+	if game != null and game._audio != null:
+		for handle in sound_handles.values():
+			game._audio.remove_event(int(handle))
+	sound_handles.clear()
+
+func _exit_tree() -> void:
+	_stop_map_audio()

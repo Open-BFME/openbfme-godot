@@ -386,6 +386,7 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_model_report", "model"), &W3DInstancer::get_model_report);
 	ClassDB::bind_method(D_METHOD("add_instance", "model", "transform", "clip", "start_time", "speed"), &W3DInstancer::add_instance, DEFVAL(String()), DEFVAL(0.0), DEFVAL(1.0));
 	ClassDB::bind_method(D_METHOD("set_instance_cast_shadow", "instance", "enabled"), &W3DInstancer::set_instance_cast_shadow);
+	ClassDB::bind_method(D_METHOD("set_instance_scene_fog", "instance", "enabled"), &W3DInstancer::set_instance_scene_fog);
 	ClassDB::bind_method(D_METHOD("set_shadow_receiving", "enabled"), &W3DInstancer::set_shadow_receiving);
 	ClassDB::bind_static_method("W3DInstancer", D_METHOD("set_shadow_maps_enabled", "enabled"), &W3DInstancer::set_shadow_maps_enabled);
 	ClassDB::bind_method(D_METHOD("set_instance_transform", "instance", "transform"), &W3DInstancer::set_instance_transform);

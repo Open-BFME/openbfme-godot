@@ -73,6 +73,8 @@ Dictionary iconDict(const IconTemplate &t)
 	Dictionary d;
 	d["name"] = s(t.name);
 	d["kind"] = (int)t.kind;
+	d["on_selected_sound"] = s(t.onSelectedSound);
+	d["on_move_planned_sound"] = s(t.onMovePlannedSound);
 	Array objects;
 	for (const IconObject &o : t.objects)
 	{
@@ -85,6 +87,11 @@ Dictionary iconDict(const IconTemplate &t)
 		od["orient_angle"] = o.orientAngle;
 		od["visible_army_sizes"] = o.visibleArmySizes;
 		od["use_house_color"] = o.useHouseColor;
+		od["hide_when_selected"] = o.hideWhenSelected;
+		od["hide_when_hilighted"] = o.hideWhenHilighted;
+		od["show_only_for_local_player"] = o.showOnlyForLocalPlayer;
+		od["show_only_for_allies"] = o.showOnlyForAllies;
+		od["anim_mode"] = s(o.animMode);
 		od["hide_when_unselected"] = o.hideWhenUnselected;
 		od["hide_when_unhilighted"] = o.hideWhenUnhilighted;
 		od["hide_when_under_construction"] = o.hideWhenUnderConstruction;
@@ -513,6 +520,16 @@ Dictionary LivingWorldGame::setup(Object *game_world)
 		d["name"] = s(rc.name);
 		d["effects"] = s(rc.regionEffectsManagerName);
 		d["army_placement"] = spots(rc.armyPlacementPos);
+		Array territories;
+		for (const ConcurrentRegionBonus &bonus : rc.concurrentRegionBonuses)
+		{
+			Dictionary territory;
+			territory["name"] = s(bonus.territory);
+			territory["effect_name"] = s(bonus.effectName);
+			territory["regions"] = strings(bonus.regions);
+			territories.push_back(territory);
+		}
+		d["territories"] = territories;
 		Array regions;
 		for (const Region &r : rc.regions)
 		{
@@ -562,6 +579,9 @@ Dictionary LivingWorldGame::setup(Object *game_world)
 	mi["apt_pitch"] = st.mapInfo.aptPitch;
 	mi["camera_bound_x"] = st.mapInfo.cameraBoundX;
 	mi["camera_bound_y"] = st.mapInfo.cameraBoundY;
+	mi["mouse_wheel_zoom_per_tick"] = st.mapInfo.mouseWheelZoomPerTick;
+	mi["mouse_wheel_zoom_dampen_factor"] = st.mapInfo.mouseWheelZoomDampenFactor;
+	mi["enter_map_sound"] = s(st.mapInfo.enterMapSound);
 	mi["army_height"] = st.mapInfo.armyHeight;
 	mi["banner_height"] = st.mapInfo.bannerHeight;
 	mi["cloud_border_sub_object"] = s(st.mapInfo.cloudBorderSubObject);
@@ -605,9 +625,60 @@ Dictionary LivingWorldGame::setup(Object *game_world)
 		d["neutral_color"] = Color(e.neutralRegionColor.red, e.neutralRegionColor.green, e.neutralRegionColor.blue);
 		d["border_color"] = Color(e.regionBorderColor.red, e.regionBorderColor.green, e.regionBorderColor.blue);
 		d["shell_start_color"] = Color(e.shellStartPositionColor.red, e.shellStartPositionColor.green, e.shellStartPositionColor.blue); // lane WOTR-2
+		d["show_borders"] = e.shouldShowRegionBorders;
+		Array definitions;
+		for (const RegionEffect &effect : e.effects)
+		{
+			Dictionary definition;
+			definition["name"] = s(effect.name);
+			definition["geometry"] = strings(effect.geometry);
+			definition["opacity"] = effect.opacity;
+			definition["load_in_shell"] = effect.loadInShell;
+			Array points;
+			for (const RegionEffectPoint &point : effect.points)
+			{
+				Dictionary p;
+				p["time"] = point.time;
+				p["position"] = Vector3(point.position.x, point.position.y, point.position.z);
+				p["angle"] = point.angle;
+				p["ease_in"] = point.easeIn;
+				p["ease_out"] = point.easeOut;
+				points.push_back(p);
+			}
+			definition["points"] = points;
+			definition["has_transform_curve"] = !effect.transformPoints.empty();
+			definitions.push_back(definition);
+		}
+		d["definitions"] = definitions;
 		effects.push_back(d);
 	}
 	out["region_effects"] = effects;
+	Array mapSounds;
+	for (const MapSound &sound : st.mapSounds)
+	{
+		Dictionary d;
+		d["name"] = s(sound.name);
+		d["sound"] = s(sound.sound);
+		d["position"] = Vector3(sound.position.x, sound.position.y, sound.position.z);
+		d["flags"] = (int64_t)sound.flags;
+		d["zoom_low"] = v2(sound.zoomLow);
+		d["zoom_high"] = v2(sound.zoomHigh);
+		mapSounds.push_back(d);
+	}
+	out["map_sounds"] = mapSounds;
+	Array mapObjects;
+	for (const MapAnimObject &object : st.mapAnimObjects)
+	{
+		Dictionary d;
+		d["name"] = s(object.name);
+		d["model"] = s(object.model);
+		d["position"] = Vector3(object.position.x, object.position.y, object.position.z);
+		d["frame"] = object.frame;
+		d["has_anim"] = object.hasAnim;
+		d["orient_angle"] = object.orientAngle;
+		mapObjects.push_back(d);
+	}
+	out["map_objects"] = mapObjects;
 	Array icons;
 	for (const IconTemplate &t : st.icons)
 	{
