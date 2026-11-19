@@ -385,7 +385,6 @@ private:
 	std::map<std::string, std::shared_ptr<MeshGpu>> MeshCache;
 	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
 	bool PendingFloorSampling = false;
-	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-4832: Set_Build_Texture_Swaps, taken by the next add_model
 	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-5015: Set_Build_Texture_Swaps, taken by the next add_model
 	bool PendingSelectionDecals = false; // lane SELWALL-1: Set_Build_Selection_Decals, taken by the next add_model
 	std::vector<std::unique_ptr<Model>> Models;
