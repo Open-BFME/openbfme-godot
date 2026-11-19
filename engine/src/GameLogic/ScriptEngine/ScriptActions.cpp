@@ -2,6 +2,7 @@
 // Derived from Command & Conquer Generals Zero Hour, (c) 2001-2003 Electronic Arts Inc., GPL-3.0.
 // See GameLogic/ScriptEngine/ScriptActions.h.
 
+#include "GameLogic/ScriptEngine/ScriptEditionRules.h"
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/SelfDestruct.h"
 
@@ -398,6 +399,12 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 	}
 	GameLogic &logic = engine.logic();
 	const std::string &name = t->name;
+
+	if (ScriptEditionRules::execute(engine, a, name))
+	{
+		return;
+	}
+
 	if (name == "VICTORY" || name == "QUICKVICTORY")
 	{
 		engine.addEndRequest(true, name); // RW 0x7C45E0 / 0x7BE0A2 (the client's end screen)

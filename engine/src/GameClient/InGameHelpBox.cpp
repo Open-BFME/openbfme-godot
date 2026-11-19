@@ -19,10 +19,24 @@ void InGameHelpBox::loaded(const std::string &clip, CallFn call)
 	}
 	m_call = std::move(call);
 	m_loaded = true;
+	m_bfme1 = false;
 	m_name = name;
 	char buf[32];
 	std::snprintf(buf, sizeof(buf), "_level%d.", level); // RW 0x92E588 (string RW 0xC7C4A4)
 	m_renderName = std::string(buf) + name + "_Content";  // RW 0x92E6DC (string RW 0xC7EFF0)
+	m_state = 0;
+	m_countdown = 0;
+	m_width = -1;
+	m_help.reset();
+}
+
+void InGameHelpBox::loadedBfme1(const std::string &root, CallFn call)
+{
+	m_call = std::move(call);
+	m_loaded = true;
+	m_bfme1 = true;
+	m_name = root;
+	m_renderName = "HelpBoxText"; // VA 0x00592640 registers the render callback under this name
 	m_state = 0;
 	m_countdown = 0;
 	m_width = -1;
@@ -37,8 +51,10 @@ void InGameHelpBox::unloaded()
 	m_state = 0;
 }
 
-bool InGameHelpBox::call(const std::string &fn, const std::vector<std::string> &args)
+bool InGameHelpBox::call(const std::string &rotwkFn, const std::vector<std::string> &args)
 {
+	// BFME1's names of the three movie calls (VA 0x00564A40 / 0x00564A10 / 0x005649A0)
+	const std::string fn = !m_bfme1 ? rotwkFn : rotwkFn == "SampleContentWidth" ? "SampleHelpBoxTextWidth" : rotwkFn == "Hide" ? "HideHelpBox" : rotwkFn == "Show" ? "ShowHelpBox" : rotwkFn;
 	std::string line = fn + "(";
 	for (size_t i = 0; i < args.size(); ++i)
 	{
@@ -98,7 +114,8 @@ void InGameHelpBox::update(const std::function<int(CommandButtonHelp &, int)> &m
 			{
 				const int height = measure(*m_help, m_width);
 				char buf[64];
-				std::snprintf(buf, sizeof(buf), "%f", (double)((float)height * stageScaleY)); // RW 0x92E3AA: the float as "%f" (RW 0x6228E8)
+				// RW 0x92E3AA: the float as "%f" (RW 0x6228E8); BFME1 VA 0x005649A0 formats it with "%g"
+				std::snprintf(buf, sizeof(buf), m_bfme1 ? "%g" : "%f", (double)((float)height * stageScaleY));
 				call("Show", { buf });
 				m_state = 3;
 			}
@@ -121,6 +138,12 @@ void InGameHelpBox::render(float x, float y, float w, float h, std::vector<HelpD
 {
 	if (m_state == 1)
 	{
+		if (m_bfme1 && w < 1.0f)
+		{
+			// BFME1's Text clip is empty on the render right after SampleHelpBoxTextWidth (its placeholder shape appears a frame later); VA 0x0058E390
+			// keeps any width >= 0, so retail's first sample cannot have been empty. INFERENCE: the sample waits for the clip's shape
+			return;
+		}
 		const int sampled = (int)(w + 0.5f); // RW 0x92E2B9: cvttss2si(width + 0.5f), at least 1
 		m_width = sampled < 1 ? 1 : sampled;
 	}

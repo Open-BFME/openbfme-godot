@@ -4,6 +4,7 @@
 
 #include "GameClient/ParticleDraw.h"
 #include "GameClient/ParticleTexture.h"
+#include "Libraries/WWVegas/WW3D2/textureloader.h"
 
 #include <set>
 
@@ -111,4 +112,40 @@ TEST_CASE("review: the sorting and fog approximations carry their S-198 text")
 {
 	CHECK(std::string(SortApproximationText()).find("RW 0x44c982 / 0x44cbed") != std::string::npos);
 	CHECK(std::string(FogOmissionText()).find("0x9620b7") != std::string::npos);
+}
+
+TEST_CASE("BFME1 particle textures use the flat layout while RotWK keeps compiled texture paths")
+{
+	const std::set<std::string> files = { "art\\textures\\smoke.dds", "art\\textures\\fire.tga" };
+	auto exists = [&](const std::string &path) { return files.count(path) != 0; };
+	const auto smoke = ResolveParticleTexture("Smoke.tga", exists, true);
+	REQUIRE(smoke.Found);
+	CHECK(smoke.Path == "art\\textures\\smoke.dds");
+	CHECK(smoke.Kind == ParticleTextureResolution::DDS);
+	const auto fire = ResolveParticleTexture("Fire.tga", exists, true);
+	CHECK(fire.Path == "art\\textures\\fire.tga");
+	CHECK(fire.Kind == ParticleTextureResolution::TGA);
+	CHECK_FALSE(ResolveParticleTexture("Smoke.tga", exists).Found);
+}
+
+TEST_CASE("BFME1 alpha-tested markings survive transparent low mip levels without changing their colours or base shape")
+{
+	// A 4x4 cutout whose authored 2x2 and 1x1 mips fall below the material's 96 cutoff.
+	std::vector<unsigned char> rgba((16 + 4 + 1) * 4, 0);
+	for (size_t i = 0; i < 21; ++i) { rgba[i * 4] = 31; rgba[i * 4 + 1] = 63; rgba[i * 4 + 2] = 127; }
+	for (size_t i = 0; i < 4; ++i) rgba[i * 4 + 3] = 255;
+	for (size_t i = 16; i < 21; ++i) rgba[i * 4 + 3] = 80;
+	const auto original = rgba;
+	W3D_Preserve_Mip_Alpha_Coverage(rgba, 4, 4, 96);
+	for (size_t i = 0; i < 16 * 4; ++i) CHECK(rgba[i] == original[i]);
+	for (size_t i = 16; i < 21; ++i)
+	{
+		CHECK(rgba[i * 4 + 3] == 96);
+		CHECK(rgba[i * 4] == 31);
+		CHECK(rgba[i * 4 + 1] == 63);
+		CHECK(rgba[i * 4 + 2] == 127);
+	}
+	rgba.back() = 0;
+	W3D_Preserve_Mip_Alpha_Coverage(rgba, 4, 4, 96);
+	CHECK(rgba.back() == 0); // an empty mip stays empty
 }

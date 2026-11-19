@@ -8,6 +8,7 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/ScriptEngine/ScriptEngine.cpp
     src/GameLogic/ScriptEngine/ScriptConditions.cpp
     src/GameLogic/ScriptEngine/ScriptActions.cpp
+    src/GameLogic/ScriptEngine/ScriptEditionRules.cpp
     src/GameLogic/ScriptEngine/ScriptActionsUnits.cpp
     src/GameLogic/ScriptEngine/ScriptActionsOrders.cpp
     src/GameLogic/ScriptEngine/ScriptActionsThreatFinder.cpp # PORT 17 (issue #73): case 556

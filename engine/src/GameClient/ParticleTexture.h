@@ -6,6 +6,7 @@
 // auxiliary image of the handle (+0x1c); it is never a fourth main candidate (the earlier lane note claiming one was wrong). A name that resolves to nothing
 // draws the default texture, which is 1x1 white (RW 0x532962); the caller reports the miss.
 //
+// BFME1 uses the flat Art\Textures layout when flatLayout is true.
 // This is separate from the model texture resolver (textureloader.h, DDS then the written extension), which serves W3D meshes.
 
 #pragma once
@@ -30,4 +31,4 @@ struct ParticleTextureResolution
 	std::vector<std::string> Tried;
 };
 
-ParticleTextureResolution ResolveParticleTexture(const std::string &name, const std::function<bool(const std::string &)> &exists);
+ParticleTextureResolution ResolveParticleTexture(const std::string &name, const std::function<bool(const std::string &)> &exists, bool flatLayout = false);

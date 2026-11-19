@@ -105,7 +105,7 @@ struct ScriptGame
 {
 	logictest::LogicWorld lw;
 	std::vector<ScriptList> lists;
-	ScriptGame() { lists.resize(3); }
+	explicit ScriptGame(bool bfme1 = false) : lw(RandomAlgorithm::ZH_CarryChain, nullptr, bfme1) { lists.resize(3); }
 	std::vector<TriggerArea> triggers; ///< lane SCRIPT-2: the map's trigger areas (start() hands them to the engine)
 	void start()
 	{

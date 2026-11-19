@@ -9,6 +9,7 @@ list(APPEND OPENBFME_SIM_SOURCES
 set(OPENBFME_END1_SOURCES
     src/GameClient/EndGame.cpp
     src/GameClient/GUI/AptScreens/AptTimeLine.cpp
+    src/GameClient/GUI/AptScreens/AptScoreScreen.cpp
     src/GameClient/GUI/AptScreens/AptQuitMenu.cpp
 )
 set(OPENBFME_END1_TESTS

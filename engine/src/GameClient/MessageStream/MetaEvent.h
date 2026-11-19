@@ -119,6 +119,7 @@ class MetaMap
 public:
 	// registers the `CommandMap` block handler on the environment's block registry (the parse fills this map)
 	void registerBlocks(INIEnvironment &env);
+	void addBfme1SelectionBinding();
 	// loads one CommandMap file (the file names and their order are the caller's: the INI subsystem legend's); false + *error when the file throws
 	bool load(INIEnvironment &env, const std::string &file, std::string *error);
 

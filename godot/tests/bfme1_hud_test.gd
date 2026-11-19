@@ -31,9 +31,15 @@ func _run() -> void:
 		quit()
 		return
 	var fs = ClassDB.instantiate("RetailFileSystem")
-	if not _check(fs.mount_bfme1_path(OS.get_environment("BFME1_INSTALL")).ok):
-		_finish("")
-		return
+	assert(fs.mount_bfme1_path(OS.get_environment("BFME1_INSTALL")).ok)
+	# BFME1 PalantirA is a TGA stored under a DDS filename; a decode failure paints it pink.
+	var palantir = ClassDB.instantiate("W3DInstancer")
+	root.add_child(palantir)
+	assert(palantir.setup(fs).ok)
+	var palantir_model: int = palantir.add_model("palantir")
+	assert(palantir_model != -1)
+	assert(palantir.get_model_report(palantir_model).errors.is_empty(), str(palantir.get_model_report(palantir_model)))
+	palantir.queue_free()
 	var world = ClassDB.instantiate("GameWorld")
 	root.add_child(world)
 	if not _check(world.setup(fs).ok):
@@ -81,10 +87,15 @@ func _run() -> void:
 	for error in hud.get_report().errors:
 		_check(not "BuildingRadialButtons" in error and not "RadialBorders" in error, error)
 	var hover: Rect2 = hud.get_hud6_state().radial.buttons[0].rect
-	hud.inject_mouse_move(hover.get_center())
-	for i in 120: await process_frame
+	for i in 120:
+		hud.inject_mouse_move(hover.get_center())
+		await process_frame
 	var help: Dictionary = hud.get_hud6_state().help
-	_check(help.shown and help.text_ops > 0 and not help.name.is_empty(), str(help))  # tolerance: the help box drew text
+	assert(help.shown and help.text_ops > 0 and not help.name.is_empty(), str(help))  # tolerance: the help box drew text
+	assert(help.render_name == "HelpBoxText", str(help))
+	assert(help.calls[0] == "SampleHelpBoxTextWidth()", str(help))
+	assert(help.calls.has("HideHelpBox()"), str(help))
+	assert(str(help.calls).contains("ShowHelpBox("), str(help))
 	var keep := 0
 	for id in world.get_object_ids():
 		if world.get_object(id).template == "GondorCastleBaseKeep": keep = id; break

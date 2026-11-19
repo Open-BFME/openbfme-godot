@@ -36,6 +36,9 @@ func _init(g: Node) -> void:
 
 func save_dir() -> String:
 	var dir: String = game._save_dir_arg
+	# BFME1 has no CAH folder. Keep its OpenBFME saves in a separate namespace.
+	if dir.is_empty() and game._fs != null and game._fs.is_bfme1():
+		dir = OS.get_user_data_dir().path_join("bfme1/Save")
 	if dir.is_empty():
 		# retail: <application data>\<gi.dat UserDataLeafName>\Save\ (RW 0x6DE38D's folder; lane CAH-2's UserDataFolder)
 		var r: Dictionary = game._shell.create_a_hero_save_folder(game._rotwk_install)

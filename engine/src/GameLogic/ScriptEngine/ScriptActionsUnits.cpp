@@ -326,15 +326,13 @@ std::int32_t counterMath(std::int32_t lhs, int op, std::int32_t rhs, ScriptEngin
 // the transport (+ 0x22C) and its loading, the auto-transport (+ 0x234), the origin waypoint (+ 0x230: the units start at the waypoint here, so
 // no group move follows), a horde's own upgrade / level slots (RW 0x68C866 0xB4 / 0xB8,
 // 0x694BF8 0xC4: the object's own paths run)
-void createReinforcements(ScriptEngine &engine, const std::string &teamName, const std::string &waypointName)
+void createReinforcements(ScriptEngine &engine, const std::string &teamName, const Coord3D &spawn, bool clearSpawn = false)
 {
 	GameLogic &logic = engine.logic();
-	const TerrainLogic *terrain = logic.terrain();
-	const Waypoint *w = terrain ? terrain->findWaypointByName(waypointName) : nullptr;
 	const std::pair<std::string, std::string> q = engine.qualify(teamName);
 	TeamFactory &teams = logic.players().teams();
 	TeamPrototype *proto = teams.findTeamPrototype(q.first, q.second);
-	if (!w || !proto)
+	if (!proto)
 	{
 		return;
 	}
@@ -349,7 +347,7 @@ void createReinforcements(ScriptEngine &engine, const std::string &teamName, con
 	{
 		engine.note("[S-1186] CREATE_REINFORCEMENT_TEAM: a team with a transport (the units start on the ground)");
 	}
-	const Coord3D spawn = w->location;
+	if (clearSpawn) engine.note("[S-1186] BFME1 unit-position reinforcements resolve spawn footprints with adjustDestination (OpenBFME correction; native placement unverified)");
 	float rowY = spawn.y;
 	for (int i = 1; i <= 7; ++i)
 	{
@@ -380,6 +378,24 @@ void createReinforcements(ScriptEngine &engine, const std::string &teamName, con
 			if (!obj)
 			{
 				continue;
+			}
+			if (clearSpawn)
+			{
+				// BFME1's unit-position reinforcement action currently uses the base
+				// center as its origin. OpenBFME correction (S-1186): resolve each
+				// mobile unit's full pathfinding footprint before building its horde,
+				// so the first battalion cannot start inside the capital. The exact
+				// BFME1 action placement algorithm has not been located.
+				if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
+				{
+					if (!logic.aiWorld()->pathfinder().adjustDestination(logic.aiWorld()->adapterFor(*obj), ai->locomotorInfo(), &pos))
+					{
+						engine.note("[S-1186] BFME1 reinforcement has no clear spawn footprint");
+						logic.destroyObject(obj);
+						continue;
+					}
+					obj->setPosition(&pos);
+				}
 			}
 			obj->friend_onBuildComplete();
 			size_t at = 0;
@@ -485,6 +501,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 {
 	GameLogic &logic = engine.logic();
 	const TerrainLogic *terrain = logic.terrain();
+
 	if (name == "UNIT_AFFECT_OBJECT_PANEL_FLAGS" || name == "TEAM_AFFECT_OBJECT_PANEL_FLAGS")
 	{
 		const bool value = param(a, 2).intValue != 0;
@@ -953,9 +970,19 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
+	if (name == "CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION")
+	{
+		// BFME1's Multiplayer_Start_Teams scripts use the named base as the
+		// spawn origin; the team payload/upgrade/activation path is shared with
+		// CREATE_REINFORCEMENT_TEAM. Layout around that origin retains S-1186.
+		if (Object *object = engine.getUnitNamed(param(a, 1).stringValue))
+			createReinforcements(engine, param(a, 0).stringValue, *object->getPosition(), object->getTemplate()->bfme1Data());
+		return true;
+	}
 	if (name == "CREATE_REINFORCEMENT_TEAM")
 	{
-		createReinforcements(engine, param(a, 0).stringValue, param(a, 1).stringValue);
+		const Waypoint *waypoint = terrain ? terrain->findWaypointByName(param(a, 1).stringValue) : nullptr;
+		if (waypoint) createReinforcements(engine, param(a, 0).stringValue, waypoint->location);
 		return true;
 	}
 	if (name == "NAMED_BUILD_STRUCTURE_AT_WAYPOINT")
@@ -1068,7 +1095,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	}
 	if (name == "NAMED_BASE_UNPACK" || name == "NAMED_BASE_UNPACK_FREE")
 	{
-		// lane CASTLE-UNPACK: RW 0x7BED64 (see the file comment); the push order (RW 0x7CE925 / 0x7CE928): the flag, param 1's string, param 0
+		// BFME1 ScriptActions_doNamedBaseUnpack.cpp uses the same checks. RotWK RW 0x7BED64; the push order (RW 0x7CE925 / 0x7CE928): the flag, param 1's string, param 0
 		const bool free = name == "NAMED_BASE_UNPACK_FREE";
 		Object *o = engine.getUnitNamed(param(a, 0).stringValue);
 		if (!o || o->getControllingPlayer() != engine.currentPlayer()) // RW 0x7BED95

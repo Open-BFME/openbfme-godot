@@ -445,6 +445,23 @@ std::vector<int> SkirmishGameSetup::listedMaps() const
 	// reach the cache (RW 0x93B9F0, IniSkirmishSetupSource::loadMapCache). Ordered by player count, then shown name (stable), as the list's
 	// default sort keys (RW 0x84606C) order the rows.
 	const std::vector<MapCacheEntry> &maps = m_source.maps();
+	if (m_source.bfme1Data())
+	{
+		std::vector<int> out;
+		// BFME1 Rva00453480MapPointerCollector filters before its stable sort;
+		// a user map with the same display name must not replace an official map.
+		for (int i = 0; i < (int)maps.size(); ++i)
+		{
+			const auto &map = maps[i];
+			if (map.isMultiplayer && !map.isScenarioMP && map.numPlayers >= 2 &&
+				!map.displayName.empty() && m_source.fileExists(map.name)) out.push_back(i);
+		}
+		std::stable_sort(out.begin(), out.end(), [&](int a, int b) {
+			if (maps[a].numPlayers != maps[b].numPlayers) return maps[a].numPlayers < maps[b].numPlayers;
+			return lessNoCase(mapDisplayName(maps[a], true), mapDisplayName(maps[b], true));
+		});
+		return out;
+	}
 	std::vector<std::pair<std::u16string, int>> named;
 	for (int i = 0; i < (int)maps.size(); ++i)
 	{
