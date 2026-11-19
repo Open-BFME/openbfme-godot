@@ -266,6 +266,14 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 	{
 		return; // lane MODCOMPAT-AI: the HUD camera's far plane (scripts/campaign_cine.gd -> InGameHud camera_set_clip_depth_multiplier)
 	}
+	if (a == "RESIZE_VIEW_GUARDBAND")
+	{
+		// LOCAL-94: RW 0x7CE53A -> RW 0x7BD6E9 (DONOR BFME2 0x003BCC08, ScriptActions::doResizeViewGuardband) ->
+		// TheTacticalView vslot + 0x1BC = W3DView::setGuardBandBias (RW 0x48B5FC, View + 0x78 / + 0x7C).
+		m_guardBandBiasX = realParam(r, 0);
+		m_guardBandBiasY = realParam(r, 1);
+		return;
+	}
 	m_unhandled.push_back(a);
 }
 

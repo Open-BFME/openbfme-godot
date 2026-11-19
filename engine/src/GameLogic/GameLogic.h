@@ -620,6 +620,14 @@ public:
 	// and GameData UseBehindBuildingMarker are set (RW 0x47074D). Not hashed and not saved (no GameLogic xfer reads it): presentation only
 	void setShowBehindBuildingMarkers(bool on) { m_showBehindBuildingMarkers = on; }
 	bool getShowBehindBuildingMarkers() const { return m_showBehindBuildingMarkers; }
+	// LOCAL-94: TheGameLogic + 0x9A (OPTIONS_SET_DRAWICON_UI_MODE, action 300, RW 0x7CE222 -> RW 0x7BD55C, DONOR BFME2 0x003BCA7B;
+	// init / reset / startNewGame RW 0x62D1D9 / 0x62D3DD / 0x62A236; read by Drawable::drawIconUI RW 0x679134) and TheGameLogic + 0x9B
+	// (OPTIONS_SET_PARTICLE_CAP_MODE, action 301, RW 0x7CE2B6 -> RW 0x7BD56F, DONOR BFME2 0x003BCA8E; init / reset / startNewGame RW 0x62D1E0 /
+	// 0x62D3E4 / 0x62A23D; read by GameLogic::getParticleCapMode RW 0x441B52 at RW 0x4438ED). Not hashed (XferCRC skips them, RW 0x630ADF).
+	void setShowDrawableIconUI(bool on) { m_showDrawableIconUI = on; }
+	bool getShowDrawableIconUI() const { return m_showDrawableIconUI; }
+	void setParticleCapMode(bool on) { m_particleCapMode = on; }
+	bool getParticleCapMode() const { return m_particleCapMode; }
 	// PORT-43: TheGameLogic + 0x118, m_rankLevelLimit: constructor RW 0x6301DD and startNewGame's init helper RW 0x62A20D (RW 0x62A11A, called at
 	// RW 0x631555; GameLogic::reset RW 0x62D232 leaves +0x118 untouched) set 1000 (0x3E8); startNewGame's tail helper RW 0x6311ED (called at RW 0x6315A7)
 	// copies GlobalData + 0xE94 (GameData PowerLimit, row RW 0xC00C00, EconomySettings::powerLimit) into +0x118 at RW 0x631420 .. 0x631436 when RW 0x625456
@@ -1131,6 +1139,8 @@ private:
 	UnsignedInt m_frame = 0;
 	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
 	bool m_showBehindBuildingMarkers = true; ///< lane OCCLUDE-1: RW GameLogic + 0x99
+	bool m_showDrawableIconUI = true;        ///< LOCAL-94: RW GameLogic + 0x9A
+	bool m_particleCapMode = true;           ///< LOCAL-94: RW GameLogic + 0x9B
 	int m_rankLevelLimit = kDefaultRankLevelLimit; ///< PORT-43: RW GameLogic + 0x118 (m_rankLevelLimit)
 	bool m_rankLevelLimitScripted = false;         ///< PORT-43: set by PLAYER_SET_RANKLEVELLIMIT (RW 0x7BB04E)
 	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1

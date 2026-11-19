@@ -149,6 +149,8 @@ struct LogicSnapshot
 {
 	UnsignedInt frame = 0;          ///< the completed logic frame
 	bool showBehindBuildingMarkers = true; ///< lane OCCLUDE-1: TheGameLogic + 0x99 (script action 298)
+	bool showDrawableIconUI = true;        ///< LOCAL-94: TheGameLogic + 0x9A (script action 300, RW 0x7BD55C / 0x679134)
+	bool particleCapMode = true;           ///< LOCAL-94: TheGameLogic + 0x9B (script action 301, RW 0x7BD56F / 0x441B52)
 	// lane OCCLUDE-1: GameData UseBehindBuildingMarker and OccludedColorLuminanceScale, carried here so the renderer never waits for the logic to read them
 	bool useBehindBuildingMarker = true;
 	float occludedColorLuminanceScale = 0.5f;
