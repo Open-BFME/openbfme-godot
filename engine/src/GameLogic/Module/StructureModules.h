@@ -266,12 +266,16 @@ public:
 	float getHealth() const override;
 	float getMaxHealth() const override;
 	float getInitialHealth() const override;
-	BodyDamageType getDamageState() const override;
+	BodyDamageType getDamageState() const override; // RW 0x008C4FF9
 	// the symbiotic object has no health of its own (it answers with its symbiote's): its own 0 health is not a RUBBLE state to apply
 	void applyInitialDamageState() override {}
 	void attemptDamage(DamageInfo &info) override;
-	void attemptHealing(DamageInfo &info) override;
-	float estimateDamage(const DamageInfoInput &input) const override;
+	void attemptHealing(DamageInfo &info) override; // RW 0x008C4F62
+	float estimateDamage(const DamageInfoInput &input) const override; // RW 0x008C51BC
+	void setIndestructible(bool) override {}        // RW 0x009F3A3C (vtable 0xC72200 +0x88: no-op)
+	bool isIndestructible() const override;         // RW 0x008C52DB
+	float getDodgePercent() const override;         // RW 0x008C5250
+	std::string getGrabObjectName() const override; // RW 0x008C505F
 	void crc(StateHasher &hasher) const override;
 
 private:
