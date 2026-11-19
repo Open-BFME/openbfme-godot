@@ -374,7 +374,7 @@ void ShareExperienceBehavior::share(float value)
 	{
 		hits.push_back(h.object);
 	}
-	const bool heroesShareWithHeroes = true; // TheGameLogic + 0x9F (INFERENCE: 1 in a game, RW 0x62D299)
+	const bool heroesShareWithHeroes = logic.getHeroExperienceSharing(); // PORT-301: TheGameLogic + 0x9F (RW 0x883428: cmp byte ptr [eax + 0x9F], 0)
 	for (Object *c : hits)
 	{
 		if (heroSource && !heroesShareWithHeroes && isKind(*c, "HERO"))
@@ -2498,11 +2498,19 @@ std::vector<std::string> HeroAbilityModules::stopLines()
 }
 
 // ---- lane SAVE-4b: the snapshots (OpenBFME native, S-4190, unless noted) ----------------------------------------------------------------------------------
+// PORT-301: retail's layout (RW 0x8E3BB1, tier A, (1, 1)): the version (RW 0x404F15) and the base xfer (RW 0x850C60) and nothing else — the share counter is the
+// port's own diagnostics, not state (SAVES.md section 6), so it is not saved. The port's own version 1 wrote it after the base: version 2 drops it and a
+// version 1 snapshot's counter is read and dropped, so an older save still loads (SAVES.md section 5, the versioned blocks)
 void ShareExperienceBehavior::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x);
-	SnapshotXfer::u64(x, m_shares);
+	if (v.current == 1)
+	{
+		unsigned long long shares = 0;
+		SnapshotXfer::u64(x, shares); // the port's version 1 wrote the share counter here
+	}
 }
 
 // retail's layout (DamageFilteredCreateObjectDie::xfer RW 0x88927E, tier A, (1, 1): the version, the base xfer, u32, i32): + 0x18 the frame of the last
