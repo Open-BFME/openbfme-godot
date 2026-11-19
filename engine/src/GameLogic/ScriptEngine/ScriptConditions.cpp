@@ -34,6 +34,8 @@
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/ConstructionModules.h"
+#include "Common/SpecialPower.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/System/ShroudManager.h"
@@ -104,7 +106,9 @@ enum ConditionType
 	UNIT_HAS_OBJECT_STATUS = 80,
 	TEAM_ALL_HAS_OBJECT_STATUS = 81,
 	TEAM_SOME_HAVE_OBJECT_STATUS = 82,
+	SKIRMISH_SPECIAL_POWER_READY = 85,
 	SKIRMISH_PLAYER_FACTION = 87,
+	REGION_CAMPS_SHOULD_UNPACK = 167,
 	TEAM_HAS_CUSTOM_STATE = 143,
 	TEAM_HAS_UNITS = 10,
 	NAMED_INSIDE_AREA = 13,
@@ -2092,6 +2096,36 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		return compareReal(param(c, 1).intValue, threat, param(c, 2).realValue);
 	}
+	case SKIRMISH_SPECIAL_POWER_READY: // RW 0x7EC79F -> RW 0x7E9C33 (player, specialPower; Parameter + 0x20 retry cache not ported: evaluated every time)
+	{
+		const SpecialPowerTemplate *sp = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(param(c, 1).stringValue) : nullptr; // RW 0x69C146
+		if (!sp)
+		{
+			return false;
+		}
+		for (Player *p : ScriptConditions::players(engine, param(c, 0).stringValue)) // RW 0x75968D / RW 0x6A85EE
+		{
+			for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() != p)
+				{
+					continue;
+				}
+				if (o->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION) || o->getDisabledMask() != DISABLEDMASK_NONE) // RW 0x44DDEC(2), RW 0x9325B4 (+0x1C8)
+				{
+					continue;
+				}
+				const SpecialPowerModuleInterface *mod = SpecialPowerModules::findModule(*o, sp); // RW 0x68C26D
+				if (mod && SpecialPowerModules::canUseSpecialPower(*o, sp) && mod->isReady()) // RW 0x7B1D79, vslot 0x04
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+	case REGION_CAMPS_SHOULD_UNPACK: // RW 0x7ED40B (jump table 0x7ED414 + (167 - 5) * 4): xor al, al in both RotWK 2.01 and BFME2 1.06
+		return false;
 	default:
 		engine.noteUnportedCondition(t->name);
 		return false;
