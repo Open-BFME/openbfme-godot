@@ -499,7 +499,9 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 		if (const AssetPackFile *pf = Packs->texture(name))
 		{
 			const int reduction = g_textureReduction;
-			const std::string cacheKey = "pack:" + pf->diskPath + (reduction > 0 ? "#reduction" + std::to_string(reduction) : std::string());
+			std::string cacheKey = "pack:" + pf->diskPath;
+			if (alphaCoverage > 0) cacheKey += "#coverage" + std::to_string(alphaCoverage);
+			if (reduction > 0) cacheKey += "#reduction" + std::to_string(reduction);
 			auto cached = Textures.find(cacheKey);
 			if (cached != Textures.end())
 			{
@@ -518,6 +520,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 			{
 				image->generate_mipmaps();
 			}
+			preserveAlphaCoverage(image, alphaCoverage);
 			Reduce_Image(image, reduction);
 			Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
 			Textures[cacheKey] = tex;
