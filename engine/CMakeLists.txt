@@ -182,6 +182,7 @@ include(cmake/Experience.cmake) # OPENBFME_XP_SOURCES / OPENBFME_XP_TESTS (lane 
 include(cmake/FactB.cmake)      # OPENBFME_FACTB_TESTS (lane FACT-B: Isengard and Mordor)
 include(cmake/Port4.cmake) # OPENBFME_PORT4_TESTS
 include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
+include(cmake/Port302.cmake) # retail 2.01 InactiveBody armor flags and damage
 include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
@@ -914,6 +915,7 @@ add_executable(openbfme_tests
     ${OPENBFME_TAINTAREA1_TESTS}
     ${OPENBFME_THREATLEVEL1_TESTS}
     ${OPENBFME_BUILDCLEAR1_TESTS}
+    ${OPENBFME_PORT302_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
