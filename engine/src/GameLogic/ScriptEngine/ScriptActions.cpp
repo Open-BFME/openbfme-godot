@@ -426,6 +426,35 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		radarEventAction(engine, a, name);
 		return;
 	}
+	if (name == "PLAYER_ADD_SKILLPOINTS") // case 276: RW 0x7CDF75 -> RW 0x7BD063(param 0 player, param 1 int) -> RW 0x782AA4(float, false)
+	{
+		const float pts = SimMath::sseFromInt32(param(a, 1).intValue); // cvtsi2ss (RW 0x7BD090)
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			p->science().addSkillPoints(pts, false);
+		}
+		return;
+	}
+	if (name == "PLAYER_ADD_RANKLEVEL") // case 277: RW 0x7CDFB4 -> RW 0x7BD0AF(param 0 player, param 1 int) -> vslot 1 (RW 0x6AA9C2 / RW 0x782865), RW 0x71C311
+	{
+		const int delta = param(a, 1).intValue;
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			p->science().setRankLevel(p->science().getRankLevel() + delta);
+			p->science().setScalarBaseRank(p->science().getRankLevel()); // RW 0x71C311 (+0x18 = +0x14)
+		}
+		return;
+	}
+	if (name == "PLAYER_SET_RANKLEVEL") // case 278: RW 0x7CDFD8 -> RW 0x7BD107(param 0 player, param 1 int) -> vslot 1 (RW 0x6AA9C2 / RW 0x782865), RW 0x71C311
+	{
+		const int level = param(a, 1).intValue;
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			p->science().setRankLevel(level);
+			p->science().setScalarBaseRank(p->science().getRankLevel()); // RW 0x71C311 (+0x18 = +0x14)
+		}
+		return;
+	}
 	if (name == "PLAYER_SET_RANKLEVELLIMIT") // PORT-43: case 279, RW 0x7CE020 -> RW 0x7BD1A8 -> RW 0x7BB04E(param 0 int)
 	{
 		logic.setRankLevelLimit(param(a, 0).intValue);
