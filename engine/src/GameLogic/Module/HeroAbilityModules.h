@@ -128,6 +128,11 @@ class CommandButton;
 //     The value is NOT restored per candidate: each one shares the previous one's share (retail's register reuse, [ebp + 8]);
 //   * the drop off (RW 0x88325B): DropOff == 1.0: max(0, 1 - |candidate - position| / Radius) with the length RW 0x4054F5 (x87 z*z + y*y + x*x, CRT sqrt,
 //     fstp) and SSE subtract / divide; any other DropOff: 1.0.
+// The class's own functions that carry no gameplay: the ModuleData vtable RW 0xC5EEA0 slot + 0x38 (RW 0x4B612F, the base ModuleData's empty tag name,
+//   an AsciiString built from the empty literal RW 0xDC62B8 through RW 0x435F30), the class name (RW 0x8830A2, "ShareExperienceBehavior") and its
+//   name key (RW 0x8830A8, the one-shot registration: the flag RW 0xDE91A0, the key RW 0xDE919C built by RW 0x5487EC), the two deleting destructors
+//   (RW 0x8831AC / RW 0x88320F) and the xfer (RW 0x8E3BB1: the version (1, 1) RW 0x404F15 and the base xfer RW 0x850C60, nothing else). The update
+//   (RW 0x8831C8) writes a debug trace (not ported: the port has no Debug singleton) and sleeps forever (UPDATE_SLEEP_FOREVER): no state change.
 class ShareExperienceBehaviorModuleData : public ModuleData
 {
 public:
