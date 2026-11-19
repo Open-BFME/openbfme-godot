@@ -1201,7 +1201,11 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 			}
 			else
 			{
-				ObjectStatusMaskType status{}; // RW 0x8A25DC: bit 55 CREATE_DRAWABLE_WITH_LOW_DETAIL when the AIData flag at +0xBB is set (not ported)
+				ObjectStatusMaskType status{};
+				if (logic.settings().forceHordesToLowLOD) // RW 0x8A1B9F -> RW 0x8A25DC .. 0x8A25F4: AIData +0xBB sets bit 55 CREATE_DRAWABLE_WITH_LOW_DETAIL
+				{
+					MaskSet(status, OBJECT_STATUS_CREATE_DRAWABLE_WITH_LOW_DETAIL, true);
+				}
 				logic.setPendingProducer(us->getID());
 				newObj = logic.newObject(entry->objectToProduce, player->getDefaultTeam(), status);
 				logic.setPendingProducer(INVALID_ID);

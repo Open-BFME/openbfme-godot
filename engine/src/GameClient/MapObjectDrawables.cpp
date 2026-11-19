@@ -358,6 +358,20 @@ MapTemplateInfo buildTemplateInfo(const ThingTemplate *tmpl, const CreationScrip
 		}
 	}
 	info.isBridge = false;
+	if (const FieldValue *v = tmpl->findField("IsGrabbable"))
+	{
+		if (const bool *b = std::get_if<bool>(v))
+		{
+			info.grabbable = *b;
+		}
+	}
+	if (const FieldValue *v = tmpl->findField("IsHarvestable"))
+	{
+		if (const bool *b = std::get_if<bool>(v))
+		{
+			info.harvestable = *b;
+		}
+	}
 	if (const FieldValue *v = tmpl->findField("IsBridge"))
 	{
 		if (const bool *b = std::get_if<bool>(v))
@@ -703,6 +717,28 @@ void MapObjectCreation::build(const LoadedMap &map, const std::string &mapName, 
 	std::map<std::string, std::string> lowerNames;
 	bool lowerNamesBuilt = false;
 
+	// RW 0x62DCE4 (0x62DCF4..0x62DDCA): resolve AIData LowLodTreeName / NoGrab / NoHarvest (+0xDC/+0xE0/+0xE4);
+	// all three must resolve for low-LOD tree substitution to activate when UseLowLODTrees (+0xD8) and staticLODLevel <= 0.
+	const ThingTemplate *lowLodTree = options.lowLodTreeName.empty() ? nullptr : things.findTemplate(options.lowLodTreeName);
+	const ThingTemplate *lowLodTreeNoGrab = options.lowLodTreeNameNoGrab.empty() ? nullptr : things.findTemplate(options.lowLodTreeNameNoGrab);
+	if (!lowLodTreeNoGrab)
+	{
+		lowLodTree = nullptr; // RW 0x62DD39
+	}
+	const ThingTemplate *lowLodTreeNoHarvest = options.lowLodTreeNameNoHarvest.empty() ? nullptr : things.findTemplate(options.lowLodTreeNameNoHarvest);
+	if (!lowLodTreeNoHarvest)
+	{
+		lowLodTree = nullptr; // RW 0x62DD5C
+	}
+	bool useLowLodTrees = false;
+	if (options.useLowLODTrees && options.staticLODLevel <= 0 && lowLodTree) // RW 0x62DD8B .. 0x62DDC7
+	{
+		useLowLodTrees = true;
+		lowLodTree = lowLodTree->getFinalOverride();
+		lowLodTreeNoGrab = lowLodTreeNoGrab->getFinalOverride();
+		lowLodTreeNoHarvest = lowLodTreeNoHarvest->getFinalOverride();
+	}
+
 	std::map<std::string, const ThingTemplate *> resolved; // object name -> template (nullptr = none)
 
 	for (size_t i = 0; i < map.chunks.objects.size(); ++i)
@@ -881,12 +917,38 @@ void MapObjectCreation::build(const LoadedMap &map, const std::string &mapName, 
 		else if (prop || soundOnly || info.tree || info.shrub)
 		{
 			fate = info.tree ? MAPOBJ_CLIENT_TREE : info.shrub ? MAPOBJ_CLIENT_SHRUB : soundOnly ? MAPOBJ_CLIENT_SOUND : MAPOBJ_CLIENT_PROP;
-			if (fate == MAPOBJ_CLIENT_TREE && !options.useTrees)
+			if (fate == MAPOBJ_CLIENT_TREE)
 			{
-				// RW 0x62E433: a TREE is added only when the trees switch is on (RW 0x62E3E7 .. 0x62E454)
-				finish(MAPOBJ_SHRUBBERY_OFF, "TREE with the trees switch off");
-				++rep.notDrawnByReason["shrubbery switched off"];
-				continue;
+				if (useLowLodTrees) // RW 0x62DCE4 -> RW 0x62E3E7 .. 0x62E433
+				{
+					const ThingTemplate *subTmpl = nullptr;
+					if (info.grabbable && info.harvestable)
+					{
+						subTmpl = lowLodTree; // RW 0x62E406
+					}
+					else if (!info.grabbable && info.harvestable)
+					{
+						subTmpl = lowLodTreeNoGrab; // RW 0x62E416
+					}
+					else
+					{
+						subTmpl = lowLodTreeNoHarvest; // RW 0x62E41B
+					}
+					auto sti = out.templates.find(subTmpl);
+					if (sti == out.templates.end())
+					{
+						sti = out.templates.emplace(subTmpl, buildTemplateInfo(subTmpl, options.creationScripts, rep.errors, rep.stops)).first;
+					}
+					d.info = &sti->second;
+					d.scale = options.lowLodTreeScale; // RW 0x62E426: AIData +0xE8
+				}
+				if (!options.useTrees)
+				{
+					// RW 0x62E433: a TREE is added only when the trees switch is on (RW 0x62E3E7 .. 0x62E454)
+					finish(MAPOBJ_SHRUBBERY_OFF, "TREE with the trees switch off");
+					++rep.notDrawnByReason["shrubbery switched off"];
+					continue;
+				}
 			}
 		}
 		else
