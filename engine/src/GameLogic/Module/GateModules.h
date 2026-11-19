@@ -58,8 +58,9 @@
 //     (and the group's tasks) it walks it again (RW 0x8ED726) and gives those gates the OPEN geometry (RW 0x89CA84(1, 0), forced: it re-runs even when the
 //     geometry is already open). Both walks change the geometry only through setGeometry, so they take lane WALLFOOT-1's keeping removal (RW 0x6E861E).
 //     Both walks end with the pathfinder's portal refresh RW 0x6E85B0.
-// INFERENCE / NOT PORTED (stops S-1940 .. S-1942): the repel (RW 0x89C6F5) runs only when the collision pass hands the gate a contact; the port's pass pairs AI
-// units only (S-581), so a gate meets no contact there; the layer of RW 0x68BBE0 is the pathfinder adapter's (ground without one, as EmotionModules); GateProxyBehavior and the Proxy link (onObjectCreated RW 0x89CB19), the gate sounds (no logic sound path: counted, not played), the
+// INFERENCE / NOT PORTED (stops S-1940 .. S-1942): the repel (RW 0x89C6F5) runs when the collision pass hands the gate a contact; the units' pass pairs AI
+// units only (S-581), so the gates get their own contact pass (lane GATECOLLIDE-1, AIWorld::processGateContacts: RotWK's collision manager holds the gate,
+// RW 0x68E31F, and pairs it with any registered non-IMMOBILE object whose shapes overlap its active ones, RW 0xB6D730 / 0xAD2CE0 / 0xB6D060; INFERENCE: the port's pass takes the objects with an AI only, S-780); the layer of RW 0x68BBE0 is the pathfinder adapter's (ground without one, as EmotionModules); GateProxyBehavior and the Proxy link (onObjectCreated RW 0x89CB19), the gate sounds (no logic sound path: counted, not played), the
 // object interface call RW 0x68C3E6 -> vslot 2 at the start of the update and the AI notification RW 0x68BE59(9) are not ported (FakePathfindPortalBehaviour: lane
 // WALL-2, PortalModules.h). Lane WALLFOOT-1: the pathfinder's "keeping gate flags" removal (RW 0x6E861E) runs at each geometry change: the previous geometry's box
 // cells keep bit 17 (CanPathThroughGates) until a plain removal. RW 0x6E85B0 (the AI gate walk's pathfinder portal refresh) has nothing to do here because

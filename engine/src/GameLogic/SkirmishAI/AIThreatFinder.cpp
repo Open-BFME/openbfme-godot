@@ -145,8 +145,11 @@ double counterOne(AIThreatFinder::ThreatRecord &a, int cat, float v)
 	return SimMath::pc24MulW((double)v, (double)mult); // RW 0x7EDAE6: fmul dword [mult]
 }
 
-// RW 0x7EE166's sum over the scanned records
-AIThreatFinder::ThreatRecord sumRecords(GameLogic &logic, const AIThreatFinder::ThreatRecord (&records)[AIThreatFinder::kRecords], const Player &owner, int mode)
+} // namespace
+
+// RW 0x7EE166's sum over the scanned records (PORT 17: also a map object's stored finder's, GameLogic/System/ThreatFinder.cpp)
+AIThreatFinder::ThreatRecord AIThreatFinder::sumRecords(GameLogic &logic, const AIThreatFinder::ThreatRecord (&records)[AIThreatFinder::kRecords],
+	const Player &owner, int mode)
 {
 	AIThreatFinder::ThreatRecord out; // RW 0x7ED8A3
 	for (int i = 0; i < AIThreatFinder::kRecords; ++i)
@@ -167,7 +170,6 @@ AIThreatFinder::ThreatRecord sumRecords(GameLogic &logic, const AIThreatFinder::
 	}
 	return out;
 }
-} // namespace
 
 int AIThreatFinder::threatCategory(const ThingTemplate &tt)
 {
@@ -273,6 +275,11 @@ double AIThreatFinder::threatValueWide(const Object &obj)
 		ratio = SimMath::pc24DivW((double)body->getHealth(), (double)body->getMaxHealth());
 	}
 	return SimMath::pc24MulW(ratio, (double)local);
+}
+
+float AIThreatFinder::templateThreatLevel(const Object &obj)
+{
+	return threatLevel(obj);
 }
 
 float AIThreatFinder::threatValue(const Object &obj)

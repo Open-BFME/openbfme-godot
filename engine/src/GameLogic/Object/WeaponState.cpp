@@ -705,19 +705,19 @@ bool WeaponIsWithinAttackRange(const WeaponTemplate &t, const WeaponBonus &bonus
 				}
 			}
 			const bool ok = host.meleeReach(source, sourcePos, *victim);
-			if (!ok || host.victimFlag11A_40())
+			if (!ok || host.victimFlag11A_40(*victim))
 			{
 				return ok;
 			}
-			const int sourceLayer = host.layerOf(false);
-			const int victimLayer = host.layerOf(true);
+			const int sourceLayer = host.layerOf(source, false);
+			const int victimLayer = host.layerOf(*victim, true);
 			if (sourceLayer == 1 && victimLayer >= 0x11)
 			{
 				return false;
 			}
 			if (victimLayer == 1 && sourceLayer >= 0x11)
 			{
-				return host.victimLayerException() ? ok : false;
+				return host.victimLayerException(*victim) ? ok : false;
 			}
 			return ok;
 		}

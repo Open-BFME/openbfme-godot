@@ -49,7 +49,7 @@ public:
 	bool m_upgradeDiscount = false;                            // +0x148
 	bool m_startsActive = false;                               // +0x149
 	bool m_slaughter = false;                                  // +0x14A
-	std::string m_labelForPalantirString;                      // +0x14C
+	std::string m_labelForPalantirString = ">UNSPECIFIED<";    // +0x14C, RW 0x8B9E0D–0x8B9E14
 	std::vector<std::string> m_applyToTheseUpgrades;           // +0x150
 	static void buildFieldParse(MultiIniFieldParse &p);
 };

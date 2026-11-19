@@ -9,6 +9,7 @@
 #include "doctest.h"
 
 #include "StartTestUtil.h"
+#include "AISceneTestUtil.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -167,6 +168,13 @@ inline AttackResult siegeAttack(starttest::Shared &s, const std::string &map, co
 {
 	AttackResult res;
 	FortressGame g(s, map, aiDefender);
+	if (aiDefender)
+	{
+		// Preserve the Easy defender's construction/gate activity, but isolate the siege pins from background roaming draws.
+		Player *defender = g.ofFaction("FactionMen");
+		REQUIRE(defender);
+		testutil::deferRoamingDefense(g.game->logic(), defender->getPlayerIndex());
+	}
 	g.frames(2);
 	Object *gate = g.named(gateName);
 	REQUIRE(gate);

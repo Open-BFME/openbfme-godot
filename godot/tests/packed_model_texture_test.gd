@@ -107,6 +107,56 @@ func _check_corrupt_mask() -> bool:
 		DirAccess.remove_absolute(path)
 	return true
 
+## The textures of an instancer's materials by mesh surface, and those materials.
+func _surface_resources(renderer: Node) -> Dictionary:
+	var out := {}
+	for child in renderer.get_children():
+		if not child is MultiMeshInstance3D:
+			continue
+		var mesh: Mesh = child.multimesh.mesh
+		for surface in mesh.get_surface_count():
+			var material: ShaderMaterial = mesh.surface_get_material(surface)
+			var texture: Texture2D = material.get_shader_parameter("w3d_tex0")
+			if texture != null:
+				out[str(child.name) + ":" + str(surface)] = [texture, material]
+	return out
+
+## Another instancer on the same mount takes the decoded textures (W3DTextureCache) with its own materials and the S-1482 note; one on a
+## new mount decodes its own.
+func _check_shared_textures(fs: RefCounted, first: Node) -> void:
+	var original := {}
+	var all := _surface_resources(first)
+	for key in all:
+		if str(key).begins_with("GUGdfHrs_SKN_"): # the first renderer also drew GUGdfHrs_SKNL
+			original[key] = all[key]
+	var expected := ["GUGdfHrs_SKN_GUGDFHRS_SKN_GANDALF_W:0", "GUGdfHrs_SKN_GUGDFHRS_SKN_GUHORSE:0"] # the rider and the horse
+	var got := original.keys()
+	got.sort()
+	_check(got == expected, str(all.keys()))
+	var remounted: RefCounted = ClassDB.instantiate("RetailFileSystem")
+	if not _check(remounted.mount_retail().ok):
+		return
+	for source in [fs, remounted]:
+		var second: Node3D = ClassDB.instantiate("W3DInstancer")
+		root.add_child(second)
+		if not _check(second.setup(source).ok):
+			second.free()
+			return
+		var report: Dictionary = second.get_model_report(second.add_model("GUGdfHrs_SKN"))
+		_check(report.errors.is_empty(), str(report))
+		var packed_note := false
+		for note in report.notes:
+			packed_note = packed_note or (str(note).contains("[S-1482] model texture") and str(note).contains("gushadowfaxh.jpg"))
+		_check(packed_note, str(report))
+		var again := _surface_resources(second)
+		_check(again.keys() == original.keys(), str(again.keys()) + " vs " + str(original.keys()))
+		for key in original:
+			if not _check(again.has(key), key):
+				continue
+			_check(again[key][1] != original[key][1], key + ": a material of its own")
+			_check((again[key][0] == original[key][0]) == (source == fs), key + (": the same texture on the same mount" if source == fs else ": its own texture on a new mount"))
+		second.free()
+
 func _run() -> void:
 	if OS.get_environment("ROTWK_INSTALL").is_empty() or OS.get_environment("BFME2_INSTALL").is_empty():
 		quit(77)
@@ -164,5 +214,6 @@ func _run() -> void:
 				_check(_check_texture(texture, colour, mask))
 				horse_textures += 1
 	_check(horse_textures == 2)
+	_check_shared_textures(fs, renderer)
 	_check(_check_corrupt_mask())
 	_finish("PACKED MODEL TEXTURE PASS")

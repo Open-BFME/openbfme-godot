@@ -170,38 +170,24 @@ GiantBirdAIUpdate *birdOf(Object *o)
 	return o ? dynamic_cast<GiantBirdAIUpdate *>(o->getAIUpdateInterface()) : nullptr;
 }
 
-// RW 0x690BD2 with no label, mode 1 and a seed (the geometry's random contact point): stop S-362's approximation (the geometry centre), the seed drawn
-Coord3D seededContactPoint(Object &victim, int line)
-{
-	GameLogic &logic = victim.logic();
-	(void)logic.random().getValue(0, 12345678, kGiantBirdCpp, line); // GetGameLogicRandomValue(0, 0xBC614E)
-	Coord3D aim = *victim.getPosition();
-	aim.z = SimMath::addf32(aim.z, SimMath::mulf32(CombatQueries::geometry(victim).height, 0.5f));
-	return aim;
-}
-
-// the victim's contact point of the swoop / attack states: the AI's labelled point (RW 0x667C76), else the seeded one (RW 0x690BD2 at `line`)
+// the victim's contact point of the swoop / attack states: the AI's labelled point (RW 0x667C76), else Object::getWorldspaceBestContactPoint with no label, mode 1
+// and a logic-random seed (RW 0x690BD2 -> GeometryInfo::getBestContactPoint RW 0xAD3340: the target's highest GeometryContactPoint, z clamped to its geometry height,
+// back to the world). RW 0x76B711 .. 0x76B721 is the attack state's fallback: push 0 (no skip), push 0x37B (the seed), push 0xC2E120 (the file name), push 0xBC614E
+// (the top of GetGameLogicRandomValue's range) and call; the swoop's on-enter (line 0x254) and update (line 0x294) reach the same call. The seed value is drawn and
+// dropped exactly as RW does, so the logic random stays in step.
 // RW 0x667C76 with `preferred` false runs GeometryInfo::getBestContactPoint's overlap test (RW 0xAD2CE0: the target's shapes against the static point geometry
-// RW 0xDF1EA8 at the label's point; ported by lane AIMAIM-1). A logic error left (another mode, S-1281) makes the bird take the seeded contact point, as RW
-// does for a target without the label, and the world's report carries S-1281
+// RW 0xDF1EA8 at the label's point; ported by lane AIMAIM-1).
 Coord3D contactPointOn(AIUpdateInterface &ai, Object &victim, int line)
 {
 	Coord3D pos;
-	bool found = false;
-	try
-	{
-		found = ai.findNearestLabeledContactPointOnTarget(victim, pos, *ai.getObject()->getPosition(), false);
-	}
-	catch (const std::logic_error &)
-	{
-		static const std::string stop = "[S-1281] GiantBirdAIUpdate: the labelled contact point (SpecialContactPoints, RW 0x667C76) asked a getBestContactPoint "
-		                                "mode that is not ported: the seeded contact point is used";
-		ai.world().noteStop(stop.c_str());
-		found = false;
-	}
+	bool found = ai.findNearestLabeledContactPointOnTarget(victim, pos, *ai.getObject()->getPosition(), false);
 	if (!found)
 	{
-		pos = seededContactPoint(victim, line);
+		(void)victim.logic().random().getValue(0, 12345678, kGiantBirdCpp, line); // GetGameLogicRandomValue(0, 0xBC614E), RW 0x76B721
+		if (!ObjectGeometry::worldspaceBestContactPoint(victim, *ai.getObject()->getPosition(), "", 1, false, pos))
+		{
+			pos = *victim.getPosition(); // unreachable: mode 1 answers true (RW 0xAD3373 `mov al, 1`)
+		}
 	}
 	return pos;
 }
@@ -896,8 +882,14 @@ public:
 				const WeaponTemplate &wt = *w->currentWeapon()->getTemplate();
 				if (wt.m_hasGrabNugget && !wt.m_fireFXs[0].empty())
 				{
+					// Local 22 (#163), RW 0x76B84C .. 0x76B894 (DONOR BFME2 0x00368DE2 AIGiantBirdAttackStateOnEnter.cpp:431): when o has a drawable
+					// (RW 0x76B856), fireFX->doFXPos(&victim->m_position, o.getDrawable()->getTransformMatrix(), wt.m_weaponSpeed, &victim->m_position).
 					FXEvent e = FXEventLog::objectEvent(FXEvent::POSITION_FX, "GiantBirdGrabFX", o.logic().getFrame(), wt.m_fireFXs[0], o);
 					e.position = *victim->getPosition();
+					e.drawableMatrix = true;
+					e.weaponSpeed = wt.m_weaponSpeed;
+					e.secondaryPosition = e.position;
+					e.hasSecondaryPosition = true;
 					o.logic().fxEvents().emit(e);
 				}
 				ai.flight().flags |= 0x40u;
@@ -1724,7 +1716,7 @@ bool GiantBirdAIUpdate::routeCommand(const RoutedCommand &c)
 {
 	Object &o = *getObject();
 	const bool routed = c.type == 0 || c.type == kCommandUnidentifiedMove || c.type == 0xB || c.type == 0xC || c.type == 0x39 || c.type == 0xE || c.type == 0xF ||
-						c.type == 6 || c.type == 7 || c.type == 0x32 || c.type == 0x33 || c.type == 0x47;
+						c.type == 6 || c.type == 7 || c.type == 0x32 || c.type == 0x33 || c.type == 0x47 || c.type == 0x48;
 	if (!routed)
 	{
 		// RW 0x76DACD: the bird's flag 0 cleared, then the base aiDoCommand (RW 0x66A7EC). (The deferral of such a command while attacking is ported for the
@@ -1769,6 +1761,22 @@ bool GiantBirdAIUpdate::routeCommand(const RoutedCommand &c)
 			stateMachine().setGoalObject(c.target->getID());
 			stateMachine().setGoalPosition(*c.target->getPosition());
 			startCommand(STATE_SWOOP, c.source);
+		}
+		return true;
+	case 0x48:
+		// RW 0x76DAF4: retail reads the ID without a null test and faults; the port cancels the command (owner decision 2026-11-06, #57).
+		// INFERENCE: reachability of that read after the target's removal is not proved; the adjacent branch RW 0x76A139 returns without touching the machine.
+		if (!c.target)
+		{
+			o.logic().noteStop("[PORT-5] missing GiantBird ability target: command cancelled (INFERENCE, RW 0x76DAF4; owner decision #57)");
+			return true;
+		}
+		if (mobile)
+		{
+			stateMachine().clear();
+			stateMachine().setGoalPosition(*c.target->getPosition());
+			stateMachine().setGoalObject(INVALID_ID);
+			startCommand(STATE_FLY_400, c.source);
 		}
 		return true;
 	case 0x47:
@@ -1865,7 +1873,7 @@ void GiantBirdAIUpdate::followWaypointPath(int first, bool asTeam, CommandSource
 
 bool GiantBirdAIUpdate::deferrable(int type)
 {
-	static const int kRouted[] = { 0, kCommandUnidentifiedMove, 0xB, 0xC, 0x39, 0xE, 0xF, 6, 7, 0x32, 0x33, 0x47, kDeferredFollowPath, kDeferredFollowPathAppend };
+	static const int kRouted[] = { 0, kCommandUnidentifiedMove, 0xB, 0xC, 0x39, 0xE, 0xF, 6, 7, 0x32, 0x33, 0x47, 0x48, kDeferredFollowPath, kDeferredFollowPathAppend };
 	return std::find(std::begin(kRouted), std::end(kRouted), type) != std::end(kRouted);
 }
 
@@ -1990,6 +1998,20 @@ bool GiantBirdAIUpdate::aiSwoopAttackObject(Object *victim, CommandSourceType so
 	RoutedCommand c;
 	c.type = 0x39;
 	c.target = victim;
+	c.source = source;
+	return routeCommand(c);
+}
+
+bool GiantBirdAIUpdate::aiAbilityMoveToObject(Object *target, CommandSourceType source)
+{
+	// RW 0x852DC5 -> 0x76D995: command 0x48 keeps the object ID if the bird is attacking.
+	if (!acceptCommand(source, 0x48, target))
+	{
+		return false;
+	}
+	RoutedCommand c;
+	c.type = 0x48;
+	c.target = target;
 	c.source = source;
 	return routeCommand(c);
 }
@@ -2356,6 +2378,14 @@ UpdateSleepTime GiantBirdAIUpdate::update()
 		else if (c.type == kDeferredFollowPathAppend)
 		{
 			privateFollowPathAppend(c.position, c.source);
+		}
+		else if (c.type == 0x48)
+		{
+			// RW 0x76CE7D re-enters the bird dispatcher, including its gate 0x667174.
+			if (allowedToRespondToCommand(c.source, c.type))
+			{
+				routeCommand(c);
+			}
 		}
 		else if ((c.type != 0xB && c.type != 0xC && c.type != 0x39) || c.target)
 		{

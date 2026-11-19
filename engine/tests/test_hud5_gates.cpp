@@ -663,6 +663,88 @@ TEST_CASE("gatepush1 gates retail: the closed gate repels a colliding unit (Repe
 	CHECK(askedBy(*bumper, *gate));
 }
 
+// ---- lane GATECOLLIDE-1: the gates' contacts (RotWK's collision manager holds every object without INERT / NO_COLLIDE, a HORDE with AIData
+// HordesWaitForHordes, RW 0x68E31F; the pairs RW 0xB6D730 /
+// 0xB6D060) bring the closed gate's repel (RW 0x89C6F5) into the game -------------------------------------------------------------------------------
+TEST_CASE("gatecollide1 gates retail: a unit whose path was made through the open main gate meets the closed gate, is repelled (RW 0x89C6F5) and never reaches the far side")
+{
+	OPENBFME_REQUIRE_START(s);
+	GateGame g(*s, gateMessage(*s, "maps/map wor helms deep/map wor helms deep.map", false));
+	g.frames(2);
+	Object *gate = g.named("Main Gate");
+	REQUIRE(gate);
+	GateOpenAndCloseBehavior *b = GateOpenAndCloseBehavior::findGate(*gate);
+	REQUIRE(b);
+	REQUIRE(b->isOpen());
+	Player *owner = gate->getControllingPlayer();
+	REQUIRE(owner);
+	const Gateway w = gatewayOf(*gate);
+	const Coord3D at = *gate->getPosition();
+	// the unit's side of the gate: its distance along the gate's direction from the gate's position (the CLOSED box, 1 deep at offset -5, lies at -6 .. -4)
+	const auto side = [&](const Object &u) { return (u.getPosition()->x - at.x) * w.dirX + (u.getPosition()->y - at.y) * w.dirY; };
+	// a porter far enough out that it reaches the doorway after the CLOSED geometry is in (above PercentOpenForPathing, 50 % of the 61 frames), its order
+	// given with the close order, so its path is made through the open gate
+	std::string error;
+	const float lateral = 24.0f;
+	const Coord3D start{ at.x - w.dirX * 800.0f - w.dirY * lateral, at.y - w.dirY * 800.0f + w.dirX * lateral, at.z };
+	Object *walker = g.game->createObject("MenPorter", owner->getPlayerIndex(), start, 0.0f, &error);
+	REQUIRE_MESSAGE(walker, error);
+	g.frames(1);
+	g.send(MSG_CLOSE_GATE, owner->getPlayerIndex(), gate->getID());
+	const Coord3D goal{ at.x + w.dirX * 300.0f - w.dirY * lateral, at.y + w.dirY * 300.0f + w.dirX * lateral, at.z };
+	walker->getAIUpdateInterface()->aiMoveToPosition(goal, CMD_FROM_PLAYER);
+	int closedFrame = -1, repelFrame = -1;
+	bool nearAtSwitch = false, reachedFarSide = false, sawPath = false, pathThroughDoorway = false;
+	const unsigned long long contactsBefore = g.game->ai().gateContacts();
+	GateOpenAndCloseBehavior::State stateAtRepel = GateOpenAndCloseBehavior::OPEN;
+	for (int i = 0; i < 150; ++i)
+	{
+		g.frames(1);
+		if (!sawPath && walker->getAIUpdateInterface()->mover().path())
+		{
+			// the path the order made: one of its legs crosses the gate's plane inside the doorway (|lateral| within the gate's bounding radius)
+			sawPath = true;
+			const Path *path = walker->getAIUpdateInterface()->mover().path();
+			const auto along = [&](const Coord3D &q) { return (q.x - at.x) * w.dirX + (q.y - at.y) * w.dirY; };
+			const auto across = [&](const Coord3D &q) { return -(q.x - at.x) * w.dirY + (q.y - at.y) * w.dirX; };
+			for (const PathNode *n = path->getFirstNode(); n && n->getNext(); n = n->getNext())
+			{
+				const Coord3D a = *n->getPosition(), c = *n->getNext()->getPosition();
+				const float sa = along(a), sc = along(c);
+				if (sa < 0.0f && sc >= 0.0f) // tolerance: the gate's plane
+				{
+					const float u = sa / (sa - sc);
+					const Coord3D x{ a.x + (c.x - a.x) * u, a.y + (c.y - a.y) * u, a.z };
+					pathThroughDoorway = std::fabs(across(x)) <= w.radius; // tolerance: the doorway, within the gate's bounding radius
+				}
+			}
+		}
+		if (closedFrame < 0 && b->geometryState() == GateOpenAndCloseBehavior::GEOMETRY_CLOSED)
+		{
+			closedFrame = i;
+			nearAtSwitch = side(*walker) < -6.0f; // tolerance: outside the closed box (-6 .. -4), on the near side
+		}
+		if (repelFrame < 0 && askedBy(*walker, *gate))
+		{
+			repelFrame = i;
+			stateAtRepel = b->state();
+		}
+		reachedFarSide = reachedFarSide || (closedFrame >= 0 && side(*walker) >= 0.0f); // tolerance: the gate's plane
+	}
+	const unsigned long long contacts = g.game->ai().gateContacts() - contactsBefore;
+	MESSAGE("the closed geometry came in at frame " << closedFrame << ", the gate repelled the porter at frame " << repelFrame << "; it ends at side " << side(*walker)
+	                                                << "; gate contacts " << contacts);
+	REQUIRE(sawPath);
+	REQUIRE(pathThroughDoorway); // the order's path was made through the open gate
+	REQUIRE(closedFrame == 31);
+	REQUIRE(nearAtSwitch); // the porter was outside the closed box, on the near side, when the closed geometry came in
+	CHECK(b->state() == GateOpenAndCloseBehavior::CLOSED);
+	CHECK(repelFrame == 70); // the repel (RW 0x89C6F5 -> 0x89C5A2): the gate became its move-away requester when it touched the closed box
+	CHECK(stateAtRepel == GateOpenAndCloseBehavior::CLOSED); // the gate had finished closing (100 %) before the porter reached it
+	CHECK_FALSE(reachedFarSide);
+	CHECK(contacts == 2); // every gate pair on the map that overlapped (only the porter comes near a gate; on main: none, no pass)
+}
+
 TEST_CASE("hud5 gates: the acceptance stops are reported")
 {
 	const std::vector<std::string> stops = GateModules::acceptanceStops();

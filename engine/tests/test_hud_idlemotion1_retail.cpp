@@ -146,7 +146,10 @@ TEST_CASE("idlemotion1 retail: a lancer left behind while its horde runs a fleei
 	// merge queue q29 (measured at IDLEMOTION-1's merge point and on the merged tree): the run-down starts at 59, not 65 (the lane's tree had neither
 	// AIDATA-1's run-down rules, RW 0x748650 / 0x74AA69, nor PATHPRIO-1 and the other items merged before it; not split per item)
 	// merge queue q34 (measured once on the merged tree and at each merge point): 59 -> 58 from #160's merge point on (the lancers walk to their slots, RW 0x871536, instead of being put on them)
-	REQUIRE(start == 58);
+	// pin: lane DECOMPFIX-1109 (FLEECHASE-1, retail rule: the horde melee wait state fails at once on a fleeing target, RW 0x7469FD (BFME2 decomp AIAttackMeleeHordeWaitState.cpp:42), and its update on one that
+	// starts to run, RW 0x74AD1A; measured on the lane's tree merged with the archive at 1ef945faf): the lancers no longer stop to melee the fleeing orcs, the
+	// approach runs them down from frame 18 (was 58); the member's held, leash and run-down frames below are unchanged
+	REQUIRE(start == 18);
 	const unsigned runDown = (unsigned)CombatNames::statuses().runningDownFromBehind;
 	// the last member is put 120 units behind its horde: beyond the leash of the marching horde and of its slot
 	Object *m = membersOf(lancers).back();
@@ -227,7 +230,7 @@ TEST_CASE("idlemotion1 retail: the run-down orders a member whose attack has no 
 	}
 	Arena a(shared(), "FactionElves", "FactionMordor");
 	Object *lancers = nullptr, *orcs = nullptr;
-	REQUIRE(startRunDown(a, lancers, orcs) == 58); // the run-down of the test above
+	REQUIRE(startRunDown(a, lancers, orcs) == 18); // the run-down of the test above (DECOMPFIX-1109: was 58)
 	// a lancer attacks one orc; its attack's own machine is then cleared (no current state): RW 0x740ECD answers "not active" (RW 0x742DD0: the machine's
 	// current state, none: idle), while the state is still AI_ATTACK_OBJECT
 	Object *m = membersOf(lancers).back();
@@ -272,7 +275,7 @@ TEST_CASE("idlemotion1 retail: a member running a fleeing horde down is done aim
 	}
 	Arena a(shared(), "FactionElves", "FactionMordor");
 	Object *lancers = nullptr, *orcs = nullptr;
-	REQUIRE(startRunDown(a, lancers, orcs) == 58); // the run-down of the tests above
+	REQUIRE(startRunDown(a, lancers, orcs) == 18); // the run-down of the tests above (DECOMPFIX-1109: was 58)
 	const unsigned runDown = (unsigned)CombatNames::statuses().runningDownFromBehind;
 	const unsigned aiming = (unsigned)CombatNames::statuses().isAimingWeapon;
 	Object *m = membersOf(lancers).back();

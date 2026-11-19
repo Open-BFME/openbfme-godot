@@ -14,6 +14,7 @@
 #pragma once
 
 #include "Common/Dict.h"
+#include "Common/INIDataTypes.h"
 #include "GameLogic/ObjectTypes.h"
 
 #include <cstdint>
@@ -100,6 +101,17 @@ public:
 	bool hadMembers() const { return m_hadMembers; }
 	void setHadMembers() { m_hadMembers = true; }
 
+	// lane THREATLEVEL-1: the map scripts' cached enemy threat around the team (RW + 0x120, a float) and its deadline frame (RW + 0x124); the constructor
+	// (RW 0x7A6C91) clears both and Team::xfer (RW 0x7A5C06: xferReal + 0x120, xferUnsignedInt + 0x124; BFME2 TeamXfer.cpp:196-197) writes them.
+	// GameLogic/ScriptEngine/ScriptThreat.cpp reads and refreshes them (RW 0x7A6A20 / 0x7A5B03)
+	float scriptThreatCache() const { return m_scriptThreat; }
+	unsigned scriptThreatDeadline() const { return m_scriptThreatDeadline; }
+	void setScriptThreatCache(float value, unsigned deadline)
+	{
+		m_scriptThreat = value;
+		m_scriptThreatDeadline = deadline;
+	}
+
 	// lane CAMP-1H: the team's script state (TARGET FACTS, rotwk201_game.exe; the constructor RW 0x7A6C91 clears it, the INI-free parts of Team::updateState
 	// RW 0x7A208C and Team::updateGenericScripts RW 0x7A267D read and write it, ScriptEngine::updateTeamState runs both)
 	struct ScriptState
@@ -139,6 +151,17 @@ public:
 	}
 	bool isActive() const { return m_script.active; }
 
+	// lane PORT-40: team + 0x110 / + 0x111, written by TEAM_SET_AI_RECRUITABLE_FLAG (RW 0x7C199C) and TEAM_AVAILABLE_FOR_RECRUITMENT (RW 0x7C0C3E):
+	// the per-team AI-recruitable override. The recruit gate RW 0x7A491C (RW 0x7A4A13 .. 0x7A4A22) reads the override when set, else the member
+	// counts as recruitable when it belongs to its player's default team or its team's prototype is teamIsAIRecruitable
+	void setAIRecruitableOverride(bool recruitable)
+	{
+		m_aiRecruitableOverrideSet = true;
+		m_aiRecruitableOverride = recruitable;
+	}
+	bool hasAIRecruitableOverride() const { return m_aiRecruitableOverrideSet; }
+	bool aiRecruitableOverride() const { return m_aiRecruitableOverride; }
+
 	// lane RAI-POW: the team's special-power registry (Team + 0x140). Retail keeps a circular list of five-word records (the power template, the
 	// frame, two zeros and the caster's object id; RW 0x7A5582 appends one, RW 0x7A3EF5 looks one up and answers the caster the id resolves to).
 	// AIPOW-1's SOUL_FREEZE decision writes it, and RW 0x9E6941 (ATTACK_HEAL_AOE) reads it.
@@ -155,6 +178,29 @@ public:
 	// RW 0x7A5582: appended at the end of the registry (retail's circular list insert before its sentinel)
 	void addSpecialPowerRecord(int powerType, std::uint32_t frame, ObjectID caster);
 	const std::vector<SpecialPowerRecord> &specialPowerRecords() const { return m_specialPowers; }
+
+	// lane RAI-POW-4: the team's threat-order list (Team + 0x13C, a pointer to a circular list of orders; RW 0x7A59CB adds one, RW 0x7A1C5E
+	// erases one, RW 0x7A2004 expires them after 3000 frames). Its commands and payload words are at RW_0x9E691D.md: + 0x0C the command, + 0x13
+	// the flags byte (0x40 target id at + 0x24, 0x80 position at + 0x18), + 0x14 the timestamp. The AI's ATTACK_HEAL_AOE decision reads them.
+	struct Order
+	{
+		std::int32_t command = 0;        ///< + 0x04 (node + 0x0C): 0x11 / 0x1A from RW 0x7A59CB
+		std::uint16_t flagsWord = 0;     ///< + 0x0A (node + 0x12): 0x2004, | 0x10; 0x8000 position, 0x4000 target
+		std::uint8_t flags = 0;          ///< + 0x08 (node + 0x10): 0xFF / 0x0F / 0 from the threat size
+		std::uint32_t timestamp = 0;     ///< + 0x0C (node + 0x14): written 0 by RW 0x7A59CB's producer (RW 0x7A0060)
+		Coord3D position{};              ///< + 0x10 (node + 0x18)
+		ObjectID target = INVALID_ID;    ///< + 0x1C (node + 0x24)
+		bool hasPosition() const { return (flagsWord & 0x8000u) != 0; } ///< RW 0x79F922 tests byte + 0xB bit 0x80
+		bool hasTarget() const { return (flagsWord & 0x4000u) != 0; }   ///< the decision tests byte + 0xB bit 0x40
+	};
+	// RW 0x7A1C5E: the order at `index` leaves the list
+	void eraseOrder(std::size_t index);
+	const std::vector<Order> &orders() const { return m_orders; }
+	// RW 0x7A2004: every order older than 3000 frames (node + 0x14 + 0xBB8 < frame) goes
+	void expireOrders(std::uint32_t frame);
+	// RW 0x7A59CB: the team's most damaged member (RW 0x7A0141), turned into an order of 0x11 / 0x1A unless one is already there
+	void updateThreatOrder(class GameLogic &logic);
+	void addOrderForTest(const Order &order) { m_orders.push_back(order); } // tests only (never called by the game)
 
 	// the members, in insertion order
 	Object *getFirstMember() const { return m_head; }
@@ -183,8 +229,13 @@ private:
 	std::uint32_t m_teamTarget = 0;         ///< lane SCRIPT-3: + 0x114
 	int m_currentWaypoint = -1;             ///< lane SCRIPT-3: + 0x6C
 	bool m_hadMembers = false;              ///< lane CAMP-1: + 0x128
+	float m_scriptThreat = 0.0f;            ///< lane THREATLEVEL-1: + 0x120
+	unsigned m_scriptThreatDeadline = 0;    ///< lane THREATLEVEL-1: + 0x124
 	ScriptState m_script;                   ///< lane CAMP-1H
+	bool m_aiRecruitableOverrideSet = false; ///< lane PORT-40: + 0x110
+	bool m_aiRecruitableOverride = false;    ///< lane PORT-40: + 0x111
 	std::vector<SpecialPowerRecord> m_specialPowers; ///< lane RAI-POW: + 0x140, in insertion order (never cleared in a game)
+	std::vector<Order> m_orders;                    ///< lane RAI-POW-4: + 0x13C, in insertion order (RW 0x7A59CB inserts, RW 0x7A2004 expires)
 };
 
 // lane CAMP-1H: the team scripts of a prototype's TeamTemplateInfo (prototype + 0x12C), read from the map's team dict by RW 0x7A2C96 with the keys of RW
@@ -235,6 +286,12 @@ public:
 	Team *getNewestTeam() const { return m_teams.empty() ? nullptr : m_teams.back(); }
 	// lane CAMP-1H: the TeamTemplateInfo's scripts (read from the dict once)
 	const TeamTemplateScripts &templateScripts() const;
+
+	// lane PORT-40: the TeamTemplateInfo's recruit fields (prototype + 0x210 / + 0x21C): teamIsAIRecruitable (RW 0x7A35EA reads the key,
+	// RW 0x7A35F6 a missing one = false) and teamProductionPriority (RW 0x7A383A; the getter RW 0x714A98 answers 0 for a missing key). The recruit
+	// gate RW 0x7A491C (RW 0x7A49F1 .. 0x7A4A22) reads them
+	bool teamIsAIRecruitable() const { return m_dict.getBool("teamIsAIRecruitable"); }
+	int teamProductionPriority() const { return m_dict.getInt("teamProductionPriority"); }
 
 private:
 	friend class TeamFactory;

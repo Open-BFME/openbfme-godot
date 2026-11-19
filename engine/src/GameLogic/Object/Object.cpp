@@ -18,6 +18,7 @@
 #include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameClient/MapChunks.h"
@@ -794,6 +795,7 @@ Team *Object::getOriginalTeam() const
 
 void Object::setTeam(Team *team)
 {
+	m_logic.noteRadarLogicWrite(); // the owner the radar's attack scan filters by may change between logic steps
 	// lane BACKLOG4: RW 0x699554 .. 0x699570 (BFME2 decomp ObjectSetTeam.cpp Object::setTeam, tier B same-shape: "to prevent spawning useful units for a
 	// player after he dies"): the team of a player who is not active (RW 0x6AAC52: an observer, Player + 0x35A, or defeated, + 0x754) is replaced by the
 	// neutral player's default team (ThePlayerList + 0x18 -> + 0x30C). Retail reads the team's player without a test; a team without one is kept here
@@ -1077,9 +1079,15 @@ void Object::setCapturedTeam(Team *team)
 	{
 		return;
 	}
-	// RW 0x699733 .. 0x6997A7: the production module's vslot 0x40 (its queue cancelled), the score keeper's structure counts, RW 0x68B303 and the firing tracker
+	// RW 0x69973D .. 0x69974D (DONOR BFME2 0x00298C76 in ObjectDefect.cpp:133, lane LOCAL-62): cancel and release all production on the previous owner's team
+	// before changing the building's team (ProductionUpdateInterface vslot +0x40, RW 0x8A1666)
+	if (ProductionUpdateInterface *pu = getProductionUpdate()) // RW 0x699740: RW 0x68C327(0)
+	{
+		pu->cancelAndReleaseAllProduction(); // RW 0x69974D -> RW 0x8A1666
+	}
+	// RW 0x699733 .. 0x6997A7: the score keeper's structure counts, RW 0x68B303 and the firing tracker
 	// RW 0x8E3ABB are not ported (S-1225); the selection, radar and EVA messages after the change are the client's
-	m_logic.noteStop("[S-1225] Object::setCapturedTeam: the production cancel, score counts and RW 0x68B303 / 0x8E3ABB of a capture are not ported");
+	m_logic.noteStop("[S-1225] Object::setCapturedTeam: the score counts and RW 0x68B303 / 0x8E3ABB of a capture are not ported");
 	setTeam(team); // RW 0x69954A
 	if (AIUpdateInterface *ai = getAIUpdateInterface())
 	{
@@ -1899,6 +1907,20 @@ void Object::removeUpgrade(const UpgradeTemplate *upgrade)
 	}
 }
 
+// RW 0x68E083 / BFME2 0x0028DA28: the whole mask clears, then every upgrade module drops its upgrade (RW 0x8D2688).
+// The citadel's zero-percent capture (S-6010) takes the entering object's team this way.
+void Object::resetUpgrades()
+{
+	m_upgradeMask.words.fill(0);
+	for (std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (UpgradeMux *mux = m->getUpgrade())
+		{
+			mux->removeUpgrade(); // RW 0x8D2688
+		}
+	}
+}
+
 void Object::updateUpgradeModules()
 {
 	const Player *player = getControllingPlayer(); // RW 0x68B678
@@ -2050,6 +2072,7 @@ void Object::doAttemptDamage(DamageInfo &info)
 			if (info.m_input.m_shouldPlayUnderAttackEva)
 			{
 				m_radarAttackFrame = m_logic.getFrame();
+				m_logic.noteRadarLogicWrite(); // the HUD may already have sampled this logic frame
 				// lane EVADAMAGE-1: RW 0x67B580 .. 0x67B776, the Eva half for the local player's object (RW 0x6AA7B2): the logic's part of the choice and
 				// the scan (EvaDamageNotice.h; reads only), the rest is the client's (ClientEvent::EVA_DAMAGED)
 				if (notifyDrawable && m_client && owner == m_logic.players().getLocalPlayer())
@@ -2531,6 +2554,12 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 	{
 		h.addU32(0x4A5Bu); // lane MODCOMPAT-MOD1: hashed only when set (a game without rebuild holes keeps its hash)
 	}
+	if (m_scriptThreatDeadline != 0)
+	{
+		h.addU32(0x7E4A0000u); // lane THREATLEVEL-1: the script threat cache, hashed once a refresh armed it (a game without threat scripts keeps its hash)
+		h.addU32(m_scriptThreatDeadline);
+		h.addFloat(m_scriptThreat);
+	}
 	if (m_geometrySource) // lane MODCOMPAT-MOD1: another template's GeometryInfo (setGeometryInfoFrom), hashed when set
 	{
 		h.addU32(0x6E100000u | m_geometrySource->getTemplateID());
@@ -2745,7 +2774,10 @@ void Object::setScriptStatus(std::uint8_t bits, bool set)
 // (the Objects block's order) and the team links (the TeamFactory's post-process).
 void Object::xfer(Xfer &x)
 {
-	XferVersion version{ 1, 2 }; // lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4)
+	// lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4). Lane THREATLEVEL-1: version 3 the script threat cache (+ 0x464 /
+	// + 0x468), written only once a refresh armed it (every other object keeps version 2's block)
+	const bool threatArmed = m_scriptThreatDeadline != 0 || m_scriptThreat != 0.0f;
+	XferVersion version{ 1, (std::uint8_t)(x.isLoading() || threatArmed ? 3 : 2) };
 	x.xferVersion(version);
 	// a load never reads its destination: the save-side values are built from the members only when saving (SAVES.md, rules for xfer authors)
 	const bool saving = !x.isLoading();
@@ -2844,6 +2876,19 @@ void Object::xfer(Xfer &x)
 	else if (x.isLoading())
 	{
 		m_campaignCarryover = false;
+	}
+	// lane THREATLEVEL-1 (Sol review): the script threat cache. RotWK's Object::xfer (RW 0x697F28) does not write it (a retail load starts from the
+	// constructor's cleared pair); BFME2 1.06's does (+ 0x448 then + 0x444, ObjectDoXfer.cpp:715-716). The OpenBFME snapshot keeps it in both editions:
+	// the state hash covers it, and a load must give the saved hash back (CommandLogLoad::beginSnapshot refuses anything else)
+	if (version.current >= 3)
+	{
+		x.xferUnsignedInt(&m_scriptThreatDeadline);
+		x.xferReal(&m_scriptThreat);
+	}
+	else if (x.isLoading())
+	{
+		m_scriptThreat = 0.0f;
+		m_scriptThreatDeadline = 0;
 	}
 	x.xferBool(&m_scriptSelectable);
 	x.xferBool(&m_masked); // lane MODCOMPAT-MOD1: RW + 0x459 bit 1

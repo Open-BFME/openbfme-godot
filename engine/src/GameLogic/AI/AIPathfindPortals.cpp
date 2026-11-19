@@ -519,8 +519,8 @@ unsigned Pathfinder::costToGoal(const PathfindCell *cell, const PathfindCell *go
 // nor closed, joins the open list: the start cell (when it is not the popped one) gets a record, the popped cell as parent, and is closed; the link cell's
 // parent is the start cell with the waypoint (RW 0x93443D), its cost so far the start cell's plus 500 for a type 8 waypoint, else the 1/10-cell distance
 // between the two (RW 0x9345AA), its total that plus its distance to the goal.
-bool Pathfinder::hierarchicalPortals(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone, const PathfindMovement &mv,
-	const PathfindObject *obj, int &cellCount)
+bool Pathfinder::hierarchicalPortals(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone,
+	const PathfindZoneManager::ZoneLookup &zoneLookup, const PathfindObject *obj, int &cellCount)
 {
 	const int bs = m_zoneManager.blockSize();
 	const int cx = c->getXIndex(), cy = c->getYIndex();
@@ -572,7 +572,7 @@ bool Pathfinder::hierarchicalPortals(PathfindCell *c, PathfindCell *goal, zoneSt
 				continue;
 			}
 			PathfindCell *fromCell = getCell(LAYER_GROUND, f.x, f.y);
-			if (!fromCell || m_zoneManager.getBlockZone(mv, fromCell->getZone()) != cz) // the block zone the search compares (getBlockZone)
+			if (!fromCell || PathfindZoneManager::blockZoneOf(zoneLookup, fromCell->getZone()) != cz) // the block zone the search compares (getBlockZone)
 			{
 				continue;
 			}

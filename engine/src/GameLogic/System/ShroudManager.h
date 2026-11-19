@@ -82,6 +82,8 @@ enum ObjectShroudStatus
 	OBJECTSHROUD_SHROUDED = 4
 };
 
+struct TriggerArea;
+
 class ShroudManager
 {
 public:
@@ -162,6 +164,9 @@ public:
 	void shroudMapForPlayer(int player);               ///< RW 0xB51A00
 	// RW 0x62F91A's tail: the reveals of a new game (observers permanently; everyone else unless MultiplayerSettings UseShroud)
 	void applyNewGameShroud(bool useShroud, const std::vector<int> &slotPlayers, const std::vector<int> &observerPlayers);
+	// the regional script reveals (RW 0xB4DBE0 / 0xB4DD90 a circle, RW 0xB4DCA0 / 0xB4DE50 a trigger): the ordinary looker counts
+	void revealCircle(float x, float y, float radius, std::uint32_t mask, bool add);
+	void revealTrigger(const TriggerArea &area, std::uint32_t mask, bool add);
 
 	// ---- queries ----
 	CellShroudStatus getCellStatus(int player, int cellX, int cellY) const; ///< out of the grid or of the player range: SHROUDED
@@ -211,7 +216,7 @@ public:
 		m_levels[2] = shroud;
 	}
 	unsigned displayLevel(CellShroudStatus s) const { return m_levels[(int)s]; }
-	// whether the client draws the shroud (a game started from a game setup; a bare map load is drawn without it); client data, not hashed
+	// whether the client draws the shroud (skirmish or campaign/tutorial; a bare viewer load is drawn without it); client data, not hashed
 	void setDisplayed(bool on) { m_displayed = on; }
 	bool displayed() const { return m_displayed; }
 

@@ -36,6 +36,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -224,7 +225,8 @@ public:
 private:
 	std::vector<std::string> m_unknownSubUpgrades; // lane MODS-2
 	UpgradeTemplate *newUpgrade(const std::string &name, bool assignBit); // RW 0x66FC27
-	std::map<std::string, std::unique_ptr<UpgradeTemplate>> m_byName;
+	// lane PERF-SIM-1: upgrades are looked up by name in the AI's per-frame legality checks; the map is not iterated
+	std::unordered_map<std::string, std::unique_ptr<UpgradeTemplate>> m_byName;
 	std::vector<UpgradeTemplate *> m_byBit;
 	std::vector<std::unique_ptr<UpgradeTemplate>> m_retired; ///< reloaded templates (RW frees them; kept so stale pointers stay valid)
 	int m_nextBit = 0;                                      ///< RW + 0x10

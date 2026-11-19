@@ -53,6 +53,7 @@
 class ArchiveFileSystem;
 class GameTextSource;
 class LiveGame;
+class Player;
 class RetailObjectWorld;
 
 class InGameHud : public ScriptLocalView
@@ -225,7 +226,7 @@ public:
 	const HelpBoxSettings &helpBoxSettings() const { return m_helpSettings; }
 	// the device's mapped images (the overlays' and icons' sizes) and font metrics (the help's text); without metrics the help measures with the
 	// headless stand-in (S-176)
-	void setMappedImages(const MappedImageCollection *images) { m_hud6Images = images; }
+	void setMappedImages(const MappedImageCollection *images) { m_hud6Images = images; m_input->context().images = images; }
 	void setFontMetrics(FontMetricsSource *metrics) { m_hud6Metrics = metrics; }
 	// the device draws the help box's content clip (its `_type` is helpBox().renderName()) at (x, y, w, h) window pixels: RW 0x92E2AC
 	void helpBoxRender(float x, float y, float w, float h, std::vector<HelpDrawOp> &out);
@@ -327,6 +328,9 @@ private:
 	UpdateParts m_updateParts;                     // lane SELPERF-1
 	// lane SELPERF-1: what m_selectionDecals was built for (rebuilt when any changes, else refreshed)
 	unsigned m_decalLogicFrame = ~0u;
+	unsigned m_radarLogicFrame = ~0u; ///< the logic frame noteAttacks / noteLogicEvents last read (their state moves once per logic frame)
+	std::uint32_t m_radarLogicWrites = 0; ///< GameLogic::radarLogicWrites() at that read; a later write in the same logic frame reads again
+	const Player *m_radarLocalPlayer = nullptr; ///< the local player at that read (noteAttacks keeps only that player's attacks)
 	std::vector<ObjectID> m_decalSelection;
 	SelectionDecalSettings m_decalBuiltSettings;
 	const GameLogic *m_decalLogic = nullptr;

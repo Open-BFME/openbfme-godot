@@ -266,7 +266,7 @@ private:
 //   AdvancedOption0Num .. 8Num (provider RW 0x91EA4E: the option's choice count, "%d") and binds the labels the movie shows: APT:MasterOption0_<n> /
 //   APT:MasterOption0_Custom = the game text APT:MasterOption_<level name>, APT:AdvancedOption<i> = APT:AdvancedOption_<key>, APT:AdvancedOption<i>_<j> =
 //   APT:AdvancedOption_<key>_<choice> (ShadowLOD_UltraHigh reads ShaderLOD_UltraHigh's text, RW 0x921515); + 0x310 is the LOD manager's level (+ 0x1768);
-// - MasterOption0Template<n> (RW 0x91F3B3; BFME2 decomp AptOptionsCallbacks.cpp:ExternsLODTemplate, tier A) answers preset n's nine settings ("%d"
+// - MasterOption0Template<n> (RW 0x91F3B3; BFME2 decomp AptOptions.cpp:AptOptions::ExternsLODTemplate, tier A) answers preset n's nine settings ("%d"
 //   joined by ",", RW 0x91EE9A), Custom the text kept at + 0x314; a write to Custom replaces + 0x314;
 // - EnterAdvancedSettings (RW 0x91F043, tier A): the state becomes 2; with a level chosen (+ 0x310 != -1) + 0x314 = that preset's settings;
 // - the Detail combo (RW 0x919167's twin in RotWK): Custom (item data 5) calls the movie's ShowAdvancedSettings, another level becomes + 0x310;

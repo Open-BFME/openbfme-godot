@@ -41,14 +41,15 @@ TEST_CASE("siege1 attack retail: Isengard's battering ram breaks Helm's Deep's m
 	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; a WHEELS_FOUR unit's first leg bent from its facing or reversed, RW 0x766F7F / 0x767800; the AI defender and the random stream move with every unit's lines; measured twice on the lane's tree): first damage 237 -> 273, death 322 -> 355
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): first damage 273 -> 249
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first damage 249 -> 248
-	CHECK(r.firstHit == 248); // the drive round to the causeway, then the PreAttackDelay
+	// pin: lane WALLMELEE-1 (adjustToMeleeDestination RW 0x6EEBC1 searches the destination's layer for the unit, RW 0x680A75: the approach point beside the gate, moved by 5 in x and y for the even footprint (RW 0x6EE62D), falls in a side cell of HelmsDeepGatehouseRight's ramp, layer 0x10 (RW 0x93527F), whose layer RW 0x6EE600 answers with no height test; the spiral's first cell is (269, 263) on that ramp, about 187 high, where the ground-layer search refused every cell. That goal is out of reach: FindClosestPath (RW 0x6FB869) moves the unit about 40 toward it before the attack falls back to a path to the gate itself, as on main, so it reaches the gate later; measured once on the merged tree, with that one rule switched off main's frames come back, the lane's other rules switched off change nothing, #220's goal layer switched back changes nothing): the ram gives way inside the gate (5.4; main: at 20.4) and strikes from 48.4 (main: 67.7); first damage 248 -> 288, death 315 -> 354
+	CHECK(r.firstHit == 288); // the drive round to the causeway, then the PreAttackDelay
 	CHECK(r.healthAfterFirst == 3000.0f); // ISENGARD_BATTERINGRAM_DAMAGE 1000, the gate's armour full
 	// merge queue q27: death 335 -> 366, GATEPUSH-1 (the gate repels the units colliding with it when it opens or closes, RepelCollidingUnits; measured
 	// at each merge point)
 	// merge queue q31 (#68's ambient wanderers draw from the game's random numbers; measured at each merge point): death 366 -> 364
 	// merge queue q32 (#159's ramp cells (RW 0x93527F: Helm's Deep's ramps meet the ground and the wall tops only at their two ends) move the AI defender and the random stream; measured once on the merged tree, the change appears at #159's merge point): death 364 -> 359
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): death 355 -> 315
-	CHECK(r.deathFrame == 315);
+	CHECK(r.deathFrame == 354);
 	CHECK(r.dead);
 }
 
@@ -132,7 +133,8 @@ TEST_CASE("siege1 attack retail: Mordor's catapult made inside its MinimumAttack
 	// merge queue q33 (MODCOMPAT-MOD1's modules move the AI defender and the random stream; measured at each merge point): 49 -> 59, at the end 2869.34985 ->
 	// 2935.85986
 	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; a WHEELS_FOUR unit's first leg bent from its facing or reversed, RW 0x766F7F / 0x767800; the AI defender and the random stream move with every unit's lines; measured twice on the lane's tree): 59 -> 57, at the end 2935.87988 -> 2935.84985; with the optimiser's layer rule (RW 0x766532) 56 and 2869.33984
-	CHECK(r.firstHit == 56); // merge queue q26: 47 -> 63; lane MODCOMPAT-MOD1 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244): 63 -> 66
+	// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): 56 -> 58
+	CHECK(r.firstHit == 58); // merge queue q26: 47 -> 63; lane MODCOMPAT-MOD1 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244): 63 -> 66
 	CHECK(r.distAtHit > 150.0f); // tolerance: it fired from outside its minimum range (the drive ends where the attack state's approach puts it: 243.2)
 	// merge queue q26 (the archive's pair rule, SIEGE-1 / test_siege1_gate.cpp): from its backed-off spot most stones are caught before the gate; at frame 600
 	// the gate still stands at 2935.86 (a follow-up: test_siege1_gate.cpp's back-off case)
@@ -148,7 +150,8 @@ TEST_CASE("siege1 attack retail: Mordor's catapult made inside its MinimumAttack
 	// pin: merge queue q42 (#220's wall-top and ramp goals on top of q41's DECOMPFIX-1104B; measured once on the merged tree and at each merge point, #216 keeps the archive's value, CASTLEATK-1 and #225 keep #220's): 2869.33984 (#220 alone: 2869.35986) -> 2869.32983
 	// pin: merge queue q43 (#231's DEFENSIVE tactic moves the AI defender and the random stream; measured once on the merged tree and at each merge point,
 	// the later items keep it): 2869.32983 -> 2869.33984
-	CHECK(r.healthAfter == 2869.33984f); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 2869.33984 -> 2869.35986; lane FBSIM-1 (the AI defender's phantom sites move the random stream): 2935.85986 -> 2935.87988
+	// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): 2869.33984 -> 2935.83984
+	CHECK(r.healthAfter == 2935.83984f); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 2869.33984 -> 2869.35986; lane FBSIM-1 (the AI defender's phantom sites move the random stream): 2935.85986 -> 2935.87988
 }
 
 TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's Deep's main gate; Mordor's catapult from 500 toward Player_2_Start hits the flanking tower")
@@ -191,12 +194,13 @@ TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the demolisher's first damage 245 -> 242
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first damage 242 -> 250
 	// pin: merge queue q43 (#231's DEFENSIVE tactic; measured once on the merged tree and at each merge point, the later items keep it): first damage 250 -> 249
-	CHECK(d.firstHit == 249);
+	// pin: lane WALLMELEE-1 (adjustToMeleeDestination RW 0x6EEBC1 searches the destination's layer for the unit, RW 0x680A75: the approach point beside the gate, moved by 5 in x and y for the even footprint (RW 0x6EE62D), falls in a side cell of HelmsDeepGatehouseRight's ramp, layer 0x10 (RW 0x93527F), whose layer RW 0x6EE600 answers with no height test; the spiral's first cell is (269, 263) on that ramp, about 187 high, where the ground-layer search refused every cell. That goal is out of reach: FindClosestPath (RW 0x6FB869) moves the unit about 40 toward it before the attack falls back to a path to the gate itself, as on main, so it reaches the gate later; measured once on the merged tree, with that one rule switched off main's frames come back, the lane's other rules switched off change nothing, #220's goal layer switched back changes nothing): the demolisher strikes once from 5.4 against the gate, gives way and strikes on from 48.0 (main: every blow from 48.1); first damage 250 -> 241, death 318 -> 354 (on main; port onto merge queue q44's base, after q43's DEFENSIVE tactic: first damage 249 -> 241, death 317 -> 353)
+	CHECK(d.firstHit == 241);
 	CHECK(d.healthAfterFirst == 3000.0f);
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): its death 312 -> 309
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 309 -> 318
 	// pin: merge queue q43 (#231's DEFENSIVE tactic; measured once on the merged tree and at each merge point, the later items keep it): death 318 -> 317
-	CHECK(d.deathFrame == 317);
+	CHECK(d.deathFrame == 353);
 	const AttackResult c = siegeAttack(*s, kHelmsDeep, "Main Gate", "MordorCatapult", false, 500.0f, 600, true);
 	print("MordorCatapult", c);
 	// on the archive (SIEGE-1, test_siege1_gate.cpp): from 500 toward Player_2_Start the catapult's stones meet HelmsDeepGatehouseRight in their line of fire,
