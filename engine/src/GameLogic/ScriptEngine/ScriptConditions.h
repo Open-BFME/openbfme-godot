@@ -40,6 +40,7 @@ class ScriptConditions
 public:
 	// RW 0x7EB7CD: an ordinal without a port is counted (S-1180) and false; an ordinal without a retail case is false
 	static bool evaluate(ScriptEngine &engine, const ScriptCondition &c);
+	static bool compareIntegers(int op, std::int32_t lhs, std::int32_t rhs);
 
 	// the players of a player parameter (RW 0x758F7C), in index order
 	static std::vector<Player *> players(ScriptEngine &engine, const std::string &parameter);

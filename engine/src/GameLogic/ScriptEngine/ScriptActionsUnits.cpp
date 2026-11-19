@@ -52,7 +52,6 @@
 // choice, face-object) -> S-1186 (docs/STOPS.md); the noted stand-ins below each report themselves.
 
 #include "GameLogic/ScriptEngine/ScriptActions.h"
-#include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/ScriptEngine/AttackPriority.h"
 
 #include "Common/Player.h"
@@ -502,81 +501,6 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 {
 	GameLogic &logic = engine.logic();
 	const TerrainLogic *terrain = logic.terrain();
-	if (logic.things().bfme1Data() && name == "TEAM_RECRUIT_UNITS")
-	{
-		// DONOR BFME1 ScriptActionsTeamRecruit.cpp (0x2F5BE0): create team,
-		// resolve template/object list, recruit count; empty teams use map-wide range.
-		// S-5017: the helper's candidate ranking is not recovered. Restrict this
-		// first slice to default-team units and stable object order; populated
-		// teams keep the explicit stop instead of inventing MaxRecruitDistance.
-		Team *target = ScriptConditions::team(engine, param(a, 0).stringValue, true);
-		Player *owner = target ? target->getControllingPlayer() : nullptr;
-		if (!target || !owner) return true;
-		if (target->getMemberCount() != 0)
-		{
-			engine.noteUnportedAction(name);
-			return true;
-		}
-		const auto types = ScriptConditions::typeNames(engine, param(a, 2).stringValue);
-		int remaining = param(a, 1).intValue;
-		for (Object *o = logic.getFirstObject(); o && remaining > 0; o = o->getNextObject())
-		{
-			if (o->getTeam() != owner->getDefaultTeam() || o->isEffectivelyDead() || o->isUnderConstruction()) continue;
-			bool matches = false;
-			for (const auto &type : types) matches = matches || ScriptConditions::equivalentTemplates(o->getTemplate(), logic.things().findTemplate(type));
-			if (!matches) continue;
-			engine.note("[S-5017] BFME1 empty-team recruitment uses default-team candidates in object order; native ranking is unverified");
-			o->setTeam(target);
-			--remaining;
-		}
-		target->setActive();
-		return true;
-	}
-
-	if (logic.things().bfme1Data() && name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF")
-	{
-		// DONOR BFME1 ScriptActions_doTeamMoveToNearestObjectOfKindof.cpp:
-		// all players, closest object to team center, ordinary script move.
-		Team *team = ScriptConditions::team(engine, param(a, 0).stringValue);
-		if (!team) return true;
-		const auto members = ScriptConditions::members(*team);
-		if (members.empty()) return true;
-		Coord3D center{};
-		for (Object *o : members)
-		{
-			center.x = SimMath::addf32(center.x, o->getPosition()->x);
-			center.y = SimMath::addf32(center.y, o->getPosition()->y);
-			center.z = SimMath::addf32(center.z, o->getPosition()->z);
-		}
-		center.x = SimMath::divf32(center.x, (float)members.size());
-		center.y = SimMath::divf32(center.y, (float)members.size());
-		center.z = SimMath::divf32(center.z, (float)members.size());
-		const bool typed = name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER";
-		// DONOR sibling ScriptActions_doTeamMoveToNearestObjectOfTypeOwnedByPlayer.cpp.
-		const auto owners = typed ? ScriptConditions::players(engine, param(a, 2).stringValue) : std::vector<Player *>();
-		const auto types = typed ? ScriptConditions::typeNames(engine, param(a, 1).stringValue) : std::vector<std::string>();
-		const int kind = ObjectTemplateInfoBuilder::kindOfIndex(param(a, 1).stringValue.c_str());
-		Object *closest = nullptr;
-		float best = 0.0f;
-		for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
-		{
-			if (o->isDestroyed()) continue;
-			if (typed)
-			{
-				if (std::find(owners.begin(), owners.end(), o->getControllingPlayer()) == owners.end()) continue;
-				bool matches = false;
-				for (const auto &type : types) matches = matches || ScriptConditions::equivalentTemplates(o->getTemplate(), logic.things().findTemplate(type));
-				if (!matches) continue;
-			}
-			else if (kind < 0 || !o->isKindOf((unsigned)kind)) continue;
-			const float dx = SimMath::subf32(o->getPosition()->x, center.x), dy = SimMath::subf32(o->getPosition()->y, center.y), dz = SimMath::subf32(o->getPosition()->z, center.z);
-			const float distance = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)), SimMath::mulf32(dz, dz));
-			if (!closest || distance < best) { closest = o; best = distance; }
-		}
-		if (closest)
-			for (Object *o : members) if (auto *ai = o->getAIUpdateInterface()) ai->aiMoveToPosition(*closest->getPosition(), CMD_FROM_SCRIPT);
-		return true;
-	}
 
 	if (name == "UNIT_AFFECT_OBJECT_PANEL_FLAGS" || name == "TEAM_AFFECT_OBJECT_PANEL_FLAGS")
 	{
@@ -1171,7 +1095,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	}
 	if (name == "NAMED_BASE_UNPACK" || name == "NAMED_BASE_UNPACK_FREE")
 	{
-		// lane CASTLE-UNPACK: RW 0x7BED64 (see the file comment); the push order (RW 0x7CE925 / 0x7CE928): the flag, param 1's string, param 0
+		// BFME1 ScriptActions_doNamedBaseUnpack.cpp uses the same checks. RotWK RW 0x7BED64; the push order (RW 0x7CE925 / 0x7CE928): the flag, param 1's string, param 0
 		const bool free = name == "NAMED_BASE_UNPACK_FREE";
 		Object *o = engine.getUnitNamed(param(a, 0).stringValue);
 		if (!o || o->getControllingPlayer() != engine.currentPlayer()) // RW 0x7BED95

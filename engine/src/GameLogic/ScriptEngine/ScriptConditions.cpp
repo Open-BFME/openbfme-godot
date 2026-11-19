@@ -2,6 +2,7 @@
 // Derived from Command & Conquer Generals Zero Hour, (c) 2001-2003 Electronic Arts Inc., GPL-3.0.
 // See GameLogic/ScriptEngine/ScriptConditions.h.
 
+#include "GameLogic/ScriptEngine/ScriptEditionRules.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptThreat.h"
 #include "GameLogic/Module/EmotionModules.h"
@@ -52,17 +53,8 @@ int indexOf(const std::string &name);
 #include <set>
 #include <sstream>
 
-namespace
-{
-
-const ScriptParameter &param(const ScriptCondition &c, size_t i)
-{
-	static const ScriptParameter kEmpty;
-	return i < c.params.size() ? c.params[i] : kEmpty;
-}
-
 // RW 0x7E4B36 / 0x608B28 compare forms: (lhs op rhs) with 0 <, 1 <=, 2 ==, 3 >=, 4 >, 5 !=
-bool compare(int op, std::int32_t lhs, std::int32_t rhs)
+bool ScriptConditions::compareIntegers(int op, std::int32_t lhs, std::int32_t rhs)
 {
 	switch (op)
 	{
@@ -74,6 +66,16 @@ bool compare(int op, std::int32_t lhs, std::int32_t rhs)
 	case 5: return lhs != rhs;
 	default: return false;
 	}
+}
+
+
+namespace
+{
+
+const ScriptParameter &param(const ScriptCondition &c, size_t i)
+{
+	static const ScriptParameter kEmpty;
+	return i < c.params.size() ? c.params[i] : kEmpty;
 }
 
 // lane THREATLEVEL-1: RW 0x7E5970 / 0x7E8A25's compare of the threat (lhs) with the parameter (rhs): comiss / ucomiss per op, 0 <, 1 <=, 2 ==, 3 >=, 4 >,
@@ -354,7 +356,7 @@ void traceObjectComparison(ScriptEngine &engine, const ScriptCondition &c, const
 	}
 	GameLogic &logic = engine.logic();
 	std::ostringstream out;
-	const bool raw = !types.empty() && compare(param(c, 1).intValue, count, param(c, 2).intValue);
+	const bool raw = !types.empty() && ScriptConditions::compareIntegers(param(c, 1).intValue, count, param(c, 2).intValue);
 	out << "SCRIPTCOND frame=" << logic.getFrame() << " script=\"" << selected << "\" side=" << engine.currentSideName()
 		<< " condition=" << c.internalName << " count=" << count << " op=" << param(c, 1).intValue << " threshold=" << param(c, 2).intValue
 		<< " inverted=" << c.flagB4D << " result=" << (c.flagB4D ? !raw : raw) << '\n';
@@ -868,42 +870,9 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		return false; // retail's default case
 	}
 	GameLogic &logic = engine.logic();
-	if (t->name == "COMPARE_NUM_PLAYERS_IN_GAME" && logic.things().bfme1Data())
+	if (const auto result = ScriptEditionRules::evaluate(engine, c, t->name))
 	{
-		int count = 0;
-		for (int index = 0; index < logic.players().getPlayerCount(); ++index)
-		{
-			const Player *player = logic.players().getNthPlayer(index);
-			if (player && !player->isObserver() && (player->getPlayerType() == PLAYER_HUMAN || player->isSkirmishAI())) ++count;
-		}
-		return compare(param(c, 0).intValue, count, param(c, 1).intValue);
-	}
-	if ((logic.things().bfme1Data() && t->name == "CAN_BUILD_OBJECTTYPE_AT_BASE") || (t->name == "CAN_BUILD_AT_BASE" &&
-		engine.getUnitNamed(param(c, 1).stringValue) && engine.getUnitNamed(param(c, 1).stringValue)->getTemplate()->bfme1Data()))
-	{
-		// DONOR BFME1 ScriptConditionsCanBuildAtBase.cpp (0x323E50).
-		Object *base = engine.getUnitNamed(param(c, 1).stringValue);
-		// S-5017: BFME1 script base references can name the keep after unpack;
-		// resolve its existing CastleMember link to the owning castle controller.
-		if (base && base->getTemplate()->bfme1Data())
-			if (auto *member = dynamic_cast<CastleMemberBehavior *>(base->findModule("CastleMemberBehavior")))
-				if (!base->findModule("CastleBehavior") && !base->isKindOfName("BASE_FOUNDATION"))
-				{
-					engine.note("[S-5017] BFME1 script base references resolve the keep through its CastleMember link");
-					base = logic.findObjectByID(member->castleId());
-				}
-		Player *owner = firstPlayer(engine, param(c, 0).stringValue);
-		if (!base || !owner || base->getControllingPlayer() != owner) return false;
-		const ThingTemplate *tt = t->name == "CAN_BUILD_OBJECTTYPE_AT_BASE" ? logic.things().findTemplate(param(c, 2).stringValue) : nullptr;
-		if (t->name == "CAN_BUILD_OBJECTTYPE_AT_BASE" && !tt) return false;
-		if (auto *castle = dynamic_cast<CastleBehavior *>(base->findModule("CastleBehavior"))) return castle->hasFreeBuildSlot(tt);
-		if (!tt && base->isKindOfName("BASE_FOUNDATION"))
-		{
-			auto *member = dynamic_cast<CastleMemberBehavior *>(base->findModule("CastleMemberBehavior"));
-			if (member && member->plotIsTaken()) return false;
-			for (const auto &module : base->modules()) if (module->getFoundationAIUpdate()) return true;
-		}
-		return false;
+		return *result;
 	}
 
 	switch (c.resolved)
@@ -1070,7 +1039,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		{
 			percent = SimMath::cvttss2si(SimMath::sseDiv(SimMath::sseMul(health, 100.0f), maxHealth));
 		}
-		return compare(param(c, 1).intValue, percent, param(c, 2).intValue);
+		return ScriptConditions::compareIntegers(param(c, 1).intValue, percent, param(c, 2).intValue);
 	}
 	case UNIT_HAS_OBJECT_STATUS: // RW 0x7E66C6: the status index (the parser's, RW 0x7B66F5)
 	{
@@ -1229,7 +1198,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 			count += countPlayerObjects(logic, *p, types);
 		}
 		traceObjectComparison(engine, c, owners, types, count);
-		return !types.empty() && compare(param(c, 1).intValue, count, param(c, 2).intValue);
+		return !types.empty() && ScriptConditions::compareIntegers(param(c, 1).intValue, count, param(c, 2).intValue);
 	}
 	case PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA:              // RW 0x7E6D81(.., no upgrade, false)
 	case PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_WITH_UPGRADE: // (.., the upgrade, false)
@@ -1278,7 +1247,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 				++count;
 			});
 		}
-		return compare(param(c, 1).intValue, count, param(c, 2).intValue);
+		return ScriptConditions::compareIntegers(param(c, 1).intValue, count, param(c, 2).intValue);
 	}
 	case PLAYER_HAS_CREDITS: // RW 0x7E4B36: the money of every player of the parameter, summed, then (amount op total)
 	{
@@ -1287,7 +1256,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		{
 			total += (std::int32_t)p->getMoney()->countMoney();
 		}
-		return compare(param(c, 1).intValue, param(c, 0).intValue, total);
+		return ScriptConditions::compareIntegers(param(c, 1).intValue, param(c, 0).intValue, total);
 	}
 	case MULTIPLAYER_ALLIED_VICTORY:
 	case MULTIPLAYER_ALLIED_DEFEAT:
@@ -1390,12 +1359,12 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 	{
 		const ScriptEngine::Counter *a = engine.findCounter(param(c, 0).stringValue);
 		const ScriptEngine::Counter *b = engine.findCounter(param(c, 2).stringValue);
-		return compare(param(c, 1).intValue, a ? a->value : 0, b ? b->value : 0);
+		return ScriptConditions::compareIntegers(param(c, 1).intValue, a ? a->value : 0, b ? b->value : 0);
 	}
 	case COUNTER_SECONDS: // RW 0x7E8954
 	{
 		const ScriptEngine::Counter *a = engine.findCounter(param(c, 0).stringValue);
-		return compare(param(c, 1).intValue, a ? a->value : 0, ScriptEngine::secondsToFrames(param(c, 2).realValue));
+		return ScriptConditions::compareIntegers(param(c, 1).intValue, a ? a->value : 0, ScriptEngine::secondsToFrames(param(c, 2).realValue));
 	}
 	case IS_GAME_IN_SKIRMISH_OR_MULTIPLAYER: // RW 0x7E5F8E -> RW 0x625456 (a network game, or GameLogic + 0x110 in { 1, 2, 5 })
 	{
@@ -1895,7 +1864,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 			}
 			const bool typed = list ? std::find(list->begin(), list->end(), o.getTemplate()->getName()) != list->end() : equivalentTemplatesImpl(o.getTemplate(), tt);
 			const ExperienceTracker *xp = o.getExperienceTracker();
-			hit = typed && xp && compare(param(c, 2).intValue, xp->getRank(), param(c, 3).intValue);
+			hit = typed && xp && ScriptConditions::compareIntegers(param(c, 2).intValue, xp->getRank(), param(c, 3).intValue);
 		});
 		return hit;
 	}
@@ -1929,7 +1898,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 				break;
 			}
 		}
-		return compare(param(c, 2).intValue, total, limit);
+		return ScriptConditions::compareIntegers(param(c, 2).intValue, total, limit);
 	}
 	case COMPARE_NUM_PLAYERS_IN_GAME: // RW 0x7E5FA5 (BFME2 ScriptConditions.cpp, tier A) -> RW 0x6A8630(0)
 	{
@@ -1943,7 +1912,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 				++n;
 			}
 		}
-		return compare(param(c, 0).intValue, n, param(c, 1).intValue);
+		return ScriptConditions::compareIntegers(param(c, 0).intValue, n, param(c, 1).intValue);
 	}
 	case EVAL_TEAM_HEALTH: // RW 0x7E98D2 (BFME2 ScriptConditions_evaluateTeamStateIs.cpp:1889, tier A)
 	{
@@ -1979,7 +1948,7 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 			}
 		}
 		const std::int32_t percent = maxCount != 0 ? curCount * 100 / maxCount : 0;
-		return compare(param(c, 1).intValue, percent, param(c, 2).intValue);
+		return ScriptConditions::compareIntegers(param(c, 1).intValue, percent, param(c, 2).intValue);
 	}
 	case CAMERA_SCROLL_DISTANCE: // lane BFME2CAMP1: RW 0x7E5AB2
 	case OBJECTIVES_SCREEN_IS_OPEN: // lane BFME2CAMP1: RW 0x7EB7CD case 0xC6
