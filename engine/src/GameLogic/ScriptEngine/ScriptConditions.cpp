@@ -167,6 +167,7 @@ enum ConditionType
 	NAMED_BUILDING_IS_EMPTY = 78,
 	PLAYER_HAS_SCIENCEPURCHASEPOINTS = 101,
 	PLAYER_HAS_KILLED_TYPE_UNITS = 129,
+	PLAYER_COMPARE_RANK = 145,
 	PLAYER_HAS_OBJECT_OF_VETERANCY = 146,
 	PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION = 160,
 	COMPARE_NUM_PLAYERS_IN_GAME = 168,
@@ -1806,6 +1807,11 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		const Object *o = engine.getUnitNamed(param(c, 0).stringValue);
 		const ContainModuleInterface *ct = o ? o->getContain() : nullptr;
 		return ct && ct->getContainCount() == 0;
+	}
+	case PLAYER_COMPARE_RANK: // RW 0x7ECFF6 -> RW 0x7E5EC8(player, op, rank): exact single-player mask (RW 0x6A85B6), compare m_rankLevel (+0x1C)
+	{
+		const Player *p = playerOfMask(engine, param(c, 0).stringValue);
+		return p && compare(param(c, 1).intValue, p->science().getRankLevel(), param(c, 2).intValue);
 	}
 	case PLAYER_HAS_SCIENCEPURCHASEPOINTS: // RW 0x7E50AE (BFME2 ScriptConditions.cpp, tier A): any player with at least the points
 		for (Player *p : players(engine, param(c, 0).stringValue))
