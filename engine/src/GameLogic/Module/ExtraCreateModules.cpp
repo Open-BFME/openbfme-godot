@@ -150,10 +150,14 @@ void LockWeaponCreate::xfer(Xfer &x)
 	x.xferBool(&m_needToRunOnBuildComplete);
 }
 
+// RW 0x8BD80E / 0x8BD701: onBuildComplete checks shouldDoOnBuildComplete (slot 3 at +0xC, RW 0x4986C4) then clears +0x14 flag and runs partition query.
+// DONOR BFME2 0x004B94E3 (InheritUpgradeCreateXfer.cpp): base CreateModule xfer via 0x4B8D4E then Version(1,1) (base first).
+// Missing functions cited: RW 0x8BD5B1 (name literal 0xC0ABA0), RW 0x8BD5D6 (ModuleData table 0xC703E0), RW 0x8BD62C (scalar deleting dtor), RW 0x8BD648 (filter helper), RW 0x8BD829 (thunk add ecx -0x10 -> 0x8BD701).
+// xfer: BehaviorModule xfer (RW 0x4C9C7D via CreateModule 0x4B8D4E) then Version(1,1); m_inherited is extra test state (not in retail) kept after version.
 void InheritUpgradeCreate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
 	xferBehaviorModule(x);
+	SnapshotXfer::version(x, 1, 1);
 	x.xferBool(&m_needToRunOnBuildComplete);
 	x.xferUnsignedInt(&m_inherited);
 }
