@@ -727,7 +727,9 @@ TEST_CASE("aidata1 retail: knights running down a fleeing troll hit within Chase
 	// #160 (a horde's move or turn no longer carries its members, they walk to their slots, RW 0x871536) measured 60 -> 74 on its own base; on the archive's
 	// tree with #160 it stays 62 (merge queue q34)
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first hit 62 -> 60
-	CHECK(none.frame == 60);
+	// pin: lane DECOMPFIX-1109 (FLEECHASE-1, retail rule: the horde melee wait state fails on a fleeing target, RW 0x7469FD / 0x74AD1A, BFME2 decomp AIAttackMeleeHordeWaitState.cpp:42, so the knights leave the melee and
+	// approach again instead of standing in it; measured on the lane's tree merged with the archive at 1ef945faf): first hit 60 -> 66
+	CHECK(none.frame == 66);
 	CHECK_FALSE(none.runningDown);
 	const Hit standRetail = firstHit(false, 50.0f);
 	const Hit standNone = firstHit(false, 0.0f);

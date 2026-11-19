@@ -11,6 +11,10 @@
 //   * getMaxHeightAbovePosition (RW 0xAD1920): the maximum over the ACTIVE shapes of (a sphere's major radius, a cylinder's or box's height) + the shape's z offset, never below 0.
 //   * lane BUILD-3: GeometryContactPoint = X:<x> Y:<y> Z:<z> [<label>] (RW 0xAD3D30): the coordinate by the sub tokens X / Y / Z (parseReal each), then the next token
 //     (getNextTokenOrNull) or "" is the label; appended (RW 0xAD3C80) to the 16 byte records of GeometryInfo + 0x38 / + 0x3C (x, y, z, the label string at + 0xC).
+//   * mode 1 (RW 0xAD3187 -> RW 0xAD3340): the GeometryInfo member +0x44, the highest GeometryContactPoint row in the object's own space (the row parser
+//     RW 0xAD3DD5 .. 0xAD3DEB replaces it with a strictly higher z, RW 0xAD3DC9), z clamped to getMaxHeightAbovePosition (RW 0xAD1920, RW 0xAD3357 .. 0xAD336D),
+//     always true (RW 0xAD3373); no caller position and no overlap test are read. The GiantBird swoop / attack fallback asks for it (RW 0x76B6FF .. 0x76B721)
+//     through Object::getWorldspaceBestContactPoint RW 0x690D20. A template without rows answers (0, 0, 0) (INFERENCE on the constructor's +0x44).
 //   * getBestContactPoint (RW 0xAD30E0) with mode 0 and a caller position (the only mode lane BUILD-3 ports): over the points whose label equals the asked one
 //     (StringBase compare RW 0x406585: exact bytes), z clamped to getMaxHeightAbovePosition (x87 fcomp: when the height is below z), the overlap test RW 0xAD2CE0
 //     unless `preferred` is set (the dozer's call sets it; lane AIMAIM-1 ported the test: the sphere of radius 2 at the point, RW 0xAD3415), the smallest x87 PC24 distance (dx^2 + dy^2) + dz^2 strictly below the best (start
@@ -73,13 +77,13 @@ struct ContactPoint
 std::vector<ContactPoint> contactPointsOf(const ThingTemplate &tt);
 // RW 0xAD30E0, mode 0 with a caller position (object space); without `preferred` a point must touch the geometry (lane AIMAIM-1).
 // false when no point carries the label (the result is then the geometry's first-shape-free default, RW + 0x50, which this port does not keep: left unchanged)
-bool getBestContactPoint(const std::vector<Shape> &shapes, const std::vector<ContactPoint> &points, const Coord3D &callerPos, const std::string &label, bool preferred,
+bool getBestContactPoint(const std::vector<Shape> &shapes, const std::vector<ContactPoint> &points, const Coord3D &callerPos, const std::string &label, int preference, bool preferred,
                          Coord3D &out);
 // RW 0x690BD2 Object::getWorldspaceBestContactPoint(out, callerPos, label, 0, 0, preferred): the caller's position into the object's space (the orthogonal inverse of its
 // transform, RW 0xB26C00, SSE in the binary's order), getBestContactPoint there, a RUBBLE body (body vslot 0x24 == 3) takes the geometry's height as the point's z,
 // and the point back to the world (SSE). The transform is the object's basis and position (Thing); the shapes are its own GeometryInfo's (Object::geometryShapes,
 // lane MODCOMPAT-MOD1), the points its template's (S-1281)
-bool worldspaceBestContactPoint(const Object &obj, const Coord3D &callerPos, const std::string &label, bool preferred, Coord3D &out);
+bool worldspaceBestContactPoint(const Object &obj, const Coord3D &callerPos, const std::string &label, int preference, bool preferred, Coord3D &out);
 // lane PATH-2 (S-341): the template's shape list into the pathfinder's geometry (every shape, and shape 0's values as the single-shape fields); nothing changes
 // when the template has no shape. Throws std::logic_error like shapesOf.
 void fillPathfindGeometry(const ThingTemplate &tt, PathfindGeometry &out);

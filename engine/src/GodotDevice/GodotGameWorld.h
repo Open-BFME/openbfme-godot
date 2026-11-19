@@ -739,6 +739,8 @@ private:
 	std::vector<MapCacheEntry> m_mapCache;           ///< maps\\mapcache.ini, read by setup()
 	struct EntryView
 	{
+		uint64_t shadowDecalId = 0;
+		std::string shadowDecalTexture;
 		int64_t instance = -1;
 		std::string model;              ///< the lower-case model the instance shows ("" none)
 		std::string rawModel, rawLowered; ///< lane PERF-1: the last model name as the draw gave it and its lower-case form (lowered once per change)
@@ -762,6 +764,7 @@ private:
 		const void *shadowState = nullptr;  ///< S-3304: the model condition state and module data the shadow eligibility was made from
 		const void *shadowData = nullptr;
 		int64_t shadowInstance = -1;        ///< the instance it was handed to
+		bool shadowOn = true;               ///< TOP20 #24: the drawable's shadowsEnabled() it was made with
 		std::uint32_t colorsRevision = 0;   ///< lane CAH-2: Drawable::customColorRevision the model choice saw
 		// lane HCKEY-1: a static entry's model key (lowered name + floor swap suffix + palette) and the inputs it was made from, rebuilt only
 		// when one of them changes (community PR #60 made it every frame for every coloured static drawable)
@@ -907,6 +910,7 @@ private:
 	std::unique_ptr<EndGameController> m_endGame;
 	std::unique_ptr<ScriptCameraDirector> m_scriptView;     // lane SCRIPT-1
 	std::vector<ScriptClientRequest> m_pendingScriptRequests; // lane SCRIPT-1: taken from the game, not applied to the director yet
+	Array m_untakenScriptRequests; // lane SAVEUIHELD-1: taken from the game by update_script_view, not yet returned by take_script_requests
 	Dictionary m_objectivesView; // lane CAMPUI-1: the tracker as last read in a held frame (get_mission_objectives)
 	std::vector<ScriptClientRequest> m_pendingScriptAudio;    // lane RENDERWAIT-1 r2: taken, their audio not applied yet (waits for a held logic)
 	unsigned long long m_scriptAudioApplied = 0; // RENDERWAIT-1 r3: requests handed to the audio side (test counter)

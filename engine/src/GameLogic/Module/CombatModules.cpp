@@ -474,6 +474,16 @@ void SlowDeathBehavior::beginSlowDeath(const DieModuleInterface::Event &)
 	{
 		obj->setModelConditionState(kDying, true);
 	}
+	// TOP20 #24, RW 0x860F3E .. 0x860F58: with a drawable ([ebp - 0x10], RW 0x70E013) and ShadowWhenDead (+ 0x18D) No, the drawable's shadows are switched off
+	// (RW 0x672D28(false)); client only, no logic state. (RW 0x860F5D .. 0x860F71, the terrain decal's fade RW 0x67093E(0, -0.2), is the client's too: not
+	// ported, stop S-3304's drawable decals)
+	if (!d->m_shadowWhenDead)
+	{
+		if (ObjectClientHooks *client = logic.clientHooks())
+		{
+			client->setShadowsEnabled(*obj, false);
+		}
+	}
 	const float scale = 1.0f; // TheGameLODManager's SlowDeathScale (see the header)
 	auto scaled = [&](unsigned v) { return (unsigned)SimMath::ftol2(SimMath::pc24MulW((double)v, (double)scale)); }; // fild (+ 2^32 when negative); fmul; _ftol2
 	m_sinkFrame = scaled((unsigned)logic.random().getValue(0, (int)d->m_sinkDelayVariance, "SlowDeathBehavior.cpp", 0x1A5) + d->m_sinkDelay);

@@ -329,6 +329,11 @@ TEST_CASE("skirmish ai siege: SiegeGates attacks the wall gate while the path is
 	w.frames(5);
 	tac.teams.push_back(team);
 
+	// RW 0x7A11FF returns the team list's first object, which never holds a destroyed one; the port's member ids keep a dead id, so the search must
+	// skip it instead of failing for good (with the dead first member the wall target is still found)
+	logic.destroyObject(units[0]);
+	units.erase(units.begin());
+	w.frames(1);
 	AITacticalAI::launchTacticForTest(logic, ai, brain, tac, owner); // RW 0x9B31C5 -> 0x9B3184
 	CHECK(tac.squadTarget == w.gate->getID());
 	CHECK(tac.step == 0); // RW 0x9B31E6: the wall stage
@@ -431,13 +436,28 @@ TEST_CASE("skirmish ai siege: SimpleSiege attacks the wall with team 0 and stand
 		REQUIRE(uai != nullptr);
 		CHECK(uai->stateMachine().goalObjectID() == w.gate->getID()); // team 0 attacks the wall
 	}
+	const Coord3D stand = AITacticalAI::siegeStandBackPointForTest(leader, *w.gate->getPosition()); // RW 0xC894AC: 500, in 3D
 	for (Object *u : assault)
 	{
 		AIUpdateInterface *uai = u->getAIUpdateInterface();
 		REQUIRE(uai != nullptr);
 		CHECK(uai->attackMoveActive()); // team 1 moves to the stand-back point (the group's own slots)
 	}
-	const Coord3D stand = AITacticalAI::siegeStandBackPointForTest(leader, *w.gate->getPosition()); // RW 0xC894AC: 500, in 3D
+	// the issued goal: the group slots spread the members around the stand-back point, so their mean must sit on it (the wall itself is 500 away)
+	Coord3D goalSum{ 0.0f, 0.0f, 0.0f };
+	for (Object *u : assault)
+	{
+		AIUpdateInterface *uai = u->getAIUpdateInterface();
+		REQUIRE(uai != nullptr);
+		const Coord3D goal = uai->stateMachine().goalPosition();
+		goalSum.x += goal.x;
+		goalSum.y += goal.y;
+		goalSum.z += goal.z;
+	}
+	const float n = (float)assault.size();
+	const Coord3D goalMean{ goalSum.x / n, goalSum.y / n, goalSum.z / n };
+	const float mx = goalMean.x - stand.x, my = goalMean.y - stand.y, mz = goalMean.z - stand.z;
+	CHECK(std::sqrt(mx * mx + my * my + mz * mz) < 100.0f); // tolerance: the group's member slot offsets cancel in the mean; a wall destination is 500 off
 	const float sx = stand.x - w.gate->getPosition()->x, sy = stand.y - w.gate->getPosition()->y, sz = stand.z - w.gate->getPosition()->z;
 	CHECK(std::fabs(std::sqrt(sx * sx + sy * sy + sz * sz) - 500.0f) < 0.05f); // tolerance: float32 normalise and the map's position bits
 	CHECK(sx * (leader.x - w.gate->getPosition()->x) >= 0.0f); // tolerance: the sign only says the leader lies on the same side as the stand-back step

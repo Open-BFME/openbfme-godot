@@ -125,6 +125,7 @@ public:
 	bool isEndPortalAboveWall(Coord3D *pos) const;
 	// RW 0x863D30
 	float topAttackRadius() const override { return m_data->m_topAttackRadius; }
+	bool portalCreated() const override { return m_created; }
 	// ---- SiegePortalInterface (lane SIEGE-1's deploy asks the ladder's / tower's portal through it; the merge of WALL-2 and SIEGE-1 connects them) ----
 	bool isEndPortalAboveWall(Coord3D *out) override { return static_cast<const DynamicPortalBehaviour *>(this)->isEndPortalAboveWall(out); }
 	void createPortalWaypoints() override { createWaypoints(); }

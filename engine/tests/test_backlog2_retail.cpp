@@ -5,6 +5,7 @@
 #include "doctest.h"
 
 #include "BuildTestUtil.h"
+#include "AISceneTestUtil.h"
 
 #include "Common/NumericState.h"
 #include "Common/Player.h"
@@ -199,6 +200,8 @@ TEST_CASE("BACKLOG2 S-653: a dead structure that starts its rebuild sends the al
 	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 4242, g, &error), error);
 	LiveGame &live = *g.live;
 	GameLogic &logic = live.logic();
+	// Keep the rebuild movement vector independent of Easy roaming's shared RNG draws from frame 35.
+	testutil::deferRoamingDefense(logic, live.players().findPlayerWithName(live.report().startSlotPlayers[1])->getPlayerIndex());
 	Player *men = live.players().findPlayerWithName(live.report().startSlotPlayers[0]);
 	REQUIRE(men);
 	// a free Men wall segment far from the bases (KeepObjectDie: it stays in the world dead), killed, then Boromir on its rubble
@@ -459,7 +462,9 @@ TEST_CASE("BACKLOG2 S-951: a captured camp flag's unpack (MSG_CASTLE_UNPACK) cos
 		++wait;
 	}
 	CHECK(cb->state() == CastleBehavior::STATE_UNPACKING);
-	// Camp_Men: the camp's floor, keep, five walls, five defence nodes and six building foundations (the rock goes to the neutral player)
+	// Camp_Men: the camp's floor, keep, eleven walls, five defence nodes and six building foundations (the rock goes to the neutral player). Lane BUILDCLEAR-1:
+	// the layout's 11 GBCampWall entries are a ring of touching segments; RotWK's member test (RW 0x796E9A: bit 0x100, the CampFlag is BASE_SITE) ignores the
+	// castle's own members, so all 11 stand (ZH's overlap rule let neighbouring segments refuse each other and kept 5)
 	std::map<std::string, int> made;
 	Object *keep = nullptr;
 	for (ObjectID id : cb->ownedObjects())
@@ -470,7 +475,7 @@ TEST_CASE("BACKLOG2 S-951: a captured camp flag's unpack (MSG_CASTLE_UNPACK) cos
 		keep = o->getTemplate()->getName() == "GondorCampKeep" ? o : keep;
 	}
 	CHECK(made["GondorCampKeep"] == 1);
-	CHECK(made["GBCampWall"] == 5);
+	CHECK(made["GBCampWall"] == 11);
 	CHECK(made["GondorBuildingFoundation"] == 6);
 	REQUIRE(keep);
 	CHECK(keep->getControllingPlayer() == c.men);
@@ -737,7 +742,18 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// distance to the goal, RW 0x664127, moves when the units arrive)
 	// merge queue q43 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x45726314 -> 0xCA4B529D at #230's merge point
 	// (the AI's position sampler and base structure groups, hashed in the AI state) -> 0x57D4FF8F at #231's (the DEFENSIVE tactic's state); the later items keep it
-	CHECK(a.hashes.back() == 0x57D4FF8FU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// merge queue q46 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x57D4FF8F (#262 and #270 keep it) -> 0x8ECFDB13 at
+	// #267's merge point -> 0x658900C4 at #269's -> 0x5B377D5A at #271's (each ports a targetless tactic: the hashed unported-tactic counter) -> 0x162264F8 with the
+	// review fix (the team threat walk and the horde soldier's threat, RW 0x66362D / 0x693A1A)
+	// pin: PORT-12 hashes MinDistFromEdgeOfMapForBuild in GameLogicSettings::crc (RotWK GlobalData +0xA68; clean BFME2 1.06 has the same row at
+	// 0x00BE924C): 0x162264F8 -> 0x97DB949B, the draws, goals and positions unchanged. Measured once on this tree (upstream/main + PORT-12, Windows
+	// MSVC, ROTWK_INSTALL and BFME2_INSTALL set) with the other open ports merged; perf1 and uber1 moved from frame 0 for the same reason
+	// pin: merge queue q52 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x162264F8 -> 0x02B42AF9 at
+	// #294 / #295's merge point (#294: SlaughterHordeContain now runs under the citadels) -> 0xB240D889 with #298 (PORT-12's
+	// MinDistFromEdgeOfMapForBuild in GameLogicSettings::crc; the 0x97DB949B above was measured without #294); #297 is client only
+	// pin: merge queue q55 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0xB240D889 -> 0x75092A38 at #313's merge
+	// point (ThreatFinderUpdate replaces the unported shell on the map objects that carry it: their module state and update schedule change); #311, #312, #314, #315, #319 and #324 keep it
+	CHECK(a.hashes.back() == 0x75092A38U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

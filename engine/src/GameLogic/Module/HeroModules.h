@@ -59,8 +59,8 @@
 //     owner), plus the object itself with AllowSelf, gets the per-object step; with AffectContainedOnly its contain's objects do; the next pulse is after
 //     (object id % 5) + RefreshDelay frames.
 //     per object (RW 0x89F114): KindOf IGNORED_IN_GUI or ARMY_OF_DEAD, the source itself without AllowSelf, AffectGood with an Evil owner template, AffectEvil
-//     with a non-Evil one, a rank above MaxActiveRank (when not 0), Object + 0x11C bit 1, or a TAINT / ELVEN_WOOD condition not met (the terrain areas of
-//     RW 0xAD49B0 are not ported: none is met, S-856) skip it; in the contained mode a HORDE recurses into its contain; the AntiCategory goes to its pool
+//     with a non-Evil one, a rank above MaxActiveRank (when not 0), Object + 0x11C bit 1, or a TAINT / ELVEN_WOOD condition not met (TheTaintManager's cell
+//     at the object, RW 0xAD49B0, of that kind and its painter not an enemy: lane TAINTAREA-1) skip it; in the contained mode a HORDE recurses into its contain; the AntiCategory goes to its pool
 //     (RW 0x804FCC: XP-1's S-633, counted) with AntiFX; then Object::addAttributeModifier(BonusName, -1) (RW 0x68F1A8: the list's own Duration).
 //   * AutoHealBehavior (constructor RW 0x85562D, vtables RW 0xC56504 / update RW 0xC564F8 / mux RW 0xC564B0 at +0x20 / damage RW 0xC564A4 at +0x28; data: the
 //     upgrade base then table RW 0xC09F70): StartsActive (+0x138), ButtonTriggered (+0x139), SingleBurst (+0x13A), HealingAmount (+0x13C, parseInt), HealingDelay
@@ -152,18 +152,27 @@ public:
 	RespawnUpdate(Thing *thing, const RespawnUpdateModuleData *data); ///< RW 0x8B3244
 	const RespawnUpdateModuleData *data() const { return m_data; }
 	UpdateSleepTime update() override; ///< RW 0x8B3A35
+	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)0xFFFFFFFFu; } ///< RW 0x8B3313 (vtable 0xC6C354 slot 1)
 
 	void onDeath();             ///< RW 0x8B3744
 	void onPermanentDeath();    ///< RW 0x8B3349
 	void onRevived(const Object *producer); ///< RW 0x8B38A2
+	Object *searchForSuitableSpawnAtObject() const; ///< RW 0x8B307E (BFME2 0x8AEF78): AutoRespawnAtObjectFilter (+0x08), else self
+	float getRespawnProgress(int *outCost = nullptr) const; ///< RW 0x8B310D (BFME2 0x8AF007, vslot 0x34)
 	void setState(int s) { m_state = s; }  ///< RespawnBody's `state = 0` after RW 0x8B3349 (RW 0x8C5657)
 	void setInitialSpawn(bool initial) { m_initialSpawn = initial; } ///< RW 0x78142F: + 0x41 = the record is not a revive
+	void setRespawnAt(ObjectID id) { m_respawnAt = id; }
+	ObjectID respawnAt() const { return m_respawnAt; }
+	void setAutoRespawnTimer(std::int32_t startFrame, std::int32_t durationFrames) { m_34 = startFrame; m_time = durationFrames; }
+	std::int32_t autoRespawnStartFrame() const { return m_34; }
+	std::int32_t autoRespawnDuration() const { return m_time; }
 
 	int state() const { return m_state; }
 	bool isInitialSpawn() const { return m_initialSpawn; } ///< RW 0x8B330F
 	float healthFraction() const { return m_health; }
 	unsigned ruleCost() const;                 ///< RW 0x8B3C07 -> 0x8B3637 (the tracker's rank)
 	int ruleSeconds() const;                   ///< RW 0x8B3C1C -> 0x8B36B2
+	std::string deadImage() const;             ///< RW 0x8B33E4 (BFME2 0x8AF2DE, vslot 0x38): ButtonImage (+0x118), else the template's ButtonImage
 	const ThingTemplate *respawnTemplate() const; ///< RW 0x8B316B: RespawnAsTemplate, else the object's template
 	void crc(StateHasher &h) const override;
 
@@ -238,6 +247,8 @@ public:
 	void crc(StateHasher &h) const override;
 	unsigned pulses() const { return m_pulses; }
 	unsigned long long antiCategoryRequests() const { return m_anti; }
+	// lane TAINTAREA-1: RW 0x89EE67, the destructor's part: a TAINT object clears the taint it painted (GameLogic::processDestroyList calls it)
+	void onDeleteClearTaint();
 
 protected:
 	void upgradeImplementation() override; ///< RW 0x8554D6: wake next frame

@@ -36,7 +36,9 @@
 //     cliff -> false; an obstacle cell must be the AI's ignored obstacle (else false; nothing else is checked there); type 6 -> false; the goal list
 //     (info + 0x14): every unit that is not the unit, not its ignored obstacle and not contained by it: an ally adds 1, a non-ally standing at its goal
 //     (RW 0x68B47F) -> false; the position list (info + 0x20): every unit that is not the unit and not contained by it adds 3 for an ally, else 1.
-// INFERENCE / NOT PORTED (stop S-590): the layer for a destination is the ground (S-161); the quick path test RW 0x6F5BB0 (RW 0x6F6D08 / 0x6F6D19 / 0x6F6D2E, the unit and the caller's set) is quickDoesPathExist (lane QPATH-1).
+// Lane WALLMELEE-1: the layer is the destination's for the mover (RW 0x680A75 at RW 0x6FB6C6, again in the functor RW 0x6EEB6F) and the height that layer's
+// (TheTerrainLogic->getLayerHeight, RW 0x6FB6E0); the cells are taken from that layer's grid with no layer test, each at its own layer's height (RW 0x6ED023).
+// INFERENCE / NOT PORTED (stop S-590): the quick path test RW 0x6F5BB0 (RW 0x6F6D08 / 0x6F6D19 / 0x6F6D2E, the unit and the caller's set) is quickDoesPathExist (lane QPATH-1).
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindLine.h"
@@ -233,8 +235,8 @@ bool Pathfinder::adjustHordeMeleeDestination(PathfindObject &obj, const Pathfind
 	bool centred = false;
 	getRadiusAndCenter(&obj, radius, centred);
 	const ICoord2D centre{ cellIndex(dest->x, centred), cellIndex(dest->y, centred) };
-	const PathfindLayerEnum layer = LAYER_GROUND; // RW 0x680A75: the layer for the destination (only the ground, S-161)
-	const float height = m_terrain ? m_terrain->getGroundHeight(dest->x, dest->y) : 0.0f;
+	const PathfindLayerEnum layer = getLayerAt(obj, *dest);            // RW 0x6FB6C6: RW 0x680A75(obj, dest), lane WALLMELEE-1
+	const float height = getLayerHeight(dest->x, dest->y, layer); // RW 0x6FB6E0: TheTerrainLogic vslot 0x1C, getLayerHeight(x, y, layer)
 	const bool isHuman = !obj.isComputerControlled();
 	const Coord3D unitPos = obj.getPosition();
 	Coord3D goal = *dest; // the functor's goal (+ 0x28), replaced by every accepted cell

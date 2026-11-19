@@ -11,6 +11,9 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/SlavedUpdate.h"
+#include "GameLogic/Weapon.h"
+#include "GameLogic/WeaponNugget.h"
 #include "GameLogic/Object/Object.h"
 
 namespace
@@ -111,30 +114,39 @@ bool atPosition(GameLogic &logic, const GameMessage &m, bool withLocation)
 	group.clearTemporarySpeedCaps(); // RW 0x77A342 -> RW 0x76FD04
 	return true;
 }
-// RW 0x77B6EF .. 0x77B7C7: the status NO_AUTO_ACQUIRE (0x17) of an object; on a HORDE (template KindOf byte + 0x115 bit 5) through RW 0x748650 -> RW 0x293D3B,
-// which sets it on the horde and every member (BFME2 decomp ObjectConditionAndPassengerWeaponSet.cpp, INFERENCE: the top object is the containing horde)
-void setNoAutoAcquire(Object &o, bool on)
+// RW 0x693C53..0x693C7B: inspect each live weapon of the member; RW 0x6CBABB..0x6CBAC9 asks each nugget's slot 0x34.
+bool hasSlaveAttackWeapon(const Object &o)
 {
-	static const int noAuto = CombatNames::status("NO_AUTO_ACQUIRE");
-	Object *top = &o;
-	if (o.getContainedBy() && o.getContainedBy()->isKindOf((unsigned)CombatNames::kinds().horde))
+	const ObjectWeapons *weapons = o.getWeapons();
+	if (!weapons)
 	{
-		top = o.getContainedBy();
+		return false;
 	}
-	if (top->isKindOf((unsigned)CombatNames::kinds().horde) && top->getContain() && top->getContain()->getContainedItemsList())
+	for (int slot = 0; slot < WEAPONSLOT_COUNT; ++slot)
 	{
-		for (Object *m : *top->getContain()->getContainedItemsList())
+		const Weapon *weapon = weapons->weaponInSlot(slot);
+		const WeaponTemplate *t = weapon ? weapon->getTemplate() : nullptr;
+		if (t)
 		{
-			m->setStatus((unsigned)noAuto, on);
+			for (const auto &n : t->m_nuggets)
+			{
+				if (n && n->kind() == NUGGET_SLAVE_ATTACK) // RW 0x910E97: vtable 0xC7B9B0 slot 0x34 returns true
+				{
+					return true;
+				}
+			}
 		}
 	}
-	top->setStatus((unsigned)noAuto, on);
+	return false;
 }
 
 // MSG_TOGGLE_NO_AUTO_ACQUIRE 1115 (RW 0x77B6C4): { objectID source } (the button's object, 0 none). With a source, the value set on the group is the opposite
-// of the source's NO_AUTO_ACQUIRE (no source object: off); without one each member toggles its own. A member already at the value is skipped; turning it on
-// idles a member whose AI attacks (AI vslot 0x1BC, INFERENCE: isAttacking; aiIdle(CMD_FROM_PLAYER), RW 0x5E821A). The related object of a member (RW 0x68CBBC
-// / 0x693C2D / 0x68CBE2: behavior slot 26's object, a member's master whose weapon has a flag) gets the same status: not ported (S-1983)
+// of the source's NO_AUTO_ACQUIRE (no source object: off); without one each member toggles its own. Per member: a SlavedUpdate member (behavior slot 26,
+// RW 0x68CBBC) whose weapons carry a SlaveAttackNugget (RW 0x693C2D) makes its master the related object (RW 0x68CBE2), and that pointer is kept for the
+// next members (RW 0x77B6D7 sets it once, 0x77B75A is its only write); a member already at the value is skipped (RW 0x77B779); a selected HORDE sets the
+// status across its members (RW 0x748650 -> 0x694569, nothing without a horde contain), any other object on itself; turning it on idles a member whose
+// AI state is active (AI vslot 0x1BC, RW 0x662B3C; aiIdle(CMD_FROM_PLAYER), RW 0x5E821A); the related object takes the same status and idle (RW 0x77B7A6 ..
+// 0x77B80E)
 bool toggleNoAutoAcquire(GameLogic &logic, const GameMessage &m)
 {
 	const GameMessageArgument *src = arg(m, 0, ARGUMENTDATATYPE_OBJECTID);
@@ -155,12 +167,22 @@ bool toggleNoAutoAcquire(GameLogic &logic, const GameMessage &m)
 			value = !s->testStatus((unsigned)noAuto);
 		}
 	}
+	Object *related = nullptr; // RW 0x77B6D7: initialized once, not at the start of each member iteration
 	for (ObjectID id : AICommands::selection(logic, m.getPlayerIndex()))
 	{
 		Object *o = logic.findObjectByID(id);
 		if (!o)
 		{
 			continue;
+		}
+		// RW 0x77B731..0x77B75A: overwrite the retained pointer only when the interface and the weapon test both succeed.
+		if (SlavedUpdateInterface *slaved = SlavedUpdateInterface::of(*o))
+		{
+			Object *master = logic.findObjectByID(slaved->getSlaverID());
+			if (master && hasSlaveAttackWeapon(*o)) // RW 0x693C2D requires a resolvable master
+			{
+				related = logic.findObjectByID(slaved->getSlaverID());
+			}
 		}
 		const bool has = o->testStatus((unsigned)noAuto);
 		if (perObject)
@@ -171,13 +193,39 @@ bool toggleNoAutoAcquire(GameLogic &logic, const GameMessage &m)
 		{
 			continue;
 		}
-		setNoAutoAcquire(*o, value);
+		// RW 0x77B789 / 0x77B7B3: only a selected HORDE takes the group status path;
+		// an individually selected member is set directly even when it belongs to a horde.
+		if (o->isKindOf((unsigned)CombatNames::kinds().horde))
+		{
+			// RW 0x69458A..0x694591: the horde interface is mandatory, not just any contain.
+			if (o->getContain() && o->getContain()->getHordeContainInterface())
+			{
+				o->setStatusAcrossHorde((unsigned)noAuto, value); // RW 0x748650 -> 0x694569
+			}
+		}
+		else
+		{
+			o->setStatus((unsigned)noAuto, value);
+		}
 		if (value)
 		{
 			AIUpdateInterface *ai = o->getAIUpdateInterface();
-			if (ai && ai->isAttacking())
+			if (ai && ai->isStateActive())
 			{
 				ai->aiIdle(CMD_FROM_PLAYER);
+			}
+		}
+		if (related)
+		{
+			// RW 0x77B7A6 / 0x77B7F2: set the related object directly, not through the horde path.
+			related->setStatus((unsigned)noAuto, value);
+			if (value)
+			{
+				AIUpdateInterface *ai = related->getAIUpdateInterface();
+				if (ai && ai->isStateActive()) // RW 0x77B80E, AI vslot 0x1BC
+				{
+					ai->aiIdle(CMD_FROM_PLAYER);
+				}
 			}
 		}
 	}
@@ -206,6 +254,6 @@ std::vector<std::string> WeaponCommands::acceptanceStops()
 		"MaxShotsToFire; not ported: the riders of a container (RW 0x77229A / 0x77208A hand "
 		"the order to riders allowed to fire) and the members' distance order of groupAttackObject",
 		"[S-1983] MSG_TOGGLE_NO_AUTO_ACQUIRE (FACT-A, RW 0x77B6C4): the group's NO_AUTO_ACQUIRE status toggles (a horde with its members) and a member turned on stops "
-		"attacking; not ported: the related object of a member (behavior slot 26, RW 0x68CBE2) and the button's image toggle (RW 0x75D366, client)",
+		"when its AI state is active, including the related object (behavior slot 26, RW 0x68CBE2); not ported: the button's image toggle (RW 0x75D366, client)",
 	};
 }

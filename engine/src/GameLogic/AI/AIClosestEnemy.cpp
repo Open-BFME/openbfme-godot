@@ -19,6 +19,7 @@
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/GateModules.h"
+#include "GameLogic/Module/SiegeModules.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -47,7 +48,7 @@ const char *const kNoPathfinderStop = "[S-326] target search: no pathfinder (The
 struct Names
 {
 	int noAutoAcquire, contestingBuilding, hordeMember, fleeOffMap, destroyed, doNotPickMe, standGround;
-	int horde, unattackable, structure, mine, fsBaseDefense, notAutoAcquirable, rockVendor, rebuildHole, blockingGate, wallSegment, canAttack, creep;
+	int horde, siegeTower, unattackable, structure, mine, fsBaseDefense, notAutoAcquirable, rockVendor, rebuildHole, blockingGate, wallSegment, canAttack, creep;
 	int stunnedFlailing, freefall, emotionDissident;
 	Names()
 	{
@@ -59,6 +60,7 @@ struct Names
 		doNotPickMe = CombatNames::status("DO_NOT_PICK_ME");             // 0x4F
 		standGround = CombatNames::status("STAND_GROUND");               // 0x44
 		horde = CombatNames::kindOf("HORDE");                            // 109 (+ 0x115 bit 5)
+		siegeTower = CombatNames::kindOf("SIEGE_TOWER");                 // + 0x113 bit 5
 		unattackable = CombatNames::kindOf("UNATTACKABLE");              // 54
 		structure = CombatNames::kindOf("STRUCTURE");                    // 7
 		mine = CombatNames::kindOf("MINE");                              // 55
@@ -468,9 +470,18 @@ bool canAttackFromHere(Object &source, Object &victim)
 	}
 	const Names &n = names();
 	const bool standing = status(source, n.standGround); // or the AI byte + 0x3CC, which the port never sets (S-326)
-	if (kind(source, n.horde) && !source.getContain())
+	const bool horde = kind(source, n.horde);
+	if (horde && !source.getContain())
 	{
 		return false; // RW 0x6FF8A7: a HORDE without its contain
+	}
+	// lane WALLMELEE-1: the melee pass needs both on one layer (RW 0x68BBE0); a HORDE's also takes a deployed SIEGE_TOWER victim on another layer
+	// (SiegeDeploySpecialPower::isDeployed, RW 0x8C9C01)
+	bool layerOk = AIWorld::objectLayer(source) == AIWorld::objectLayer(victim);
+	if (!layerOk && horde && kind(victim, n.siegeTower))
+	{
+		const SiegeDeploySpecialPower *deploy = SiegeDeploySpecialPower::of(victim);
+		layerOk = deploy && deploy->isDeployed();
 	}
 	for (int slot = 0; slot < (int)WEAPONSLOT_COUNT; ++slot)
 	{
@@ -489,8 +500,7 @@ bool canAttackFromHere(Object &source, Object &victim)
 			{
 				return false;
 			}
-			// the layers (RW 0x68BBE0) are the same (one layer in the port, S-161: the SIEGE_TOWER branch of a HORDE for other layers cannot run)
-			if (EmotionModules::canSeeObject(source, victim, AIUpdateInterface::objectVisionRangeOf(source))) // RW 0x68FA3D, RW 0x68E43B
+			if (layerOk && EmotionModules::canSeeObject(source, victim, AIUpdateInterface::objectVisionRangeOf(source))) // RW 0x68FA3D, RW 0x68E43B
 			{
 				return true;
 			}

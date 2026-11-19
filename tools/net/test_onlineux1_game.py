@@ -38,7 +38,7 @@ def test_a_failed_rejoin_leaves_no_game_menu_behind_and_a_second_one_is_given_up
         out = r.stdout + r.stderr
         lines = [l for l in out.splitlines() if l.startswith("UX1 ")]
         assert r.returncode == 0, "\n".join(lines) or out[-4000:]
-        assert lines and lines[-1] == "UX1 RESULT: 18 ok, 0 failed", "\n".join(lines) or out[-4000:]
+        assert lines and lines[-1] == "UX1 RESULT: 20 ok, 0 failed", "\n".join(lines) or out[-4000:]
         # both failures went through _online_game_failed (back to the screens, not the program's end)
         assert out.count("GAME ONLINE error: rejoin:") == 2, out[-4000:]
     finally:

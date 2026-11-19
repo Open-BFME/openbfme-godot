@@ -226,11 +226,14 @@ bool AIAttackMeleeApproachState::computePath()
 	}
 	if (AttackTargetFleeing(self, *victim))
 	{
+		// lane FLEECHASE-1, RW 0x746F51 .. 0x747010 (BFME2 decomp AIStatesBfmeComputePath.cpp:916, both editions): the lead point, adjustsDestination off (state
+		// + 0x48: the port's move is always made without the adjustment), requestPath(lead, 0), the waiting flag copied (+ 0x49 = AI + 0x3B1) and FALSE: onEnter
+		// goes on to the engage state (0xE2, its own lead) and update fails (the port returned the waiting flag and kept its approach move on the lead)
 		m_dest = fleeingLead(*victim, m_victimPos);
 		m_moveEntered = false;
 		mv.requestPath(m_dest, false);
 		m_pending = mv.isWaitingForPath();
-		return m_pending;
+		return false;
 	}
 	float dx = SimMath::subf32(self.getPosition()->x, m_victimPos.x), dy = SimMath::subf32(self.getPosition()->y, m_victimPos.y);
 	const float len = SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, 0.0f)));
@@ -244,6 +247,7 @@ bool AIAttackMeleeApproachState::computePath()
 	m_dest = Coord3D{ SimMath::addf32(m_victimPos.x, SimMath::mulf32(r, dx)), SimMath::addf32(m_victimPos.y, SimMath::mulf32(dy, r)), m_victimPos.z };
 	if (!mv.requestMeleeApproachPath(m_dest, false))
 	{
+		m_pending = mv.isWaitingForPath(); // RW 0x7471B3 -> 0x747001 (lane FLEECHASE-1): a refused request copies the waiting flag too
 		return false;
 	}
 	m_pending = mv.isWaitingForPath();
@@ -389,7 +393,7 @@ bool AIAttackMeleeEngageState::reserveOwnPosition()
 	// RW 0x68B3BD(own position, layer); the AI + 0x180 / + 0x3B0 writes of RW 0x68B411 are not ported (S-787)
 	AIUpdateInterface &a = ai();
 	Coord3D p = *owner().getPosition();
-	a.world().pathfinder().updateGoal(a.adapter(), &p, LAYER_GROUND);
+	a.world().pathfinder().updateGoal(a.adapter(), &p, a.adapter().getLayer()); // RW 0x74F6BE / 0x74F7FC: the owner's layer (RW 0x68BBE0), lane WALLMELEE-1
 	setMeleeFlag(owner(), true);
 	return true;
 }
@@ -453,7 +457,7 @@ bool AIAttackMeleeEngageState::computePath()
 	m_noDest = !(target && pf.findMeleeEngagementLocation(obj, info, *target, range, &m_dest));
 	if (!m_noDest)
 	{
-		pf.updateGoal(obj, &m_dest, LAYER_GROUND); // RW 0x68B3AB
+		pf.updateGoal(obj, &m_dest, pf.getLayerAt(obj, m_dest)); // RW 0x68B3AB -> 0x8E28AC: the goal's layer for the unit (RW 0x680A75), lane WALLMELEE-1
 		mv.requestPath(m_dest, true);
 		m_pending = mv.isWaitingForPath();
 		return true;

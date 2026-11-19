@@ -25,6 +25,7 @@
 #pragma once
 
 #include "Common/INIDataTypes.h"
+#include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/DieModule.h"
 #include "GameLogic/Module/UpdateModule.h"
 
@@ -37,7 +38,7 @@ class AIUpdateInterface;
 struct DieMuxData;
 struct OpenContainModuleData;
 
-class OpenContain : public UpdateModule, public ContainModuleInterface, public DieModuleInterface
+class OpenContain : public UpdateModule, public ContainModuleInterface, public DieModuleInterface, public CollideModuleInterface
 {
 public:
 	OBFME_MODULE_XFER(OpenContain) // lane SAVE-4b
@@ -47,7 +48,19 @@ public:
 	// ---- BehaviorModule ----
 	ContainModuleInterface *getContain() override { return this; }
 	DieModuleInterface *getDie() override { return this; }
+	CollideModuleInterface *getCollide() override { return this; }
 	void onDelete() override; // main slot 0x20 RW 0x86708F
+	// ---- CollideModuleInterface (the subobject at module + 0x24, vtable RW 0xC5D650, getCollide RW 0x64F3EA) ----
+	// lane PORT-9, RW 0x8659D8: an object that touches this container while its AI is entering it (AI vslot 0x1FC) is picked up when CollidePickup is set,
+	// after the enemy STEALTH_GARRISON occupants it collides with are revealed (RW 0x867C40). Retail installs this slot in OpenContain (RW 0x867FC1),
+	// TransportContain (RW 0x86B6CF), HordeTransportContain (RW 0x87A2CF), SiegeEngineContain (RW 0x87F525), HordeSiegeEngineContain (RW 0x88051C),
+	// GarrisonContain (RW 0x87B1FA), HordeGarrisonContain (RW 0x87D30F) and TunnelContain (RW 0x880EBB); every class that derives from this one inherits it
+	// here, and HordeContain - not an OpenContain in this port - keeps the empty RW 0x46E918 slot it installs at RW 0x872800
+	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override;
+	bool wouldLikeToCollideWith(const Object &other) const override { (void)other; return false; } // RW 0x7FEAC1
+	// RW 0x867C40, module vslot 0x4C (the C++ name is INFERENCE): the STEALTH_GARRISON occupants an entering object collides with are revealed and ordered out.
+	// No RotWK contain class replaces the slot, so it is not virtual here
+	bool tryToEvacuate(Object *entering);
 	void crc(StateHasher &hasher) const override;
 	// ---- UpdateModule (RW 0x86702D: every frame) ----
 	UpdateSleepTime update() override;
@@ -63,6 +76,12 @@ public:
 	bool isPassengerAllowedToFire() const override;                                    // RW 0x865A7E (lane DECOMP-3)
 	bool isPassengerShotBlocked(const Object *rider, const Object *victim) const override; // RW 0x865B33 (lane DECOMP-3)
 	void orderAllPassengersToExit(int source) override; // RW 0x867D6A
+	// contain slot 0x64, the sale's call (RW 0x796806): RW 0x86561F clears the kill-on-death byte (module + 0xE1) and then orders every rider out with
+	// CMD_FROM_AI through vslot 0x80 (GarrisonContain / HordeGarrisonContain answer that slot with RW 0x991027 instead of RW 0x867D6A)
+	void onSelling() override;
+	// RW 0x86588C `cmp byte [ecx + 0xE1], 0` then `mov ecx, [ecx + 4]` (the module data) `cmp byte [ecx + 0x83], 0` (KillPassengersOnDeath): the byte above
+	// AND the data's row. Read by GarrisonContain::onRemoving (RW 0x87C0B6), HordeGarrisonContain::onDie (RW 0x87CF7D) and TransportContain's die (RW 0x87AE29)
+	bool getKillPassengersOnDeath() const;
 	void onObjectWantsToEnterOrExit(Object *obj, int wants) override;
 	unsigned getStealthUnitsContained() const override { return m_stealthUnitsContained; }
 	bool allowAlliesInside() const override;
@@ -171,8 +190,9 @@ public:
 protected:
 	// contain slot 0xB0(obj) (OpenContain RW 0x865C15: the data's ObjectStatusOfContained; SiegeEngineContain RW 0x87ED55: a crew member's ObjectStatusOfCrew)
 	virtual const ObjectStatusMaskType &statusMaskFor(const Object *obj) const;
-	// RW 0x8674C2's body (main slot 0x74 of the horde contains calls it directly)
-	void openContainAdd(Object *obj);
+	// RW 0x8674C2's body (main slot 0x74 of the horde contains calls it directly). False when the rider is not inside afterwards: it was in a container
+	// already, or onContaining killed the rider or the container (see the body)
+	bool openContainAdd(Object *obj);
 	// RW 0x8665BE -> 0x865EB6
 	void openContainRemove(Object *obj);
 	void objectOnContainedBy(Object *rider); // RW 0x6901AE
@@ -189,7 +209,7 @@ protected:
 	std::map<ObjectID, int> m_wanters;        // RW OpenContain + 0x50 (ZH m_objectEnterExitInfo: 0 enter, 1 exit)
 	bool m_enabled = true;                    // RW interface + 0xBE (from the data's Enabled)
 	bool m_dying = false;                     // RW interface + 0xB8 (onDie)
-	bool m_killingRiders = true;              // RW + 0xE1 (1 at construction, RW 0x867FD8; read with KillPassengersOnDeath, RW 0x86588C; cleared by RW 0x86561F)
+	bool m_killingRiders = true;              // RW + 0xE1 (1 at construction, RW 0x86806C; read with KillPassengersOnDeath, RW 0x86588C; cleared by the sale's onSelling, RW 0x865623)
 	std::map<ObjectID, int> m_riderBoneIndex;          // RW + 0xD0 (the rider's bone index, RW 0x7871FC)
 	std::map<ObjectID, std::string> m_riderBoneName;   // RW + 0x3C (RW 0x8689EC)
 	std::array<std::uint32_t, 19> m_watchedConditions{}; // RW + 0x84 (19 words, zero at construction: RW 0x867FF3 memset)

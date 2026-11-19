@@ -125,6 +125,9 @@ struct Counters
 	size_t waypoints = 0;
 	size_t roadPairs = 0, roadSameName = 0, roadOrphans = 0, roadUnknown = 0, roadDuplicates = 0;
 	size_t waypointLinks = 0;
+	std::vector<std::string> rallyWaypoints;          // "<map>: Player_<n>_Rally" (lane EDAINMAPS-3, RW 0x62AE09: the zero-offset starting units gather there)
+	std::vector<std::string> duplicateWaypointNames; // "<map>: <name> x<count>" (lane EDAINMAPS-3: RW 0x628C29 / getWaypointByName answer the last one)
+	std::set<std::string> scriptedRepeatedWaypoints; // "<map>: '<name>'": a map script parameter names a waypoint name the map uses twice
 	std::set<std::string> roadNames, roadUnknownNames;
 	size_t decodedBytes = 0;
 	std::vector<std::string> zeroLeftoverFailures;
@@ -459,6 +462,7 @@ TEST_CASE("map corpus: every pure 2.01 + BFME2 1.06 .map parses with zero leftov
 			}
 		}
 
+		std::set<std::string> repeatedWaypoints; // lane EDAINMAPS-3: this map's waypoint names used more than once
 		// ---- terrain logic: every WaypointsList id names a waypoint object (spec 4.2); roads (spec 2.6)
 		{
 			TerrainLogic logic;
@@ -473,6 +477,28 @@ TEST_CASE("map corpus: every pure 2.01 + BFME2 1.06 .map parses with zero leftov
 				c.waypointProblems.push_back(key + ": " + p);
 			}
 			c.waypoints += logic.waypoints().size();
+			{
+				std::map<std::string, int> byName;
+				for (const Waypoint &w : logic.waypoints())
+				{
+					++byName[w.name];
+					int rallyStart = 0;
+					char rallyTail = 0;
+					if (std::sscanf(w.name.c_str(), "Player_%d_Rall%c", &rallyStart, &rallyTail) == 2 && rallyTail == 'y' &&
+						w.name == "Player_" + std::to_string(rallyStart) + "_Rally")
+					{
+						c.rallyWaypoints.push_back(key + ": " + w.name);
+					}
+				}
+				for (const auto &[name, count] : byName)
+				{
+					if (count > 1)
+					{
+						c.duplicateWaypointNames.push_back(key + ": '" + name + "' x" + std::to_string(count));
+						repeatedWaypoints.insert(name);
+					}
+				}
+			}
 			c.waypointLinks += m.chunks.waypointLinks.size();
 
 			// roads: ZH pairs a ROAD_POINT1 object with the object right after it when that has ROAD_POINT2 (names are
@@ -602,6 +628,15 @@ TEST_CASE("map corpus: every pure 2.01 + BFME2 1.06 .map parses with zero leftov
 		const JsonValue &sc = J(s, "scripts");
 		size_t conds = 0, acts = 0, params = 0;
 		std::map<std::string, int> condTail, actTail;
+		auto scriptNamesRepeated = [&](const std::vector<ScriptParameter> &ps) {
+			for (const ScriptParameter &sp : ps)
+			{
+				if (!sp.stringValue.empty() && repeatedWaypoints.count(sp.stringValue))
+				{
+					c.scriptedRepeatedWaypoints.insert(key + ": '" + sp.stringValue + "'");
+				}
+			}
+		};
 		std::function<void(const std::vector<ScriptItem> &)> walkItems = [&](const std::vector<ScriptItem> &items) {
 			for (const ScriptItem &it : items)
 			{
@@ -617,6 +652,7 @@ TEST_CASE("map corpus: every pure 2.01 + BFME2 1.06 .map parses with zero leftov
 					{
 						++conds;
 						params += cd.params.size();
+						scriptNamesRepeated(cd.params);
 						if (cd.version >= 5) condTail["(" + std::to_string(cd.flagA) + ", " + std::to_string(cd.flagB) + ")"]++;
 						c.condNames.insert(cd.internalName);
 					}
@@ -627,6 +663,7 @@ TEST_CASE("map corpus: every pure 2.01 + BFME2 1.06 .map parses with zero leftov
 					{
 						++acts;
 						params += a.params.size();
+						scriptNamesRepeated(a.params);
 						if (a.version >= 3) actTail[std::to_string(a.tail)]++;
 						c.actionNames.insert(a.internalName);
 					}
@@ -844,6 +881,33 @@ TEST_CASE("map corpus: every pure 2.01 + BFME2 1.06 .map parses with zero leftov
 		std::printf("        %s\n", b.c_str());
 	}
 	CHECK(c.waypoints == 5015); // spec 2.7: 5015 waypoint objects
+	std::printf("  info: %zu Player_<n>_Rally waypoints\n", c.rallyWaypoints.size());
+	for (const std::string &r : c.rallyWaypoints)
+	{
+		std::printf("        %s\n", r.c_str());
+	}
+	std::printf("  info: %zu waypoint names used more than once in a map\n", c.duplicateWaypointNames.size());
+	for (const std::string &d : c.duplicateWaypointNames)
+	{
+		std::printf("        %s\n", d.c_str());
+	}
+	std::printf("  info: %zu of them named by a script parameter of their map\n", c.scriptedRepeatedWaypoints.size());
+	for (const std::string &d : c.scriptedRepeatedWaypoints)
+	{
+		std::printf("        %s\n", d.c_str());
+	}
+	// lane EDAINMAPS-3: no retail map has a Player_<n>_Rally waypoint (RW 0x62AE09: the zero-offset starting units would gather there; only map wor minas
+	// tirith has a "Player_1_Start_Rally", which the start code never asks for); the 84 repeated names are all WorldBuilder's "Waypoint <n>" (no start
+	// waypoint), and two of them are named by a script of their map: there TerrainLogic::findWaypointByName answers the later one, as RW 0x6824FB does
+	CHECK(c.rallyWaypoints.empty());
+	CHECK(c.duplicateWaypointNames.size() == 84);
+	for (const std::string &d : c.duplicateWaypointNames)
+	{
+		CAPTURE(d);
+		CHECK(d.find(": 'Waypoint ") != std::string::npos);
+	}
+	CHECK(c.scriptedRepeatedWaypoints == (std::set<std::string>{ "maps/map ang fornost/map ang fornost.map: 'Waypoint 137'",
+	                                                             "maps/map ang gundabad/map ang gundabad.map: 'Waypoint 46'" }));
 	CHECK(c.waypointLinks == 1680);
 	// spec claim wrong: 42 links in exactly one map ('cin fornost - peaceful pan - clean') name unknown ids
 	CHECK(c.waypointProblems.size() == 42);

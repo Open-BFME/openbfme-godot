@@ -51,53 +51,80 @@ std::string utf8(const std::u16string &s)
 }
 } // namespace
 
-bool RealTimeStatsPreferences::load(const std::string &folder, const std::u16string &profile, std::string *error)
+namespace
 {
-	m_file = OptionPreferences();
-	m_path.clear();
+// ProfilePreferences::loadStatsFile (RW 0x93E669; decomp Common/ProfilePreferences.cpp, BFME2 0x937D33): the map is cleared; an empty profile reads
+// nothing; else the profile name and the leaf appended to the user data folder are read as a UserPreferences file (RW 0x7B2B7F). A missing file is a
+// profile without stats (true, no entries); a file that cannot be read is an error (`file` empty, false).
+bool loadProfileStatsFile(const char *leaf, const std::string &folder, const std::u16string &profile, OptionPreferences &file, std::string &path,
+	std::string *error)
+{
+	file = OptionPreferences();
+	path.clear();
 	if (!profile.empty() && folder.empty())
 	{
-		m_file.set("UseMapListTooltips", "1");
 		if (error)
 		{
-			*error = "RealTimeStats: the profile store has no user data folder (an in-memory store): no stats file";
+			*error = std::string(leaf) + ": the profile store has no user data folder (an in-memory store): no stats file";
 		}
 		return false;
 	}
 	if (!profile.empty())
 	{
-		// loadStatsFile (RW 0x93E669): the profile name and the leaf appended to the user data folder (UserPreferences::load RW 0x7B2B7F)
-		m_path = folder + utf8(profile) + kLeaf;
+		path = folder + utf8(profile) + leaf;
 		std::error_code ec;
-		const std::filesystem::path path = PathIO::native(m_path);
-		if (std::filesystem::exists(path, ec))
+		const std::filesystem::path native = PathIO::native(path);
+		if (std::filesystem::exists(native, ec))
 		{
 			// a folder (or anything not a file) of that name cannot be read: an error, not an empty profile
-			const bool file = std::filesystem::is_regular_file(path, ec);
-			if (!file || !m_file.load(m_path, error))
+			const bool isFile = std::filesystem::is_regular_file(native, ec);
+			if (!isFile || !file.load(path, error))
 			{
-				if (!file && error)
+				if (!isFile && error)
 				{
-					*error = "RealTimeStats: " + m_path + " is not a file";
+					*error = std::string(leaf) + ": " + path + " is not a file";
 				}
-				m_file = OptionPreferences();
-				m_file.set("UseMapListTooltips", "1");
+				file = OptionPreferences();
 				return false;
 			}
 		}
 	}
-	m_file.set("UseMapListTooltips", "1"); // RealTimeStatsPreferences' constructor (RW 0x93E72F): setBool -> boolAsStr "%d"
 	return true;
+}
+
+// UserPreferences::getInt (RW 0x7B2620): a missing key or an empty value is `defaultValue`, else atoi
+int statsInt(const OptionPreferences &file, const std::string &key, int defaultValue)
+{
+	if (!file.has(key))
+	{
+		return defaultValue;
+	}
+	const std::string v = file.get(key);
+	return v.empty() ? defaultValue : std::atoi(v.c_str());
+}
+} // namespace
+
+bool RealTimeStatsPreferences::load(const std::string &folder, const std::u16string &profile, std::string *error)
+{
+	const bool ok = loadProfileStatsFile(kLeaf, folder, profile, m_file, m_path, error);
+	m_file.set("UseMapListTooltips", "1"); // RealTimeStatsPreferences' constructor (RW 0x93E72F): setBool -> boolAsStr "%d"
+	return ok;
+}
+
+bool StrategicStatsPreferences::load(const std::string &folder, const std::u16string &profile, std::string *error)
+{
+	// RW 0x93E6F2 (BFME2 0x937DBC): loadStatsFile with the leaf static RW 0xE05E04 ("StrategicStats.ini"); no default key
+	return loadProfileStatsFile(kLeaf, folder, profile, m_file, m_path, error);
+}
+
+int StrategicStatsPreferences::getInt(const std::string &key, int defaultValue) const
+{
+	return statsInt(m_file, key, defaultValue);
 }
 
 int RealTimeStatsPreferences::getInt(const std::string &key, int defaultValue) const
 {
-	if (!m_file.has(key))
-	{
-		return defaultValue;
-	}
-	const std::string v = m_file.get(key);
-	return v.empty() ? defaultValue : std::atoi(v.c_str()); // RW 0x7B2620: an empty value is the default, else atoi
+	return statsInt(m_file, key, defaultValue);
 }
 
 void RealTimeStatsPreferences::setInt(const std::string &key, int value)

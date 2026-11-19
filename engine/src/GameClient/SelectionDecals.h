@@ -18,7 +18,7 @@
 // - each frame (BFME2 decomp RadiusDecal.cpp RadiusDecal::update): opacity = (min + (max - min) * (sin(2 pi * (client frame mod period) / period) + 1) / 2)
 //   * 255 with period = max(ceil(OpacityThrobTime * 30), 1) client frames, 0 while the in-game UI is hidden; RotationsPerMinute turns it;
 // - a decal whose Style is SHADOW_MERGE_DECAL (0x1000) is drawn by the projected shadow manager's stencil list (RW 0x50D46A, tier A: identical to BFME2
-//   0x50DA71 = BFME2 decomp W3DProjectedShadowRenderShadows.cpp rva0010DA71 (RVA 0x10DA71; RotWK's own 0x50DA71 lies in the ordinary shadow renderer
+//   0x50DA71 = BFME2 decomp W3DProjectedShadow.cpp rva0010DA71 (RVA 0x10DA71; RotWK's own 0x50DA71 lies in the ordinary shadow renderer
 //   RW 0x50D92C); the stencil states are flushDecals' (RW 0x50977A, tier B: BFME2 decomp W3DProjectedShadowManagerFlushDecals.cpp, byte-matched C++)):
 //   stencil on, ref 255, fail / z-fail KEEP;
 //   two passes over the whole list when the device has a stencil and GameData UseSimpleMergeDecals (+ 0x9A7) is off, else one:
@@ -32,7 +32,7 @@
 // - nothing else draws the decal: the draw module's vslot 0x6C has no hover caller (its callers are RW 0x67580E, the horde RW 0x86F4EE, RW 0x872D0A, RW 0x664F93),
 //   so a hovered unit shows no marker.
 // - lane SELWALL-1: every selection decal (the merge list RW 0x50D46A and the other styles' renderShadows RW 0x50D92C alike) is projected by RW 0x50C23A
-//   (= BFME2 0x50C841, W3DProjectedShadowDecalHelpers.cpp rva0010C841, 0 instructions apart) with the height range the shadow's + 0x60 holds (RW 0x50B597):
+//   (= BFME2 0x50C841, W3DProjectedShadow.cpp rva0010C841, 0 instructions apart) with the height range the shadow's + 0x60 holds (RW 0x50B597):
 //   the selected drawable's current condition state's ShadowMaxHeight (RW 0x4B2AD6 .. 0x4B2AF4; field table RW 0xBE0BC8), 20 without a state or a shadow
 //   record (20.0 at RW 0xBDBC6C; the record's own default is 20 too); its terrain part only while the decal's z - the floor < that height (RW 0x50CDE4 ..
 //   0x50CDF9; the floor max(the GROUND layer's height, a bridge's height + 1), RW 0x50C4DE .. 0x50C569), and onto the parts of at most 16 KINDOF
@@ -258,7 +258,8 @@ enum class DecalReceiver
 bool EvaluateMergeDecalGrid(const MergeDecalGrid &grid, const DecalImage &atlas, float x, float y, float z, DecalReceiver receiver, std::uint8_t rgba[4]);
 
 // lane HERORING-1: the surface's colour bytes `surface` (gamma space) under every selection decal at (x, y, z) of `receiver`, as the shaders draw it
-// (selection_decals.gdshaderinc sel_alpha_at, then sel_merge_at): the alpha decals blended in their list order, then the merge result over them. False
+// (selection_decals.gdshaderinc sel_alpha_at, then sel_merge_at): the alpha decals blended in their list order (clipped to [0, 1] after each draw, as
+// retail's D3D9 frame buffer is), then the merge result over them. False
 // where no decal covers the point (out = surface). The merge result is blended in gamma space here; the shaders mix it in linear space: the same in the two
 // passes (it covers 0 or 1), not in the simple pass (UseSimpleMergeDecals, a blended pass)
 // `shadow` (optional, per channel, 1 lit .. 0 black): the object shadow on the surface; the decals are drawn over the shadowed surface, as the
@@ -268,7 +269,7 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 
 // lane PLACEDECAL-1: a drawable's decal shadow (W3DModelDraw Shadow = SHADOW_ALPHA_DECAL ..., the placement ghost's): its centre for the drawable at `p`
 // turned `angle`: ShadowOffsetX along the decal's u axis (cos, sin), ShadowOffsetY along its v axis (sin, -cos) (addShadow negates both, RW 0x50C07E /
-// 0x50C083, and the projection adds them to its 0.5, RW 0x50C713 .. 0x50C729; BFME2 decomp W3DProjectedShadowDecalHelpers.cpp)
+// 0x50C083, and the projection adds them to its 0.5, RW 0x50C713 .. 0x50C729; BFME2 decomp W3DProjectedShadow.cpp rva0010C841)
 Coord3D DecalShadowCentre(const Coord3D &p, float offsetX, float offsetY, float angle);
 // its diffuse: white, ShadowOpacityPeak's low byte as the alpha (W3DModelDraw's shadow setup RW 0x4C4F22 .. 0x4C4FCC: setOpacity(Peak), RW 0x73228B,
 // shifts the value left 24, RW 0x7322AA). INFERENCE (S-5032): the _DYNAMIC types' fade (0x400 / 0x800 / 0x10000, RW 0x4B1BC6 -> RW 0x7323CE) is not run,

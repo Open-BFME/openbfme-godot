@@ -14,6 +14,7 @@
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/AI/AIClosestEnemy.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/ActiveBody.h"
@@ -428,7 +429,11 @@ public:
 		{
 			return STATE_SUCCESS;
 		}
-		// RW 0x68BBE0 / 0x6FF7FA: the owner's layer (Object + 0x428) is the ground or the nemesis can be reached across layers: S-3802, always the ground here
+		// lane WALLMELEE-1, RW 0x94A29F: off the ground layer (RW 0x68BBE0) the owner pursues only a nemesis it can hit from where it stands (RW 0x6FF7FA)
+		if (AIWorld::objectLayer(obj) != LAYER_GROUND && !AI::canAttackFromHere(obj, *nemesis))
+		{
+			return STATE_SUCCESS; // -1
+		}
 		const float range = AIGuardMachine::getAdjustedVisionRange(obj); // OWNERTYPE | MOOD
 		m_exit.center = g.guardedSpot(); // RW 0x94A2B5 ..: the guarded object, else the team's centre, else + 0x48 (as the inner state; lane BFME2CAMP1 review)
 		if (const TriggerArea *area = g.areaToGuard())
@@ -444,7 +449,23 @@ public:
 		return r == STATE_CONTINUE ? STATE_CONTINUE : STATE_SUCCESS;
 	}
 	// RW 0x94A407
-	StateReturnType update() override { return m_attack ? m_attack->update() : STATE_SUCCESS; }
+	StateReturnType update() override
+	{
+		if (!m_attack)
+		{
+			return STATE_SUCCESS;
+		}
+		const StateReturnType r = m_attack->update();
+		// lane WALLMELEE-1, RW 0x94A407 after the inner update: off the ground layer the attack ends once the victim (the machine's goal, RW 0x8DBACE) is out of
+		// reach from where the owner stands (RW 0x6FF7FA)
+		Object &obj = owner();
+		Object *victim = machine().goalObject();
+		if (victim && AIWorld::objectLayer(obj) != LAYER_GROUND && !AI::canAttackFromHere(obj, *victim))
+		{
+			return STATE_SUCCESS; // -1
+		}
+		return r;
+	}
 	// RW 0x9495C4
 	void onExit(StateExitType status) override { stopAttack(status); }
 	void crc(StateHasher &h) const override { crcAttack(h); }
@@ -516,8 +537,8 @@ public:
 const char *guardStopLine()
 {
 	return "[S-3802] AI guard (RW 0x662A21 -> state 16, the guard machine RW 0x949A10): ported for the LOCATION guard of the stances and (lane BFME2CAMP1) the AREA "
-		   "and TEAM guards of the scripts; not ported: the object guard, the turret's target in lookForInnerTarget, the AI + 0x3CD layer flag and the outer state's layer test (RW 0x68BBE0 / 0x6FF7FA: "
-		   "every object is on the ground layer), AI crates, the inner state's restart flag (lane TARGET-1: TheAI's closest enemy is RotWK's search, AIClosestEnemy.h)";
+		   "and TEAM guards of the scripts; not ported: the object guard, the turret's target in lookForInnerTarget, the AI + 0x3CD layer flag, AI crates (lane WALLMELEE-1: the outer state's layer test, "
+		   "RW 0x68BBE0 / 0x6FF7FA, is ported), the inner state's restart flag (lane TARGET-1: TheAI's closest enemy is RotWK's search, AIClosestEnemy.h)";
 }
 
 // RW 0x9497F0

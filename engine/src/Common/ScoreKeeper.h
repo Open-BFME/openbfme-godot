@@ -167,6 +167,10 @@ public:
 	void addObjectBuilt(GameLogic &logic, const Object &obj, int count);
 	void addObjectDestroyed(GameLogic &logic, const Object &victim);
 	void addObjectLost(GameLogic &logic, const Object &victim);
+	// PORT-55: SlaughterHordeContain's zero-percent ownership transfer calls
+	// these template/count callbacks (RW 0x79F60E / 0x79F430), not addObjectLost.
+	void addSlaughterTransferLost(const std::string &templateName, unsigned count);
+	void addSlaughterTransferDestroyed(const std::string &templateName, const Player &previousOwner, unsigned count);
 	// RW 0x79F704: `frame` is TheGameLogic + 0x40; `player` is the keeper's owner
 	void recordPerFrameStats(GameLogic &logic, const Player &player, unsigned frame);
 	// RW 0x79DFFA without the store at + 0xEC (the client may ask at any time: nothing changes); `frame` is the logic frame

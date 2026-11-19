@@ -28,6 +28,16 @@ const MAX_FPS_LIMIT := 1000
 const SCALERS := ["bilinear", "fsr", "fsr2"]
 const SCALE_MIN := 0.5
 const SCALE_MAX := 1.0
+## Graphics preset. auto measures the first match; high is the full picture; low is the toaster tier (70% 3D scale, bilinear, retail Low's
+## terrain without a normal map, and Low's detail unless Options.ini names a StaticGameLOD). Upstream has no adapter class, so every first
+## start is measured. A median GPU time above PROBE_SLOW_GPU_MS records low. A file that holds no probe but a render scale or a scaler (one from
+## before this key) is never measured; a render scale or scaler the player chose meanwhile stays (record_probe).
+const PRESETS := ["auto", "high", "low"]
+const PROBE_RESULTS := ["", "pending", "low", "high"]
+const PROBE_SLOW_GPU_MS := 25.0
+const PROBE_WARMUP_US := 20000000
+const PROBE_FRAMES := 300
+const LOW_PRESET_SCALE := 0.7
 ## lane OWNERFIX-1: the anti-aliasing option's TAA is FSR 2's temporal anti-aliasing at the render scale in effect (game_options.gd sets this): the
 ## scaler then is FSR 2 whatever `scaler` says, on the renderers that have it
 static var temporal_aa := false
@@ -43,6 +53,9 @@ var max_fps := 0
 var show_fps := false
 var render_scale := 1.0
 var scaler := "bilinear"
+var preset := "auto"
+## "" never measured (an older file); "pending" until the first match; then "low" or "high".
+var probe := ""
 var errors := PackedStringArray()
 
 
@@ -52,7 +65,7 @@ static func default_path() -> String:
 
 func to_dict() -> Dictionary:
 	return {"window_mode": window_mode, "resolution": resolution_text(resolution), "vsync": vsync, "max_fps": max_fps, "show_fps": show_fps,
-		"render_scale": render_scale, "scaler": scaler}
+		"render_scale": render_scale, "scaler": scaler, "preset": preset, "probe": probe}
 
 
 func copy():
@@ -119,6 +132,16 @@ func from_dict(d: Dictionary) -> void:
 					scaler = v
 				else:
 					errors.append("scaler = %s: not one of %s" % [str(v), ", ".join(SCALERS)])
+			"preset":
+				if v is String and PRESETS.has(v):
+					preset = v
+				else:
+					errors.append("preset = %s: not one of %s" % [str(v), ", ".join(PRESETS)])
+			"probe":
+				if v is String and PROBE_RESULTS.has(v):
+					probe = v
+				else:
+					errors.append("probe = %s: not one of %s" % [str(v), ", ".join(PROBE_RESULTS)])
 			_:
 				errors.append("unknown key %s" % key)
 
@@ -126,6 +149,7 @@ func from_dict(d: Dictionary) -> void:
 ## Reads the file. A missing file is the first run (the defaults, no error); a file that cannot be parsed is an error and leaves the defaults.
 func load_file(path: String) -> bool:
 	if not FileAccess.file_exists(path):
+		_first_start()
 		return true
 	var cfg := ConfigFile.new()
 	var err := cfg.load(path)
@@ -141,9 +165,66 @@ func load_file(path: String) -> bool:
 			d[key] = cfg.get_value(SECTION, key)
 	var before := errors.size()
 	from_dict(d)
+	if not d.has("preset") and not (d.has("render_scale") or d.has("scaler")):
+		if not d.has("probe"):
+			_first_start()
 	for i in range(before, errors.size()):
 		errors[i] = "%s: %s" % [path, errors[i]]
 	return errors.size() == before
+
+
+static func preset_values(choice: String, probe_result := "") -> Dictionary:
+	var tier_name := choice
+	if tier_name == "auto":
+		tier_name = detected_preset(probe_result)
+	var out := {"preset": choice}
+	if tier_name == "low":
+		out.merge({"render_scale": LOW_PRESET_SCALE, "scaler": "bilinear"}, true)
+	else:
+		out.merge({"render_scale": 1.0, "scaler": "bilinear"}, true)
+	return out
+
+
+func preset_line() -> String:
+	var why := "the file's choice" if preset != "auto" else "auto: %s" % ({"low": "measured slow", "high": "measured fast enough", "pending": "not measured yet: the first match measures it"}.get(probe, "a settings file from before the probe"))
+	return "graphics preset %s (%s), 3D %d%%" % [tier(), why, roundi(render_scale * 100.0)]
+
+
+static func detected_preset(probe_result := "") -> String:
+	return "low" if probe_result == "low" else "high"
+
+
+func tier() -> String:
+	return preset if preset != "auto" else detected_preset(probe)
+
+
+func _first_start() -> void:
+	probe = "pending"
+
+
+func needs_probe() -> bool:
+	return preset == "auto" and probe == "pending"
+
+
+static func probe_verdict(samples_ms: Array) -> String:
+	if samples_ms.is_empty():
+		return ""
+	var sorted := samples_ms.duplicate()
+	sorted.sort()
+	return "low" if float(sorted[sorted.size() / 2]) > PROBE_SLOW_GPU_MS else "high"
+
+
+func record_probe(verdict: String) -> Array:
+	probe = verdict
+	var keys := ["probe"]
+	# the probe never overrides a choice: only the defaults (100%, bilinear) step down; a scale or scaler set on the options screen before the
+	# first match stays
+	if verdict == "low" and is_equal_approx(render_scale, 1.0) and scaler == "bilinear":
+		var rows := preset_values("low")
+		render_scale = rows.render_scale
+		scaler = rows.scaler
+		keys.append_array(["render_scale", "scaler"])
+	return keys
 
 
 ## Writes only `keys` into the file, keeping every other key the file holds (a hotkey outside the options screen: the launcher or the screen may

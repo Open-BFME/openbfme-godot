@@ -5,6 +5,8 @@
 #include "GameLogic/AI/AIFollowPathAsTeam.h"
 
 #include "Common/StateHash.h"
+#include "GameLogic/AI/AIAttack.h"
+#include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIMove.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -71,18 +73,40 @@ bool pointBehind(const Object &obj, const Coord3D &p, const Coord3D &next)
 
 const char *AIFollowPathAsTeamState::stopLine()
 {
-	return "[S-4463] the formation march's state 54 (AIFollowPathAsTeamState, lane BACKLOG-8: command 0x24, RW 0x74FD39 / 0x74FF49) runs; NOT ported: the "
-		   "attack variant (state 61, command 0x25: an attack march goes on as the group's plain attack-move), AI + 0x164 (cleared before each point), the wait "
-		   "for the others at the first points (AIData WaitForOthers, No in retail), computePath's outside-the-map quick path; INFERENCE: AI + 0x44 is the "
-		   "desired speed, the internal move is the port's AIMoveToState";
+	return "[S-4463] the formation march's states 54 and 61 (AIFollowPathAsTeamState, lanes BACKLOG-8 / PORT-13: commands 0x24 / 0x25, RW 0x74FD39 / 0x74FF49) "
+		   "run; NOT ported: the attack-move sub-machine's crate state 0x27 and AI + 0x3C7, AI + 0x164 (cleared before each point), the wait for the others at "
+		   "the first points (AIData WaitForOthers, No in retail), computePath's outside-the-map quick path; INFERENCE: AI + 0x44 is the desired speed, the "
+		   "internal move is the port's AIMoveToState";
 }
 
-AIFollowPathAsTeamState::AIFollowPathAsTeamState(AIStateMachine &m)
+AIFollowPathAsTeamState::AIFollowPathAsTeamState(AIStateMachine &m, bool isAttack)
 	: AIState(m, "AIFollowPathAsTeamState")
+	, m_isAttack(isAttack)
 {
 }
 
 AIFollowPathAsTeamState::~AIFollowPathAsTeamState() = default;
+
+std::unique_ptr<AIStateMachine> AIFollowPathAsTeamState::makeAttackMachine()
+{
+	// RW 0x74E083: idle 0 (HuntIdleState), crate 0x27 (not ported, S-1189), attack 10 -> AI_ATTACK_OBJECT; each ends in idle
+	std::unique_ptr<AIStateMachine> m = std::make_unique<AIStateMachine>(ai(), "AIAttackMoveStateMachine");
+	m->defineState(AI_IDLE, makeHuntIdleState(*m), AI_IDLE, AI_IDLE);
+	m->defineState(AI_ATTACK_OBJECT, std::make_unique<AIAttackState>(*m, false, true, false), AI_IDLE, AI_IDLE);
+	return m;
+}
+
+bool AIFollowPathAsTeamState::attackMachineIdle() const
+{
+	const AIState *cur = m_attackMachine ? m_attackMachine->currentState() : nullptr;
+	return !cur || cur->isIdle();
+}
+
+bool AIFollowPathAsTeamState::isActive() const
+{
+	// RW 0x7427EA (vtable slot 0x24): + 0x5C != null and its current state is not AI_IDLE
+	return m_attackMachine && !attackMachineIdle();
+}
 
 StateReturnType AIFollowPathAsTeamState::startMove(bool adjusts)
 {
@@ -101,6 +125,19 @@ StateReturnType AIFollowPathAsTeamState::onEnter()
 	AIUpdateInterface &a = ai();
 	Object &obj = owner();
 	obj.logic().noteStop(stopLine());
+	if (m_isAttack)
+	{
+		if (!m_attackMachine)
+		{
+			m_attackMachine = makeAttackMachine();
+		}
+		else
+		{
+			m_attackMachine->clear(); // vslot 0x14
+		}
+		m_attackMachine->setState(AI_IDLE); // RW 0x74FD5A .. 0x74FD67
+	}
+	m_savedCommandSource = a.lastCommandSource(); // RW 0x74FD6D .. 0x74FD73 (+ 0x58)
 	m_index = 0;
 	m_retries = 5;
 	m_atPoint = false;
@@ -144,9 +181,39 @@ StateReturnType AIFollowPathAsTeamState::onEnter()
 
 StateReturnType AIFollowPathAsTeamState::update()
 {
-	// RW 0x74FF49, the move variant
+	// RW 0x74FF49
 	AIUpdateInterface &a = ai();
 	Object &obj = owner();
+	bool retarget = false;
+	bool justFinishedAttack = false;
+	if (m_attackMachine)
+	{
+		if (!attackMachineIdle())
+		{
+			// RW 0x74FF74 .. 0x74FFDC: sync a changed parent goal object, step the attack machine, and stay in combat until it returns to AI_IDLE
+			if (Object *goal = machine().goalObject(); goal && goal != m_attackMachine->goalObject())
+			{
+				m_attackMachine->setGoalObject(goal->getID());
+			}
+			m_attackMachine->updateStateMachine();
+			if (!attackMachineIdle())
+			{
+				return STATE_CONTINUE;
+			}
+			a.setLastCommandSource(m_savedCommandSource); // RW 0x74FFCD -> 0x6627F0
+			retarget = true;
+			justFinishedAttack = true;
+		}
+		// RW 0x75002F .. 0x750072: crate pickup (RW 0x66810B -> 0x27) is not ported; mood target scan interrupts the march into AI_ATTACK_OBJECT
+		if (Object *victim = a.getNextMoodTarget(!retarget, false))
+		{
+			a.mover().endingMove(); // RW 0x750048 -> 0x6627CB
+			m_attackMachine->setGoalObject(victim->getID());
+			m_attackMachine->setState(AI_ATTACK_OBJECT);
+			a.setLastCommandSource(CMD_FROM_AI); // RW 0x750060
+			return STATE_CONTINUE;
+		}
+	}
 	machine().setGoalPosition(m_goal); // RW 0x661EFE
 	if (m_turning)
 	{
@@ -174,9 +241,9 @@ StateReturnType AIFollowPathAsTeamState::update()
 				status = STATE_SUCCESS;
 			}
 		}
-		if (status != STATE_SUCCESS && status != STATE_FAILURE)
+		if (status != STATE_SUCCESS && status != STATE_FAILURE && !justFinishedAttack)
 		{
-			return status;
+			return status; // RW 0x7502E9: when justFinishedAttack is set, fall through to RW 0x7500F0 to skip passed points and repath to m_index
 		}
 	}
 	else
@@ -273,6 +340,11 @@ StateReturnType AIFollowPathAsTeamState::update()
 
 void AIFollowPathAsTeamState::onExit(StateExitType)
 {
+	// RW 0x74B800
+	if (m_attackMachine)
+	{
+		m_attackMachine->setState(AI_IDLE);
+	}
 	AIUpdateInterface &a = ai();
 	if (m_move)
 	{
@@ -309,10 +381,18 @@ void AIFollowPathAsTeamState::crc(StateHasher &h) const
 	{
 		m_move->crc(h);
 	}
+	if (m_isAttack)
+	{
+		h.addI32((int)m_savedCommandSource);
+		h.addBool(m_attackMachine != nullptr);
+		if (m_attackMachine)
+		{
+			m_attackMachine->crc(h);
+		}
+	}
 }
 
-// merge queue q19 (SAVE-4c made AIState::xfer pure; BACKLOG-8 added this state): OpenBFME layout (S-4220) after AIFollowPathState::xfer
-// (AIStateMachineSnapshot.cpp): every field crc covers, the internal move through xferMove; a state without a retail xfer reader of its own (state 54 is the port's, S-4463)
+// merge queue q19 (SAVE-4c made AIState::xfer pure; BACKLOG-8 added state 54, PORT-13 added state 61's RW 0x742721 fields + 0x58 / + 0x5C)
 void AIFollowPathAsTeamState::xfer(Xfer &x)
 {
 	XferVersion v{ 1, 1 };
@@ -331,4 +411,25 @@ void AIFollowPathAsTeamState::xfer(Xfer &x)
 		AIXfer::inRange(m_retries, 0, 5, "ai follow path as team: the retries");
 	}
 	xferMove(x, ai().mover(), m_move);
+	if (m_isAttack)
+	{
+		AIXfer::enumIn(x, m_savedCommandSource, (int)CMD_FROM_PLAYER, (int)CMD_FROM_AI, "ai follow path as team: the command source");
+		bool has = m_attackMachine != nullptr;
+		x.xferBool(&has);
+		if (!x.isLoading())
+		{
+			if (m_attackMachine)
+			{
+				m_attackMachine->xfer(x);
+			}
+			return;
+		}
+		std::unique_ptr<AIStateMachine> loaded;
+		if (has)
+		{
+			loaded = makeAttackMachine();
+			loaded->xfer(x);
+		}
+		m_attackMachine = std::move(loaded);
+	}
 }

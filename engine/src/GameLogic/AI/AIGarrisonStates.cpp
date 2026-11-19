@@ -30,7 +30,10 @@ const char *const kStop =
 	"0x747D04 / 0x74347D) and ActionManager::canEnterObject (RW 0x82CBD5) are ported; lane BACKLOG-1 (BFME2 decomp): the DOZER + HARVESTER health test (RW "
 	"0x82CC09), the collide-module branch (RW 0x82CD2E: every collide class a unit has answers no), AIEnterState's contained-container test (RW 0x756088) and "
 	"its attack on an enemy container (RW 0x7560FB, getCanAttackObject RW 0x82CFD4: its object part as ObjectWeapons::canAttackObject, S-325), MSG_ENTER's "
-	"weapon lock release (RW 0x76FB64), privateEnter's locomotor point and blocked fields (RW 0x5E39CE, AI + 0x16C / + 0x3B8); not ported: the SHIP branches "
+	"weapon lock release (RW 0x76FB64), privateEnter's locomotor point and blocked fields (RW 0x5E39CE, AI + 0x16C / + 0x3B8); lane ENTERADJUST-1: the "
+	"AIEnterState moves to the entry position itself (adjusted for a SHIP container only) and ignores the container as an obstacle (RW 0x751668 .. "
+	"0x751707 / 0x752B31); not ported: AIMoveToPositionAndEnterState's unadjusted goal (RW 0x751AB6) with its goal-following update RW 0x755572 (the port "
+	"adjusts the entry point), the SHIP branches "
 	"(RW 0x82CED4, privateEnter's AI command 0x4F RW 0x66C6E3), behaviour slot 0x48 of the collide branch, getCanAttackObject's STRUCTURE and "
 	"SPAWNS_ARE_THE_WEAPONS parts (reported), the container AI's slot 0x1A8 in the exit states (taken as not 2), the members' AI slot 0x1C4 of RW 0x875C93, "
 	"the locomotor's allow-invalid-position flag, the group manager of MSG_ENTER (GameData + 0x11CA)";
@@ -283,6 +286,11 @@ public:
 		{
 			ai().world().noteStop(OpenContain::shipStop()); // lane SHIP-1: the boarding legs of RW 0x751A8A / 0x756452 are not ported (S-4160)
 		}
+		// NOT PORTED (S-1101, lane ENTERADJUST-1): RW 0x751AB6 clears adjustsDestination (+ 0x48) and only a SHIP's entry point is adjusted (RW 0x751AF0 .. 0x751B11),
+		// but retail's state is an AIMoveToState whose update (RW 0x755572, BFME2 decomp AIStatesDerivedOnExit.cpp:702) moves the goal to the container's position
+		// every frame (and leads a moving one) before the internal move (RW 0x748E46). The port's state keeps a fixed goal: unadjusted, an entry offset inside the
+		// footprint (WildMineShaft: EntryOffset Y:-10, radius 36) is never reached and the horde never enters (test_hud_tunnel_retail.cpp), so the port keeps the
+		// adjustment until RW 0x755572 is ported
 		m_move = std::make_unique<AIMoveToState>(ai().mover(), m_goal, true);
 		return m_move->onEnter();
 	}
@@ -384,6 +392,11 @@ public:
 		if (ContainModuleInterface *contain = container->getContain())
 		{
 			contain->getEntryPosition(m_goal);                 // slot 0x158
+			static const int kShip = CombatNames::kindOf("SHIP");
+			if (container->isKindOf((unsigned)kShip))
+			{
+				ai().world().pathfinder().adjustDestination(ai().adapter(), ai().locomotorInfo(), &m_goal, nullptr); // RW 0x75168E (lane ENTERADJUST-1)
+			}
 			contain->onObjectWantsToEnterOrExit(&obj, 0);     // slot 0x44(obj, WANTS_TO_ENTER)
 			m_container = container->getID();
 		}
@@ -391,8 +404,13 @@ public:
 		{
 			m_goal = *container->getPosition();
 		}
+		// lane ENTERADJUST-1 (RW 0x751665 .. 0x751707; BFME2 0x74FB77, decomp AIEnterStateOnEnter.cpp, both editions): only a SHIP container (template + 0x11F bit 7) has
+		// its entry position adjusted (RW 0x6FE456(obj, AI + 0x1CC, &goal, 0), before the wants-to-enter call, the answer unused); the goal object is the ignored
+		// obstacle (RW 0x7516C8: RW 0x66831A, AI + 0x164), so the path may end inside its footprint; adjustsDestination (+ 0x48) is 0: the internal move goes to the
+		// entry position itself (the port adjusted it to a nearby free cell and kept the container as an obstacle). onExit clears the ignored obstacle
+		ai().mover().ignoreObstacle(container->getID());
 		// RW 0x7516CD .. 0x7516D7: the locomotor flag + 0x44 bit 1 (ZH setAllowInvalidPosition); the port's locomotor has no reader of it (S-1101)
-		m_move = std::make_unique<AIMoveToState>(ai().mover(), m_goal, true);
+		m_move = std::make_unique<AIMoveToState>(ai().mover(), m_goal, false);
 		return m_move->onEnter();
 	}
 
@@ -475,6 +493,7 @@ public:
 			m_move->onExit();
 			m_move.reset();
 		}
+		ai().mover().ignoreObstacle(PATHFIND_INVALID_ID); // RW 0x752B2D .. 0x752B31: ignoreObstacle(0) (lane ENTERADJUST-1), then the locomotor flag off
 		if (m_container != INVALID_ID)
 		{
 			if (Object *c = owner().logic().findObjectByID(m_container))

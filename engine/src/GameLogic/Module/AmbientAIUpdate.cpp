@@ -28,7 +28,7 @@ float lengthEstimate3D(float x, float y, float z)
 
 const char *AmbientAIUpdate::stopLine()
 {
-	return "[S-5910] ambient wandering is ported from RotWK AnimalAIUpdate::update (RW 0x882058) and WanderAIUpdate::update (RW 0x8ACAFA): the idle gate, the RNG draws and their order, the SALT_LICK scan, the return-to-origin test (Coord3D::GetLengthEstimate, RW 0x4035AC) and ConditionForEntry. Not ported: the enemy flee scan every UpdateTimer frames, the special-layer check (RW 0x881FCC, with the returning state) and WanderAIUpdate WildBeast acquisition, which reports this stop and issues no wander order; the ordinary pathfinder validates wander destinations.";
+	return "[S-5910] ambient wandering is ported from RotWK AnimalAIUpdate::update (RW 0x882058) and WanderAIUpdate::update (RW 0x8ACAFA): the idle gate, the RNG draws and their order, the SALT_LICK scan, the return-to-origin test (Coord3D::GetLengthEstimate, RW 0x4035AC), ConditionForEntry, and the enemy scan of every UpdateTimer frame with its not-an-ally, alive and KindOf filters. Emulated, not ported: the flee itself, aiFleeFromObject (RW 0x881FF3) becoming a step of FleeDistance away with LOCOMOTORSET_PANIC, and the re-issue suppression by AI state 19 or 20 (S-221). Not ported: the special-layer check (RW 0x881FCC, with the returning state) and WanderAIUpdate WildBeast acquisition, which reports this stop and issues no wander order; the ordinary pathfinder validates wander destinations.";
 }
 
 AmbientAIUpdate::AmbientAIUpdate(Thing *thing, const ModuleData *data, bool animal)
@@ -53,6 +53,11 @@ AmbientAIUpdate::AmbientAIUpdate(Thing *thing, const ModuleData *data, bool anim
 			else if (key == "maxwanderdistance" || key == "wanderdistance") field = &m_distance;
 			else if (key == "maxwanderradius") field = &m_radius;
 			else if (key == "fleerange") field = &m_range;
+			// TARGET: RW AnimalAIUpdate's field table: FleeDistance is the int at data + 0x68 (default 100 at RW 0x64BB4D)
+			// and UpdateTimer the unsigned int at data + 0x78 (row RW 0xC04F38, parser RW 0x42EC5E, default 10 at
+			// RW 0x64BB3D), read by the enemy scan of update (RW 0x882288 mov ecx, [eax+0x78]).
+			else if (key == "fleedistance") field = &m_fleeDistance;
+			else if (key == "updatetimer") field = &m_updateTimer;
 			if (field)
 			{
 				std::istringstream number(value);
@@ -100,10 +105,62 @@ UpdateSleepTime AmbientAIUpdate::update()
 	AIUpdateInterface::update();
 	Object &obj = *getObject();
 	if (!m_processed) { m_origin = *obj.getPosition(); m_processed = true; }
-	if (m_animal ? state != AI_IDLE : !isIdle()) return UPDATE_SLEEP_NONE;
-	if (!m_animal && m_condition >= 0 && !obj.testModelCondition(m_condition)) return UPDATE_SLEEP_NONE; // RW 0x8ACAFA: bit test RW 0x46E918
 	GameLogic &logic = obj.logic();
 	Coord3D dest = *obj.getPosition();
+	// S-5910 / lane PORT-7: the enemy scan of RW AnimalAIUpdate::update, and it runs BEFORE the idle test (both skip
+	// branches of its gate land on RW 0x882508, the idle test, so a moving animal scans too). The gate is the logic frame
+	// counter divided by UpdateTimer: RW 0x882288 mov ecx,[data+0x78] / RW 0x88228B test ecx,ecx / RW 0x882292 jbe
+	// RW 0x882508 (0: never scans) / RW 0x882298 mov eax,[RW 0xDE412C] (TheGameLogic) / RW 0x88229D mov eax,[eax+0x40]
+	// (the frame) / RW 0x8822A2 div ecx / RW 0x8822A4 test edx,edx / RW 0x8822A6 jne RW 0x882508 (remainder: not this
+	// frame). The gate covers the scan alone, so the wander dice below still run on every idle frame whatever the timer.
+	if (m_animal && m_updateTimer > 0 && (logic.getFrame() % (unsigned)m_updateTimer) == 0)
+	{
+		// The scan: RW 0x882398 call RW 0xA39090 (ThePartitionManager getClosestObject) with the object's position
+		// (+ 0x38, RW 0x88238F), (float)FleeRange (+ 0x64, RW 0x882381), 0 at RW 0x882386 = FROM_CENTER_2D, and a chain of
+		// three filters linked at RW 0x88236D / RW 0x882378 (RW 0xA394C0 appends): the relationship filter
+		// (Rva00260EB1Filter, vftable RW 0xC11DC0) with flags 3 (RW 0x88235B) and the direction byte 0 (RW 0x882362) -
+		// relationship(animal, other) is one of the flags' bits, bit (1 << Relationship), so 3 is ENEMIES (0) and NEUTRAL
+		// (1), everything that is not an ally; the alive filter (vftable RW 0xC10E20, built at RW 0x88233A); and the KindOf
+		// mask { 8, 9, 10, 11 } (RW 0x882324 .. RW 0x88232C) = INFANTRY, CAVALRY, MONSTER, MACHINE in the retail name table
+		// (RW 0xDA0E68): a structure or a tree is no threat.
+		static const int kThreatKinds[] = { ObjectTemplateInfoBuilder::kindOfIndex("INFANTRY"), ObjectTemplateInfoBuilder::kindOfIndex("CAVALRY"),
+			ObjectTemplateInfoBuilder::kindOfIndex("MONSTER"), ObjectTemplateInfoBuilder::kindOfIndex("MACHINE") };
+		PartitionFilterFn notAlly([&obj](Object &other) {
+			const Relationship rel = obj.getRelationship(other);
+			return rel == ENEMIES || rel == NEUTRAL;
+		});
+		PartitionFilterFn alive([](Object &other) { return !other.isEffectivelyDead(); });
+		PartitionFilterFn threatKind([](Object &other) {
+			for (const int kind : kThreatKinds)
+			{
+				if (kind >= 0 && other.isKindOf((unsigned)kind)) return true;
+			}
+			return false;
+		});
+		if (Object *enemy = logic.partition().getClosestObject(dest, (float)m_range, FROM_CENTER_2D, { &notAlly, &alive, &threatKind }))
+		{
+			// S-5910: the flee itself is emulated, not ported. Retail writes the module's FleeDistance into the object's own
+			// flee distance (RW 0x88249B cvtsi2ss [data+0x68] / RW 0x8824A0 movss [object+0x1AC]) and calls its own
+			// aiFleeFromObject (RW 0x8824BC call RW 0x881FF3, with the enemy from GameLogic::findObjectByID RW 0x8824B3 and
+			// command source 1 = CMD_FROM_SCRIPT at RW 0x8824AE), then remembers it (RW 0x8824C4, object + 0x49C). The port
+			// has no flee order and no panic state, so it steps FleeDistance away from the enemy with LOCOMOTORSET_PANIC and
+			// aiMoveToPosition(CMD_FROM_AI). The same enemy is not suppressed: retail skips the re-issue while the animal is
+			// in state 19 or 20 (RW 0x8823C8 / RW 0x8823D5 call RW 0x660AC1), states this port does not have (S-221).
+			const Coord3D *from = enemy->getPosition();
+			float dx = SimMath::subf32(dest.x, from->x), dy = SimMath::subf32(dest.y, from->y);
+			const float len = SimMath::length2d(dx, dy);
+			if (len > 0.0f) { dx = SimMath::divf32(dx, len); dy = SimMath::divf32(dy, len); }
+			else { dx = 1.0f; dy = 0.0f; } // the emulation's own guard: an enemy exactly below an animal flees east
+			dest.x = SimMath::addf32(dest.x, SimMath::mulf32(dx, (float)m_fleeDistance));
+			dest.y = SimMath::addf32(dest.y, SimMath::mulf32(dy, (float)m_fleeDistance));
+			dest.z = 0.0f;
+			chooseLocomotorSet(LOCOMOTORSET_PANIC);
+			aiMoveToPosition(dest, CMD_FROM_AI);
+			return UPDATE_SLEEP_NONE;
+		}
+	}
+	if (m_animal ? state != AI_IDLE : !isIdle()) return UPDATE_SLEEP_NONE;
+	if (!m_animal && m_condition >= 0 && !obj.testModelCondition(m_condition)) return UPDATE_SLEEP_NONE; // RW 0x8ACAFA: bit test RW 0x46E918
 	if (!m_animal)
 	{
 		if (m_wildBeast) { logic.noteStop(stopLine()); return UPDATE_SLEEP_NONE; }

@@ -12,7 +12,9 @@
 //
 // The host answers findObject, the logic frame and the drawable side (showModule / showSubObject) from live objects; every other callee a handler
 // can name stays LUA-1's reported stop S-124 (no AI, upgrades, powers, emotions or partition manager exist yet). An object has an AI for the engine
-// when its template names an AILuaEventsList in a behavior module (MapCreationHooks::templateEventLists); ForceLuaRegistration is not read (S-147).
+// when its template names an AILuaEventsList in a behavior module (MapCreationHooks::templateEventLists). An object WITHOUT such a list is still
+// registered when its template sets ForceLuaRegistration (RW 0x73595C .. RW 0x735966; MapCreationHooks::templateForcesLuaRegistration): it gets the
+// Lua object record and no handler, since a dispatch needs the AI (RW 0x735F8F / 0x735F9D).
 
 #pragma once
 
@@ -46,6 +48,7 @@ public:
 	{
 		size_t creations = 0;                  ///< sendObjectCreated calls (one creation draw each)
 		size_t creationListObjects = 0;        ///< objects whose AILuaEventsList the registry resolved: registered and sent OnCreated
+		size_t creationForcedObjects = 0;      ///< PORT-24: objects without an AILuaEventsList that ForceLuaRegistration registered (no handlers)
 		size_t creationHookObjects = 0;        ///< of those, the ones whose list has an OnCreated handler
 		std::map<std::string, size_t> creationHandlers; ///< OnCreated handler function -> objects
 		size_t templatesWithSeveralLists = 0;  ///< objects whose template names AILuaEventsList in more than one AI module (the first is used)
@@ -93,6 +96,7 @@ private:
 		size_t aiModules = 0;
 		std::string listName;
 		bool resolved = false;
+		bool forcesLuaRegistration = false; ///< ThingTemplate + 0x640 (RW 0x73595F): registers an object with no AI
 	};
 	std::map<const ThingTemplate *, TemplateLists> m_templates;
 	Stats m_stats;

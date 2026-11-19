@@ -28,6 +28,8 @@ class ArchiveFileSystem;
 namespace godot
 {
 
+struct W3DTextureCache;
+
 class RetailFileSystem : public RefCounted
 {
 	GDCLASS(RetailFileSystem, RefCounted)
@@ -120,6 +122,8 @@ public:
 	const AssetPacks &assetPacks() const { return m_packs; }
 	AssetPacks &assetPacksMutable() { return m_packs; } // lane SDK-1b: GameWorld::set_asset_packs_used
 	std::unique_ptr<W3DFileSource> renderW3DSource();
+	// The decoded W3D textures every material factory of this mount shares (presentation, main thread only); a mount starts a new cache
+	std::shared_ptr<W3DTextureCache> w3dTextureCache();
 
 protected:
 	static void _bind_methods();
@@ -130,6 +134,7 @@ private:
 	void mountMods(const std::string &rotwkRoot, PackedStringArray &errors); // lane MODS-1
 
 	std::unique_ptr<Win32BIGFileSystem> m_fs;
+	std::shared_ptr<W3DTextureCache> m_w3dTextures;
 	bool m_mounted = false;
 	bool m_shellSource = false;
 	std::string m_installRoot;

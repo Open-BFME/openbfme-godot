@@ -21,8 +21,11 @@
 //     ExtraForbiddenKindOf +0x4C (KindOf masks RW 0x6564E7), CanDetectWhileGarrisoned +0x68, CanDetectWhileContained +0x69, CancelOneRingEffect +0x6A,
 //     RequiredUpgrade +0x6C (parseAsciiString).
 //       - constructor: InitiallyDisabled sleeps forever, else GameLogicRandomValue(1, DetectionRate) frames ("StealthDetectorUpdate.cpp" line 0x4F, RW 0x6D328E);
-//       - update (RW 0x8A641A): PHANTOM_STRUCTURE (status 0x58) or UNDER_CONSTRUCTION: next frame; dead or SOLD: forever; inside a container: its contain's
-//         garrisonable answer (slot 0x10) picks CanDetectWhileGarrisoned or CanDetectWhileContained, false: sleep DetectionRate; RequiredUpgrade: an unknown
+//       - update (RW 0x8A641A): PHANTOM_STRUCTURE (status 0x58) or UNDER_CONSTRUCTION: next frame; dead or SOLD: forever. The container decision is
+//         RW 0x8A6477 .. RW 0x8A64AB: no container (Object +0x27C, branch RW 0x8A6482) or no contain module (container +0x258, branch RW 0x8A648C)
+//         continues detection. RW 0x8A6492 calls contain vslot 0x10: a garrisonable contain reads CanDetectWhileGarrisoned (+0x68) at RW 0x8A6499;
+//         any other contain reads CanDetectWhileContained (+0x69) at RW 0x8A64A6. A set byte takes RW 0x8A649C and continues; a clear byte takes
+//         RW 0x8A649E and returns DetectionRate (+8) through RW 0x8A6A36. RequiredUpgrade: an unknown
 //         name or the object without it: next frame; the range is DetectionRange when above 0, else the object's vision range (RW 0x68E43B); every object the
 //         partition manager finds within it (RW 0xA39340 distance type 0) through the filters "the detector sees it" (RW 0x6612AC -> 0x68FA3D(obj, range)),
 //         the KindOf masks (RW 0x445139) and "the detector's relationship to it is ENEMIES or NEUTRAL" (RW 0xC11DC0 mask 3, flag 0) gets, when alive,

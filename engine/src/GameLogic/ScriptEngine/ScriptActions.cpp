@@ -70,9 +70,7 @@ const std::set<int> &clientActions()
 			"AUDIO_RESTORE_VOLUME_ALL_TYPE", "AUDIO_OVERRIDE_VOLUME_TYPE", "AUDIO_RESTORE_VOLUME_TYPE", "AUDIO_SET_VOLUME_TYPE", "CAMEO_FLASH",
 			"NAMED_FLASH", "TEAM_FLASH", "ENABLE_HOUSE_COLOR", "DRAW_SKYBOX_BEGIN", "DRAW_SKYBOX_END", "SUSPEND_BACKGROUND_SOUNDS",
 			"RESUME_BACKGROUND_SOUNDS", "SET_VISUAL_SPEED_MULTIPLIER", "SHOW_WEATHER", "SCREEN_SHAKE", "SELECT_BUILDER_BUTTON_FLASH", "HERO_SELECT_BUTTON_FLASH",
-			"CLOSE_OBJECTIVES_SCREEN", "PLAYER_SELECT_SKILLSET", "MAP_REVEAL_AT_WAYPOINT", "MAP_SHROUD_AT_WAYPOINT", "MAP_REVEAL_PERMANENTLY_AT_WAYPOINT",
-			"MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT", "MAP_REVEAL_PERMANENTLY_IN_TRIGGER", "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER",
-			"MAP_REVEAL_IN_TRIGGER", // lane BFME2CAMP1: RW 0x7C0BCF (the trigger, the players: a one-off reveal, RW 0xB4DCA0 / 0xB4DE50), as the reveals above
+			"CLOSE_OBJECTIVES_SCREEN", "PLAYER_SELECT_SKILLSET", "MAP_SHROUD_AT_WAYPOINT",
 			// lane SCRIPT-2: the victory screen (RW 0x7BF05C: TheShell's victory window, no logic), the objectives button flash (RW 0x7BDF4E), the command
 			// bar edits (RW 0x7C6793 ...: TheControlBar). Lane BACKLOG3: the radar event actions are ported below (radarEventAction)
 			"VICTORY_SCREEN", "FLASH_OBJECTIVES_BUTTON", "FLASH_SPELL_STORE_BUTTON", "FLASH_PLANNING_MODE_BUTTON", // lane CAMPUI-1: RW 0x6D455F's other two slots "COMMANDBAR_REMOVE_BUTTON_OBJECTTYPE", "COMMANDBAR_ADD_BUTTON_OBJECTTYPE_SLOT",
@@ -103,7 +101,7 @@ const std::set<int> &clientActions()
 
 bool positionOf(ScriptEngine &engine, const std::string &name, Coord3D &out, bool cameraFirst = false)
 {
-	// lane CAMPUI-1: MOVE_CAMERA_TO's parameter (type 51) is a named camera or a waypoint; RW 0x7BB540 (BFME2 0x7BAAE4, decomp ScriptActionsRva003BACCA.cpp)
+	// lane CAMPUI-1: MOVE_CAMERA_TO's parameter (type 51) is a named camera or a waypoint; RW 0x7BB540 (BFME2 0x7BAAE4, decomp ScriptActions.cpp)
 	// looks up both and the named camera's position wins
 	if (cameraFirst)
 	{
@@ -129,8 +127,8 @@ bool positionOf(ScriptEngine &engine, const std::string &name, Coord3D &out, boo
 	return false;
 }
 
-// Lane BACKLOG3 (S-2452): the scripts' radar events. TARGET FACTS (RotWK game.dat, caveat S-001; BFME2 decomp ScriptActionsRva003BB76E.cpp /
-// ScriptActions_doObjectRadarCreateEvent.cpp / ScriptActions_doTeamRadarCreateEvent.cpp, tier A for these addresses):
+// Lane BACKLOG3 (S-2452): the scripts' radar events. TARGET FACTS (RotWK game.dat, caveat S-001; BFME2 decomp ScriptActions.cpp /
+// ScriptActions_doObjectRadarCreateEvent.cpp, tier A for these addresses):
 //   RADAR_CREATE_EVENT (RW 0x7BC221): TheRadar->createEvent(the Coord3D parameter, the type parameter, 4.0f (RW 0xBD88C0)), then TheEva's event position (RW 0x5DD1F3);
 //   OBJECT_CREATE_RADAR_EVENT (RW 0x7BC250): the same at the named unit's position (Object + 0x38); nothing without the unit;
 //   TEAM_CREATE_RADAR_EVENT (RW 0x7C0B61): the team by name (getTeamNamed), only when it has a unit (RW 0x7A07D8: a member that is not dead, not Object + 0x94
@@ -428,6 +426,11 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		radarEventAction(engine, a, name);
 		return;
 	}
+	if (name == "PLAYER_SET_RANKLEVELLIMIT") // PORT-43: case 279, RW 0x7CE020 -> RW 0x7BD1A8 -> RW 0x7BB04E(param 0 int)
+	{
+		logic.setRankLevelLimit(param(a, 0).intValue);
+		return;
+	}
 	if (name == "PLAYER_GRANT_SCIENCE" || name == "PLAYER_PURCHASE_SCIENCE") // RW 0x7CE037 / 0x7CE05C -> RW 0x7BD1BA / 0x7BD210(param 0 player, param 1 science)
 	{
 		// TheScienceStore by name (RW 0x5FEF8F; an unknown name does nothing), then every player of the parameter: grantScience (RW 0x6AE3A7) or
@@ -663,6 +666,13 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		}
 		return;
 	}
+	if (name == "MAP_REVEAL_AT_WAYPOINT" || name == "MAP_REVEAL_PERMANENTLY_AT_WAYPOINT" ||
+		name == "MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT" || name == "MAP_REVEAL_IN_TRIGGER" ||
+		name == "MAP_REVEAL_PERMANENTLY_IN_TRIGGER" || name == "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER")
+	{
+		engine.executeMapReveal(a);
+		return;
+	}
 	if (name == "MAP_REVEAL_ALL" || name == "MAP_REVEAL_ALL_PERM" || name == "MAP_REVEAL_ALL_UNDO_PERM" || name == "MAP_SHROUD_ALL")
 	{
 		ShroudManager *shroud = logic.shroud();
@@ -681,7 +691,8 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		}
 		return;
 	}
-	if (executeUnitAction(engine, a, name) || executeOrderAction(engine, a, name) || executeCampaignAction(engine, a, name) || executeSiegeAction(engine, a, name))
+	if (executeUnitAction(engine, a, name) || executeOrderAction(engine, a, name) || executeCampaignAction(engine, a, name) || executeSiegeAction(engine, a, name) ||
+		executeThreatFinderAction(engine, a, name)) // PORT 17 (issue #73): case 556, RW 0x7C68AA
 	{
 		return;
 	}

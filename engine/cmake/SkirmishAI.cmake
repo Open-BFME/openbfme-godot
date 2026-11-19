@@ -21,6 +21,7 @@ set(OPENBFME_SKIRMISH_AI_TESTS
     tests/test_skirmish_ai_upgrades.cpp
     tests/test_skirmish_ai_siege.cpp
     tests/test_aiexpand1_expansion.cpp
+    tests/test_rai_group_tasks.cpp
     tests/test_rai_defense_records.cpp
     tests/test_rai_defensive_tactic.cpp
     tests/test_rai_defensive_state.cpp

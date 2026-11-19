@@ -14,7 +14,8 @@ void AIMover::requestSafePath(PathfindObjectID repulsor)
 		m_repulsors[1] = m_repulsors[0];
 	}
 	m_repulsors[0] = repulsor;
-	m_meleeApproachRequest = false; // + 0x3B3, + 0x3B4
+	m_isFinalGoal = false;          // + 0x3B3 (lane REQTHROTTLE-1: RW 0x663C89)
+	m_meleeApproachRequest = false; // + 0x3B4
 	m_attackRequest = false;        // + 0x3B2
 	m_attackVictim = PATHFIND_INVALID_ID; // + 0x144
 	m_safeRequest = true;           // + 0x3B5

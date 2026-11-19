@@ -26,7 +26,7 @@ const Wait := preload("res://scripts/opts6_wait.gd")
 ## closed (tests/opts6_test.gd): "inventory:<name>" drops a name from these lists, "page:<name>" hides it from the page's side.
 const REQUIRED_TABS := ["Display", "Graphics", "Audio", "Camera", "Interface", "Online", "Performance", "Controls"]
 const REQUIRED_ROWS := {
-	"Display": ["OpenBFMEWidescreen", "Retail.Brightness", "max_fps", "render_scale", "resolution", "scaler", "show_fps", "vsync", "window_mode"],
+	"Display": ["OpenBFMEWidescreen", "Retail.Brightness", "max_fps", "preset", "render_scale", "resolution", "scaler", "show_fps", "vsync", "window_mode"],
 	"Graphics": ["OpenBFMEAnisotropic", "OpenBFMEAntiAliasing", "OpenBFMELook", "OpenBFMESoftParticles", "Retail.AdvancedOption0", "Retail.AdvancedOption1",
 		"Retail.AdvancedOption2", "Retail.AdvancedOption3", "Retail.AdvancedOption4", "Retail.AdvancedOption5", "Retail.AdvancedOption6", "Retail.AdvancedOption7",
 		"Retail.AdvancedOption8", "Retail.Detail"],

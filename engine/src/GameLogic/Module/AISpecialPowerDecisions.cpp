@@ -14,6 +14,8 @@
 #include "Common/Team.h"
 #include "Common/RandomValue.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/ActionManager.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Construction.h"
@@ -44,6 +46,15 @@ float distSqr3Sse(const Coord3D &a, const Coord3D &b)
 {
 	const float dx = SimMath::subf32(a.x, b.x), dy = SimMath::subf32(a.y, b.y), dz = SimMath::subf32(a.z, b.z);
 	return SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
+}
+
+// TARGET: Coord3D::GetLengthEstimate, RW 0x4035AC: |the larger of x, y| + 0.25 * |the smaller|, then the same with that result and |z| (the 0.25 is
+// RW 0xBD1904; every step is stored as a float32, the x87 runs at 24-bit precision)
+float lengthEstimate3D(float x, float y, float z)
+{
+	const auto absf = [](float a) { return a < 0.0f ? SimMath::subf32(0.0f, a) : a; };
+	const auto estimate = [](float a, float b) { return a > b ? SimMath::addf32(a, SimMath::mulf32(b, 0.25f)) : SimMath::addf32(b, SimMath::mulf32(a, 0.25f)); };
+	return estimate(estimate(absf(x), absf(y)), absf(z));
 }
 
 // the rank of the object's ExperienceTracker (Object + 0x26C, + 0x24). INFERENCE: every retail object has a tracker (ZH Object's constructor makes one); a
@@ -1049,6 +1060,88 @@ bool AISpecialPowerUpdate::decideSoulFreeze(Object &obj)
 	}
 	// RW 0x9EA028: the five-word record joins the team's registry after the location was accepted
 	team->addSpecialPowerRecord(m_decision->powerType, obj.logic().getFrame(), obj.getID());
+	return true;
+}
+
+// RW 0x9E691D: ATTACK_HEAL_AOE (the Angmar Necromancer's Well of Souls, INI `AI_SPECIAL_POWER_ATTACK_HEAL_AOE`). The team's registry (RW 0x7A3EF5,
+// "+ 0x140") must hold no record of the power at all. The first of the team's orders (Team + 0x13C) whose command is 0x11 or 0x31 and whose payload
+// gives a position (bit 0x80 of node + 0x13, the three words at node + 0x18) or an object id (bit 0x40, node + 0x24; a dead id does NOT fall back to
+// the position) is the spot. RW 0x68B3AB reserves that goal (the pathfinder's updateGoal), then the estimated 3D length from the caster to it
+// (Coord3D::GetLengthEstimate, RW 0x4035AC) must be below distanceLimit (+ 0x18) * 0.9 (RW 0xBDE198). The first enemy (relationship mask 4, alive,
+// near to far) within the range (+ 0x14) around the CASTER (not the order) must pass RW 0xA0229F; only then the order is erased (RW 0x7A1C5E).
+bool AISpecialPowerUpdate::decideAttackHealAoe(Object &obj)
+{
+	GameLogic &logic = obj.logic();
+	Team *team = obj.getTeam();
+	const Player *player = obj.getControllingPlayer();
+	// RW 0x9E6930..0x9E6941 uses the persisted power type; the template cache is not needed after snapshot load.
+	if (!team || !player)
+	{
+		return false;
+	}
+	if (team->findSpecialPowerRecord(m_decision->powerType, nullptr, logic))
+	{
+		return false; // RW 0x9E6941: any record of the power rejects, the caster's own included
+	}
+	Coord3D position{};
+	size_t found = team->orders().size();
+	for (size_t i = 0; i < team->orders().size(); ++i)
+	{
+		const Team::Order &order = team->orders()[i];
+		if (order.command != 0x11 && order.command != 0x31)
+		{
+			continue;
+		}
+		if (order.hasTarget() && order.target != INVALID_ID) // RW 0x9E6991: zero falls back to the position payload
+		{
+			Object *target = logic.findObjectByID(order.target); // RW 0x9E69A2 -> RW 0x449681
+			if (!target)
+			{
+				continue; // no position fallback (RW 0x9E69B0)
+			}
+			position = *target->getPosition();
+		}
+		else if (order.hasPosition()) // RW 0x79F922
+		{
+			position = order.position;
+		}
+		else
+		{
+			continue;
+		}
+		found = i;
+		break; // only the first usable order
+	}
+	if (found == team->orders().size())
+	{
+		return false;
+	}
+	// RW 0x68B3AB: the goal reservation before the distance test; the wrapper resolves the point's layer (RW 0x680A75) and reserves the goal
+	if (AIUpdateInterface *ai = obj.getAIUpdateInterface())
+	{
+		Pathfinder &pf = ai->world().pathfinder();
+		pf.updateGoal(ai->pathfindObject(), &position, pf.getLayerAt(ai->pathfindObject(), position)); // RW 0x8E28AC: RW 0x680A75(object, point)
+	}
+	const Coord3D &p = *obj.getPosition();
+	const float dx = SimMath::subf32(p.x, position.x), dy = SimMath::subf32(p.y, position.y), dz = SimMath::subf32(p.z, position.z);
+	const float limit = SimMath::mulf32(m_decision->radius, 0.9f); // RW 0xBDE198
+	if (!(lengthEstimate3D(dx, dy, dz) < limit))
+	{
+		return false;
+	}
+	// RW 0x9E6A64 .. 0x9E6AD7: the first alive enemy (mask 4) within the range + 0x14 of the caster, near to far
+	PartitionFilterFn relation([&](Object &o) { return relationIn(player, o, 4u); });
+	PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
+	const PartitionHits hits = logic.partition().iterateObjectsInRange(p, m_decision->range, FROM_CENTER_2D, { &relation, &alive }, ITER_SORTED_NEAR_TO_FAR);
+	if (hits.empty())
+	{
+		return false;
+	}
+	if (!setLocationIfValid(obj, *hits[0].object->getPosition())) // RW 0x9E6AE2 -> RW 0xA0229F
+	{
+		return false;
+	}
+	team->eraseOrder(found); // RW 0x9E6AFD -> RW 0x7A1C5E
 	return true;
 }
 

@@ -1288,6 +1288,9 @@ func _display_setup() -> void:
 	if not _display.load_file(_display_path):
 		for e in _display.errors:
 			printerr("GAME DISPLAY settings: ", e)
+	if _display.probe == "pending" and not _display.save_keys(_display_path, ["probe"]):
+		printerr("GAME DISPLAY ", _display.errors[-1])
+	print("GAME DISPLAY ", _display.preset_line())
 	var r: Dictionary = _display.apply(get_tree().root, null)
 	print("GAME DISPLAY settings %s: %s%s" % [_display_path.get_file(), ", ".join(r.applied), "" if r.problems.is_empty() else " PROBLEMS " + str(r.problems)])
 	_display_overlay = load("res://scripts/fps_overlay.gd").new()
@@ -2381,10 +2384,14 @@ func _begin_game(message: Dictionary) -> void:
 			print("GAME   slot %d: state %d faction %d colour %d start %d team %d (was faction %d colour %d start %d)" % [i, s.state, s.player_template, s.color, s.start_pos, s.team, -1, -1, -1])
 	_state = State.LOADING
 	_shell_leave_for_game()
-	var cards: Dictionary = _shell.set_load_screen_from_game(resolved)
+	var load_screen_game := resolved.duplicate()
+	load_screen_game["online_game"] = _last_game_online # lane RANKICON-1: an online game (_hub_begin above) reads no local profile stats for its rank icons
+	var cards: Dictionary = _shell.set_load_screen_from_game(load_screen_game)
 	if cards.has("error"):
 		_fail("load screen: " + cards.error)
 		return
+	if cards.has("rank_stats_error"):
+		print("LOADSCREEN rank icons: the profile stats file could not be read, the players' rank icons show 0 points: " + str(cards.rank_stats_error)) # lane RANKICON-1
 	_show_rules_summary(str(cards.get("rules_summary", "")))
 	var local_card: int = cards.get("local_card", -1)
 	if local_card >= 0 and local_card < cards.cards.size():
@@ -3089,9 +3096,16 @@ func _apply_lighting(rep: Dictionary) -> void:
 	add_child(_sun)
 
 
+func is_playing() -> bool:
+	return _state == State.PLAYING
+
+
 func set_shadow_lod(lod: int) -> void:
 	if _sun != null:
-		load("res://scripts/object_shadows.gd").configure(_sun, _shadow_lighting, lod)
+		var drawn := lod
+		if _display != null and _display.tier() == "low" and (_shell == null or not _shell.get_options().has("StaticGameLOD")):
+			drawn = mini(lod, 1)
+		load("res://scripts/object_shadows.gd").configure(_sun, _shadow_lighting, drawn)
 
 
 # ---- the scripted run (--auto) --------------------------------------------------------------------------------------------------------------

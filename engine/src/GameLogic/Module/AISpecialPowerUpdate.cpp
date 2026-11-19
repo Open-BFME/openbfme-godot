@@ -58,9 +58,10 @@ using namespace AISpecialPowerDetail;
 namespace
 {
 const char *const kStop =
-	"[S-1421] AISpecialPowerUpdate (lanes MOD-4, AIPOW-1, RAI-POW, RAI-POW-3b, RAI-POW-2, RAI-POW-3): the module (RW 0x8B73B7 / 0x8B714F / 0x8B708B), the decision framework (RW 0x993055 / "
-	"0x993307 / 0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 50 of the 53 decisions run; not ported "
-	"(they answer no, counted): ATTACK_HEAL_AOE (RW 0x9E691D: the team's order list Team + 0x13C, RW 0x7A1C5E, not ported; its registry gate is); spell book "
+	"[S-1421] AISpecialPowerUpdate (lanes MOD-4, AIPOW-1, RAI-POW, RAI-POW-3b, RAI-POW-2, RAI-POW-3, RAI-POW-4): the module (RW 0x8B73B7 / 0x8B714F / 0x8B708B), the decision framework (RW 0x993055 / "
+	"0x993307 / 0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 51 of the 53 decisions run "
+	"(ATTACK_HEAL_AOE RW 0x9E691D consumes the team's threat order, Team + 0x13C, written by the team's vslot 0x14 RW 0x7A59CB and erased RW 0x7A1C5E); not ported "
+	"(they answer no, counted): spell book "
 	"HEAL (RW 0x9E85C6: the ZH AIPlayer's list, Player + 0x2FC -> + 0x4, entries of type 0x1A); ARMY_BREAKER (RW 0x9E92CA: the brain's army trackers, "
 	"AI + 0x164 -> + 0x20); the per-frame "
 	"steering of a summoned helper (slot 1 of TARGETAOE_SUMMON RW 0x9EB961, ASSIST_BATTLE_* RW 0x9E8A42, SHROUD_REVEAL RW 0x9E7F0F: the helper is found through "
@@ -146,6 +147,7 @@ bool AISpecialPowerDecision::decisionPorted(int type)
 	case AISP_SPELLBOOK_SHROUD_REVEAL: case AISP_SPELLBOOK_ASSIST_BATTLE_BUFF: case AISP_SPELLBOOK_ASSIST_BATTLE_DEBUFF: case AISP_SPELLBOOK_BUFFTERRAIN:
 	case AISP_SPELLBOOK_REBUILD: case AISP_SPELLBOOK_ENSHROUDINGMIST: case AISP_SPELLBOOK_CALLTHEHORDE: case AISP_SPELLBOOK_BUFFECONOMYBUILDING: case AISP_SPELLBOOK_CITADEL:
 	case AISP_SOUL_FREEZE:
+	case AISP_ATTACK_HEAL_AOE:
 	case AISP_SPELLBOOK_STRUCTURE_BREAKER: case AISP_SPELLBOOK_STRUCTURE_BREAKER_PREF_WALLS: case AISP_SPELLBOOK_STRUCTURE_BASEKILL:
 	case AISP_SPELLBOOK_DEBUFFECONOMYBUILDING: case AISP_SPELLBOOK_DEBUFFPRODUCTIONBUILDING:
 	case AISP_SPELLBOOK_TREE_KILLER:
@@ -547,6 +549,8 @@ bool AISpecialPowerUpdate::decide(Object &obj)
 		return decideCallTheHorde(obj);
 	case AISP_SPELLBOOK_BUFFECONOMYBUILDING:
 		return decideBuffEconomy(obj);
+	case AISP_ATTACK_HEAL_AOE:
+		return decideAttackHealAoe(obj);
 	case AISP_SPELLBOOK_CITADEL:
 		return decideCitadel(obj);
 	case AISP_SOUL_FREEZE:

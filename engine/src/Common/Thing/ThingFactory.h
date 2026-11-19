@@ -41,6 +41,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/ObjectTypes.h"
 
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <memory>
@@ -66,6 +67,10 @@ public:
 	// ZH ThingFactory.h
 	const ThingTemplate *findTemplate(const std::string &name) const;
 	bool contains(const std::string &name) const { return m_byName.count(name) != 0; }
+	// lane EDAINMAPS-3 (not retail; performance): the state of the templates, a value no other state of any factory ever had (a process-wide counter).
+	// It changes whenever a name is added or removed (newTemplate, reset), an override is linked (newOverride) and around every definition parse
+	// (parseObjectDefinition, which writes template fields), so an answer of findTemplate, or a template's field value, kept with it stays exact
+	std::uint64_t nameGeneration() const { return m_nameGeneration; }
 	// RW 0x6CFE6C ThingFactory::findByTemplateID (lane PROD-1): the master-list template with this 16-bit id (the id the INI loader assigned, RW +0x5E8), or null
 	const ThingTemplate *findByTemplateID(unsigned short id) const;
 	ThingTemplate *newTemplate(const std::string &name);
@@ -133,7 +138,11 @@ private:
 
 	std::deque<std::unique_ptr<ThingTemplate>> m_arena; ///< every template ever made (masters and overrides)
 	std::vector<ThingTemplate *> m_list;                ///< the master list, creation order
-	std::map<std::string, ThingTemplate *> m_byName;    ///< case-sensitive (RW 0x4065AA)
+	// lane PERF-SIM-1: a hash map, not a tree: the per-frame filters and the AI look templates up by name, and the
+	// name map is never iterated (the master list `m_list` keeps creation order). case-sensitive (RW 0x4065AA)
+	std::unordered_map<std::string, ThingTemplate *> m_byName;
+	std::uint64_t m_nameGeneration = 0; ///< lane EDAINMAPS-3: nameGeneration(); set by bumpNameGeneration()
+	void bumpNameGeneration();
 	unsigned short m_nextTemplateID = 1;                ///< RW 0x6D1ACD
 
 	std::vector<std::string> m_slotNames;

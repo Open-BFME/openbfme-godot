@@ -128,14 +128,7 @@ int statusBit(const char *name)
 // RW 0x68BBE0 (inference: the AI's pathfinder layer; ground when the object has none)
 int layerOf(Object &obj)
 {
-	if (AIWorld *w = obj.logic().aiWorld())
-	{
-		if (ObjectPathfindAdapter *a = w->findAdapter(obj.getID()))
-		{
-			return (int)a->getLayer();
-		}
-	}
-	return (int)LAYER_GROUND;
+	return (int)AIWorld::objectLayer(obj);
 }
 
 // RW 0x66352C -> RW 0x6634BF: the squared 2D distance between the two bounding circles' edges (0 when they overlap), the geometry ThePartitionManager reads

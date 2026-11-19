@@ -28,6 +28,7 @@
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameLogic/SpellStores.h"
 
 #include <cmath>
 #include <string>
@@ -434,6 +435,13 @@ TEST_CASE("script4 conditions: EVAL_TEAM_HEALTH (RW 0x7E98D2) never reads hit po
 TEST_CASE("script4 conditions: BUILT_BY_PLAYER (RW 0x7EA59C) counts dead objects too and needs the raw name to be a template; COMPARE_NUM_PLAYERS_IN_GAME "
 		  "(RW 0x6A8630(0): playable sides not defeated); PLAYER_HAS_SCIENCEPURCHASEPOINTS (RW 0x7E50AE); NAMED_ATTACKED_BY_OBJECTTYPE (RW 0x7EA374)")
 {
+	// PlayerScience::baseReset adds Rank 1's grant. Own the spell/rank stores
+	// before constructing players: a prior retail fixture may leave its store
+	// installed, where Rank 1 grants points instead of this test's zero.
+	NameKeyGenerator keys;
+	keys.init();
+	SpellStores spellStores(keys);
+	spellStores.install(); // RAII restores the previous owner after the world dies.
 	combattest::CombatWorld w;
 	startEngine(*w.logic);
 	ScriptEngine &e = w.logic->scriptEngine();
@@ -443,8 +451,14 @@ TEST_CASE("script4 conditions: BUILT_BY_PLAYER (RW 0x7EA59C) counts dead objects
 	CHECK(!eval(e, cond("BUILT_BY_PLAYER", { sp(61, "NoSuchThing"), sp(11, "Bob") })));
 	// Alice and Bob have the playable FactionA / FactionB, the neutral player FactionNeutral is no playable side: 2 (op 2 "==")
 	CHECK(eval(e, cond("COMPARE_NUM_PLAYERS_IN_GAME", { ip(6, 2), ip(0, 2) })));
+	Player *alice = w.logic->players().findPlayerWithName("Alice");
+	REQUIRE(alice);
+	CHECK(alice->science().getSciencePurchasePoints() == 0);
 	CHECK(!eval(e, cond("PLAYER_HAS_SCIENCEPURCHASEPOINTS", { sp(11, "Alice"), ip(0, 1) })));
 	CHECK(eval(e, cond("PLAYER_HAS_SCIENCEPURCHASEPOINTS", { sp(11, "Alice"), ip(0, 0) })));
+	alice->science().addSciencePurchasePoints(3);
+	CHECK(eval(e, cond("PLAYER_HAS_SCIENCEPURCHASEPOINTS", { sp(11, "Alice"), ip(0, 3) })));
+	CHECK(!eval(e, cond("PLAYER_HAS_SCIENCEPURCHASEPOINTS", { sp(11, "Alice"), ip(0, 4) })));
 	d->setName("D");
 	CHECK(!eval(e, cond("NAMED_ATTACKED_BY_OBJECTTYPE", { sp(14, "D"), sp(61, "Swordsman") }))); // no damage record yet
 	Object *attacker = w.unit("Swordsman", 'A', 330.0f, 300.0f);

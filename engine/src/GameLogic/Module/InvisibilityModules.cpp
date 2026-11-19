@@ -369,8 +369,10 @@ UpdateSleepTime StealthDetectorUpdate::update()
 	{
 		if (ContainModuleInterface *c = container->getContain())
 		{
-			// lane GARRISON-1: the contain's slot 0x10 is read (ContainModuleInterface::isGarrisonable: GarrisonContain RW 0x8BD372 true, the others false)
-			if (c->isGarrisonable() && !m_data->m_canDetectWhileContained)
+			// RW 0x8A6492: contain vslot 0x10 chooses the field: garrisonable -> +0x68 at RW 0x8A6499, otherwise -> +0x69 at RW 0x8A64A6.
+			const bool canDetect = c->isGarrisonable() ? m_data->m_canDetectWhileGarrisoned : m_data->m_canDetectWhileContained;
+			// RW 0x8A649C: a set field continues at RW 0x8A64AB; a clear field returns DetectionRate at RW 0x8A649E through RW 0x8A6A36.
+			if (!canDetect)
 			{
 				return UPDATE_SLEEP((int)m_data->m_detectionRate);
 			}
