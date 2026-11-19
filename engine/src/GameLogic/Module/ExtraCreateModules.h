@@ -20,8 +20,7 @@
 // WHAT IS INFERENCE / NOT PORTED (stop S-981, reported per use):
 //   * InheritUpgradeCreate's partition query is a scan of the logic's object list (list order) with the 3D centre distance <= Radius and
 //     ObjectFilterMatch::allows; the partition manager's cell order and its exact range test are not read (the effect does not depend on the order: every
-//     match gives the same bits);
-//   * LockWeaponCreate on an object with a contain module: the contain's slot 0x168 (its weapon lock pass-through) is not ported.
+//     match gives the same bits).
 
 #pragma once
 

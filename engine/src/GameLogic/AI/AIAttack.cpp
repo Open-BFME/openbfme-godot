@@ -8,7 +8,9 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 
 #include "Common/StateHash.h"
+#include "Common/GameCommon.h"
 #include "Common/Team.h"
+#include "GameLogic/AI/AIGarrisonStates.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIMove.h"
@@ -557,6 +559,7 @@ StateReturnType AIAttackApproachState::onEnter()
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
 	Object *victim = victimOf(machine());
+	m_waiting = false; // RW 0x74E6CE clears + 0x71 before its first return
 	if (m_att->isAttackingObject() && victimGone(victim))
 	{
 		return STATE_SUCCESS; // already killed the victim
@@ -578,7 +581,25 @@ StateReturnType AIAttackApproachState::onEnter()
 	}
 	const Coord3D goal = victim ? *victim->getPosition() : machine().goalPosition();
 	m_prevVictimPos = goal;
+	if (!GarrisonRules::isMobile(source) || a.curLocomotorSpeed() < 0.1f)
+	{
+		// an owner that cannot move (Object::isMobile RW 0x690E97 false, or its locomotor's max speed RW 0x5E3F49 below 0.1, RW 0xBD83D4: a speedless
+		// locomotor such as the fortress catapults' FloatingCatapultLocomotor) asks for no path: it waits two seconds and then fails unless the victim came
+		// into range (RW 0x74E6CE: + 0x71 = 1, + 0x68 = frame + 2 * LOGICFRAMES_PER_SECOND, before the turret and computePath; BFME2 decomp
+		// AIAttackApproachTargetStateOnEnter.cpp onEnter retail 0x0034CD3A; update: see AIAttackApproachState::update). The port made a move at speed 0
+		// and held the victim, never firing
+		m_waiting = true;
+		m_waitFrame = a.frame() + 2u * (unsigned)LOGICFRAMES_PER_SECOND;
+		return STATE_CONTINUE;
+	}
 	aimTurret(a, *m_att, victim, machine().goalPosition()); // lane GARRISON-2: RW 0x74E6CE before the path
+	return startMove(goal, victim);
+}
+
+StateReturnType AIAttackApproachState::startMove(const Coord3D &goal, Object *victim)
+{
+	AIUpdateInterface &a = ai();
+	Object &source = owner();
 	// lane PHYS-1: the approach's computePath RW 0x749A3E asks for an attack path (RW 0x663802 -> computeAttackPath 0x6668CA -> findAttackPath 0x6FC18E): a free cell in
 	// weapon reach, reserved, instead of a move to the victim's centre (the destination is not adjusted). A HORDE object attacks through its horde machine (the approach
 	// state 0xC9, computePath RW 0x74A594, S-590); a HORDE that reaches this generic approach keeps the move to the victim (RW 0x749A3E's branch distinctions and the
@@ -612,6 +633,29 @@ StateReturnType AIAttackApproachState::update()
 	if (inRange())
 	{
 		return STATE_SUCCESS;
+	}
+	if (m_waiting)
+	{
+		// RW 0x749D46 reads the wait (+ 0x71 / + 0x68) only for an object target: the wait over -> failure
+		if (m_att->isAttackingObject())
+		{
+			return a.frame() > m_waitFrame ? STATE_FAILURE : STATE_CONTINUE;
+		}
+		// a position target (attack-ground) runs computePath RW 0x749A3E on every update instead: it fails at once for an owner that is not mobile
+		// (RW 0x749A7A); a mobile owner gets the path its onEnter skipped and holds the attack while the move runs (a speedless one: until the
+		// target comes into range or a new command)
+		if (!GarrisonRules::isMobile(owner()))
+		{
+			return STATE_FAILURE;
+		}
+		if (!m_move)
+		{
+			const StateReturnType entered = startMove(machine().goalPosition(), nullptr);
+			if (entered != STATE_CONTINUE)
+			{
+				return entered;
+			}
+		}
 	}
 	if (!m_move)
 	{
@@ -654,6 +698,8 @@ void AIAttackApproachState::crc(StateHasher &h) const
 	h.addFloat(m_prevVictimPos.y);
 	h.addFloat(m_prevVictimPos.z);
 	h.addU32(m_approachFrame);
+	h.addBool(m_waiting);
+	h.addU32(m_waitFrame);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -786,7 +832,7 @@ StateReturnType AIAttackAimState::aim(bool firstCall)
 		bool contact = false;
 		if (wt && (victim->isKindOf((unsigned)kWallTop) || victim->isKindOf((unsigned)kBlockingGate)) && wt->m_meleeWeapon)
 		{
-			contact = ObjectGeometry::worldspaceBestContactPoint(*victim, *self.getPosition(), "Ram", false, target);
+			contact = ObjectGeometry::worldspaceBestContactPoint(*victim, *self.getPosition(), "Ram", 0, false, target);
 		}
 		if (!victim->isKindOf((unsigned)kWallUpgrade) && !contact)
 		{
@@ -909,14 +955,33 @@ StateReturnType AIAttackFireState::update()
 {
 	Object &obj = owner();
 	Object *victim = victimOf(machine());
-	if (m_att->isAttackingObject() && victimGone(victim))
+	// lane ATTACK-FINISH-1: the current weapon is taken before the victim is looked at, as RW 0x74C4D3 .. RW 0x74C4E5 does (RW 0x68B58C; no weapon
+	// leaves the state at RW 0x74C72B): the decision below needs its template.
+	ObjectWeapons *w = obj.getWeapons();
+	Weapon *weapon = w ? w->currentWeapon() : nullptr;
+	if (!w || !weapon)
 	{
 		return STATE_FAILURE;
 	}
-	ObjectWeapons *w = obj.getWeapons();
-	if (!w || !w->currentWeapon())
+	// lane ATTACK-FINISH-1: RW 0x74C6A8 .. RW 0x74C6D9: an attack on an object (notify slot 0xC, AIAttackState + 0x41) whose victim is gone — no victim
+	// object (RW 0x74C6C3), a dead one (Object + 0x458 bit 0, RW 0x74C6C7) or one with the status FLEE_OFF_MAP (0x32, RW 0x74C6D0) — is decided by the
+	// weapon's FinishAttackOnceStarted (WeaponTemplate + 0x161, reached through Weapon + 4 as at RW 0x74C509; parser RW 0x42E558, the constructor's default 1
+	// at RW 0x6CE164): RW 0x74C6E5 `cmp byte ptr [eax+0x161], 0` and RW 0x74C6EC `jne` keep the shot — the state goes on into the fire path RW 0x74C530 and
+	// fires at the victim's last position — while zero clears the machine's goal object (RW 0x74C6F2) and returns STATE_FAILURE at RW 0x74C8AC: the attack
+	// ends and no shot is fired.
+	static const int kFleeOffMap = CombatNames::status("FLEE_OFF_MAP");
+	const WeaponTemplate *tmpl = weapon->getTemplate();
+	// RW 0x74C50F .. RW 0x74C52A: before the decision, a NoVictimNeeded weapon (+ 0x16B) with no victim (RW 0x74C51C) or with one that is not IMMOBILE
+	// (KindOf bit 2 of the victim's template, RW 0x74C523 `test byte ptr [eax+0x108], 4`) sets the flag [ebp-0xd] and falls into RW 0x74C530, which later
+	// sends the shot to the position fire RW 0x74C88B. Those shots never read the field; the port fires them at the machine's goal position.
+	const bool positionShot = tmpl && tmpl->m_noVictimNeeded && (!victim || !victim->isKindOf((unsigned)CombatNames::kinds().immobile));
+	if (!positionShot && m_att->isAttackingObject() && (victimGone(victim) || victim->testStatus((unsigned)kFleeOffMap)))
 	{
-		return STATE_FAILURE;
+		if (!tmpl || !tmpl->m_finishAttackOnceStarted)
+		{
+			machine().setGoalObject(INVALID_ID); // RW 0x74C6F2
+			return STATE_FAILURE;
+		}
 	}
 	if (m_deferred)
 	{

@@ -211,6 +211,28 @@ void ScoreKeeper::addObjectDestroyed(GameLogic &logic, const Object &victim)
 	addToMap(m_destroyedByTemplate[idx], templateKey(victim), 1, false); // RW 0x79F3BD .. : + 0x1FC [idx]
 }
 
+// PORT-55. RW 0x79F619..0x79F67A: no enabled/counting gate, and no
+// change to unitsAlive. These callbacks account a previously captured horde.
+void ScoreKeeper::addSlaughterTransferLost(const std::string &templateName, unsigned count)
+{
+	m_unitsLost = (int)((std::uint32_t)m_unitsLost + count);
+	m_unitsLost2 = (int)((std::uint32_t)m_unitsLost2 + count);
+	addToMap(m_lostByTemplate, templateName, (int)count, false);
+	addToMap(m_lostByTemplate2, templateName, (int)count, false);
+}
+
+// RW 0x79F433..0x79F47E: only the counting byte gates this callback.
+void ScoreKeeper::addSlaughterTransferDestroyed(const std::string &templateName, const Player &previousOwner, unsigned count)
+{
+	if (!m_counting) return;
+	const int index = previousOwner.getPlayerIndex();
+	if (index < 0 || index >= MAX_PLAYERS)
+		throw std::logic_error("SlaughterHordeContain: invalid previous owner's score index");
+	m_unitsDestroyed[index] = (int)((std::uint32_t)m_unitsDestroyed[index] + count);
+	m_unitsDestroyed2[index] = (int)((std::uint32_t)m_unitsDestroyed2[index] + count);
+	addToMap(m_destroyedByTemplate[index], templateName, (int)count, false);
+}
+
 // RW 0x79F486 (the victim's keeper)
 void ScoreKeeper::addObjectLost(GameLogic &logic, const Object &victim)
 {

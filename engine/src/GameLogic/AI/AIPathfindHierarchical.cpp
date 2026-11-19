@@ -168,7 +168,7 @@ void Pathfinder::makeHierarchicalPathPassable(PathfindCell *last, bool expand)
 }
 
 void Pathfinder::examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2D &delta, PathfindCell *parent, PathfindCell *goal, zoneStorageType parentZone,
-	zoneStorageType *zones, int &zoneCount, const PathfindMovement &mv)
+	zoneStorageType *zones, int &zoneCount, const PathfindMovement &mv, const PathfindZoneManager::ZoneLookup &zoneLookup)
 {
 	// TARGET RW 0x6F6454 (see the file comment)
 	if (cell.x < m_extent.lo.x || cell.x > m_extent.hi.x || cell.y < m_extent.lo.y || cell.y > m_extent.hi.y)
@@ -176,7 +176,7 @@ void Pathfinder::examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2
 		return;
 	}
 	PathfindCell *edge = getCell(LAYER_GROUND, cell.x, cell.y);
-	if (!edge || m_zoneManager.getBlockZone(mv, edge->getZone()) != parentZone)
+	if (!edge || PathfindZoneManager::blockZoneOf(zoneLookup, edge->getZone()) != parentZone)
 	{
 		return;
 	}
@@ -194,7 +194,7 @@ void Pathfinder::examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2
 	{
 		return;
 	}
-	const zoneStorageType z = m_zoneManager.getBlockZone(mv, across->getZone());
+	const zoneStorageType z = PathfindZoneManager::blockZoneOf(zoneLookup, across->getZone());
 	for (int i = 0; i < zoneCount; ++i)
 	{
 		if (zones[i] == z)
@@ -207,7 +207,7 @@ void Pathfinder::examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2
 			return;
 		}
 	}
-	if (!m_zoneManager.zonesJoin(mv, edge->getZone(), across->getZone()))
+	if (!m_zoneManager.zonesJoin(zoneLookup, edge->getZone(), across->getZone()))
 	{
 		return;
 	}
@@ -239,8 +239,8 @@ void Pathfinder::examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2
 	m_open.push(across);
 }
 
-bool Pathfinder::hierarchicalRaisedLinks(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone, const PathfindMovement &mv,
-	int &cellCount)
+bool Pathfinder::hierarchicalRaisedLinks(PathfindCell *c, PathfindCell *goal, zoneStorageType cz, zoneStorageType goalZone,
+	const PathfindZoneManager::ZoneLookup &zoneLookup, int &cellCount)
 {
 	// RW 0x6F8CC7 .. 0x6F8F7B (BFME2 decomp internal_findHierarchicalPath, the m_layers loop): every layer 0 .. 15 in use (RW 0x768326) and not marked
 	// (+ 0x30, the bridge kind's; never for a walkway) with both wall connect cells set. The near cell is + 0x18 unless + 0x18 lies outside the popped cell's
@@ -267,14 +267,14 @@ bool Pathfinder::hierarchicalRaisedLinks(PathfindCell *c, PathfindCell *goal, zo
 			continue;
 		}
 		const PathfindCell *near = getCell(LAYER_GROUND, from.x, from.y);
-		zoneStorageType z = near ? m_zoneManager.getBlockZone(mv, near->getZone()) : 0;
+		zoneStorageType z = near ? PathfindZoneManager::blockZoneOf(zoneLookup, near->getZone()) : 0;
 		if (z != cz)
 		{
 			if (to.x / kBlock == bx && to.y / kBlock == by)
 			{
 				std::swap(from, to);
 				near = getCell(LAYER_GROUND, from.x, from.y);
-				z = near ? m_zoneManager.getBlockZone(mv, near->getZone()) : 0;
+				z = near ? PathfindZoneManager::blockZoneOf(zoneLookup, near->getZone()) : 0;
 			}
 			if (z != cz)
 			{
@@ -384,6 +384,8 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 	}
 	const PathfindMovement mv = makeMovement(obj, loco);
 	ensureZoneBlocks();
+	// lane PERF-SIM-1: the movement's block-zone table is the same for every edge cell of this search
+	const PathfindZoneManager::ZoneLookup zoneLookup = m_zoneManager.zoneLookup(mv);
 	const bool expand = obj && obj->isKindOf(PK_SHIP);
 	goal->startPathfind(nullptr);
 	start->clearParentCell();
@@ -391,7 +393,7 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 	// RW 0x76550F: the ground grid's layers (1, and 0x10 on: the ramps and wall tops) compare block zones; a raised layer's cell its own zone
 	auto searchZone = [&](const PathfindCell *c) {
 		const int l = (int)c->getLayer();
-		return l == (int)LAYER_GROUND || l >= (int)LAYER_RAMP ? m_zoneManager.getBlockZone(mv, c->getZone()) : c->getZone();
+		return l == (int)LAYER_GROUND || l >= (int)LAYER_RAMP ? PathfindZoneManager::blockZoneOf(zoneLookup, c->getZone()) : c->getZone();
 	};
 	const bool goalOnGrid = (int)goal->getLayer() == (int)LAYER_GROUND || (int)goal->getLayer() >= (int)LAYER_RAMP;
 	const zoneStorageType goalZone = searchZone(goal);
@@ -439,7 +441,7 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 		{
 			return;
 		}
-		examineHierarchicalEdgeCell(ICoord2D{ x, y }, delta, parent, goal, parentZone, zones, zoneCount, mv);
+		examineHierarchicalEdgeCell(ICoord2D{ x, y }, delta, parent, goal, parentZone, zones, zoneCount, mv, zoneLookup);
 	};
 	while (!m_open.empty())
 	{
@@ -455,12 +457,12 @@ bool Pathfinder::findClosestHierarchicalPath(PathfindObject *obj, const Pathfind
 		bool found = cz == goalZone && (goalBx == -1 || (bx == goalBx && by == goalBy));
 		if (!found && m_zoneManager.interactsWithRaisedLayer(c->getXIndex(), c->getYIndex()))
 		{
-			found = hierarchicalRaisedLinks(c, goal, cz, goalZone, mv, linkCells);
+			found = hierarchicalRaisedLinks(c, goal, cz, goalZone, zoneLookup, linkCells);
 		}
 		// lane WALL-2: the portals of the cell's block (RW 0x6F9089 .. 0x6F9371)
 		if (!found)
 		{
-			found = hierarchicalPortals(c, goal, cz, goalZone, mv, obj, linkCells);
+			found = hierarchicalPortals(c, goal, cz, goalZone, zoneLookup, obj, linkCells);
 		}
 		if (found)
 		{

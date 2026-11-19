@@ -102,7 +102,7 @@ TEST_CASE("p16 core: startup rejects incomplete unknown and nonfinite starts")
 	CHECK_FALSE(MapCache::validateStartPositions(map, &error));
 }
 
-TEST_CASE("map start waypoints: only Player_1..numPlayers_Start are read, other names are skipped, a used start twice is an error")
+TEST_CASE("map start waypoints: only Player_1..numPlayers_Start are read, other names are skipped, a used start twice keeps the later one")
 {
 	// Edain's Anomaly: mapcache.ini lists one player, the map also has Player_2_Start; Deserted South Road has a "Player_y_Start"
 	MapCacheEntry map;
@@ -119,10 +119,13 @@ TEST_CASE("map start waypoints: only Player_1..numPlayers_Start are read, other 
 	REQUIRE(map.startPositions.size() == 1);
 	CHECK(map.startPositions.at(1).x == 100);
 	CHECK(MapCache::validateStartPositions(map, &error));
+	// lane EDAINMAPS-3: retail's start lookup RW 0x628C29 walks the prepended waypoint list (RW 0x6829B0) and answers the LAST Player_1_Start of the file
 	error.clear();
-	CHECK_FALSE(MapCache::addStartWaypoint(map, "Player_1_Start", Coord3D{ 150, 100, 0 }, &error));
-	CHECK(error == "duplicate start waypoint 'Player_1_Start'");
-	CHECK(map.startPositions.at(1).x == 100);
+	CHECK(MapCache::addStartWaypoint(map, "Player_1_Start", Coord3D{ 150, 100, 0 }, &error));
+	CHECK(error.empty());
+	REQUIRE(map.startPositions.size() == 1);
+	CHECK(map.startPositions.at(1).x == 150);
+	CHECK(MapCache::validateStartPositions(map, &error));
 }
 
 TEST_CASE("p16 core: replay network indices preserve legacy width and extended high slots")

@@ -28,9 +28,9 @@
 #include "GameLogic/Combat/CombatLineOfSight.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/AI/AIStateMachine.h"
+#include "GameLogic/AI/AIClosestEnemy.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
-#include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponSet.h"
 #include "GameLogic/GameLogic.h"
@@ -222,48 +222,10 @@ static bool weaponFilterAllows(Object &attacker, Object &candidate, Weapon *weap
 	return true;
 }
 
-// RW 0x6FF7FA(source, victim) (BFME2 0x6FE193, tier B, no decomp code yet): the source can hit the victim from where it stands. For a source that is not a HORDE, each
-// of the six weapon slots (RW 0x6C81B0) that holds a weapon: within its attack range (RW 0x6CC653(source, victim, 0, 1)) -> true; a MeleeWeapon then, unless the source
-// stands its ground (STAND_GROUND, status 0x44, or the AI byte + 0x3CC, which the port does not have: S-583), counts when both stand on the same layer (RW 0x68BBE0:
-// every object is on the ground layer in the port, as ObjectWeapons' range host has it) and the source sees the victim (RW 0x68FA3D with the vision range RW 0x68E43B).
-// The HORDE branch (RW 0x6FF8A7, the SiegeDeploySpecialPower exception) is never reached here: the sources are horde members.
+// RW 0x87541E calls RW 0x6FF7FA(source, victim) (BFME2 0x8721F7 -> 0x6FE193): AI::canAttackFromHere, the same layer rule included (lane WALLMELEE-1)
 static bool canReachFromHere(Object &source, Object *victim)
 {
-	if (!victim || !source.getAIUpdateInterface())
-	{
-		return false;
-	}
-	ObjectWeapons *w = source.getWeapons();
-	if (!w)
-	{
-		return false;
-	}
-	static const int kStandGround = ObjectTemplateInfoBuilder::objectStatusIndex("STAND_GROUND");
-	const bool standing = kStandGround >= 0 && source.testStatus((unsigned)kStandGround);
-	for (int slot = 0; slot < (int)WEAPONSLOT_COUNT; ++slot)
-	{
-		Weapon *weapon = w->weaponInSlot(slot);
-		if (!weapon)
-		{
-			continue;
-		}
-		if (w->isSlotWithinAttackRange(slot, *victim, 0.0f, true))
-		{
-			return true;
-		}
-		if (weapon->getTemplate() && weapon->getTemplate()->m_meleeWeapon)
-		{
-			if (standing)
-			{
-				break;
-			}
-			if (EmotionModules::canSeeObject(source, *victim, AIUpdateInterface::objectVisionRangeOf(source)))
-			{
-				return true;
-			}
-		}
-	}
-	return false;
+	return victim && AI::canAttackFromHere(source, *victim);
 }
 
 // a member's slot record is in the member map (RW 0x6B4E57 on interface + 0x60) and its rank is one of RanksToReleaseWhenAttacking (module data + 0x1B8; the rank is the
@@ -550,7 +512,7 @@ const char *HordeContain::attackStopLine()
 	return "[S-2610] HordeAttackNugget fire (lane ARCHER-1): HordeContain::attackTargetNow is RotWK's RW 0x875221 and the member pick RW 0x86FA87 (a randomised nearest: "
 	       "every enemy member in reach has its distance times GameLogicRandomValueReal(0.66, 1.33), the smallest product wins), read in full; INFERENCE / not ported: the "
 	       "line of sight filter RW 0x6616AC of ATTACK_NEEDS_LINE_OF_SIGHT / CAN_SHOOT_OVER_WALLS attackers is ported (lane LOS-1), RW 0x6FF7FA's AI byte + 0x3CC is "
-	       "taken as unset and its layers as equal, the melee member's touch attack RW 0x69675C uses the Amoeba reach rule (S-588), a victim held by a container that is "
+	       "taken as unset (its layer rule is ported, lane WALLMELEE-1), the melee member's touch attack RW 0x69675C uses the Amoeba reach rule (S-588), a victim held by a container that is "
 	       "not a HordeContain stays the pick (that contain's slot 0x48 is not read); the position fire RW 0x875550 orders every released member to attack the position "
 	       "(aiAttackPosition RW 0x6961F1, lane HORDEPOS-1)";
 }

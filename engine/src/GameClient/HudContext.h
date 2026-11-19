@@ -19,6 +19,7 @@ class AIWorld;
 class ArchiveFileSystem;
 class CommandStore;
 class FormationAssistant;
+class MappedImageCollection;
 class MessageStream;
 class Object;
 class Player;
@@ -58,5 +59,6 @@ struct HudContext
 	std::function<DrawablePick::Result(const Object &, const Coord3D &, const Coord3D &, float *)> pickRay;
 
 	const FormationAssistant *formations = nullptr;
+	const MappedImageCollection *images = nullptr;
 	Player *localPlayer() const { return logic.players().getLocalPlayer(); }
 };

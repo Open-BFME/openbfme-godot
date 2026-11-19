@@ -45,9 +45,14 @@ public:
 	~AIGroup();
 	// ZH AIGroup::groupMoveToPosition. `addWaypoint` appends the destination to the path the units follow. `finalAngle` (when `haveFinalAngle`) is the facing every unit
 	// takes on arrival (the BFME formation move's drag direction, S-223). lane BACKLOG-8 r2: RW 0x774897's head first offers a player's group of more than one
-	// unit to the formation march (gatherAndMoveInFormation); `attackMove` (the port's group attack-move) never marches (the attack march, mode 1, is S-4463)
+	// unit to the formation march (gatherAndMoveInFormation); `attackMove` (the port's plain group attack-move) never marches (a formation attack-move is
+	// AIGroup::groupAttackMoveToPosition's, lane PORT-13)
 	void groupMoveToPosition(const Coord3D &pos, bool addWaypoint, CommandSourceType source, bool haveFinalAngle = false, float finalAngle = 0.0f,
 		bool attackMove = false);
+	// lane PORT-13: RW 0x774E2F (AIGroup::groupAttackMoveToPosition): with more than one member, AIData AttackMoveUsesFormations (+ 0xBA), a player's order and
+	// AIData UseFormations (+ 0xBD), the group is offered to gatherAndMoveInFormation(pos, CMD_FROM_PLAYER, /*mode=*/1, /*ground=*/true) (no tighten rectangle
+	// check); else, and when that refuses, every unit takes the plain attack-move (groupMoveToPosition + armAttackMove, `maxShots` on the current weapon)
+	void groupAttackMoveToPosition(const Coord3D &pos, int maxShots, CommandSourceType source);
 	// ---- lane BACKLOG-8 r2: the formation march (AIGroupMarch.cpp) ----
 	// RW 0x7747DE (privateGatherAndMoveInFormationToPosition): true when the group took the order (it marched, or every member was invalid)
 	bool gatherAndMoveInFormation(const Coord3D &pos, CommandSourceType source, int mode, bool ground);
@@ -88,6 +93,9 @@ public:
 	// RW 0x76FD04 (RotWK only): every member's current locomotor (AI + 0x1F0) loses its temporary speed cap (+ 0x2C = -1.0, RW 0xBD19DC). The attack
 	// commands end with it (RW 0x77B00A -> 0x77A342)
 	void clearTemporarySpeedCaps();
+	// RW 0x77005F (stop S-1301), the group's speed matching (see AIGroup.cpp): every member's current locomotor gets the
+	// temporary speed cap (+ 0x2C) of the group's slowest member, with the leader bands when `withLeader`
+	void cohereMoveSpeed(bool withLeader);
 	// the stop line of the force-attack commands (S-2480)
 	static const char *forceAttackStopLine();
 	// the stop line S-223 (raised by every group move)

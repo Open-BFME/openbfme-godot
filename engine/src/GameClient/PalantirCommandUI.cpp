@@ -5,6 +5,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
 
 #include "Common/Player.h"
+#include "Common/NumericState.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Team.h"
 #include "Common/Thing/ThingFactory.h"
@@ -12,6 +13,8 @@
 #include "GameLogic/ExperienceLevels.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/StructureModules.h"
+#include "GameLogic/Module/UpgradeModules.h"
+#include "GameLogic/ObjectFilter.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Module/StealthAbilityModules.h"
@@ -349,11 +352,67 @@ RankInfo rankInfoFor(const HudContext &ctx, ObjectID contextObject, const std::v
 	return info;
 }
 
+CostModifierInfo costModifierInfo(const HudContext &ctx, ObjectID contextObject)
+{
+	CostModifierInfo result;
+	const Object *obj = ctx.logic.findObjectByID(contextObject);
+	// RW 0x92FBC0: only structures; RW 0x92FC16: the first module of this name.
+	if (!obj || !obj->isKindOfName("STRUCTURE"))
+	{
+		return result;
+	}
+	const auto *module = dynamic_cast<const CostModifierUpgrade *>(obj->findModule("CostModifierUpgrade"));
+	Player *owner = obj->getControllingPlayer();
+	Player *local = ctx.localPlayer();
+	// RW 0x92FC25–0x92FC48 -> 0x6A8803: observers/defeated see all; otherwise only allies.
+	if (!module || !owner || !local || (!local->isObserver() && !local->isDefeated() && local->getRelationship(obj->getTeam()) != ALLIES))
+	{
+		return result;
+	}
+	const auto *data = module->data();
+	result.visible = true;
+	result.upgradeDiscount = data->m_upgradeDiscount;
+	result.label = data->m_labelForPalantirString; // RW 0x92F6F2
+	float percentage = 0.0f;
+	if (data->m_upgradeDiscount)
+	{
+		percentage = owner->getUpgradeCostChange(""); // RW 0x92F728–0x92F735: empty name sums every entry
+	}
+	else
+	{
+		// RW 0x6AD967: compare interned filter IDs, not the produced unit's kind-of.
+		// RW 0x76341A interns by 0x762AEE equality; this port stores parsed filters by value.
+		size_t index = 0;
+		for (const Player::CostModifier &entry : owner->costModifiers())
+		{
+			const Object *source = ctx.logic.findObjectByID(entry.source);
+			if (!source || source->testModelCondition(0x44)) // RW 0x6AD98A–0x6AD9A7
+			{
+				continue;
+			}
+			if ((bool)entry.filter != (bool)data->m_objectFilter || (entry.filter && !(*entry.filter == *data->m_objectFilter)))
+			{
+				continue;
+			}
+			if (index < entry.percents.size()) // RW 0x6AD9B2–0x6AD9D0
+			{
+				percentage = entry.percents[index];
+			}
+			++index;
+		}
+	}
+	// RW 0x92F73A–0x92F759 / 0x6AD9DA–0x6AD9FC: PC24, floor then fstp float/fistp.
+	const double product = NumericState::pc24MulW(percentage, 100.0);
+	const double rounded = data->m_upgradeDiscount ? NumericState::pc24AddW(product, 0.5) : NumericState::pc24SubW(0.5, product);
+	result.amount = NumericState::fistp32(NumericState::fstpDword(NumericState::floorD(rounded)));
+	return result;
+}
+
 std::vector<std::string> acceptanceStops()
 {
 	return {
 		"[S-760] Palantir portrait: a drawable's portrait uses SelectPortrait or a Create-a-Hero model-state PortraitImageName; the draw module's template override (RW 0x694BF8) and the local-player branch of the "
-		"kind-of bit +0x11F & 0x40 (RW 0x68FBD3) are not ported, nor the cost modifier interface of CommandUI (ShowCostModifierUpgradeInterface)",
+		"kind-of bit +0x11F & 0x40 (RW 0x68FBD3) are not ported",
 	};
 }
 } // namespace PalantirCommandUI

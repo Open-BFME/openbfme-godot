@@ -63,6 +63,7 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/GateModules.h"
@@ -490,7 +491,24 @@ void Object::doCommandButtonAtPosition(const CommandButton *button, const Coord3
 		unported(*this, b, "doCommandButtonAtPosition", "Object + 0x478, RW 0x68C91B");
 		return;
 	case GUI_COMMAND_DOZER_CONSTRUCT:
-		unported(*this, b, "doCommandButtonAtPosition", "TheBuildAssistant slot 0x38, RW 0x697A57");
+		// Both editions: RW 0x697A57 -> BuildAssistant slot 0x38;
+		// BFME2 Object.cpp 0x297149 -> BuildAssistant.cpp 0x3952D8:
+		// an actual dozer idles as AI, then constructs at angle zero.
+		// Other buildObjectNow branches remain explicitly unported.
+		if (isKindOfName("DOZER"))
+		{
+			if (auto *dozer = dynamic_cast<DozerAIUpdate *>(ai))
+			{
+				if (const ThingTemplate *what = b.getThingTemplate())
+					if (Player *owner = getControllingPlayer())
+					{
+						dozer->aiIdle(CMD_FROM_AI);
+						dozer->construct(*what, pos, 0.0f, *owner);
+					}
+				return;
+			}
+		}
+		unported(*this, b, "doCommandButtonAtPosition", "non-dozer buildObjectNow, RW 0x697A57");
 		return;
 	default:
 		return;

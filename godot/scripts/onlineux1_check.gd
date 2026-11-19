@@ -7,6 +7,7 @@
 ##   2. a second game whose rejoin went live, then the quit menu's Options open and a rejoin of a new attempt that fails at once (no catch-up seen):
 ##      given up too (before r2 the watch a live attempt left spent ignored it and the game hung on the map), Options goes with it;
 ##   3. a third game plays and its Esc opens the quit menu as usual.
+## The first failure leaves the world paused and slowed (what a failed Watch does): the next game must run, unpaused, at speed 1.
 ## Prints "UX1 <name>: ok / FAIL <why>" and "UX1 RESULT: <n> ok, <m> failed".
 extends RefCounted
 
@@ -58,6 +59,8 @@ func _next_game(tag: String) -> bool:
 		return false
 	var live: bool = await _wait(func(): return game._state == game.State.PLAYING and game._hud != null and game._world.get_stats().frame > 5, 60.0)
 	check("%s: the next game starts" % tag, live, "state %d" % game._state)
+	check("%s: the next game is not paused and runs at speed 1" % tag, not game._world.is_paused() and game._world.get_time_scale() == 1.0,
+		"paused %s, speed %s" % [str(game._world.is_paused()), str(game._world.get_time_scale())])
 	return live
 
 
@@ -73,6 +76,12 @@ func run(p_game: Node) -> int:
 	game._net_pause_tick(_status("catching_up", 1001, 3))
 	check("1: the catch-up line is shown", game._pause_label != null and game._pause_label.text.begins_with("Rejoining the game"),
 		game._pause_label.text if game._pause_label != null else "no label")
+	# the state a failed Watch leaves (GameWorld::advance pauses the world of a failed spectator; the caster's bar also sets the speed): the game that
+	# is given up must not hand it to the next one. v0.6.11: the next online game stood at frame 1 on that peer, and so on every player's
+	# (a network game's quit menu does not pause, so its close does not resume either: here the game is a skirmish, whose menu would)
+	game._quit_paused = false
+	game._world.set_paused(true)
+	game._world.set_time_scale(0.25)
 	game._net_pause_tick(_status("failed", 1001, 3))
 	await _back_in_menus("1")
 	if not await _next_game("2"):

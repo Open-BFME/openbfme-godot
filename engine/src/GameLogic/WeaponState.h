@@ -266,9 +266,9 @@ public:
 	// lane PLAY-4 r1: `sourcePos` is RW 0x6CC07C's source position (RW 0x6ED843's second argument: the point the reach is tested from)
 	virtual bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) = 0;
 	virtual float meleeRunDownLimit() = 0; ///< RW [TheAI 0xDE4B40] + 0x18 -> AIData + 0xD0 (ChaseFromBehindLimit, RW 0x6CC0F6)
-	virtual bool victimFlag11A_40() = 0;   ///< RW victim template +0x11A & 0x40
-	virtual int layerOf(bool victim) = 0;  ///< RW 0x68BBE0
-	virtual bool victimLayerException() = 0; ///< RW 0x863983 && +0x3C
+	virtual bool victimFlag11A_40(const RangeSubject &victim) = 0;            ///< RW victim template +0x11A & 0x40 (WALL_UPGRADE)
+	virtual int layerOf(const RangeSubject &subject, bool victim) = 0;          ///< RW 0x68BBE0
+	virtual bool victimLayerException(const RangeSubject &victim) = 0;         ///< RW 0x863983(victim) && +0x3C
 };
 
 // RW 0x6634BF: 2D edge to edge squared distance (x87 at PC24 for the differences and squares, the CRT sqrt, SSE for the final square)

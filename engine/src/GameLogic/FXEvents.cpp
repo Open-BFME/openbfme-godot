@@ -53,6 +53,20 @@ FXEvent FXEventLog::objectEvent(FXEvent::Kind kind, const char *site, UnsignedIn
 	return e;
 }
 
+// Local 22 (#163), RW 0x6CEA25 .. 0x6CEA58 (Weapon::preFireWeapon, DONOR BFME2 0x002CDC3D WeaponReloadWithBonus.cpp:170) and
+// RW 0x895FC4 .. 0x896026 (WeaponFireSpecialAbilityUpdate::startUnpacking, DONOR BFME2 0x0049283E WeaponFireSpecialAbilityUpdate.cpp:509):
+// FXList::doFXPos with obj.getDrawable() (RW 0x70E013, not tested for null in either place)(fx, d->getPosition(), d->getTransformMatrix(), weaponTemplate->m_weaponSpeed, d->getPosition()).
+FXEvent FXEventLog::drawablePositionEvent(const char *site, UnsignedInt frame, const std::string &fxList, const Object &obj, float weaponSpeed)
+{
+	FXEvent e = objectEvent(FXEvent::POSITION_FX, site, frame, fxList, obj);
+	e.drawablePosition = true;
+	e.drawableMatrix = true;
+	e.weaponSpeed = weaponSpeed;
+	e.secondaryPosition = e.position;
+	e.hasSecondaryPosition = true;
+	return e;
+}
+
 void FXEventLog::emit(const FXEvent &event)
 {
 	if (event.choices ? event.choices->empty() : (!event.fxList || !isFXName(*event.fxList)))

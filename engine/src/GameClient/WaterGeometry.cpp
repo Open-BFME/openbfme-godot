@@ -16,7 +16,7 @@ namespace
 {
 
 // RW 0x70E911 (RenderableStandingWaterArea::AllocateAndFillBuffers' cell test, RW 0x482A16). The donor matched
-// in Open-BFME-2 is rva0030B7C2 / rva0030B5AF (GameLogic/Map/Rva0030B7C2PointQuery.cpp). Target facts, read from RW:
+// in Open-BFME-2 is rva0030B7C2 / rva0030B5AF (Common/AreaPolygonBase.cpp). Target facts, read from RW:
 // a bounds precheck (lo.x > x, lo.y > y, x > hi.x, y > hi.y reject), then crossing parity over every
 // vertex i against its predecessor (the last for i 0): skip a horizontal edge, skip when x is right of both
 // ends, order the edge by y, skip unless a.y < y <= b.y, then toggle when (y - a.y) * (b.x - a.x) >=

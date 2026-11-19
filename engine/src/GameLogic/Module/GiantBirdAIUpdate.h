@@ -122,6 +122,7 @@ public:
 
 	// AI commands 0x47 / 0x48 (SpecialAbilityUpdate's approach, RW 0x852D59 / 0x852DC5) -> RW 0x76A04A: GiantBirdNormalFlightState 0x400 to `pos`
 	bool aiAbilityMoveTo(const Coord3D &pos, CommandSourceType source);
+	bool aiAbilityMoveToObject(Object *target, CommandSourceType source); // RW 0x76DAEE: command 0x48 retains its target through deferral
 	// RW 0x76A139 with the level flag (AI command 0x3F, FellBeastSwoopPower): the level swoop at `victim`
 	bool aiLevelAttackObject(Object *victim, CommandSourceType source);
 	// lane STEALTHFLY1: AI command 0x39 (RW 0x77131B, the script's group / named attack of a GiantBirdAIUpdate: AI vslot 0x168 RW 0x68BA5C): RW 0x76D995 routes it

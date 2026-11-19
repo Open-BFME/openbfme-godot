@@ -260,6 +260,15 @@ bool ConstructionSite::GeometryFilter::allow(Object &obj)
 	return NotifyCrushModules::geometriesOverlap(m_shapes, m_pos, m_angle, objectShapes(obj), *obj.getPosition(), obj.getOrientation()) == m_flag;
 }
 
+ConstructionSite::GeometryBounds ConstructionSite::geometryBounds(const std::vector<ObjectGeometry::Shape> &shapes)
+{
+	const Geometry g = geometryOf(shapes);
+	GeometryBounds b;
+	b.circle = g.circle;
+	b.sphere = g.sphere;
+	return b;
+}
+
 std::vector<ObjectGeometry::Shape> ConstructionSite::objectShapes(const Object &obj)
 {
 	return obj.geometryShapes(); // the object's own GeometryInfo (Object + 0xA8)

@@ -139,14 +139,31 @@ void parseRingFX(INI *ini, void *, void *store, const void *)
 }
 }
 
-void CitadelSlaughterHordeContainBehaviorData::buildFieldParse(MultiIniFieldParse &p)
+// RW 0x8842AF..0x884321: percentage 0.5, NONE filter and an empty required mask.
+SlaughterHordeContainBehaviorData::SlaughterHordeContainBehaviorData()
+{
+	canAlwaysEnter = ObjectFilter::none(KindOfMaskType{}, KindOfMaskType{});
+}
+
+void SlaughterHordeContainBehaviorData::buildFieldParse(MultiIniFieldParse &p)
 {
 	HordeGarrisonContainBehaviorData::buildFieldParse(p);
+#define SH_OFF(field) (int)offsetof(SlaughterHordeContainBehaviorData, field)
+	static const FieldParse rows[] = { // RW 0xC5EFE8, shared by the citadel
+		{ "CashBackPercent", INI::parsePercentToReal, nullptr, SH_OFF(cashBackPercent) },
+		{ "CanAlwaysEnter", ParseObjectFilter, nullptr, SH_OFF(canAlwaysEnter) },
+		{ "StatusRequiredForCanAlwaysEnter", ParseObjectStatusMask, nullptr, SH_OFF(statusRequired) },
+		{ nullptr, nullptr, nullptr, 0 }
+	};
+#undef SH_OFF
+	p.add(rows, 0);
+}
+
+void CitadelSlaughterHordeContainBehaviorData::buildFieldParse(MultiIniFieldParse &p)
+{
+	SlaughterHordeContainBehaviorData::buildFieldParse(p);
 #define CSH_OFF(field) (int)offsetof(CitadelSlaughterHordeContainBehaviorData, field)
 	static const FieldParse rows[] = {
-		{ "CashBackPercent", INI::parsePercentToReal, nullptr, CSH_OFF(cashBackPercent) },
-		{ "CanAlwaysEnter", ParseObjectFilter, nullptr, CSH_OFF(canAlwaysEnter) },
-		{ "StatusRequiredForCanAlwaysEnter", ParseObjectStatusMask, nullptr, CSH_OFF(statusRequired) },
 		{ "StatusForRingEntry", ParseObjectStatusMask, nullptr, CSH_OFF(ringStatus) },
 		{ "UpgradeForRingEntry", INI::parseAsciiStringVector, nullptr, CSH_OFF(ringUpgrades) },
 		{ "ObjectToDestroyForRingEntry", ParseObjectFilter, nullptr, CSH_OFF(objectToDestroy) },

@@ -61,8 +61,34 @@ func _settings_checks() -> void:
 	DirAccess.remove_absolute(path)
 	var d = DisplaySettings.new()
 	_check(d.load_file(path) and d.errors.is_empty(), "a missing file is the first run: the defaults, no error")
-	_check(d.to_dict() == {"window_mode": "windowed", "resolution": "", "vsync": "on", "max_fps": 0, "show_fps": false, "render_scale": 1.0, "scaler": "bilinear"},
-		"the defaults change nothing of the game's start (windowed, vsync on, no cap, 100%% bilinear): %s" % JSON.stringify(d.to_dict()))
+	_check(d.to_dict() == {"window_mode": "windowed", "resolution": "", "vsync": "on", "max_fps": 0, "show_fps": false, "render_scale": 1.0, "scaler": "bilinear", "preset": "auto", "probe": "pending"},
+		"a first start keeps the full picture and marks the GPU probe pending: %s" % JSON.stringify(d.to_dict()))
+	_check(DisplaySettings.probe_verdict([10.0, 30.0, 40.0]) == "low" and DisplaySettings.probe_verdict([10.0, 16.0, 20.0]) == "high",
+		"the probe's median above 25 ms is low")
+	# PR #268 review: the probe never overrides a player's saved settings (first start only)
+	var fresh = DisplaySettings.new()
+	fresh.load_file(path)
+	_check(fresh.needs_probe() and fresh.record_probe("low") == ["probe", "render_scale", "scaler"] and fresh.render_scale == 0.7 and fresh.tier() == "low",
+		"a first start measured slow steps the defaults down to Low's 70%% bilinear: %s" % JSON.stringify(fresh.to_dict()))
+	var chose = DisplaySettings.new()
+	chose.load_file(path)
+	chose.from_dict({"render_scale": 0.85, "scaler": "fsr"}) # set on the options screen before the first match (ACCEPT keeps probe = pending)
+	_check(chose.needs_probe() and chose.record_probe("low") == ["probe"] and chose.render_scale == 0.85 and chose.scaler == "fsr",
+		"a render scale and scaler the player chose before the first match stay when it measures slow: %s" % JSON.stringify(chose.to_dict()))
+	var old := FileAccess.open(path, FileAccess.WRITE)
+	old.store_string("[display]\nwindow_mode=\"borderless\"\nrender_scale=1.0\nscaler=\"bilinear\"\n")
+	old.close()
+	var old_text := FileAccess.get_file_as_string(path)
+	var older = DisplaySettings.new()
+	_check(older.load_file(path) and not older.needs_probe() and older.probe == "" and older.tier() == "high",
+		"a settings file from before the probe is never measured: %s" % JSON.stringify(older.to_dict()))
+	_check(FileAccess.get_file_as_string(path) == old_text, "reading it leaves the file's bytes alone")
+	var picked := FileAccess.open(path, FileAccess.WRITE)
+	picked.store_string("[display]\npreset=\"high\"\nprobe=\"pending\"\n")
+	picked.close()
+	var high = DisplaySettings.new()
+	_check(high.load_file(path) and not high.needs_probe() and high.tier() == "high", "a preset the player picked is never measured")
+	DirAccess.remove_absolute(path)
 	d.from_dict({"window_mode": "borderless", "resolution": "1600x900", "vsync": "adaptive", "max_fps": 144, "show_fps": true, "render_scale": 0.65, "scaler": "fsr2"})
 	_check(d.errors.is_empty() and d.save_file(path), "a full set of values is accepted and written")
 	var e = DisplaySettings.new()

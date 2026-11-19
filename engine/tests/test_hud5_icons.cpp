@@ -629,6 +629,27 @@ TEST_CASE("hud5 icons retail: an enemy's invisible unit shows no health bar or m
 	CHECK(IconRig::of(r.build({ own->getID() }, 0), own->getID()).size() == 6);
 }
 
+// The decoration prefilter must not drop the missing-filter note. The marks list inserts it when a living non-member with an
+// experience tracker is queued and VeterancyPipDrawObjectFilter is absent. An off-screen tracker does not reach that list.
+TEST_CASE("hud5 icons: a missing veterancy filter still notes S-1951 for an on-screen tracker, and not for one off screen")
+{
+	if (!haveWorld("hud5 icons veterancy note"))
+	{
+		return;
+	}
+	IconRig r(shared());
+	r.settings.veterancyFilter = nullptr;
+	Object *unit = r.place("GondorFighter", r.rig.local, 5000.0f, 5000.0f);
+	r.rig.game->advance(0.2);
+	REQUIRE(unit->getExperienceTracker());
+	// Default camera looks at the origin. The fighter is outside that view, so the marks list never queues it.
+	r.build({}, 0);
+	CHECK(r.ui.notes().count("[S-1951] no VeterancyPipDrawObjectFilter: no veterancy marks") == 0);
+	r.look(*unit);
+	r.build({}, 0);
+	CHECK(r.ui.notes().count("[S-1951] no VeterancyPipDrawObjectFilter: no veterancy marks") == 1);
+}
+
 TEST_CASE("hud5 icons: the acceptance stops are reported")
 {
 	const std::vector<std::string> stops = DrawableIconUI::acceptanceStops();

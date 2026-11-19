@@ -104,6 +104,19 @@ const HordeContainModuleData &HordeContain::hordeData() const
 	return m_data->horde;
 }
 
+// RW 0x872B9E / 0x872BAB (HordeContainInterface vslots 0x258 / 0x25C): `mov eax, [ecx-0x118]; fld dword ptr [eax+0x274]` and the same for + 0x278, i.e. the
+// module data's VisionRearOverride / VisionSideOverride returned on ST0. The setter side is the INI parse (HordeContain.cpp) and the only reader is the object's
+// look (RW 0x694B9B / 0x694B79), which prefers them over the template's VisionRear / VisionSide when they are above 0.
+float HordeContain::getVisionRearOverride() const
+{
+	return hordeData().m_visionRearOverride;
+}
+
+float HordeContain::getVisionSideOverride() const
+{
+	return hordeData().m_visionSideOverride;
+}
+
 void HordeContain::setMeleeEngaged(bool on)
 {
 	if (m_meleeEngaged == on)

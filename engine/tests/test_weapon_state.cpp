@@ -619,9 +619,9 @@ struct RangeHostDouble : WeaponRangeHost
 	float boxDistanceSquared(const RangeSubject &, const RangeSubject &) override { return 1234.0f; }
 	bool meleeReach(const RangeSubject &, const Coord3D &, const RangeSubject &) override { return reach; }
 	float meleeRunDownLimit() override { return runDown; }
-	bool victimFlag11A_40() override { return flag11A; }
-	int layerOf(bool victim) override { return victim ? vicLayer : srcLayer; }
-	bool victimLayerException() override { return layerException; }
+	bool victimFlag11A_40(const RangeSubject &) override { return flag11A; }
+	int layerOf(const RangeSubject &, bool victim) override { return victim ? vicLayer : srcLayer; }
+	bool victimLayerException(const RangeSubject &) override { return layerException; }
 };
 }
 

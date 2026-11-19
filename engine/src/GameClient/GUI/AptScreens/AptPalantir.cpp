@@ -652,6 +652,7 @@ void AptPalantir::syncLocal()
 	if (m_local.context && (!m_commandContext || m_local.contextObject != m_contextObject || m_local.commandSet != m_contextSet))
 	{
 		hideRank(); // RW 0x92F990: HideRankInterface when shown
+		hideCostModifier(); // RW 0x92F9AF–0x92F9B2
 		if (m_commandShown)
 		{
 			call("", "HideCommandInterface", {});
@@ -695,6 +696,42 @@ void AptPalantir::syncLocal()
 	if (m_commandShown)
 	{
 		syncRank(); // RW 0x930963: each update while the command interface is up
+		if (m_local.contextObject != INVALID_ID) // RW 0x930968–0x930970
+		{
+			syncCostModifier();
+		}
+	}
+}
+
+void AptPalantir::hideCostModifier()
+{
+	if (m_costShown)
+	{
+		call("", "HideCostModifierUpgradeInterface", {}); // RW 0x92F67B
+		m_costShown = false;
+	}
+}
+
+void AptPalantir::syncCostModifier()
+{
+	if (!m_local.costVisible) // RW 0x92FD5B
+	{
+		hideCostModifier();
+		return;
+	}
+	if (!m_costShown)
+	{
+		call("", "ShowCostModifierUpgradeInterface", {}); // RW 0x92FC53–0x92FC6F
+		m_costShown = true;
+		m_costSet = false;
+	}
+	// RW 0x92FCA2–0x92FCBE caches the mode and amount, not the label.
+	if (!m_costSet || m_costUpgradeDiscount != m_local.costUpgradeDiscount || m_costAmount != m_local.costAmount)
+	{
+		windows().setAptText("APT:CostModifierUpgrade", LocalizedText::format(m_local.costLabelFormat, { m_local.costAmount })); // RW 0x92FCCD–0x92FD29
+		m_costUpgradeDiscount = m_local.costUpgradeDiscount;
+		m_costAmount = m_local.costAmount;
+		m_costSet = true;
 	}
 }
 

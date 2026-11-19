@@ -28,8 +28,13 @@
 #include "Common/INI.h"
 #include "GameLogic/BitFlags.h"
 
+#include <atomic>
+#include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
+
+class ThingTemplate;
 
 struct ObjectFilter
 {
@@ -63,6 +68,33 @@ struct ObjectFilter
 	int side = SIDE_ANY;                    // RW +0x90
 
 	bool operator==(const ObjectFilter &o) const;
+
+	// lane EDAINMAPS-3 (not retail state; performance): the include / exclude names resolved to templates, as retail's resolve pass keeps them (with
+	// the two lists isEquivalentTo reads of each), for one state of a ThingFactory's templates (ThingFactory::nameGeneration). ObjectFilterMatch::allows fills it on first use and while the table
+	// is unchanged answers from it instead of looking every name up again for every object it is asked about (Edain's Moria: 3,178 market places
+	// whose map-wide aura asks a 13-name filter about every object). Not part of the value: a copy or an assignment starts it empty, operator== and
+	// the state hash ignore it. Filled once under a lock; read without one after the generation is published (acquire / release)
+	struct ResolvedNames
+	{
+		ResolvedNames() = default;
+		ResolvedNames(const ResolvedNames &) {}
+		ResolvedNames &operator=(const ResolvedNames &) // the filter gets other names: resolve again
+		{
+			generation.store(kNone, std::memory_order_relaxed);
+			return *this;
+		}
+		static constexpr std::uint64_t kNone = ~std::uint64_t(0);
+		mutable std::atomic<std::uint64_t> generation{ kNone };
+		mutable std::mutex lock;
+		struct Entry
+		{
+			const ThingTemplate *tmpl = nullptr;                         // findTemplate's answer (null: no template carries the name)
+			const std::vector<std::string> *equivalentTo = nullptr;      // its EquivalentTo list (null: none)
+			const std::vector<std::string> *buildVariations = nullptr;   // its BuildVariations list (null: none)
+		};
+		mutable std::vector<Entry> include, exclude; // the non-"S:" names in list order
+	};
+	ResolvedNames resolved;
 
 	// RW 0x762BDF defaults (what the parser starts from; also OpenContain's default).
 	static ObjectFilter parserDefault() { return ObjectFilter(); }

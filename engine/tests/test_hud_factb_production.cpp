@@ -165,6 +165,25 @@ void buildEveryStructure(const std::string &faction, Results &res)
 		const ThingTemplate *tt = s.world->things().findTemplate(e->name);
 		const Coord3D start = siteFor(g, n++, 300.0f);
 		Object *porter = g.rig.make(builderName, start.x, start.y);
+		// lane BUILDCLEAR-1: a WALL_HUB build is legal only within its MaxBuildoutDistance (MEN_FORTRESS_WALL_EFFECTIVE_RADIUS = 1500) of one of the player's
+		// COMMANDCENTERs (RW 0x796C66 / 0x6B00F3); the bare map gives the player none, so a citadel stands nearby while a hub is built
+		Object *centre = factb::hasKindOf(*tt, "WALL_HUB") ? [&]() {
+			const Coord3D c = g.rig.freeSpot(start.x, start.y - 700.0f, 300.0f);
+			return g.rig.make("MenFortressCitadel", c.x, c.y);
+		}() : nullptr;
+		struct CentreGone
+		{
+			factb::HudGame &g;
+			Object *o;
+			~CentreGone()
+			{
+				if (o && !o->isDestroyed())
+				{
+					g.logic().destroyObject(o);
+				}
+			}
+		} centreGone{ g, centre };
+		REQUIRE((!centre || factb::hasKindOf(*static_cast<const ThingTemplate *>(centre->getTemplate()), "COMMANDCENTER")));
 		g.step(2);
 		if (!g.select(porter))
 		{
@@ -193,13 +212,23 @@ void buildEveryStructure(const std::string &faction, Results &res)
 			g.logic().destroyObject(porter);
 			continue;
 		}
-		// a legal site near the builder: the ghost tells
+		// a legal site near the builder: the ghost tells. RotWK judges the ghost only on odd client frames (RW 0x6A3939), so the pointer's own site
+		// is judged once the client frame is odd again: a stale code clicks a site the ghost refused (the builder's own position is illegal once
+		// GameData's MinDistFromEdgeOfMapForBuild reaches its footprint, RW 0x794C08, lane PORT-12)
 		bool placed = false;
 		std::string codes;
 		for (int k = 0; k < 12 && !placed; ++k)
 		{
 			const Coord3D site = g.rig.freeSpot(start.x + 250.0f + 60.0f * (float)k, start.y + 40.0f * (float)(k % 3), 220.0f);
 			const ICoord2D px = g.pointAt(site);
+			// HudInput::update does not advance the client frame (HudInput::cameraFrame does, and this rig has no camera frame): on an even frame step it
+			// once by hand and update again, so the odd frame judges the pointer's site (review lane PRTRLW: the unbounded wait could never end)
+			if ((g.hud->input().ui().clientFrame() & 1u) == 0u)
+			{
+				g.hud->input().ui().advanceClientFrame();
+				g.hud->input().update();
+			}
+			REQUIRE((g.hud->input().ui().clientFrame() & 1u) == 1u);
 			const int code = g.hud->input().ui().placeLegalCode();
 			if (code != (int)LBC_OK)
 			{
@@ -220,7 +249,9 @@ void buildEveryStructure(const std::string &faction, Results &res)
 			continue;
 		}
 		Object *bld = nullptr;
-		for (int f = 0; f < 50 && !bld; ++f)
+		// the dozer walks to the site before the building appears (its walk is not part of the frames measured below): a site `freeSpot` moved
+		// away from the builder can be several hundred units off, and the porter covers ~11 a frame
+		for (int f = 0; f < 600 && !bld; ++f)
 		{
 			g.step(1);
 			bld = g.newestOf(e->name, before);

@@ -131,6 +131,8 @@ public:
 
 	// RW 0x8DEDBB: picks the voice of `selection` (object ids, the client's selection order) for message `msgType` and plays it. true when something played.
 	bool pickAndPlay(const std::vector<ObjectID> &selection, int msgType, const Info *info = nullptr);
+	// the message argument that is the voice's target (RW 0x8DD74F: the pick info's drawable), by message type, from the port's message writers; -1 none
+	static int voiceTargetArgument(int msgType);
 	// the voice-bearing message types this port handles (the HUD calls pickAndPlay for these)
 	static bool handles(int msgType);
 

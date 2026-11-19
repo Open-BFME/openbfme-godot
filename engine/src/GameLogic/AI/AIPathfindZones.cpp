@@ -320,6 +320,28 @@ zoneStorageType PathfindZoneManager::getBlockZone(const PathfindMovement &mv, zo
 	return blockTable(2 * e, kind)[zone]; // the profile zonesJoin uses (the non-terrain variant)
 }
 
+PathfindZoneManager::ZoneLookup PathfindZoneManager::zoneLookup(const PathfindMovement &mv) const
+{
+	// lane PERF-SIM-1: getBlockZone's and zonesJoin's answers without the per-zone work; the same air / kind-less cases and the same table
+	ZoneLookup lookup;
+	lookup.zones = m_zones.size();
+	lookup.air = (mv.surf & LOCOMOTORSURFACE_AIR) != 0;
+	if (lookup.air)
+	{
+		lookup.blockFixed = 1; // as getBlockZone: air is all zone 1
+		return lookup;
+	}
+	lookup.kind = kindOf(mv);
+	if (lookup.kind < 0)
+	{
+		lookup.blockFixed = lookup.kind == -1 ? 1 : 0;
+		return lookup;
+	}
+	lookup.profile = 2 * ((mv.i8 >= 0 ? mv.i8 + 1 : 0) + (mv.b4 ? 1 : 0) + (mv.b5 ? 2 : 0));
+	lookup.blockTable = &blockTable(lookup.profile, lookup.kind);
+	return lookup;
+}
+
 void PathfindZoneManager::markDirty(const PathfindRegion &cells)
 {
 	// RW 0x937CA7: the blocks x / blockSize .. clamped to the grid

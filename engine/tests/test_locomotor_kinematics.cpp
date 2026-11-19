@@ -236,6 +236,8 @@ struct MockHost : LocomotorHost
 	void hordeEndReform() override { ++reformEnd; }
 	bool hordeFormationReady(float) const override { return formationReady; }
 	bool thingWaitsForFormation() const override { return thingWaits; }
+	bool scalingWall = false;
+	bool isScalingWall() const override { return scalingWall; }
 	// lane SHIP-1
 	bool underwater = false;
 	float waterZ = 0.0f;
@@ -751,11 +753,13 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		CHECK_THROWS_WITH_AS(loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f), doctest::Contains("S-084"), std::logic_error);
 	}
 	{
+		// lane MECH-D: the ScalesWalls look-ahead (RW 0x5E8956 .. 0x5E8FF8) is ported; a host that does not answer it (this mock) moves the unit as before.
+		// The S-084 stop still comes from the NO_Z branch's unported layer / water / falling cases (RW 0x5E774A / 0x5E5785), not from the look-ahead
 		LocoFixture sw(std::string(kHuman) + "  ScalesWalls = Yes\n");
 		Locomotor loco(sw.tmpl());
 		MockHost h;
 		h.place(0, 0, 0);
-		loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+		CHECK_NOTHROW(loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f));
 		bool noted = false;
 		for (const std::string &s : loco.unverified())
 		{
@@ -763,6 +767,31 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		}
 		CHECK(noted);
 	}
+}
+
+TEST_CASE("SCALING_WALLS: a locomotor on a kept wall keeps its height (no z force, no ground snap, RW 0x5E76AC case 9); off a wall it is NO_Z")
+{
+	// lane MECH-D: the horde wall-scaling locomotor's z case. On a wall the matrix z the climb left is kept; before the port it threw S-084.
+	LocoFixture f(std::string(kHuman) + "  ScalesWalls = Yes\n  ZAxisBehavior = SCALING_WALLS\n");
+	Locomotor loco(f.tmpl());
+	MockHost h;
+	h.place(0, 0, 0);
+	h.pos.z = 25.0f;
+	h.transform.m[2][3] = 25.0f;
+	h.groundZ = 0.0f;
+	h.scalingWall = true;
+	CHECK_NOTHROW(loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f));
+	CHECK(nearly(h.pos.z, 25.0, 1e-6));     // the wall's height, not the ground
+	CHECK(nearly(h.pending.z, 25.0, 1e-5)); // the common tail: 2 * z - the object's z before the transform
+	// off a wall the same locomotor is NO_Z_MOTIVE_FORCE: the ground height
+	MockHost g;
+	g.place(0, 0, 0);
+	g.pos.z = 25.0f;
+	g.transform.m[2][3] = 25.0f;
+	g.groundZ = 7.0f;
+	g.scalingWall = false;
+	loco.locomotorMoveTowardsPosition(g, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+	CHECK(nearly(g.pos.z, 7.0, 1e-6));
 }
 
 TEST_CASE("NO_Z_MOTIVE_FORCE: z is the terrain height; the pending position is the previous effective position with 2z - z0")
@@ -852,9 +881,9 @@ TEST_CASE("Locomotor stops S-081 and S-084 are reported and pinned")
 	CHECK(stops[0].find("x87 and SSE") != std::string::npos);
 	CHECK(stops[1].rfind("S-084:", 0) == 0);
 	CHECK(stops[1].find("HOVER") == std::string::npos); // lane SHIP-1: the HOVER and SHIP movers are ported
-	CHECK(stops[1].find("FIXED_SURFACE_RELATIVE_HEIGHT and FIXED_ABSOLUTE_HEIGHT (the last two: RW 0x5E78DB;") != std::string::npos);
+	CHECK(stops[1].find("FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS") != std::string::npos); // the remaining z behaviours, lane WALL-4 / MECH-D
 	CHECK(stops[1].find("GIANT_BIRD") == std::string::npos); // lane TAKEOVER-1: rotateTowardsPosition's GIANT_BIRD branch is ported
-	CHECK(stops[1].find("ScalesWalls") != std::string::npos);
+	CHECK(stops[1].find("ScalesWalls") == std::string::npos); // lane MECH-D: the ScalesWalls look-ahead is ported
 	CHECK(stops[2].rfind("S-1750:", 0) == 0);
 	CHECK(stops[2].find("RW 0x5E7CC7") != std::string::npos);
 	LocoFixture f(kHuman);

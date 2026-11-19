@@ -276,8 +276,8 @@ TEST_CASE("build5 binary facts: the placement translator, the placement update, 
 	CHECK(bytes(0x6A39B1, 5) == std::vector<std::uint8_t>{ 0x68, 0x8F, 0x04, 0x00, 0x00 });
 	CHECK(bytes(0x6A393D, 2) == std::vector<std::uint8_t>{ 0xA8, 0x01 });
 	CHECK(bytes(0x83E815, 5) == std::vector<std::uint8_t>{ 0x68, 0x9F, 0x04, 0x00, 0x00 });
-	CHECK(PlaceEventTranslator::ghostOptions() == 0x0Fu);
-	CHECK(PlaceEventTranslator::placeOptions() == 0x1Fu);
+	CHECK(PlaceEventTranslator::ghostOptions() == 0x48Fu); // lane BUILDCLEAR-1: the retail values, every bit now has its RotWK meaning
+	CHECK(PlaceEventTranslator::placeOptions() == 0x49Fu);
 	// the colours: IllegalBuildColor (1, 0, 0), the code 9 pulse's blue 0.5 / 1.7, the opacity 0.45
 	CHECK(f32At(*pe, 0xDA0B28) == 1.0f);
 	CHECK(f32At(*pe, 0xDA0B2C) == 0.0f);
@@ -454,6 +454,8 @@ TEST_CASE("build5 placement: a refused site shows the code's label, plays BadBui
 	Object *farm = r.game->createObject("GondorFarm", r.game->players().getLocalPlayer()->getPlayerIndex(),
 		Coord3D{ porter->getPosition()->x + 120.0f, porter->getPosition()->y, 0.0f }, 0.0f, &err);
 	REQUIRE_MESSAGE(farm != nullptr, err);
+	// lane BUILDCLEAR-1: the placement test asks ThePartitionManager (RW 0x796E2C), which takes a new object's position at the logic frame's partition update
+	r.game->logic().runLogicFrame();
 	ICoord2D pu{ -1, -1 };
 	REQUIRE(r.cam->worldToScreen(*farm->getPosition(), pu));
 	r.move(pu.x, pu.y);

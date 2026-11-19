@@ -435,7 +435,7 @@ bool MarkRaisedSelectionDecals(std::vector<SelectionDecal> &list, const std::fun
 			d.position.z = z; // RW 0x68DB35: the layer's height under an AIRBORNE_TARGET object
 			changed = true;
 		}
-		// RW 0x50CDE4 .. 0x50CDF9 (= BFME2 0x50C841, decomp rva0010C841, W3DProjectedShadowDecalHelpers.cpp:1097-1098): the terrain part is drawn while
+		// RW 0x50CDE4 .. 0x50CDF9 (= BFME2 0x50C841, decomp rva0010C841, W3DProjectedShadow.cpp:3082): the terrain part is drawn while
 		// pos.z - floor < maxHeight
 		const bool raised = !(d.position.z - floorHeight(d.position.x, d.position.y) < kSelectionDecalMaxHeight);
 		changed = changed || raised != d.raised;
@@ -959,7 +959,7 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 				{
 					continue; // lane PLACEDECAL-1: a terrain-only decal draws on no wall top
 				}
-				// the top-down projection (BFME2 decomp W3DProjectedShadowDecalHelpers.cpp): u along the turned x axis, v toward -y at angle 0; lane
+				// the top-down projection (BFME2 decomp W3DProjectedShadow.cpp rva0010C841): u along the turned x axis, v toward -y at angle 0; lane
 				// PLACEDECAL-1: u over the decal's x size, v over its y size
 				const float co = d[12], si = d[13];
 				const float u = (dx * co + dy * si) / d[2] + 0.5f, v = (dx * si - dy * co) / d[14] + 0.5f;
@@ -978,13 +978,15 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 				}
 				for (int ch = 0; ch < 3; ++ch)
 				{
+					// review (Greptile P2 on #243): D3D9's frame buffer clips to [0, 1] after EVERY draw; carry the clipped value into the next decal, or
+					// an additive overbright decal survives a later alpha / multiply blend (white ground + half additive white + half black = 0.5, not 0.75)
 					if (additive)
 					{
-						c[ch] += s[ch] * d[4 + ch] * a; // ONE / ONE: the surface keeps its colour
+						c[ch] = std::max(0.0f, std::min(255.0f, c[ch] + s[ch] * d[4 + ch] * a)); // ONE / ONE: the surface keeps its colour
 					}
 					else
 					{
-						c[ch] = c[ch] * (1.0f - a) + s[ch] * d[4 + ch] * a;
+						c[ch] = std::max(0.0f, std::min(255.0f, c[ch] * (1.0f - a) + s[ch] * d[4 + ch] * a));
 					}
 				}
 				drawn = drawn || a > 0.0f;

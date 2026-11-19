@@ -362,13 +362,18 @@ const Waypoint *TerrainLogic::findWaypointById(int id) const
 	return it == m_waypointById.end() ? nullptr : &m_waypoints[it->second];
 }
 
+// lane EDAINMAPS-3: retail's waypoint list is built by the Waypoint constructor (RW 0x6829B0), which PREPENDS each new waypoint to the global head
+// (RW 0xDE4694: this + 0x1C = head; head = this); TerrainLogic::loadMap adds them in map object order (the map file's order, the order objects are
+// created in). The lookups walk that list from its head (TerrainLogic vtable + 0x84 = RW 0x67C54B returns the head; the start code's RW 0x628C29 and
+// getWaypointByName stop at the first name match), so a name used twice answers the LAST such waypoint of the file: m_waypoints (file order) is walked
+// backwards. BFME2: the same constructor list and loadMap (open-bfme-2 TerrainLogic.cpp, tier A); both editions.
 const Waypoint *TerrainLogic::findWaypointByName(const std::string &name) const
 {
-	for (const Waypoint &w : m_waypoints)
+	for (auto it = m_waypoints.rbegin(); it != m_waypoints.rend(); ++it)
 	{
-		if (w.name == name)
+		if (it->name == name)
 		{
-			return &w;
+			return &*it;
 		}
 	}
 	return nullptr;

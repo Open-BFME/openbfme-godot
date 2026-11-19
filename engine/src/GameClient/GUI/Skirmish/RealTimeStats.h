@@ -60,6 +60,8 @@ public:
 	// UserPreferences::write (RW 0x7B274C; false and `*error` when it cannot be written, or when nothing was loaded: an empty profile has no file name)
 	bool write(std::string *error) const;
 	const OptionPreferences &values() const { return m_file; }
+	// lane RANKICON-1: UserPreferences RW 0x93C1F9 (BFME2 0x9358C3, decomp UserPreferences::rva005358C3): getInt(<army> + "Points", 0)
+	int armyPoints(const std::string &army) const { return getInt(army + "Points", 0); }
 
 	// the map name of the counters for a map cache key (retail spelling: '\' separators)
 	static std::string statsMapName(const std::string &cacheKey);
@@ -68,6 +70,25 @@ public:
 	// RW 0x846674 ..: the MappedImage of a state ("" for a state the table has not got: retail keeps the not-conquered image's default)
 	static const char *conquestImage(int state);
 	static constexpr const char *kLeaf = "RealTimeStats.ini";
+
+private:
+	std::string m_path;
+	OptionPreferences m_file;
+};
+
+// Lane RANKICON-1: the War of the Ring profile stats (StrategicStatsPreferences RW 0x93E6F2, BFME2 0x937DBC; decomp Common/ProfilePreferences.cpp): the
+// user data folder + the current profile's name + "StrategicStats.ini" (the leaf static RW 0xE05E04), read like RealTimeStats.ini (the same loadStatsFile
+// RW 0x93E669) without RealTimeStats' "UseMapListTooltips" default. Only read here: the strategic game does not write it yet (stop S-3506).
+class StrategicStatsPreferences
+{
+public:
+	// as RealTimeStatsPreferences::load: a missing file is a profile without stats (true); a file that cannot be read is an error
+	bool load(const std::string &folder, const std::u16string &profile, std::string *error);
+	const std::string &path() const { return m_path; }
+	int getInt(const std::string &key, int defaultValue) const;
+	// UserPreferences RW 0x93C1F9 (BFME2 0x9358C3): getInt(<army> + "Points", 0)
+	int armyPoints(const std::string &army) const { return getInt(army + "Points", 0); }
+	static constexpr const char *kLeaf = "StrategicStats.ini";
 
 private:
 	std::string m_path;

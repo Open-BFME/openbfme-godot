@@ -65,11 +65,13 @@
 //   onEnter RW 0x74D68C (can turn = a locomotor whose MinSpeed is 0), update RW 0x75638B on the machine's goal position (|relAngle| below 0.035: success; a
 //   unit that cannot turn: the explicit goal, vslot 0x210; else the goal angle, vslot 0x21C), onExit RW 0x743DA9; the command (0x27 -> AI vslot 0x118 RW
 //   0x667290): mobile (RW 0x690E97): the machine cleared, the clipped goal position (RW 0x6654AD), the last source, state 0x25.
-// INFERENCE / NOT PORTED (stops S-4940 .. S-4944, docs/STOPS.md):
+// INFERENCE / NOT PORTED (stops S-4940, S-4942 .. S-4944, docs/STOPS.md; S-4941 is ported):
 //   * S-4940: DynamicPortalBehaviour is lane WALL-2's: the deploy asks it through SiegePortalInterface below (IsEndPortalAboveWall, the waypoints made and
 //     removed). Until a DynamicPortalBehaviour runtime implements the interface the phase-1 test cannot pass: the ladder / tower reaches the wall, faces it and
 //     waits there (the stop is noted each time the test is asked);
-//   * S-4941: Pathfinder::adjustMeleeOffset (RW 0x6EA0EC) is not ported: SkipAdjustPosition No (no retail object) notes the stop and keeps the offset;
+//   * S-4941 was: Pathfinder::adjustMeleeOffset (RW 0x6EA0EC) was not ported, so SkipAdjustPosition No kept the offset as it was. It is a pathfinder function now
+//     (Pathfinder::adjustMeleeOffset, AIPathfindMelee.cpp, the melee caller's reading, inferences S-787) and RW 0x8C9E7A calls it with the deploying object, the
+//     dock and the 0.1-scaled offset (computeApproachPoint below); RW 0x8C9E7A is its only siege caller;
 //   * S-4942: the AI's + 0x16C / + 0x3B8 the face command clears are not identified; the InitiateSound and the client's selection voices are the client's;
 //   * the bones are the drawable's pristine pose for the wall's model condition (DrawableLaunchBones, as GARRISON-1's); without a client (no bone provider) a
 //     wall has no dock point.
