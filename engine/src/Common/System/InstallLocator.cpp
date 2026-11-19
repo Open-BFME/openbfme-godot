@@ -596,8 +596,8 @@ bool readDownloaded(const std::string &markerPath, Downloaded &out, std::string 
 		else
 			return fail("an unknown key '" + key.substr(0, 40) + "'");
 	}
-	if (out.source.empty() || out.rotwk.empty() || out.bfme2.empty())
-		return fail("SOURCE, ROTWK_INSTALL and BFME2_INSTALL are all needed");
+	if (out.source.empty() || out.bfme2.empty())
+		return fail("SOURCE and BFME2_INSTALL are needed; ROTWK_INSTALL is optional for BFME2-only installs");
 	return true;
 }
 
@@ -608,7 +608,7 @@ std::vector<Candidate> discover(const DiscoveryEnvironment &e)
 	Downloaded downloaded;
 	if (!e.downloadedMarker.empty() && fs::exists(PathIO::native(e.downloadedMarker)) && readDownloaded(e.downloadedMarker, downloaded, nullptr))
 	{
-		c.add(kRotwk, PathIO::native(downloaded.rotwk), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
+		if (!downloaded.rotwk.empty()) c.add(kRotwk, PathIO::native(downloaded.rotwk), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
 		c.add(kBfme2, PathIO::native(downloaded.bfme2), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
 	}
 	if (e.windows)
@@ -843,7 +843,7 @@ Configured configured(const std::string &configPath)
 	std::string error;
 	bool r = ResolveInstallPath("ROTWK_INSTALL", configPath, c.rotwk, &error);
 	bool b = ResolveInstallPath("BFME2_INSTALL", configPath, c.bfme2, &error);
-	if (c.source == "none" && r && b)
+	if (c.source == "none" && b && (r || c.rotwk.empty()))
 		c.source = "config";
 	return c;
 }
@@ -856,7 +856,7 @@ bool remember(const std::string &configPath, const std::string &rotwkRoot, const
 		return false;
 	};
 	std::string pathError;
-	if (!PathIO::checkInstallPath(rotwkRoot, pathError) || !PathIO::checkInstallPath(bfme2Root, pathError))
+	if ((!rotwkRoot.empty() && !PathIO::checkInstallPath(rotwkRoot, pathError)) || !PathIO::checkInstallPath(bfme2Root, pathError))
 		return fail(pathError);
 	const fs::path target = PathIO::native(configPath);
 	std::error_code ec;
