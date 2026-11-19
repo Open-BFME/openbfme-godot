@@ -132,6 +132,9 @@
     "OpenBFME crash report: the launcher, %s, build %s": "the crash report's header line for the OpenBFME team (sent to the crash service, never shown)",
     "its last lines of launcher.log follow": "the crash report's header line for the OpenBFME team (sent to the crash service, never shown)"
   },
+  "launcher/scripts/ui/crash_dialog.gd": {
+    "*": "the game's crash dialog byte for byte (tools/release/test_crash_upload.py): log lines and the KB unit; every other word it shows comes from LauncherCrash.dialog_words"
+  },
   "launcher/scripts/net/crash_client.gd": {
     "*": "the game's crash client byte for byte (tools/release/test_crash_upload.py): log lines, protocol text and error codes, never shown to the player"
   }

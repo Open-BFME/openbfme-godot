@@ -16,6 +16,9 @@
 ##    reports automatically" (Options.ini OpenBFMECrashReports, default yes) turns that off, and the message then offers "Send report" for that
 ##    one crash. A fatal error (fatal()) is reported the same way. The queue (user://crash-queue) is sent at each start, in the background.
 ##    Minidumps stay local: they are never uploaded (the service takes no attachments).
+##    Lane CRASHDIALOG-1: the player sees it happen: scripts/crash/crash_dialog.gd shows what the report holds and a progress bar while it is sent. On
+##    Windows the crash handler starts it right after the crash (the same program with --crash-report=<process id>; game.gd goes to scenes/crash_report.tscn: no game boots, no
+##    marker, no handler of its own); elsewhere, or when that failed, the next start shows the same dialog over the menus. A fatal error shows it too.
 ##  * a stop the game cannot continue from: fatal(message) shows a message box with the error and the log file, then quits.
 ##  * the logs within reach (lane WINCRASH-1): the crash and error messages show the log's real path (Windows: %APPDATA%\...) and an "Open log
 ##    folder" button (the file manager opens with the log selected); a "Logs" link next to the version in the menus opens the folder; the
@@ -30,8 +33,9 @@
 ##    under the version in the menus' corner ("UPDATE ..." in the log).
 extends Node
 
-const UpdateHandover := preload("res://scripts/release/update_handover.gd")
 const CrashClient := preload("res://scripts/crash/crash_client.gd")
+const CrashDialog := preload("res://scripts/crash/crash_dialog.gd")
+const UpdateHandover := preload("res://scripts/release/update_handover.gd")
 const GameOptions := preload("res://scripts/game_options.gd")
 const LanguageWarning := preload("res://scripts/release/language_warning.gd")
 const UPDATE_POLL_SECONDS := 1.0
@@ -47,6 +51,49 @@ const CRASH_QUEUE := "user://crash-queue"            # lane CRASHACT-1: reports 
 const CRASH_ID := "user://crash-install-id"          # the random id the crash service limits submissions by
 const CRASH_OPTION := "OpenBFMECrashReports"         # Options.ini: yes (default) = send crash reports automatically
 const CRASH_SENT_NOTE := "A report of that crash is being sent to the OpenBFME team automatically (no names, folders or addresses; the log stays on your PC). You can turn this off in Options, Interface: Send crash reports automatically."
+## lane CRASHDIALOG-1: scripts/crash/crash_dialog.gd's words (the game's shell has no translation of its own)
+const CRASH_DIALOG_WORDS := {
+	"title": "OpenBFME closed unexpectedly",
+	"subtitle": "Sorry about that. Your game couldn't continue. This report helps the team find and fix what went wrong.",
+	"ask_subtitle": "Sorry about that. Your game couldn't continue. Would you like to send the team a report of this crash?",
+	"what": "WHAT'S BEING SENT",
+	"what_ask": "WHAT WOULD BE SENT",
+	"report_section": "THE EXACT REPORT",
+	"not_included": "Not included: your name, folders, e-mail, chat, or the crash dump file.",
+	"view": "View the exact report (%s)",
+	"hide": "Hide the report",
+	"row_version": "Game version",
+	"row_pc": "Your PC",
+	"row_game": "The game",
+	"row_display": "Display settings",
+	"row_crash": "Crash details",
+	"row_log": "Game log",
+	"row_id": "Crash ID",
+	"id_value": "A random ID for this install, used only to limit how many reports it can send",
+	"lines": "Error lines from the log: %d",
+	"log_lines": "The last %d lines, filtered for privacy",
+	"vsync_on": "vsync on",
+	"vsync_off": "vsync off",
+	"preparing": "Preparing the report...",
+	"sending": "Sending the report (%s)...",
+	"sent_label": "Sent",
+	"sent_title": "Report sent. Thank you",
+	"sent_subtitle": "The team has what it needs to look into this crash.",
+	"kept_title": "Report saved for later",
+	"kept_subtitle": "We couldn't reach the crash service. The report stays on this PC and is sent the next time OpenBFME starts.",
+	"refused_title": "The report could not be sent",
+	"refused_subtitle": "The crash service refused this report, so it was removed. The log of the crash stays on this PC.",
+	"reference": "Reference",
+	"copy": "Copy",
+	"copied": "Copied",
+	"open_logs": "Open log folder",
+	"dont_send": "Don't send",
+	"send": "Send report",
+	"close": "Close",
+	"retry": "Try again",
+	"restart": "Restart OpenBFME",
+	"automatic": "Always send automatically",
+}
 const CRASH_OFFER_NOTE := "Automatic crash reports are off. Choose Send report to send this crash's report to the OpenBFME team (no names, folders or addresses)."
 
 var info: RefCounted        # ReleaseInfo
@@ -58,6 +105,7 @@ var _previous_marker := {}        # lane CRASHACT-1: what the crashed run's mark
 var _crash_context := {"map": "unknown", "mode": "menu", "factions": []}
 var _crash_settings := {}
 var _crash_uploader: Node         # CrashClient while it sends the queue
+var crash_dialog: Control         # lane CRASHDIALOG-1: the crash dialog on screen (tests read it)
 var crash_report_status := ""     # what became of the previous run's report: queued / offered / not reported: <why> (logged; tests read it)
 var _watermark: CanvasLayer
 var _in_game := false
@@ -72,8 +120,11 @@ func _init() -> void:
 		printerr("RELEASE the openbfme extension is not loaded: no session log, no version")
 		return
 	info = ClassDB.instantiate("ReleaseInfo")
-	_find_previous_crash()
-	_open_log()
+	if crash_report_pid() > 0:
+		_open_log(false) # lane CRASHDIALOG-1: this process is the crash dialog: scenes/crash_report.tscn finds the crash once the crashed process has ended
+	else:
+		_find_previous_crash()
+		_open_log()
 	print(info.version_line())
 	if not log_path.is_empty():
 		print("RELEASE session log: ", info.redact(ProjectSettings.globalize_path(log_path)))
@@ -93,7 +144,7 @@ func _ready() -> void:
 	# package. (Retail RotWK titles its window with gi.dat's GameName or the installer's registry DisplayName, RW 0x640ED0 / CreateWindowExW at
 	# RW 0x40243D; OpenBFME is not that program, so it keeps its own name.)
 	_set_window_title.call_deferred() # after the engine's own start-up titling
-	if info == null:
+	if info == null or crash_report_pid() > 0:
 		return
 	_add_watermark()
 	if OS.get_name() == "Windows":
@@ -101,6 +152,8 @@ func _ready() -> void:
 		var crash_error: String = info.install_crash_handler()
 		if not crash_error.is_empty():
 			printerr("RELEASE Windows crash diagnostics unavailable: ", info.redact(crash_error))
+		else:
+			_arm_crash_dialog()
 		print("RELEASE local minidumps: user://logs/minidumps (private process data; never uploaded)")
 		# stop S-1923 (what is left of it since win-crash-1's minidumps; DEVPORT-6 keeps it reported): the dump names the extension's frames
 		# by offset only, mapped later with the build's private symbols
@@ -125,6 +178,7 @@ func _crash_start() -> void:
 	var auto := crash_auto_enabled() if eligible else false
 	var note := ""
 	var offer := {}
+	var interactive: bool = not _headless() and not OS.get_cmdline_user_args().has("--auto")
 	if not previous_crash_log.is_empty():
 		if not eligible or not _previous_marker.get("eligible", false):
 			# Sol r1: the crashed run must have been a player's run too (a killed --auto / headless / development run is no crash report)
@@ -133,6 +187,12 @@ func _crash_start() -> void:
 			var report := crash_report(previous_crash_log, _previous_marker)
 			if not report.ok:
 				crash_report_status = "not reported: " + report.error
+			elif interactive:
+				# lane CRASHDIALOG-1: the dialog queues and sends it, in front of the player, and sends the older reports with it
+				crash_report_status = "dialog"
+				print("RELEASE CRASH the previous run's report: ", crash_report_status)
+				open_crash_dialog(report, auto, previous_crash_log, self, {})
+				return
 			elif auto:
 				var queued := crash_enqueue(report.wire)
 				crash_report_status = "queued" if queued.is_empty() else "not reported: " + queued
@@ -142,7 +202,7 @@ func _crash_start() -> void:
 				offer = report
 				note = CRASH_OFFER_NOTE
 		print("RELEASE CRASH the previous run's report: ", crash_report_status)
-		if not _headless() and not OS.get_cmdline_user_args().has("--auto"):
+		if interactive:
 			_message("OpenBFME did not close normally last time (a crash?).\n\nThe log of that run is:\n%s\n\n%s%s" % [
 				_folder_and_file(log_path_for_user(previous_crash_log)), REPORT_HINT, "" if note.is_empty() else "\n\n" + note],
 				"OpenBFME", previous_crash_log, false, offer)
@@ -205,6 +265,116 @@ func crash_report(log_file: String, marker: Dictionary) -> Dictionary:
 			"the last lines of the session log %s follow" % log_file.get_file()],
 	}
 	return CrashClient.build(facts, tail.lines, Callable(info, "redact"))
+
+
+## lane CRASHDIALOG-1: a player's build starts the crash dialog after a crash. An editor's run names its project (a package carries its own).
+func _arm_crash_dialog() -> void:
+	if not crash_reports_eligible() or OS.get_environment(CrashClient.UPLOAD_ENV) == "0":
+		return
+	var extra := PackedStringArray() if OS.has_feature("template") else PackedStringArray(["--path", ProjectSettings.globalize_path("res://")])
+	var armed: String = info.arm_crash_dialog(extra)
+	if not armed.is_empty():
+		printerr("RELEASE the crash dialog will not start after a crash: ", info.redact(armed))
+
+
+## lane CRASHDIALOG-1: this process is the crash dialog of process <id> (--crash-report=<id>, the crash handler's command line); 0 = a normal run
+func crash_report_pid() -> int:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--crash-report=") and arg.trim_prefix("--crash-report=").is_valid_int():
+			return maxi(0, arg.trim_prefix("--crash-report=").to_int())
+	return 0
+
+
+## lane CRASHDIALOG-1: the dialog in the crashed run's place (scripts/crash/crash_report_screen.gd). -> shown, or false: nothing to show
+func show_crash_after_crash(parent: Control) -> bool:
+	_find_previous_crash()
+	if previous_crash_log.is_empty() or not crash_reports_eligible() or not _previous_marker.get("eligible", false):
+		print("RELEASE CRASH the crash dialog has nothing to show")
+		return false
+	var report := crash_report(previous_crash_log, _previous_marker)
+	if not report.ok:
+		printerr("RELEASE CRASH not reported: ", report.error)
+		return false
+	var restart: Variant = _previous_marker.get("restart_args", [])
+	var args := PackedStringArray(restart if restart is Array else [])
+	open_crash_dialog(report, crash_auto_enabled(), previous_crash_log, parent, {
+		"on_close": func() -> void: get_tree().quit(0),
+		"on_restart": func() -> void:
+			print("RELEASE CRASH restart: process ", UpdateHandover.restart_game(args))
+			get_tree().quit(0),
+	})
+	return true
+
+
+## lane CRASHDIALOG-1: shows the crash dialog for `report`. Under a Control it fills it (the crash screen); elsewhere it is a window of its own over the game.
+## options: on_close, on_restart, subtitle.
+func open_crash_dialog(report: Dictionary, automatic: bool, log_file: String, parent: Node, options: Dictionary) -> Control:
+	var dialog: Control = CrashDialog.new()
+	dialog.name = "CrashDialog"
+	var window: Window = null
+	var close_action: Callable = options.get("on_close", Callable())
+	if not parent is Control:
+		window = Window.new()
+		window.name = "CrashDialogWindow"
+		window.title = "OpenBFME"
+		window.exclusive = true
+		window.process_mode = Node.PROCESS_MODE_ALWAYS
+		window.wrap_controls = true
+		window.close_requested.connect(func() -> void:
+			if is_instance_valid(window):
+				window.queue_free()
+			if close_action.is_valid():
+				close_action.call())
+	var config := {
+		"strings": CRASH_DIALOG_WORDS,
+		"data": report.data, "json": report.json, "wire": report.wire,
+		"queue": CRASH_QUEUE, "install_id": CRASH_ID, "client": CrashClient, "automatic": automatic,
+		"log_line": func(text: String) -> void: print("RELEASE ", text),
+		"on_logs": func() -> void: open_log_folder(log_file),
+		"on_automatic": func(on: bool) -> void: _crash_set_automatic(on),
+		"on_close": func() -> void:
+			if window != null and is_instance_valid(window):
+				window.queue_free()
+			if close_action.is_valid():
+				close_action.call(),
+	}
+	if options.has("on_restart"):
+		config["on_restart"] = options.on_restart
+	if options.has("subtitle"):
+		config["subtitle"] = options.subtitle
+	dialog.setup(config)
+	if window != null:
+		window.add_child(dialog)
+		parent.add_child(window)
+		window.popup_centered()
+	else:
+		parent.add_child(dialog)
+	crash_dialog = dialog
+	dialog.start()
+	return dialog
+
+
+## lane CRASHDIALOG-1: "Always send automatically": Options.ini's one line (no shell here, nor needed: the file's other lines stay as they are)
+func _crash_set_automatic(on: bool) -> void:
+	var path := _crash_options_path()
+	if path.is_empty():
+		return
+	var lines := FileAccess.get_file_as_string(path).split("\n") if FileAccess.file_exists(path) else PackedStringArray()
+	var wanted := "%s = %s" % [CRASH_OPTION, "yes" if on else "no"]
+	var written := false
+	for i in lines.size():
+		var eq := lines[i].find("=")
+		if eq >= 0 and lines[i].substr(0, eq).strip_edges() == CRASH_OPTION:
+			lines[i] = wanted
+			written = true
+	if not written:
+		lines.insert(maxi(0, lines.size() - 1) if not lines.is_empty() and lines[-1].is_empty() else lines.size(), wanted)
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		printerr("RELEASE CRASH Options.ini not written: ", error_string(FileAccess.get_open_error()))
+		return
+	f.store_string("\n".join(lines))
+	f.close()
 
 
 ## lane CRASHACT-1: puts a report into the queue. "" or why not (logged)
@@ -282,6 +452,13 @@ func fatal(message: String) -> void:
 		var report := crash_report(log_path, _marker_data())
 		if not report.ok:
 			printerr("RELEASE CRASH fatal error not reported: ", report.error)
+		elif not OS.get_cmdline_user_args().has("--auto"):
+			# lane CRASHDIALOG-1: sent in front of the player; the error's words on top, closing the dialog ends the game
+			open_crash_dialog(report, crash_auto_enabled(), log_path, self, {
+				"subtitle": message,
+				"on_close": func() -> void: get_tree().quit(1),
+			})
+			return
 		elif crash_auto_enabled():
 			note = "\n\nA report of this error will be sent to the OpenBFME team at the next start." if crash_enqueue(report.wire).is_empty() else ""
 		else:
@@ -791,7 +968,7 @@ func _session_logs() -> Array:
 	return logs
 
 
-func _open_log() -> void:
+func _open_log(with_marker := true) -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(LOG_DIR))
 	var stamp := Time.get_datetime_string_from_system(false, true).replace(":", "").replace(" ", "-").replace("-", "")
 	var name := "openbfme-%s-%s" % [stamp.substr(0, 8), stamp.substr(8)]
@@ -810,8 +987,9 @@ func _open_log() -> void:
 	# the console is a report sink too (a pasted terminal, the crash handler's dump): the same filter (Common/ConsoleFilter.h)
 	if not logger.filter_console():
 		print("RELEASE console not filtered: ", logger.get_last_error())
-	_marker = path + ".running"
-	_write_marker()
+	if with_marker:
+		_marker = path + ".running"
+		_write_marker()
 	_prune_logs()
 
 
@@ -824,7 +1002,15 @@ func _marker_data() -> Dictionary:
 		if read.get("ok", false):
 			uber = "uber" if GameOptions.value_of(read.get("values", {}), "OpenBFMEUberPerformance") == "yes" else "classic"
 	return {"pid": OS.get_process_id(), "eligible": crash_reports_eligible(), "version": info.version(), "version_line": info.version_line(), "profile": info.engine_id(),
-		"simulation": uber, "context": _crash_context, "settings": _crash_settings}
+		"simulation": uber, "context": _crash_context, "settings": _crash_settings, "restart_args": _restart_args()}
+
+
+## lane CRASHDIALOG-1: this run's arguments, for the crash dialog's Restart (a mod stays on). The marker is local: the report takes named facts from it, not this.
+func _restart_args() -> Array:
+	var kept := func(a: String) -> bool: return not a.begins_with("--crash-")
+	var args: Array = Array(OS.get_cmdline_args()).filter(kept)
+	var user: Array = Array(OS.get_cmdline_user_args()).filter(kept)
+	return args if user.is_empty() else args + ["--"] + user
 
 
 func _write_marker() -> void:
@@ -878,6 +1064,8 @@ static func _marker_facts(data: Variant) -> Dictionary:
 		if typeof(data.get(key)) == TYPE_STRING:
 			out[key] = str(data[key]).left(256)
 	out["eligible"] = data.get("eligible") == true
+	if typeof(data.get("restart_args")) == TYPE_ARRAY:
+		out["restart_args"] = (data["restart_args"] as Array).filter(func(a: Variant) -> bool: return typeof(a) == TYPE_STRING)
 	for key in ["context", "settings"]:
 		if typeof(data.get(key)) == TYPE_DICTIONARY:
 			out[key] = data[key]

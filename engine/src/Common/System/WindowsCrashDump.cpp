@@ -2,6 +2,19 @@
 #include "Common/WindowsCrashDump.h"
 #include "Common/PathIO.h"
 
+// lane CRASHDIALOG-1: on every platform (the unit test), used only by the Windows handler below
+std::wstring WindowsCrashDump::crashDialogCommandLine(const std::wstring &executable, const std::vector<std::wstring> &extraArguments, unsigned long pid)
+{
+	std::wstring line = L"\"" + executable + L"\"";
+	for (const std::wstring &argument : extraArguments)
+	{
+		line += argument.find(L' ') == std::wstring::npos ? L" " + argument : L" \"" + argument + L"\"";
+	}
+	// a small window on the compatibility renderer, no audio: the crash may be the graphics driver's or the audio device's
+	line += L" --windowed --resolution 720x600 --rendering-method gl_compatibility --rendering-driver opengl3 --audio-driver Dummy";
+	return line + L" -- --crash-report=" + std::to_wstring(pid);
+}
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -25,6 +38,7 @@ std::terminate_handler previousTerminate = nullptr;
 using SignalHandler = void (*)(int);
 SignalHandler previousAbort = SIG_DFL;
 std::wstring dumpPath;
+std::wstring dialogExecutable, dialogCommandLine; // lane CRASHDIALOG-1: ready before any crash
 volatile LONG captureStarted = 0;
 volatile LONG stopping = 0;
 DWORD writerId = 0, faultThread = 0;
@@ -62,6 +76,23 @@ DWORD WINAPI writeDump(void *)
 	std::snprintf(message, sizeof(message), "CRASH local minidump %s; thread=%lu code=0x%08lX error=0x%08lX\n",
 		error ? "FAILED" : "written", faultThread, faultRecord.ExceptionCode, error);
 	diagnostic(message);
+	if (!dialogCommandLine.empty())
+	{
+		// lane CRASHDIALOG-1: the dialog waits for this process to end (the crash handlers after this one still write the log), then reads the crashed run's log
+		STARTUPINFOW startup{};
+		startup.cb = sizeof(startup);
+		PROCESS_INFORMATION started{};
+		if (CreateProcessW(dialogExecutable.c_str(), dialogCommandLine.data(), nullptr, nullptr, FALSE, DETACHED_PROCESS, nullptr, nullptr, &startup, &started))
+		{
+			CloseHandle(started.hThread);
+			CloseHandle(started.hProcess);
+			diagnostic("CRASH the crash dialog started\n");
+		}
+		else
+		{
+			diagnostic("CRASH the crash dialog did not start\n");
+		}
+	}
 	SetEvent(completeEvent);
 	return 0;
 }
@@ -184,6 +215,39 @@ bool install(const std::string &directory, std::string &error)
 	return true;
 }
 
+bool armCrashDialog(const std::vector<std::string> &extraArguments, std::string &error)
+{
+	if (!installed)
+	{
+		error = "the local dump handler is not installed";
+		return false;
+	}
+	std::wstring executable(MAX_PATH, L'\0');
+	for (;;)
+	{
+		const DWORD length = GetModuleFileNameW(nullptr, executable.data(), (DWORD)executable.size());
+		if (length == 0)
+		{
+			error = "cannot read this program's path: Win32 " + std::to_string(GetLastError());
+			return false;
+		}
+		if (length < executable.size())
+		{
+			executable.resize(length);
+			break;
+		}
+		executable.resize(executable.size() * 2);
+	}
+	std::vector<std::wstring> extra;
+	for (const std::string &argument : extraArguments)
+	{
+		extra.push_back(PathIO::native(argument).wstring());
+	}
+	dialogExecutable = executable;
+	dialogCommandLine = crashDialogCommandLine(executable, extra, GetCurrentProcessId());
+	return true;
+}
+
 bool reassertHandlers()
 {
 	if (!installed)
@@ -231,6 +295,8 @@ void uninstall()
 	if (completeEvent)
 		CloseHandle(completeEvent);
 	requestEvent = completeEvent = writer = nullptr;
+	dialogExecutable.clear();
+	dialogCommandLine.clear();
 	vectored = nullptr;
 	writerId = 0;
 	installed = false;
@@ -242,6 +308,11 @@ void uninstall()
 namespace WindowsCrashDump
 {
 bool install(const std::string &, std::string &error)
+{
+	error = "Windows minidumps are not supported on this platform";
+	return false;
+}
+bool armCrashDialog(const std::vector<std::string> &, std::string &error)
 {
 	error = "Windows minidumps are not supported on this platform";
 	return false;

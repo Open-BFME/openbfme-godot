@@ -357,6 +357,17 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
      Deck, the Actions secret of the same name for the package step and the macOS call); a package without it sends nothing
      (`crash.no_client_key`). Both builders of one release must have the same key: `package.sh --verify` compares them byte for byte.
      `OPENBFME_CRASH_UPLOAD=0` (every CI host's env.sh, test_export.sh) turns sending off entirely.
+   - Lane CRASHDIALOG-1: the player sees it happen. `godot/scripts/crash/crash_dialog.gd` (byte for byte `launcher/scripts/ui/crash_dialog.gd`) lists what
+     the report holds, read from the report itself, with "View the exact report" behind it, and shows a progress bar while the report is sent; afterwards it
+     gives the service's report id as a reference and, in the game, "Restart OpenBFME". With the Options switch off it asks first and nothing is queued before
+     "Send report"; on, it queues and sends at once and "Don't send" takes the report back. A report that could not be sent stays queued ("Try again", or the
+     next start). The bar shows stages, not bytes: HTTPRequest does not say how much of a request body has left, so while the request runs it eases towards
+     90% and only the service's answer fills it. On Windows the crash handler starts the dialog (`WindowsCrashDump::armCrashDialog`, armed by `release.gd` in
+     a player's build, not with `OPENBFME_CRASH_UPLOAD=0`): the same program with `--crash-report=<process id>`, a small window on the compatibility renderer
+     with no audio, where `game.gd` goes straight to `scenes/crash_report.tscn` (an export template refuses a scene path on the command line), which boots no game, writes no crash marker and arms nothing, so a crash at the game's start cannot repeat
+     itself. It waits for the crashed process to end, then takes that run's marker as a next start would. Linux and macOS, and a Windows crash whose handler
+     did not get to run, show the same dialog at the next start, over the menus. A fatal error (`Release.fatal`) shows it too, with the error's words. The
+     launcher shows it for its own crash, at its next start (it closes when the game starts, so it cannot watch the game).
    - Lane AIO-1 (`docs/AIO.md`): only while the player's opt-in download of
      the game files runs, `bfmeladder.com` and `workshop-files.bfmeladder.com` (HTTPS, no port) are
      allowed as well (`NetPolicy.extra_hosts`). The requests to them are the file lists of the two
