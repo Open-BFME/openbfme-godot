@@ -2000,6 +2000,13 @@ void Object::setArmorSetFlag(int bit, bool on)
 	{
 		throw std::logic_error("Object::setArmorSetFlag: bit out of range");
 	}
+	// Retail 2.01 writes an armor-set condition through the body: ArmorUpgrade calls body
+	// slot 0x34 / 0x38 (RW 0x8B761E, call at RW 0x8B76A5). InactiveBody's slots are the
+	// `ret 4` stub RW 0x9F3A3C and slot 0x3C returns zero flags (RW 0x8C1AC3).
+	if (getBodyModule() && getBodyModule()->ignoresArmorSetFlagChanges())
+	{
+		return;
+	}
 	if (on)
 	{
 		m_armorSetFlags |= (1u << bit);
