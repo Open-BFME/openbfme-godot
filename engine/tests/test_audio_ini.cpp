@@ -10,6 +10,7 @@
 #include "RetailTestMount.h"
 
 #include "Common/Audio/AudioIni.h"
+#include "Common/Audio/AudioAssetCache.h"
 #include "Common/MiniJson.h"
 
 #include <algorithm>
@@ -705,4 +706,28 @@ TEST_CASE("audio ini retail: Eva.ini, LargeGroupAudio.ini and ScoredKillEvaAnnou
 	CHECK(fire->startThreshold == 1);
 	CHECK(fire->handOffModeDurationFrames == 15u);
 	CHECK(fire->ignoreStealthedUnits);
+}
+
+TEST_CASE("audio cache: BFME1 localization keeps direct files and resolves missing localized speech")
+{
+	// BFME1 AudioEventRTSAdjustForLocalization.cpp / GenerateFilenamePrefix:
+	// the unlocalized file has priority; only a missing file gets lang/<language>.
+	AudioFixture game;
+	game.fx.mount({ { "Data/Audio/Speech/direct.mp3", "direct" },
+		{ "lang/TestLanguage/Data/Audio/Speech/direct.mp3", "localized-copy" },
+		{ "lang/TestLanguage/Data/Audio/Speech/lesson.mp3", "narration" } });
+	AudioAssetCache localized(&game.fx.fsys, 1024, "TestLanguage");
+	AudioAssetCache unchanged(&game.fx.fsys, 1024);
+	std::string error;
+	auto direct = localized.readFile("Data/Audio/Speech/direct.mp3", &error);
+	REQUIRE(direct);
+	CHECK(std::string(direct->begin(), direct->end()) == "direct");
+	CHECK(localized.exists("Data/Audio/Speech/lesson.mp3"));
+	auto speech = localized.readFile("Data/Audio/Speech/lesson.mp3", &error);
+	REQUIRE(speech);
+	CHECK(std::string(speech->begin(), speech->end()) == "narration");
+	CHECK_FALSE(unchanged.exists("Data/Audio/Speech/lesson.mp3"));
+	CHECK_FALSE(localized.exists("Data/Audio/Speech/missing.mp3"));
+	CHECK_FALSE(localized.readFile("Data/Audio/Speech/missing.mp3", &error));
+	CHECK_FALSE(error.empty());
 }

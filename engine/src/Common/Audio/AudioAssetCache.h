@@ -25,7 +25,7 @@
 class AudioAssetCache
 {
 public:
-	AudioAssetCache(ArchiveFileSystem *files, std::uint64_t decodedBudgetBytes);
+	AudioAssetCache(ArchiveFileSystem *files, std::uint64_t decodedBudgetBytes, const std::string &language = "");
 
 	bool exists(const std::string &virtualPath) const;
 	// The raw bytes of the file (shared, kept alive by the caller). Null + *error when missing.
@@ -59,6 +59,8 @@ private:
 		std::uint64_t bytes = 0;
 	};
 
+	std::string resolvedPath(const std::string &path) const;
+	std::string m_language; // BFME1 localized audio prefix; empty for existing RotWK behavior.
 	ArchiveFileSystem *m_files;
 	std::uint64_t m_budget;
 	std::unordered_map<std::string, Entry> m_entries; // key: lower-case path
