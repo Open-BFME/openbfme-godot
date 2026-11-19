@@ -71,7 +71,12 @@ def test_asset_pack_errors_reach_both_game_mounts(tmp_path):
     shutil.copytree(ROOT / "godot/scripts", tmp_path / "scripts")
     (tmp_path / "project.godot").write_text(
         'config_version=5\n[application]\nconfig/name="Standalone pack regression"\n'
-        '[autoload]\nRelease="*res://release_stub.gd"\n', encoding="utf-8")
+        '[autoload]\nRelease="*res://release_stub.gd"\n'
+        'ShaderBudget="*res://shader_budget_stub.gd"\n', encoding="utf-8")
+    # game_options.gd references this native class even though startup exits before rendering.
+    (tmp_path / "shader_budget_stub.gd").write_text(
+        'extends Node\nfunc check(_code: String, _label: String) -> void: pass\n',
+        encoding="utf-8")
     (tmp_path / "release_stub.gd").write_text(
         'extends Node\nvar info: RefCounted\n'
         'func selected_game() -> String: return "bfme2-106"\n'
