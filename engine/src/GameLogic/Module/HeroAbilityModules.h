@@ -128,11 +128,25 @@ class CommandButton;
 //     The value is NOT restored per candidate: each one shares the previous one's share (retail's register reuse, [ebp + 8]);
 //   * the drop off (RW 0x88325B): DropOff == 1.0: max(0, 1 - |candidate - position| / Radius) with the length RW 0x4054F5 (x87 z*z + y*y + x*x, CRT sqrt,
 //     fstp) and SSE subtract / divide; any other DropOff: 1.0.
-// The class's own functions that carry no gameplay: the ModuleData vtable RW 0xC5EEA0 slot + 0x38 (RW 0x4B612F, the base ModuleData's empty tag name,
-//   an AsciiString built from the empty literal RW 0xDC62B8 through RW 0x435F30), the class name (RW 0x8830A2, "ShareExperienceBehavior") and its
-//   name key (RW 0x8830A8, the one-shot registration: the flag RW 0xDE91A0, the key RW 0xDE919C built by RW 0x5487EC), the two deleting destructors
-//   (RW 0x8831AC / RW 0x88320F) and the xfer (RW 0x8E3BB1: the version (1, 1) RW 0x404F15 and the base xfer RW 0x850C60, nothing else). The update
-//   (RW 0x8831C8) writes a debug trace (not ported: the port has no Debug singleton) and sleeps forever (UPDATE_SLEEP_FOREVER): no state change.
+// THE CLASS'S OWN FUNCTIONS THAT CARRY NO GAMEPLAY (each read from its first instruction; the class is bound by create RW 0x64BC96 -> constructor
+// RW 0x88314A -> vtable RW 0xC5EEA0): the port has every one of them -- the six that carry no gameplay are the shared module plumbing, ported once
+// for every module, so nothing below is a second path:
+//   * RW 0x4B612F (the ModuleData vtable RW 0xC5EEA0 slot + 0x38) the base ModuleData's empty tag name: an AsciiString built from the empty literal
+//     RW 0xDC62B8 through RW 0x435F30 (the port's ModuleData::getModuleTagName);
+//   * RW 0x8830A2 (the module vtable RW 0xC5EE6C slot 2) the class name: `mov eax, 0xC0B55C`, the literal "ShareExperienceBehavior" (the port's
+//     Module::getModuleClassName);
+//   * RW 0x8830A8 (slot 3) the module name key: the one-shot registration (the flag RW 0xDE91A0, the name key RW 0xDE919C built by RW 0x5487EC from
+//     the class name RW 0xC0B55C) (the port's Module::getModuleNameKey);
+//   * RW 0x8831AC (slot 0) the scalar deleting destructor: the destructor RW 0x883082, then operator delete RW 0x42F6A0 for argument bit 0 (the port's
+//     implicit destructor);
+//   * RW 0x88320F (the ModuleData vtable RW 0xC5EEA0 slot 0) the ModuleData's scalar deleting destructor: the destructor RW 0x88322B, then operator
+//     delete RW 0x42F6A0 for argument bit 0 (the port's implicit destructor);
+//   * RW 0x8E3BB1 (the module's xfer) the version (1, 1) RW 0x404F15 and the base xfer RW 0x850C60, nothing else (the port's xfer(): the share counter
+//     is the port's own diagnostics, not state, so it is not written);
+//   * RW 0x8831C8 (slot 4) the update: a debug trace and then UPDATE_SLEEP_FOREVER (mov eax, 0x3FFFFFFF) -- no state change; the port sleeps forever
+//     too (the constructor's friend_setNextCallFrame, RW 0x883196 -> RW 0x850C32, and update() answers UPDATE_SLEEP_FOREVER).
+// NOT PORTED (reported per use): the retail's debug trace in RW 0x8831C8 -- it needs the general Debug singleton (RW 0xDC62C0) the port has not
+// got; the trace changes nothing the player sees.
 class ShareExperienceBehaviorModuleData : public ModuleData
 {
 public:
@@ -148,7 +162,7 @@ class ShareExperienceBehavior : public UpdateModule
 public:
 	OBFME_MODULE_XFER(ShareExperienceBehavior) // lane SAVE-4b
 	ShareExperienceBehavior(Thing *thing, const ShareExperienceBehaviorModuleData *data); // RW 0x88314A
-	UpdateSleepTime update() override { return UPDATE_SLEEP_FOREVER; }
+	UpdateSleepTime update() override { return UPDATE_SLEEP_FOREVER; } // RW 0x8831C8: a debug trace and UPDATE_SLEEP_FOREVER, no state change
 	void share(float value); // RW 0x8832F0
 	static ShareExperienceBehavior *of(Object &obj); // RW 0x88305B
 	unsigned long long shares() const { return m_shares; }
