@@ -188,6 +188,16 @@ public:
 	// lane PERF-HD: every animated draw's advance is advanceIsLocal (and the tires are this drawable's): advanceAnimation touches only this drawable
 	bool advanceIsLocal() const;
 	void advanceAnimationLocal(double elapsedMs); ///< advanceAnimation without the host's chunk name (nothing it runs reports through the host)
+	// RW 0x4BF1DE -> 0x4BF214: defer CAPTUREFLAG OnStateEnter sub-objects and colour until TRANS_FlagDown / TRANS_FlagDownCancel completes.
+	struct DeferredSubObject
+	{
+		std::string name;
+		bool visible = false;
+		bool permanent = false;
+	};
+	bool hasPendingAnimationTransition() const;
+	void applyOrDeferCapturePresentation(std::vector<DeferredSubObject> subObjects, bool hasHouse, std::uint32_t house);
+	void flushPendingCapturePresentation();
 	void advanceTires(DrawEntry &e, double elapsedMs); ///< lane COMBAT-4: W3DTruckDraw's tire spin (RW 0x4CBFFB)
 
 	// RW 0x6789B4 Drawable::showModule: the draw module whose tag is `name` (exact, case sensitive) takes the request (true: a module exists; the
@@ -357,5 +367,14 @@ private:
 	bool m_flagsDirty = false;           ///< lane ANIM-1: RW Drawable + 0x443
 	bool m_hasWeaponTiming = false;      ///< lane ANIM-1: the last flush's weapon cycle (RW 0x4BEE31 reads the object's when the draw applies the flags)
 	int m_weaponTimingFrames = 0;
+	struct PendingCapturePresentation
+	{
+		bool active = false;
+		std::vector<DeferredSubObject> subObjects;
+		bool hasHouseColor = false;
+		std::uint32_t houseColor = 0;
+	};
+	PendingCapturePresentation m_pendingCapturePresentation;
+	void applyCapturePresentationNow(const std::vector<DeferredSubObject> &subObjects, bool hasHouse, std::uint32_t house);
 	void setFadeHidden(bool hidden); ///< RW 0x6718FB (bumps the change count when it changes)
 };

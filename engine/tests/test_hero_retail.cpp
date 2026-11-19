@@ -2434,6 +2434,80 @@ TEST_CASE("capture flag presentation: authored capture events select one faction
 
 }
 
+TEST_CASE("capture flag presentation: re-capturing a captured flag lowers the previous owner flag during TRANS_FlagDown (RW 0x4BF1DE -> 0x4BF214)")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	Game g(sh, "FactionMen", "FactionMordor", true);
+	ArchiveW3DFileSource source(*sh.mount->fs);
+	WW3DAssetManager assets(source);
+	DrawableManager drawables(assets, *g.logic);
+	ClientEventRecorder events(*g.logic);
+	g.logic->setClientHooks(&events);
+	struct Detach { GameLogic &logic; ~Detach() { logic.setClientHooks(nullptr); } } detach{ *g.logic };
+
+	Object *flag = g.make(sh.world->things().findTemplate("CaptureFlag"), g.enemy, 1000, 1000);
+	Object *men = g.make(sh.world->things().findTemplate("MenPorter"), g.me, 1100, 1000);
+	g.me->setPlayerColor(0xFF123456u);
+	g.enemy->setPlayerColor(0xFFABCDEFu);
+	flag->setModelConditionState(0x77, true); // CAPTURED
+	for (int i = 0; i < 3; ++i)
+	{
+		g.logic->runLogicFrame();
+		drawables.applyEvents(events.take());
+		drawables.advance(200.0);
+	}
+	const Drawable *drawable = drawables.findByObject(flag->getID());
+	REQUIRE(drawable != nullptr);
+	const W3DScriptedModelDraw *mainDraw = nullptr;
+	for (const DrawEntry &entry : drawable->entries())
+	{
+		if (auto *s = dynamic_cast<const W3DScriptedModelDraw *>(entry.draw.get()))
+		{
+			if (!s->frame().animationStateName.empty()) { mainDraw = s; break; }
+		}
+	}
+	REQUIRE(mainDraw != nullptr);
+	REQUIRE(mainDraw->frame().animationStateName == "IdleCaptured");
+	REQUIRE(drawable->getHouseColor() == g.enemy->getPlayerColor());
+
+	auto isHidden = [](const W3DDrawFrame &f, const std::string &flagName) {
+		for (const std::string &name : f.hiddenSubObjects)
+			if (name == flagName || (name.size() > flagName.size() && name.substr(name.size() - flagName.size()) == flagName)) return true;
+		return false;
+	};
+	REQUIRE_FALSE(isHidden(mainDraw->frame(), "FLAG_MORDOR"));
+	REQUIRE(isHidden(mainDraw->frame(), "FLAG_MEN"));
+
+	flag->setCapturerID(men->getID());
+	flag->setModelConditionState(0x6E, true); // START_CAPTURE
+
+	int downFrames = 0;
+	bool enteredFlagUp = false;
+	for (int i = 0; i < 30; ++i)
+	{
+		g.logic->runLogicFrame();
+		drawables.applyEvents(events.take());
+		drawables.advance(200.0);
+		const W3DDrawFrame frame = mainDraw->frame();
+		if (frame.animationStateName == "TRANS_FlagDown")
+		{
+			++downFrames;
+			CHECK_FALSE(isHidden(frame, "FLAG_MORDOR"));
+			CHECK(isHidden(frame, "FLAG_MEN"));
+			CHECK(drawable->getHouseColor() == g.enemy->getPlayerColor());
+		}
+		else if (frame.animationStateName == "FlagUp")
+		{
+			enteredFlagUp = true;
+			CHECK(isHidden(frame, "FLAG_MORDOR"));
+			CHECK_FALSE(isHidden(frame, "FLAG_MEN"));
+			CHECK(drawable->getHouseColor() == g.me->getPlayerColor());
+		}
+	}
+	CHECK(downFrames == 16);
+	CHECK(enteredFlagUp);
+}
+
 TEST_CASE("hero execution retail: Gimli and Rogash ground Leap commands launch their own Bezier behavior and land alive")
 {
 	REQUIRE_RETAIL_WORLD(sh);

@@ -285,6 +285,16 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				if (ev.hasHouseColor) d->setHouseColor(ev.houseColor);
 				d->setScriptTarget(ev.scriptTarget); // lane FX-3: before the flush runs the state scripts
 				d->flushModelConditions(ev.hasWeaponTiming, ev.weaponTimingFrames);
+				if (!ev.deferredSubObjects.empty() || ev.hasDeferredHouseColor)
+				{
+					std::vector<Drawable::DeferredSubObject> subs;
+					subs.reserve(ev.deferredSubObjects.size());
+					for (const auto &s : ev.deferredSubObjects)
+					{
+						subs.push_back({ s.name, s.visible, s.permanent });
+					}
+					d->applyOrDeferCapturePresentation(std::move(subs), ev.hasDeferredHouseColor, ev.deferredHouseColor);
+				}
 			}
 			break;
 		case ClientEvent::CUSTOM_COLORS: // lane CAH-2 (RW 0x80AF0B -> 0x6727B0)

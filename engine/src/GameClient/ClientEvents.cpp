@@ -248,12 +248,47 @@ void ClientEventRecorder::pushFlush(Object &obj)
 {
 	static const int captureFlagKind = ObjectTemplateInfoBuilder::kindOfIndex("CAPTUREFLAG");
 	const bool captureFlag = captureFlagKind >= 0 && obj.isKindOf((unsigned)captureFlagKind);
+	bool deferCapturePresentation = false;
+	bool recaptureTransition = false;
+	std::vector<ClientEvent::DeferredSubObject> deferredSubObjects;
 	if (captureFlag)
 	{
 		auto &before = m_animationConditions[obj.getID()];
+		auto bitOn = [](const std::array<std::uint32_t, 19> &bits, int bit) {
+			return (bits[(size_t)(bit >> 5)] & (1u << (bit & 31))) != 0;
+		};
+		// RW 0x4BF1DE -> 0x4BF214: when a captured flag starts a re-capture (CAPTURED -> START_CAPTURE, TRANS_FlagDown)
+		// or cancels (CANCEL_CAPTURE, TRANS_FlagDownCancel), OnStateEnter fires after the lowering transition ends.
+		constexpr int kMcStartCapture = 0x6E;
+		constexpr int kMcCancelCapture = 0x6F;
+		constexpr int kMcCaptured = 0x77;
+		const bool hadCaptured = bitOn(before, kMcCaptured);
+		const bool startingCapture = obj.testModelCondition(kMcStartCapture) && !bitOn(before, kMcStartCapture);
+		const bool cancellingCapture = obj.testModelCondition(kMcCancelCapture) && !bitOn(before, kMcCancelCapture);
+		recaptureTransition = hadCaptured && startingCapture;
+		deferCapturePresentation = hadCaptured && (startingCapture || cancellingCapture);
+		const size_t subObjStart = m_events.size();
 		// Dispatch before pushing the flush: Lua can append subobject events.
 		if (before != obj.getModelConditionBits()) m_logic.animationConditionEvents(obj, before);
 		before = obj.getModelConditionBits();
+		if (deferCapturePresentation && m_events.size() > subObjStart)
+		{
+			std::vector<ClientEvent> kept;
+			kept.reserve(m_events.size() - subObjStart);
+			for (size_t i = subObjStart; i < m_events.size(); ++i)
+			{
+				if (m_events[i].kind == ClientEvent::SHOW_SUB_OBJECT && m_events[i].object == obj.getID())
+				{
+					deferredSubObjects.push_back({ m_events[i].name, m_events[i].visible, m_events[i].permanent });
+				}
+				else
+				{
+					kept.push_back(std::move(m_events[i]));
+				}
+			}
+			m_events.resize(subObjStart);
+			for (auto &ev : kept) m_events.push_back(std::move(ev));
+		}
 	}
 	ClientEvent &e = push(ClientEvent::MODEL_FLUSH, obj);
 	if (captureFlag)
@@ -262,8 +297,23 @@ void ClientEventRecorder::pushFlush(Object &obj)
 		// capturer before ownership transfers. Cancel returns to the current owner.
 		const Object *capturer = m_logic.findObjectByID(obj.getCapturerID());
 		const Player *player = capturer ? capturer->getControllingPlayer() : obj.getControllingPlayer();
-		e.hasHouseColor = true;
-		e.houseColor = player ? player->getPlayerColor() : 0;
+		if (deferCapturePresentation)
+		{
+			e.deferredSubObjects = std::move(deferredSubObjects);
+			e.hasDeferredHouseColor = true;
+			e.deferredHouseColor = player ? player->getPlayerColor() : 0;
+			if (recaptureTransition)
+			{
+				const Player *owner = obj.getControllingPlayer();
+				e.hasHouseColor = true;
+				e.houseColor = owner ? owner->getPlayerColor() : 0;
+			}
+		}
+		else
+		{
+			e.hasHouseColor = true;
+			e.houseColor = player ? player->getPlayerColor() : 0;
+		}
 	}
 	e.scriptTarget = DrawableScriptTarget::capture(m_logic, obj); // lane FX-3: what the state scripts this flush starts ask about (RW 0x73667D / 0x734A75)
 	if (const ObjectWeapons *w = obj.getWeapons())
