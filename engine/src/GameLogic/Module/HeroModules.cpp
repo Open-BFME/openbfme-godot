@@ -32,6 +32,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/HeroSystem.h"
 #include "GameLogic/Module/ActiveBody.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/ExitInterface.h"
@@ -1307,6 +1308,45 @@ void BuildableHeroListUpgrade::upgradeImplementation()
 		player->heroes().addPurchase(*tt);
 	}
 	// (RW 0x8BC4F3: TheControlBar + 0x28 = 1, the control bar refresh; RW 0x8D28F1 the custom anim of the mux)
+}
+
+// RW 0x008BC5CB (UpgradeMux slot 8)
+void BuildableHeroListUpgrade::processUpgradeRemoval()
+{
+	Object *obj = getObject();
+	Player *player = obj ? obj->getControllingPlayer() : nullptr;
+	if (!player || !player->getPlayerTemplate())
+	{
+		return;
+	}
+	GameLogic &logic = obj->logic();
+	for (const std::string &name : player->getPlayerTemplate()->m_buildableRingHeroesMP) // template + 0x198
+	{
+		const ThingTemplate *tt = logic.things().findTemplate(name); // RW 0x6D1305
+		if (!tt)
+		{
+			logic.reportError("BuildableHeroListUpgrade: BuildableRingHeroesMP name '" + name + "' is no template");
+			continue;
+		}
+		// RW 0x008BC519: schedule cancellation of this hero on every player FS_FACTORY (template + 0x10F & 0x80) with queued entries
+		for (Object *cand = logic.getFirstObject(); cand; cand = cand->getNextObject())
+		{
+			if (cand->isDestroyed() || cand->getControllingPlayer() != player || !cand->isKindOfName("FS_FACTORY"))
+			{
+				continue;
+			}
+			if (ProductionUpdateInterface *prod = cand->getProductionUpdate())
+			{
+				if (prod->getProductionCount() > 0)
+				{
+					prod->cancelUnitCreateByTemplate(tt, false); // slot 13, RW 0x008A30A0
+				}
+			}
+		}
+		player->heroes().removePurchase(*tt); // RW 0x0078138B
+	}
+	// (RW 0x8BC624: TheControlBar + 0x28 = 1, the control bar refresh)
+	setCustomAnim(false); // RW 0x008D28F9
 }
 
 void HeroModules::registerAll(ModuleFactory &modules)
