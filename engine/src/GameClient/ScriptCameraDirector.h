@@ -76,6 +76,8 @@ public:
 	float angle() const { return m_angle; }
 	bool resetView() const { return m_resetView; } ///< a RESET_CAMERA asked for the default pitch / zoom
 	bool letterbox() const { return m_letterbox; }
+	float guardBandBiasX() const { return m_guardBandBiasX; }
+	float guardBandBiasY() const { return m_guardBandBiasY; }
 	bool inputDisabled() const { return m_inputDisabled; }
 	const std::string &captionLabel() const { return m_captionLabel; }
 	double captionMsLeft() const { return m_captionMs; }
@@ -149,6 +151,8 @@ private:
 	Coord3D m_target;
 	float m_angle = 0.0f;
 	bool m_letterbox = false, m_inputDisabled = false;
+	float m_guardBandBiasX = 0.0f; ///< LOCAL-94: RW W3DView + 0x78 (setGuardBandBias RW 0x48B5FC from RESIZE_VIEW_GUARDBAND RW 0x7BD6E9)
+	float m_guardBandBiasY = 0.0f; ///< LOCAL-94: RW W3DView + 0x7C
 	std::string m_captionLabel;
 	double m_captionMs = 0.0;
 	unsigned m_captionSerial = 0;

@@ -42,7 +42,7 @@ enum
 	C_PLAYER_HAS_NUMBER_UNITS_DISTANCE_FROM_OBJECT = 161,
 	C_PLAYER_HAS_REACHED_LEVEL_CAP = 173,
 	C_HAS_EVA_EVENT_PLAYED_IN_LAST_N_SECONDS = 186,
-	C_NUM_UNITS_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION = 187
+	C_IS_NUM_OF_UNITS_BELONGING_TO_PLAYER_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION_COMPARISON_INT = 187
 };
 // BFME2 action ordinals (Open-BFME-2 ScriptEngine_initActionTemplates.cpp)
 enum
@@ -482,7 +482,7 @@ bool MusicScripts::evaluateCondition(const ScriptCondition &c)
 			}
 			return m_eva->playedRecently(m_eva->findEvent(param(p, 0).stringValue), (double)param(p, 1).realValue * 1000.0, m_audio.nowMs());
 		}
-		case C_NUM_UNITS_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION:
+		case C_IS_NUM_OF_UNITS_BELONGING_TO_PLAYER_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION_COMPARISON_INT:
 		{
 			Coord3D where;
 			if (!m_eva || !m_eva->lastPlayedPosition(m_eva->findEvent(param(p, 2).stringValue), &where))

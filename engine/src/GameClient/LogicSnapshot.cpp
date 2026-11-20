@@ -127,6 +127,8 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 	auto snap = std::make_shared<LogicSnapshot>();
 	snap->frame = logic.getFrame();
 	snap->showBehindBuildingMarkers = logic.getShowBehindBuildingMarkers(); // lane OCCLUDE-1
+	snap->showDrawableIconUI = logic.getShowDrawableIconUI();               // LOCAL-94
+	snap->particleCapMode = logic.getParticleCapMode();                     // LOCAL-94
 	snap->useBehindBuildingMarker = logic.settings().useBehindBuildingMarker;
 	snap->occludedColorLuminanceScale = logic.settings().occludedColorLuminanceScale;
 	const UnsignedInt occlusionFrame = RTS3DSceneOcclusion::occlusionFrame(snap->frame, logic.settings().defaultOcclusionDelay); // RW 0x470C15 .. 0x470C38

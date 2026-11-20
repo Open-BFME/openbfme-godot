@@ -23,6 +23,8 @@
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
 #include "GameLogic/ScriptEngine/ScriptThreat.h"
+#include "GameLogic/SkirmishAI/AITacticalAI.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/System/ThreatFinder.h"
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -152,6 +154,10 @@ void ScriptEngine::reset()
 	for (std::vector<TriggeredSpecialPower> &l : m_completedUpgrades) // lane MODCOMPAT-AI: RW 0x607FB3
 	{
 		l.clear();
+	}
+	for (auto &m : m_objectCounts) // LOCAL-94: DONOR BFME2 0x00209ABE (ScriptEngine::reset clears the 20 m_objectCounts maps at RW + 0x1A264)
+	{
+		m.clear();
 	}
 	m_genericScripts.clear(); // lane CAMP-1H
 	m_thisTeam = nullptr;
@@ -2316,6 +2322,20 @@ void ScriptEngine::crc(StateHasher &h) const
 			}
 		}
 	}
+	for (size_t i = 0; i < m_objectCounts.size(); ++i) // LOCAL-94: RW + 0x1A264, hashed once a player has an entry
+	{
+		const auto &m = m_objectCounts[i];
+		if (!m.empty())
+		{
+			h.addU32(0x5B6u | ((std::uint32_t)i << 12));
+			h.addU32((std::uint32_t)m.size());
+			for (const auto &kv : m)
+			{
+				h.addU32(kv.first);
+				h.addI32(kv.second);
+			}
+		}
+	}
 }
 
 // RW 0x7BC3A0 (MAP_REVEAL_AT_WAYPOINT) / 0x7C0BCF (MAP_REVEAL_IN_TRIGGER): look, then unlook at once. RW 0x7BD4C1 / 0x7BD4F3 (the permanent
@@ -2464,6 +2484,66 @@ bool ScriptEngine::isUpgradeCompleted(int playerIndex, const std::string &name, 
 		}
 	}
 	return false;
+}
+
+// ---- LOCAL-94: PLAYER_LOST_OBJECT_TYPE per-player object counts (RW + 0x1A264) & skirmish enemy ----------------------------------
+
+// RW 0x605DB0 (DONOR BFME2 0x00206255, ScriptEngine::getObjectCount): looks up playerIndex in ThePlayerList (RW 0x6A844E), returns 0 unless
+// Player::isPlayerActive (RW 0x6AAC52: !m_observer && !m_defeated), then looks up CRC_String(typeName) (RW 0x7ED86B) in m_objectCounts[playerIndex]
+// (RW + 0x1A264 + playerIndex * 0xC, tree find RW 0x606F7A); returns 0 when absent.
+int ScriptEngine::getObjectCount(int playerIndex, const std::string &typeName) const
+{
+	if (playerIndex < 0 || playerIndex >= kSpecialPowerListPlayers)
+	{
+		return 0;
+	}
+	const Player *pl = m_logic.players().getNthPlayer(playerIndex);
+	if (!pl || pl->isObserver() || pl->isDefeated())
+	{
+		return 0;
+	}
+	const std::uint32_t key = specialPowerNameCrc(typeName);
+	const auto &m = m_objectCounts[(size_t)playerIndex];
+	const auto it = m.find(key);
+	return it != m.end() ? it->second : 0;
+}
+
+// RW 0x607822 (DONOR BFME2 0x00207DF4, ScriptEngine::setObjectCount): m_objectCounts[playerIndex][CRC_String(typeName)] = newCount
+// (RW 0x7ED86B, tree insert-or-find RW 0x607027).
+void ScriptEngine::setObjectCount(int playerIndex, const std::string &typeName, int newCount)
+{
+	if (playerIndex < 0 || playerIndex >= kSpecialPowerListPlayers)
+	{
+		return;
+	}
+	m_objectCounts[(size_t)playerIndex][specialPowerNameCrc(typeName)] = newCount;
+}
+
+// RW 0x758AB1 (DONOR BFME2 0x00357900, ScriptEngine::getSkirmishEnemyPlayer): m_currentPlayer's getCurrentEnemy (RW 0x6AA5F5 ->
+// AISkirmishPlayer::getAiEnemy RW 0x8F47EB / AIPlayer::getAiEnemy RW 0x851E97); when null, walks ThePlayerList (RW 0x6A844E) and returns the first
+// player whose playerType (+ 0x5C) is PLAYER_HUMAN (0).
+Player *ScriptEngine::getSkirmishEnemyPlayer()
+{
+	if (!m_currentPlayer)
+	{
+		return nullptr;
+	}
+	if (AISkirmishPlayer *ai = m_logic.skirmishAI().findAI(m_currentPlayer->getPlayerIndex()))
+	{
+		if (const Player *enemy = AITacticalAI::enemyPlayer(m_logic, *ai))
+		{
+			return const_cast<Player *>(enemy);
+		}
+	}
+	for (int i = 0; i < m_logic.players().getPlayerCount(); ++i)
+	{
+		Player *p = m_logic.players().getNthPlayer(i);
+		if (p && p->getPlayerType() == PLAYER_HUMAN)
+		{
+			return p;
+		}
+	}
+	return nullptr;
 }
 
 // ---- lane SCRIPT-3: HAS_FINISHED_AUDIO ----------------------------------------------------------------------------------------------------------

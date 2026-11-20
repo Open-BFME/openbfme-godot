@@ -311,6 +311,11 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 	ObjectID mousedOver, std::vector<IconUIOp> &out)
 {
 	out.clear();
+	// LOCAL-94: RW 0x679134 (Drawable::drawIconUI checks TheGameLogic + 0x9A == 0 and returns before drawing any icon UI)
+	if (s.snapshot ? !s.snapshot->showDrawableIconUI : !logic.getShowDrawableIconUI())
+	{
+		return;
+	}
 	static const int IGNORED_IN_GUI = kindIndex("IGNORED_IN_GUI"), WALL_SEGMENT = kindIndex("WALL_SEGMENT"), DEFENSIVE_WALL = kindIndex("DEFENSIVE_WALL"),
 					 HORDE_KIND = kindIndex("HORDE");
 	const float zoomScale = s.zoom > 0.0f ? 1.0f / s.zoom : 1.0f;

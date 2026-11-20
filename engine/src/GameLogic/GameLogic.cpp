@@ -705,6 +705,8 @@ void GameLogic::update(int phase)
 		for (int i = 0; i < m_players.getPlayerCount(); ++i)
 		{
 			Player *p = m_players.getNthPlayer(i);
+			// LOCAL-94: RW 0x6AF27C .. 0x6AF288 (top of Player::update RW 0x6AF269): AIPlayer::update (RW 0x8F9705) -> updateBridgeRepair (RW 0x8F8F68)
+			p->updateAIPlayerRepair(*this);
 			// lane CAMP-1H: RW 0x6AF2FA .. 0x6AF32B, before the score: the player's teams run their generic scripts (Team::updateGenericScripts RW 0x7A267D;
 			// a game without map scripts has none)
 			if (m_scriptEngine->loaded())
@@ -1092,6 +1094,8 @@ void GameLogic::reset()
 	m_buildableOverrides.clear(); // lane BFME2CAMP1 (review): a new game starts without the script's overrides (ZH GameLogic::reset clears its map; donor)
 	m_campaignCarryover.reset();  // lane BFME2CAMP1: the mission's start sets it again
 	m_showBehindBuildingMarkers = true; // lane OCCLUDE-1: GameLogic::reset RW 0x62D3D6 (+ 0x99 = 1)
+	m_showDrawableIconUI = true;        // LOCAL-94: GameLogic::reset RW 0x62D3DD (+ 0x9A = 1)
+	m_particleCapMode = true;           // LOCAL-94: GameLogic::reset RW 0x62D3E4 (+ 0x9B = 1)
 	m_rankLevelLimit = kDefaultRankLevelLimit; // PORT-43: RW 0x62A20D (startNewGame's init helper RW 0x62A11A; GameLogic::reset RW 0x62D232 leaves +0x118 untouched)
 	m_rankLevelLimitScripted = false;
 	m_nextObjectID = 1;
