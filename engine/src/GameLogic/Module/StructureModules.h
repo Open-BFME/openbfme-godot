@@ -168,6 +168,8 @@ public:
 	DieModuleInterface *getDie() override { return this; }
 	void onDie(const DieModuleInterface::Event &event) override;
 	UpdateSleepTime update() override;
+	// RW 0x00654FD1 (UpdateInterface vtable 0x00C6902C slot 1): DISABLED_USER_FROZEN (bit 11)
+	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)(1u << DISABLED_USER_FROZEN); }
 	void crc(StateHasher &hasher) const override;
 	const StructureCollapseUpdateModuleData *data() const { return m_data; }
 	StructureCollapseState state() const { return m_state; }
