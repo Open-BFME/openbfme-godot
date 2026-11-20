@@ -787,7 +787,7 @@ private:
 		std::uint32_t animKeyColors[3] = { 0u, 0u, 0u };
 		HouseColorParams staticKeyPalette; ///< and what it was made from (used when a new model is built)
 		bool staticKeyColored = false;
-		std::vector<std::pair<std::string, std::string>> staticKeySwaps;
+		std::vector<TextureSwap> staticKeySwaps;
 	};
 	struct DrawableView
 	{
