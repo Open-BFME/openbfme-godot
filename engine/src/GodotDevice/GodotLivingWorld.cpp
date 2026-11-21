@@ -246,7 +246,8 @@ Dictionary LivingWorldGame::army_panel(Object *game_world, int64_t army_id) cons
 			}
 		}
 		d["progress"] = progress;
-		d["name"] = template_field(game_world, s(e.thing), "DisplayName");
+		// RW 0x9F6FF7: ArmyDetailsPanel rollover (_MemberName) uses GetDisplayNameStrategic RW 0x80EFD0
+		d["name"] = template_field(game_world, s(e.thing), "DisplayNameStrategic");
 		d["cp"] = e.info.commandPoints;
 		d["hero"] = e.info.hero;
 		return d;
@@ -307,6 +308,15 @@ String LivingWorldGame::template_field(Object *game_world, const String &templat
 	if (!t)
 	{
 		return String();
+	}
+	// Local 15 (issue fork issue 136): WotR strategic texts with fallback (RW 0x73CEB5, RW 0x73CECE)
+	if (field == "DisplayNameStrategic")
+	{
+		return s(t->displayNameStrategic());
+	}
+	if (field == "DescriptionStrategic")
+	{
+		return s(t->descriptionStrategic());
 	}
 	if (const FieldValue *v = t->findField(n(field)))
 	{

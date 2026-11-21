@@ -542,3 +542,87 @@ std::vector<std::string> ThingTemplate::fieldNames() const
 	}
 	return out;
 }
+
+std::string ThingTemplate::displayName() const
+{
+	// RW 0x73D3E0 parses DisplayName at +0x2C (label) / +0x30 (UnicodeString).
+	if (const FieldValue *v = getFinalOverride()->findField("DisplayName"))
+	{
+		if (const std::string *s = std::get_if<std::string>(v))
+		{
+			return *s;
+		}
+		if (const RawTokens *raw = std::get_if<RawTokens>(v))
+		{
+			return raw->tokens.empty() ? std::string() : raw->tokens.front();
+		}
+	}
+	return std::string();
+}
+
+std::string ThingTemplate::description() const
+{
+	// RW 0x73D3E0 parses Description at +0x34 (label) / +0x38 (UnicodeString).
+	if (const FieldValue *v = getFinalOverride()->findField("Description"))
+	{
+		if (const std::string *s = std::get_if<std::string>(v))
+		{
+			return *s;
+		}
+		if (const RawTokens *raw = std::get_if<RawTokens>(v))
+		{
+			return raw->tokens.empty() ? std::string() : raw->tokens.front();
+		}
+	}
+	return std::string();
+}
+
+std::string ThingTemplate::displayNameStrategic() const
+{
+	// Local 15 (issue fork issue 136):
+	// RW 0x80EFBD, 0x80EFD0: GetDisplayNameStrategic returns [tt + 0x58].
+	// RW 0x73CEB5: ThingTemplate::resolveNames copies DisplayName (+0x30) to DisplayNameStrategic (+0x58) if empty.
+	if (const FieldValue *v = getFinalOverride()->findField("DisplayNameStrategic"))
+	{
+		if (const std::string *s = std::get_if<std::string>(v))
+		{
+			if (!s->empty())
+			{
+				return *s;
+			}
+		}
+		else if (const RawTokens *raw = std::get_if<RawTokens>(v))
+		{
+			if (!raw->tokens.empty() && !raw->tokens.front().empty())
+			{
+				return raw->tokens.front();
+			}
+		}
+	}
+	return displayName();
+}
+
+std::string ThingTemplate::descriptionStrategic() const
+{
+	// Local 15 (issue fork issue 136):
+	// RW 0x9F989F, 0xA07D76, 0xA082C8: Strategic tooltips read [tt + 0x40].
+	// RW 0x73CECE: ThingTemplate::resolveNames copies Description (+0x38) to DescriptionStrategic (+0x40) if empty.
+	if (const FieldValue *v = getFinalOverride()->findField("DescriptionStrategic"))
+	{
+		if (const std::string *s = std::get_if<std::string>(v))
+		{
+			if (!s->empty())
+			{
+				return *s;
+			}
+		}
+		else if (const RawTokens *raw = std::get_if<RawTokens>(v))
+		{
+			if (!raw->tokens.empty() && !raw->tokens.front().empty())
+			{
+				return raw->tokens.front();
+			}
+		}
+	}
+	return description();
+}
