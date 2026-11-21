@@ -300,12 +300,44 @@ bool applyToVictim(GameLogic &logic, ObjectID sourceId, const DamageNugget &nugg
 	return info.m_output.m_actualDamageClipped > 0.0f;
 }
 
-// RW 0x90DEF0 radiusDamage (the shape of the partition query is 3D bounding sphere: S-321 the 2D bounding circle stands in)
+// RW 0x90DF35 .. 0x90DF77 (inside RW 0x90DEF0): which distance the area query asks the partition for — the number RW 0x90DFA3 pushes into
+// ThePartitionManager RW 0xA39340, whose distance functions are table RW 0xDBDAF8. CylinderAOE (+0x1C0) set: RW 0x90DF44 moves 1, RW 0xA3AE50, the 2D
+// bounding circle: horizontal distance only, so z is ignored and the area is a cylinder, bounded in height only by the two caps below. Not set: RW 0x90DF3C
+// moves 3, RW 0xA3AEB0, the 3D bounding sphere — unless the radius (already max(1, Radius), RW 0x90DF0C .. 0x90DF1F) is at least 10.0 (RW 0xBD83D8) and
+// the source object (RW 0x449681) is not a BIG_MONSTER (template + 0x11D bit 3, KindOf 171) that is also a TRANSPORT (+ 0x10A bit 5, KindOf 21) and has a
+// contain (Object + 0x258 not null): then RW 0x90DF75 moves 4, RW 0xA3C7D0, the object's own shapes against a sphere of that radius (PartitionManager).
+// The modes are RW's own numbering (the index into table RW 0xDBDAF8, docs/re/rotwk/RW_0x90DEF0.md); the port's enum keeps ZH's, which swaps modes 1 and 2, so
+// mode 1 (the 2D bounding circle) is FROM_BOUNDINGSPHERE_2D here and mode 3 is FROM_BOUNDINGSPHERE_3D.
+// INFERENCE: retail dereferences the source at RW 0x90DF57 / 0x90DF6C with no null test; the port's nugget can arrive with a dead or absent source (a
+// warhead whose launcher is gone), the three conditions cannot hold then, so the branch is the one RW takes when they fail (4). Nothing depends on that
+// choice: slot 1 (RW 0x90E855) refuses every victim when the source object is gone, so such a delivery damages nobody either way.
+DistanceCalculationType damageAreaDistance(GameLogic &logic, const DamageNugget &nugget, const Object *source, float radius)
+{
+	if (nugget.m_cylinderAOE)
+	{
+		return FROM_BOUNDINGSPHERE_2D;
+	}
+	if (10.0f <= radius && source && source->getTemplate())
+	{
+		const ObjectTemplateInfo &info = logic.templateInfo(source->getTemplate()->getFinalOverride());
+		const bool monsterTransport = MaskTest(info.kindOf, (unsigned)CombatNames::kindOf("BIG_MONSTER")) && MaskTest(info.kindOf, (unsigned)CombatNames::kindOf("TRANSPORT")) &&
+		                              source->getContain() != nullptr;
+		if (!monsterTransport)
+		{
+			return FROM_GEOMETRY_OVERLAP;
+		}
+	}
+	return FROM_BOUNDINGSPHERE_3D;
+}
+
+// RW 0x90DEF0 radiusDamage: the query is the partition's (RW 0xA39340) with the distance type above; the port walks the object list instead of the hit list
+// (S-321: RW's order is the partition's own), so each victim is tested with the partition's distance test (PartitionManager::withinRange)
 void radiusDamage(GameLogic &logic, ObjectID sourceId, const DamageNugget &nugget, const WeaponTemplate &weapon, const Coord3D &center, unsigned long long *unported)
 {
 	const float radius = nugget.m_radius > 1.0f ? nugget.m_radius : 1.0f;
 	const CombatNames::Kind &k = CombatNames::kinds();
 	Object *source = sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr;
+	const DistanceCalculationType areaShape = damageAreaDistance(logic, nugget, source, radius);
 	// RW 0x90DEF0 (the arc block before shouldDeliver; fcos call RW 0x90E16E): a DamageArc under pi (RW 0xBDD388) keeps a cone: its axis runs from the source through the centre (the source's X axis, matrix +8 / +0x18 / +0x28,
 	// when the two coincide); an object is inside when the unit vector centre -> object has a dot product of at least cos(DamageArc) with the axis.
 	// A zero vector stays unnormalised (the squared length is tested against 0.0, RW 0xC1B594), so the object at the centre (the victim) has dot 0.
@@ -346,9 +378,14 @@ void radiusDamage(GameLogic &logic, ObjectID sourceId, const DamageNugget &nugge
 		{
 			continue; // lane GARRISON-1: a contain's rider out of the world (RW 0x68C18F) is not in the partition
 		}
-		const float d2 = CombatQueries::centerDistanceSquared2D(*o->getPosition(), center);
-		const float reach = SimMath::addf32(radius, CombatQueries::boundingCircleRadius(*o));
-		if (d2 > SimMath::mulf32(reach, reach))
+		// the partition's distance test (RW 0xA3C4E0 / table 0xDBDAF8). The shape test of RW 0xA3C7D0 is asked only for the objects whose 2D centre is
+		// within the radius plus their bounding circle: every shape lies inside that circle (RW 0xAD2700), so a farther centre cannot overlap, and RW's query
+		// never walks them either (its cell rectangle is the centre +- radius)
+		if (areaShape == FROM_GEOMETRY_OVERLAP && !logic.partition().withinRange(FROM_BOUNDINGSPHERE_2D, center, *o, radius))
+		{
+			continue;
+		}
+		if (!logic.partition().withinRange(areaShape, center, *o, radius))
 		{
 			continue;
 		}
@@ -393,7 +430,7 @@ void radiusDamage(GameLogic &logic, ObjectID sourceId, const DamageNugget &nugge
 				continue;
 			}
 		}
-		if (nugget.m_minRadius > 0.0f && d2 < SimMath::mulf32(nugget.m_minRadius, nugget.m_minRadius))
+		if (nugget.m_minRadius > 0.0f && CombatQueries::centerDistanceSquared2D(*o->getPosition(), center) < SimMath::mulf32(nugget.m_minRadius, nugget.m_minRadius))
 		{
 			continue;
 		}
