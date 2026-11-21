@@ -64,6 +64,19 @@ void SMCHelper::setSpecialModelConditionState(int bit, UnsignedInt frames)
 	setWakeFrame(obj, calcSleep());
 }
 
+bool SMCHelper::hasSpecialModelConditionState(int bit) const
+{
+	const UnsignedInt now = getObject()->logic().getFrame();
+	for (const Entry &e : m_list)
+	{
+		if (e.bit == bit && e.expiry > now)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 // RW 0x8E2B72
 UpdateSleepTime SMCHelper::update()
 {

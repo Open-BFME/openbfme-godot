@@ -35,6 +35,7 @@ public:
 	// object too. A held passenger or siege crew member (DISABLED_HELD) loses JUST_BUILT on time: Grond's trolls (JUST_BUILT: Model None) were never drawn.
 	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)0xFFFFFFFFu; }
 	void setSpecialModelConditionState(int bit, UnsignedInt frames);
+	bool hasSpecialModelConditionState(int bit) const;
 	size_t activeCount() const { return m_list.size(); }
 	void crc(StateHasher &hasher) const override;
 	OBFME_MODULE_XFER(SMCHelper) // lane SAVE-4b (OpenBFME native: the shell, then the timers in list order)

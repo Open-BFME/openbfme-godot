@@ -181,7 +181,20 @@ void Construction::completeConstruction(Object &structure, Object *builder)
 {
 	structure.setConstructionPercent(-1.0f);
 	structure.setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, false);
-	setModelConditions(structure, { "AWAITING_CONSTRUCTION", "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" }, { "CONSTRUCTION_COMPLETE" });
+	// Both editions (RW 0x88DEFD..0x88DF51; DONOR BFME2 1.06 0x88AC08..0x88AC5C, DozerAIUpdateCtor.cpp:2358-2369):
+	// structures with CastleBehavior clear only AWAITING_CONSTRUCTION and hold PARTIALLY_CONSTRUCTED +
+	// ACTIVELY_BEING_CONSTRUCTED for 5 logic frames via SMCHelper so DefaultModelConditionState { Model = None }
+	// does not flash invisible before the castle unpacks.
+	if (structure.findModule("CastleBehavior") != nullptr)
+	{
+		setModelConditions(structure, { "AWAITING_CONSTRUCTION" }, { "CONSTRUCTION_COMPLETE" });
+		structure.setSpecialModelConditionState(modelConditionIndex("PARTIALLY_CONSTRUCTED"), LOGICFRAMES_PER_SECOND);
+		structure.setSpecialModelConditionState(modelConditionIndex("ACTIVELY_BEING_CONSTRUCTED"), LOGICFRAMES_PER_SECOND);
+	}
+	else
+	{
+		setModelConditions(structure, { "AWAITING_CONSTRUCTION", "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" }, { "CONSTRUCTION_COMPLETE" });
+	}
 	// Both editions: the dozer explicitly refreshes the body's visual condition before notifying the player (RW 0x88DF6B, body slot 0x94;
 	// clean BFME2 1.06 0x88AC76, slot 0x90; DozerAIUpdateCtor.cpp:Rva0048A69E). Health changes during construction suppress this refresh, so a
 	// stale REALLYDAMAGED flag from placement must not survive until GettingBuiltBehavior's next update. Preserve actual damage at completion.
@@ -196,6 +209,8 @@ void Construction::completeConstruction(Object &structure, Object *builder)
 	// AUDIO-2: the building-complete voice (RW 0x857DBA, 0x7E2) is emitted by GettingBuiltBehavior::checkCompletion (its m_completedOnce is retail's +0x33
 	// guard); not here, so a structure completes with one announcement
 	structure.friend_onBuildComplete();
+	// Both editions (RW 0x88DF9A..0x88DFA5; DONOR BFME2 1.06 DozerAIUpdateCtor.cpp:2401): flush model conditions to drawable immediately.
+	structure.flushDrawableModelConditions();
 }
 
 Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool instant)
@@ -405,7 +420,7 @@ bool Construction::placePhantomStructure(Object &dozer, Object &obj, bool isRebu
 		{
 			ConstructionSite::moveObjectsForConstruction(logic, what, *obj.getPosition(), obj.getOrientation(), *structureOwner);
 		}
-		// lane TREES1 (community #105): RW 0x684BCA is removeTreesForConstruction, with the structure's position, geometry and angle (RW 0x88D4F4 .. 0x88D533):
+		// lane TREES1 (community fork issue 105): RW 0x684BCA is removeTreesForConstruction, with the structure's position, geometry and angle (RW 0x88D4F4 .. 0x88D533):
 		// the trees, shrubs and props under it go
 		logic.trees().removeTreesForConstruction(*obj.getPosition(), ObjectGeometry::shapesOf(*what.getFinalOverride()), obj.getOrientation());
 	}

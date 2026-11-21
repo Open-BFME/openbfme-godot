@@ -52,8 +52,8 @@ void onStructureCreated(Player &player, Object *builder, Object &structure);
 // RW 0x6AA72B -> 0x6AA7A8 -> 0x68E0C2: the structure is complete: its command points join the player's pool
 void onStructureConstructionComplete(Player &player, Object *builder, Object &structure, bool fromRebuild);
 
-// completes an under-construction structure: percent -1, status cleared, model conditions (clear AWAITING_CONSTRUCTION / PARTIALLY_CONSTRUCTED /
-// ACTIVELY_BEING_CONSTRUCTED, set CONSTRUCTION_COMPLETE), the player notification, onBuildComplete
+// completes an under-construction structure: percent -1, status cleared, model conditions (clear AWAITING_CONSTRUCTION; clear or, when CastleBehavior is
+// present per RW 0x88DEFD / BFME2 0x88AC08, hold PARTIALLY_CONSTRUCTED & ACTIVELY_BEING_CONSTRUCTED for 5 frames; set CONSTRUCTION_COMPLETE), player notification, onBuildComplete
 void completeConstruction(Object &structure, Object *builder);
 
 // RW 0x858701: a plot makes a building (see the file comment). `instant` builds it complete at once. Null when refused (reasons go to GameLogic::reportError for the
