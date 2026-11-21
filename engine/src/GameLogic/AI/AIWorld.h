@@ -280,6 +280,7 @@ public:
 	// each in a BLOK) and the report's bookkeeping. A load goes into the game's world with the same AI modules (made with their objects)
 	void xfer(class Xfer &x);
 	void xferBody(class Xfer &x);
+	void loadPostProcess();
 
 	// ---- reports ----
 	// the stops that apply to this world's runs (S-220 and the ones the movers raised), each once

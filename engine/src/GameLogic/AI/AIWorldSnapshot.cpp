@@ -176,3 +176,14 @@ void AIWorld::xferBody(Xfer &x)
 		m_nextFormationId = nextFormation; // lane FLANK-1 (version 2)
 	}
 }
+
+void AIWorld::loadPostProcess()
+{
+	for (auto &kv : m_ais)
+	{
+		if (kv.second)
+		{
+			kv.second->loadPostProcess();
+		}
+	}
+}
