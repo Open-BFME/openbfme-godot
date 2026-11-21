@@ -30,7 +30,11 @@
 //   * createSpawn (RW 0x862B07): the spawner's exit (RW 0x68BB14) and a reserved door (exit slot 1); the template of the next name (RW 0x6D1305);
 //     RespectCommandLimit: the player's free command points (RW 0x6A7F6A: limit - usage) below the template's CommandPoints (+ 0x628): no; the object (RW
 //     0x6D165E) on the spawner's team; Player::onUnitCreated (RW 0x6AA688, not ported); SpawnInsideBuilding: its AI ignores the spawner as an obstacle (RW
-//     0x66831A); the drawable fade (client); the name advances (wrapping); its producer = the spawner (RW 0x68B6A1), its slaved interface onEnslave, its id
+//     0x66831A); PORT-76 (issue fork issue 208): its drawable fades in over ftol(FadeInTime * [RW 0xD9F624] = 0.03f) client frames (RW 0x862C18 .. 0x862C43: fild
+//     + 0x18C, fmul, _ftol RW 0xA3CFA4, the drawable RW 0x70E013, Drawable::fadeIn RW 0x670AA2); the same block first hides the drawable when the spawner's
+//     shroud status for the local player (RW 0x68D8F7, the player list RW 0xDE4928 + 0x10 -> + 0x54) is at least FOGGED (RW 0x862BF0 .. 0x862C13 -> RW
+//     0x678F54), which the port's per-frame shroud look already sets (GameClient/DrawableShroud.h, lane VISUAL-2); the name advances (wrapping); its producer
+//     = the spawner (RW 0x68B6A1), its slaved interface onEnslave, its id
 //     joins the spawns; the exit: exitObjectViaDoor (slot 2) unless ExitByBudding (counted, not ported); OneShot: the count - 1; the spawn count + 1 (from -1:
 //     1).
 //   * the spawn interface (RW 0xC58D94): slot 1 onSpawnDeath (RW 0x862DAB: a spawn of the list leaves it, a replacement frame now + SpawnReplaceDelay is
