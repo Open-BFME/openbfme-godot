@@ -325,9 +325,17 @@ std::vector<Radar::Blip> Radar::blips(int size) const
 	for (Object *o = m_ctx.logic.getFirstObject(); o; o = o->getNextObject())
 	{
 		Player *owner = o->getControllingPlayer();
-		if (o->isDestroyed() || o->getContainedBy() || !owner || !owner->hasTeamColor() || !HudObjects::isSelectable(*o))
+		// lane PORT-95: RW 0x6D9042 tests neither selectability nor death: the list is the radar's own records, and it keeps the remains of a KeepObjectDie with
+		// StayOnRadar (added in its onDie RW 0x88A01A). A living object enters by that add's gates (a controlled owner with a team colour, SELECTABLE: the horde
+		// members stay out, their horde is the blip); a dead one only while its record is still there: Object::onDie RW 0x698F80 took it off, RW 0x88A01A put it back.
+		if (o->getContainedBy() || !owner || !owner->hasTeamColor())
 		{
-			continue; // map props, neutral scenery and the horde members (the horde is the blip) are not on the radar
+			continue; // map props, neutral scenery and contained objects (their container holds the record) are not on the radar
+		}
+		const bool dead = o->isDestroyed() || o->isEffectivelyDead();
+		if (dead ? !o->stayOnRadarAfterDeath() : !HudObjects::isSelectable(*o))
+		{
+			continue;
 		}
 		if (ShroudManager *sm = m_ctx.logic.shroud())
 		{
@@ -656,9 +664,11 @@ void Radar::captureObject(GameLogic &logic, const Object &o, const Player *local
 {
 	out = ObjectSnapshot::RadarEntry();
 	const ThingTemplate *tt = o.getTemplate();
-	if (!tt || o.isDestroyed() || o.isEffectivelyDead())
+	// lane PORT-95: the add RW 0x6D9042 tests no death; what decides a dead object is its record: Object::onDie RW 0x698F80 removed it, and only a KeepObjectDie
+	// whose StayOnRadar is on adds it back (its onDie RW 0x88A00A .. 0x88A01A, Object + 0x268). So the remains of such a building stay a blip, the others' go.
+	if (!tt || ((o.isDestroyed() || o.isEffectivelyDead()) && !o.stayOnRadarAfterDeath()))
 	{
-		return; // Object::onDie (RW 0x698F80) takes it off the radar
+		return;
 	}
 	const RadarKinds &k = radarKinds();
 	const KindOfMaskType &kind = logic.templateInfo(tt->getFinalOverride()).kindOf; // retail reads the template's bits (+ 0x108)

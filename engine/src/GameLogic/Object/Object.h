@@ -174,6 +174,9 @@ public:
 	// RW 0x698F06 (the part lane ECON-1 ports): every die module's onDie, then the object's command points leave the player's pool (RW 0x698FD9). The death pipeline
 	// of the combat lane calls this; GameLogic::destroyObject does not (retail's does not either)
 	void friend_onDie(const DieModuleInterface::Event &event);
+	// lane PORT-95: the remains of this object stay on the radar after its death (the port's form of RW + 0x268 written by RW 0x88A01A)
+	bool stayOnRadarAfterDeath() const { return m_stayOnRadarAfterDeath; }
+	void setStayOnRadarAfterDeath(bool on) { m_stayOnRadarAfterDeath = on; }
 
 	// ---- lane COMBAT-1: weapons, damage, death, the kill credit --------------------------------------------------------------------
 	// the live weapon set (null when the template cannot have any weapon, RW 0x73C191)
@@ -650,6 +653,12 @@ private:
 	struct PendingDamage;
 	std::vector<PendingDamage> m_pendingDamage;             ///< RW + 0x460
 	bool m_effectivelyDead = false;                         ///< RW + 0x458 bit 0
+	// lane PORT-95: RW Object + 0x268 is the object's radar record. Object::onDie RW 0x698F80 takes it off the radar there (the 0 test of RW 0x698F70 /
+	// RW 0x698F77 and TheRadar's removeObject RW 0x6D876A), and KeepObjectDie::onDie adds it back when StayOnRadar is on: RW 0x88A00A tests the record (already
+	// set: no second add) and RW 0x88A013 / 0x88A01A calls Radar::addObject RW 0x6D9042. The port's radar rebuilds its list from the objects every draw
+	// (Radar::captureObject, Radar.cpp), so the port keeps the decision only, not the record: this flag is "the object was on the radar when it died and stays
+	// there" (set by that KeepObjectDie, cleared by the next death's RW 0x698F80; a client never writes it).
+	bool m_stayOnRadarAfterDeath = false;
 	bool m_campaignCarryover = false;                       ///< RW + 0x458 bit 4 (lane BFME2CAMP1)
 	bool m_offMap = false; ///< lane CAMPUI-1: RW + 0x458 bit 3 (OFF_MAP; in the padding before m_armorSetFlags: sizeof(Object) unchanged)
 	ArmorSetFlags m_armorSetFlags = 0;
