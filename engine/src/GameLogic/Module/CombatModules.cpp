@@ -11,6 +11,7 @@
 #include "GameLogic/ObjectCreationList.h"
 
 #include "Common/AsciiString.h"
+#include "Common/Player.h"
 #include "Common/GameCommon.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
@@ -303,6 +304,42 @@ void DestroyDie::onDie(const DieModuleInterface::Event &event)
 	obj->logic().destroyObject(obj); // ZH DestroyDie::onDie
 }
 
+// lane PORT-95 (issue fork issue 243): RW 0x889FA7 KeepObjectDie::onDie, every branch:
+//   1. RW 0x889FAB .. 0x889FD8: the object's controlling player (RW 0x68B678) when there is one whose Player::isPlayerActive (RW 0x6AAC4B: + 0x754) is not 0 ->
+//      TheGameLogic's destroyObject (RW 0x62BBAB) and the onDie ends: a player's object is not kept (ThePlayerList + 0x4F8 the port's API, or that player takes
+//      the battlefield's objects when it leaves: INFERENCE, S-3xxx; no ported game destroys an object this way yet);
+//   2. RW 0x889FDA .. 0x889FE8: setSpecialModelConditionState (RW 0x68B581) with model condition 0x14F (COLLAPSING, TheModelConditionNames[335]) and
+//      data + 0x38 (CollapsingTime) frames: the building shows its collapse;
+//   3. RW 0x889FED .. 0x889FFB: isDieApplicable (RW 0x85FED5, the DieMux rows RW 0xC76BD8): a death the mux refuses ends here;
+//   4. RW 0x889FFD .. 0x88A004: StayOnRadar (data + 0x3C) 0 ends here;
+//   5. RW 0x88A006: no object ends here;
+//   6. RW 0x88A00A .. 0x88A011: the radar record (Object + 0x268) already set ends here (the object is on the radar already);
+//   7. RW 0x88A013 .. 0x88A01A: TheRadar (RW 0xDE4AB8) addObject (RW 0x6D9042): the remains stay a blip.
+//     The graphics of RW 0x88A006 .. 0x88A0EB beyond the add are W3DView / drawable work (the client's).
+void KeepObjectDie::onDie(const DieModuleInterface::Event &event)
+{
+	Object *obj = getObject();
+	Player *owner = obj->getControllingPlayer();
+	if (owner && owner->isDefeated())
+	{
+		obj->logic().destroyObject(obj); // RW 0x889FCC .. 0x889FD3
+		return;
+	}
+	if (m_data->m_collapsingTime != 0)
+	{
+		obj->setSpecialModelConditionState(CombatNames::modelCondition("COLLAPSING"), m_data->m_collapsingTime); // RW 0x889FE8
+	}
+	if (!m_data->m_dieMux.isDieApplicable(*obj, event))
+	{
+		return;
+	}
+	if (!m_data->m_stayOnRadar)
+	{
+		return;
+	}
+	obj->setStayOnRadarAfterDeath(true); // RW 0x88A00A: nothing while the record is set; RW 0x88A01A: the radar's add
+}
+
 void FXListDie::onDie(const DieModuleInterface::Event &event)
 {
 	Object *obj = getObject();
@@ -474,7 +511,7 @@ void SlowDeathBehavior::beginSlowDeath(const DieModuleInterface::Event &)
 	{
 		obj->setModelConditionState(kDying, true);
 	}
-	// TOP20 #24, RW 0x860F3E .. 0x860F58: with a drawable ([ebp - 0x10], RW 0x70E013) and ShadowWhenDead (+ 0x18D) No, the drawable's shadows are switched off
+	// TOP20 fork issue 24, RW 0x860F3E .. 0x860F58: with a drawable ([ebp - 0x10], RW 0x70E013) and ShadowWhenDead (+ 0x18D) No, the drawable's shadows are switched off
 	// (RW 0x672D28(false)); client only, no logic state. (RW 0x860F5D .. 0x860F71, the terrain decal's fade RW 0x67093E(0, -0.2), is the client's too: not
 	// ported, stop S-3304's drawable decals)
 	if (!d->m_shadowWhenDead)

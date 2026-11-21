@@ -1210,6 +1210,9 @@ void Object::friend_onDie(const DieModuleInterface::Event &event)
 	{
 		m_client->observerEvent(*this, ObserverEvent::Death);
 	}
+	// RW 0x698F70 .. 0x698F80: the radar record (+ 0x268) leaves the radar before the die modules run, so one that adds it back (KeepObjectDie with StayOnRadar,
+	// RW 0x88A01A) is the only thing that keeps the remains a blip
+	m_stayOnRadarAfterDeath = false;
 	for (size_t i = 0; i < m_modules.size(); ++i)
 	{
 		if (DieModuleInterface *d = m_modules[i]->getDie())
@@ -2525,6 +2528,10 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 	h.addU32(m_originalTeamID); // lane HERO-2 / BACKLOG4: the team setTeam last recorded
 	h.addU32(m_speechLeader);                                 // lane HERO-2
 	h.addBool(m_receivingDifficultyBonus);                    // lane CAMP-1H
+	if (m_stayOnRadarAfterDeath)
+	{
+		h.addU32(0x5C950001u); // lane PORT-95: the remains stay on the radar (RW + 0x268 via RW 0x88A01A; hashed when set, like PORT-5's flag)
+	}
 	if (m_legendaryFactor != 1)
 	{
 		h.addI32(m_legendaryFactor); // lane RULES-1: only a legendary hero adds it (every other object keeps its hash)
@@ -2953,6 +2960,7 @@ void Object::xfer(Xfer &x)
 	x.xferBool(&m_inWorld);
 	x.xferUnsignedInt(&m_containedFrame);
 	x.xferBool(&m_drawableHidden);
+	x.xferBool(&m_stayOnRadarAfterDeath); // lane PORT-95: the remains stay on the radar (RW + 0x268 via RW 0x88A01A): a kept building's blip survives a save
 	x.xferObjectID(&m_producerID);
 	x.xferObjectID(&m_builderID);
 	x.xferObjectID(&m_soleHealingBenefactorID);

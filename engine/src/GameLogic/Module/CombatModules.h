@@ -19,7 +19,9 @@
 // EXPLODED_FLAILING / EXPLODED_BOUNCING), the HIT_GROUND phase, SINKING, DISABLED_HELD and the 5.7 drop of a body above the ground are ported.
 // WHAT IS INFERENCE / NOT PORTED (stop S-324): the Weapon phase effect (counted), the client's FX / Sound picks, the drawable's fade and shadow (client), the LOD death scale
 // (TheGameLODManager's SlowDeathScale: 1.0 at every level of the 2.01 GameLOD.ini, so the port takes 1.0 and has no rescale of RW 0x860B6B), the HULK quick death (RW 0x860FBC: TheGameLogic + 0xA0, the
-// hulk lifetime override of SCRIPTING_OVERRIDE_HULK_LIFETIME, which no ported script action sets: it stays -1 and the branch never runs); KeepObjectDie does nothing (an object with no DestroyDie / SlowDeath simply stays); FXListDie records the event without playing the FX list.
+// hulk lifetime override of SCRIPTING_OVERRIDE_HULK_LIFETIME, which no ported script action sets: it stays -1 and the branch never runs); KeepObjectDie (lane PORT-95, issue
+// fork issue 243): the destroyed object simply stays, COLLAPSING (model condition 0x14F) is set for CollapsingTime and, with StayOnRadar (data + 0x3C), the remains stay on the
+// radar; FXListDie records the event without playing the FX list.
 
 #pragma once
 
@@ -64,7 +66,7 @@ class KeepObjectDieModuleData : public ModuleData
 {
 public:
 	DieMuxData m_dieMux;
-	unsigned m_collapsingTime = 0; ///< frames (RW +0x38)
+	unsigned m_collapsingTime = 0x19; ///< frames (RW +0x38; the data ctor RW 0x6538DB writes 0x19 at RW 0x6538E9)
 	bool m_stayOnRadar = false;    ///< RW +0x3C
 	static void buildFieldParse(MultiIniFieldParse &p);
 };
@@ -75,7 +77,7 @@ public:
 	OBFME_MODULE_XFER(KeepObjectDie) // lane SAVE-4b: BehaviorModule's (no state)
 	KeepObjectDie(Thing *thing, const KeepObjectDieModuleData *data) : BehaviorModule(thing, data), m_data(data) {}
 	DieModuleInterface *getDie() override { return this; }
-	void onDie(const DieModuleInterface::Event &) override {}
+	void onDie(const DieModuleInterface::Event &event) override;
 
 private:
 	const KeepObjectDieModuleData *m_data;
