@@ -36,6 +36,7 @@
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/ProjectileModules.h"
 #include "GameLogic/Module/StructureModules.h"
+#include "GameLogic/Module/FadeAndDieOrnamentUpdate.h"
 #include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/StancesBehavior.h"
@@ -97,7 +98,8 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	CastleModules::registerAll(modules);
 	CombatModules::registerAll(modules);  // lane COMBAT-1: ImmortalBody, HighlanderBody and the die modules
 	ProjectileModules::registerAll(modules); // lane PROJ-1: BezierProjectileBehavior
-	StructureModules::registerAll(modules); // lane COMBAT-2: StructureBody, InactiveBody, StructureCollapseUpdate
+	StructureModules::registerAll(modules);
+	FadeAndDieOrnamentUpdate::registerClass(modules); // both editions: RW 0x007A772B / 0x007A7801 // lane COMBAT-2: StructureBody, InactiveBody, StructureCollapseUpdate
 	UpgradeModuleClasses::registerAll(modules); // lane UPGRADE-1: the upgrade module classes
 	ObjectCreationUpgrade::registerClass(modules); // lane FACT-A: the object an upgrade makes (the Crystal Moat)
 	ReplaceSelfUpgrade::registerClass(modules);    // lane FACT-A: the wall segment's gates, towers and hubs
