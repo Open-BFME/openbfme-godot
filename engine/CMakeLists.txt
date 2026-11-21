@@ -1014,6 +1014,7 @@ add_executable(openbfme_tests
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp
+    tests/test_lifetime_xfer.cpp
     tests/test_logic_players.cpp
     tests/test_logic_modules.cpp
     tests/test_logic_hash.cpp
