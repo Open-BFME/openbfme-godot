@@ -15,4 +15,5 @@ set(OPENBFME_STRUCTURE_TESTS
     tests/test_structure_victory.cpp
     tests/test_structure_hash.cpp
     tests/test_structure_review.cpp
-    tests/test_hud_combat_structure.cpp)
+    tests/test_hud_combat_structure.cpp
+    tests/test_local_102.cpp)

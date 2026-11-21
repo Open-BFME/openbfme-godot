@@ -537,6 +537,9 @@ public:
 	// TARGET RW 0x68DA67 (BFME2 decomp ObjectRva0028D412.cpp, tier B same-shape): the same with Thing::setTransformMatrix (RW 0x70BA76), the horde's slot
 	// 0x1B4 (RW 0x86D8FE) and no AI part.
 	void teleportTransform(const Coord3D *pos, const float basis[9]);
+	// TARGET RW 0x0068D58C Object::topple(dir, speed, options) (DONOR BFME2 0x0068CEBC): finds ToppleUpdate (RW 0x68BDA5), tests isAbleToBeToppled
+	// (RW 0x008AB7FB) and applies the toppling force (RW 0x008ABAAD).
+	void topple(const Coord3D *toppleDirection, float toppleSpeed, unsigned options = 0);
 	// The drawable's RW 0x674B1F(1) (BFME2 decomp DrawableInterpolationRebuild.cpp, tier A), the forced gather: the recorded transform, the current
 	// transform, P0, P1, the drawn transform and the drawn position all become the object's current ones, P2 the position and P3 the pending position
 	// (none after a recordTransform), and the drawable's frame stamp (+ 0x244) is -1. The port's client draws from the snapshot of the completed frame
