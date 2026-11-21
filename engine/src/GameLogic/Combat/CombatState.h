@@ -53,6 +53,7 @@ public:
 		unsigned long long launchBonesFound = 0;        ///< launches whose launcher's drawable named a launch bone (RW 0x6756A1 true; RENDER-2)
 		unsigned long long garrisonLaunchUnported = 0;  ///< launches from an INSIDE_GARRISON launcher (the container branch of RW 0x6CAB85, stop S-360)
 		unsigned long long garrisonLaunches = 0;        ///< lane GARRISON-1: launches that took the ENCLOSED container's drawable and transform (RW 0x6CAC62)
+		unsigned long long turretedLaunches = 0;        ///< lane PORT-28: launches whose transform the turret turned (RW 0x6CAD3F .. 0x6CB43B)
 		unsigned long long launchesWithoutBones = 0;    ///< launches with no launch bone provider installed (a bare GameLogic without the W3D assets: the identity bone, S-460)
 		unsigned long long projectilesDetonated = 0;
 		unsigned long long projectilesLanded = 0;       ///< CrushStyle projectiles that came to rest
