@@ -32,10 +32,12 @@
 //     is always walked). Each tree is walked by RW 0xA3A860: the node's own list from the head, then (when entries lie below) its children in the order 0, 1, 2, 3,
 //     a child only when it overlaps the rectangle. An entry is kept when its distance (table RW 0xDBDAF8, below) is <= radius^2 (the x87 value; a NaN passes) and
 //     every filter allows the object (RW 0xA39450, filter vslot 1, in chain order). The distance stored with the hit is the float (fst dword).
-//   * Distance types (RW 0xDBDAF8): 0 RW 0xA3A7A0 dx^2 + dy^2 of the centers; 1 RW 0xA3A7D0 dx^2 + dy^2 + dz^2; 2 RW 0xA3AE50 (sqrt(dx^2 + dy^2) - bounding circle
-//     radius), squared and negated when negative; 3 RW 0xA3AEB0 the same in 3D with the bounding sphere radius (GeometryInfo + 0x14) and dz + the geometry's centre
-//     height (GeometryInfo + 0x20, RW 0xB4E370); 4 RW 0xA3C7D0 a geometry overlap test (RW 0xAD2CE0 against a sphere of the query radius: 0 or a huge value). A
-//     type outside 0 .. 4 is 0.
+//   * Distance types (RW 0xDBDAF8, the dwords read from the image: 0xA3A7A0, 0xA3AE50, 0xA3A7D0, 0xA3AEB0, 0xA3C7D0): RW 0 RW 0xA3A7A0 dx^2 + dy^2 of the centers;
+//     RW 1 RW 0xA3AE50 (sqrt(dx^2 + dy^2) - bounding circle radius), squared and negated when negative; RW 2 RW 0xA3A7D0 dx^2 + dy^2 + dz^2; RW 3 RW 0xA3AEB0 the
+//     same in 3D with the bounding sphere radius (GeometryInfo + 0x14) and dz + the geometry's centre height (GeometryInfo + 0x20, RW 0xB4E370); RW 4 RW 0xA3C7D0 a
+//     geometry overlap test (RW 0xAD2CE0 against a sphere of the query radius: 0 or a huge value). A type outside 0 .. 4 is 0 (RW 0xA3C50F .. 0xA3C52F). The enum
+//     below keeps ZH's numbering, which swaps RW's 1 and 2: a caller that starts from an RW mode must map by meaning (lane PORT-37, RW 0x90DF44 moves mode 1,
+//     the 2D bounding circle, which is FROM_BOUNDINGSPHERE_2D here).
 //   * Sorting (RW 0xA3A750): 1 near to far (RW 0xA3A6B0), 2 far to near (RW 0xA3A700), anything else none. Both are the STLport introsort of (object, distance)
 //     pairs on the float distance: median of three, Hoare partition, heap sort past 2 * floor(log2(n)) levels, a final insertion sort of runs of 16. It is not stable:
 //     equal distances come out in the order the algorithm leaves them, which this port reproduces step by step.
@@ -280,7 +282,13 @@ public:
 	// the object's GeometryInfo + 0x10 / + 0x14 / + 0x20: its template's, or (lane MODCOMPAT-MOD1) its own once it changed a shape flag (Object::geometryShapes)
 	const Geometry &geometryOf(const Object &obj) const;
 
+	// lane PORT-37 (issue fork issue 122): RW 0xA3C4E0's per-entry test for one object the caller already holds — radius damage walks the object list itself (S-321) and
+	// needs the distance of table RW 0xDBDAF8 without a query. `radius` is squared under x87 PC24 like the query does (RW 0xA3C4E0), and only "greater" rejects
+	// (RW 0xA3A8AB: a NaN passes), so an object the query would not return is never accepted here and the other way round
+	bool withinRange(DistanceCalculationType type, const Coord3D &center, const Object &obj, float radius) const;
+
 private:
+	double distanceTo(DistanceCalculationType type, const Coord3D &c, const Object &object, const Geometry &geometry, float radiusSqr) const;
 	struct Entry;
 	struct Node
 	{

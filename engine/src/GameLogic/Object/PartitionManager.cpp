@@ -658,7 +658,14 @@ bool PartitionManager::allowed(Object &obj, const PartitionFilterList &filters) 
 // the distance functions of RW table 0xDBDAF8: the x87 register value (24-bit significand, the wide exponent of the carrier)
 double PartitionManager::distance(DistanceCalculationType type, const Coord3D &c, const Entry &e, float radiusSqr) const
 {
-	const Coord3D *p = e.object->getPosition();
+	return distanceTo(type, c, *e.object, entryGeometry(e), radiusSqr);
+}
+
+// lane PORT-37 (issue fork issue 122): the same test for a caller that holds the object itself — radius damage walks the object list (S-321) and needs the shape of
+// RW 0xA39340's query without a query (the object's entry may not exist: an INERT object is outside the partition). One distance implementation for both.
+double PartitionManager::distanceTo(DistanceCalculationType type, const Coord3D &c, const Object &object, const Geometry &geometry, float radiusSqr) const
+{
+	const Coord3D *p = object.getPosition();
 	switch (type)
 	{
 		case FROM_CENTER_3D:
@@ -676,14 +683,14 @@ double PartitionManager::distance(DistanceCalculationType type, const Coord3D &c
 			const double dy = SimMath::pc24SubW((double)p->y, (double)c.y);
 			const double dx = SimMath::pc24SubW((double)p->x, (double)c.x);
 			const float s = SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW(dx, dx), SimMath::pc24MulW(dy, dy)));
-			const double d = SimMath::pc24SubW(SimMath::sqrtPC24((double)s), (double)entryGeometry(e).circle);
+			const double d = SimMath::pc24SubW(SimMath::sqrtPC24((double)s), (double)geometry.circle);
 			const double sq = SimMath::pc24MulW(d, d);
 			return (d < 0.0) ? -sq : sq;
 		}
 		case FROM_BOUNDINGSPHERE_3D:
 		{
 			// RW 0xA3AEB0: dx, dy, dz stored as floats, dz += the geometry's centre height (stored), ((dy^2 + dx^2) + dz^2), fsqrt, minus the bounding sphere radius
-			const Geometry &g = entryGeometry(e);
+			const Geometry &g = geometry;
 			const float dx = SimMath::pc24Sub(p->x, c.x);
 			const float dy = SimMath::pc24Sub(p->y, c.y);
 			float dz = SimMath::pc24Sub(p->z, c.z);
@@ -706,12 +713,11 @@ double PartitionManager::distance(DistanceCalculationType type, const Coord3D &c
 			sphere.majorRadius = SimMath::fstpDword(SimMath::sqrtPC24((double)radiusSqr));
 			sphere.minorRadius = 2.0f;
 			const std::vector<ObjectGeometry::Shape> query = { sphere };
-			if (!e.object->getTemplate())
+			if (!object.getTemplate())
 			{
 				throw std::logic_error("partition: distance type 4 (RW 0xA3C7D0) on an object without a template");
 			}
-			const bool hit = NotifyCrushModules::geometriesOverlap(e.object->geometryShapes(), *p, e.object->getOrientation(),
-			                                                       query, c, 0.0f);
+			const bool hit = NotifyCrushModules::geometriesOverlap(object.geometryShapes(), *p, object.getOrientation(), query, c, 0.0f);
 			return hit ? 0.0 : (double)FLT_MAX;
 		}
 		case FROM_CENTER_2D:
@@ -723,6 +729,14 @@ double PartitionManager::distance(DistanceCalculationType type, const Coord3D &c
 			return SimMath::pc24AddW(SimMath::pc24MulW(dx, dx), SimMath::pc24MulW(dy, dy));
 		}
 	}
+}
+
+// lane PORT-37: RW 0xA3C4E0's test for one object (the walk's own arithmetic above), for callers that hold the object and not its entry
+bool PartitionManager::withinRange(DistanceCalculationType type, const Coord3D &center, const Object &obj, float radius) const
+{
+	const float radiusSqr = SimMath::pc24Mul(radius, radius); // RW 0xA3C4E0
+	const double d = distanceTo(type, center, obj, geometryOf(obj), radiusSqr);
+	return !(d > (double)radiusSqr); // RW 0xA3A8AB: fcomp; test ah, 0x41; je — only "greater" rejects, a NaN passes
 }
 
 // Not retail (performance): a bound in binary64 (SSE, deterministic) of the distance() value of a bounding type. The exact value carries at most a few
