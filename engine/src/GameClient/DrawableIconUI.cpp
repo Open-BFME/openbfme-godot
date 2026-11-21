@@ -291,7 +291,7 @@ const DrawableIconUI::TemplateBox &DrawableIconUI::boxOf(const ThingTemplate &tt
 		PathfindGeometry g;
 		ObjectGeometry::fillPathfindGeometry(tt, g);
 		b.radius = g.boundingCircleRadius();
-		b.maxHeight = ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(tt));
+		b.maxHeight = ObjectGeometry::maxHeightForHealthBox(ObjectGeometry::shapesOf(tt)); // RW 0x677985 -> RW 0xAD1990
 	}
 	catch (const std::exception &e)
 	{

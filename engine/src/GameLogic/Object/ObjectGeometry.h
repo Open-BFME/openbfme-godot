@@ -9,6 +9,8 @@
 //   * GeometryHeight (RW 0xAD2B60, shape + 4), GeometryMajorRadius (RW 0xAD2BC0, + 8), GeometryMinorRadius (RW 0xAD2C10, + 0xC), GeometryOffset (RW 0xAD1770, + 0x10 / 0x14 / 0x18),
 //     GeometryActive (RW 0xAD16F0, byte + 0x20) change the LAST shape.
 //   * getMaxHeightAbovePosition (RW 0xAD1920): the maximum over the ACTIVE shapes of (a sphere's major radius, a cylinder's or box's height) + the shape's z offset, never below 0.
+//   * GeometryUsedForHealthBox (RW 0xAD1730) writes the LAST shape's flag +0x21; the default shape constructor sets it. The health-box height reader RW 0xAD1990,
+//     called by the icon anchor RW 0x677985, takes the same maximum over shapes that are both ACTIVE (+0x20) and used for the health box (+0x21).
 //   * lane BUILD-3: GeometryContactPoint = X:<x> Y:<y> Z:<z> [<label>] (RW 0xAD3D30): the coordinate by the sub tokens X / Y / Z (parseReal each), then the next token
 //     (getNextTokenOrNull) or "" is the label; appended (RW 0xAD3C80) to the 16 byte records of GeometryInfo + 0x38 / + 0x3C (x, y, z, the label string at + 0xC).
 //   * mode 1 (RW 0xAD3187 -> RW 0xAD3340): the GeometryInfo member +0x44, the highest GeometryContactPoint row in the object's own space (the row parser
@@ -22,8 +24,7 @@
 //   * lane HUD-5: GeometryName (RW 0xAD16B0) parses an AsciiString (INI::parseAsciiString) into the LAST shape's name (+ 0x1C); GeometryInfo::setActive(name, flag)
 //     (RW 0xAD3520, RotWK only: the gates' GeometryForOpen / GeometryForClosed) sets the active byte of every shape whose name equals `name` exactly (byte
 //     compare and equal length) and recomputes the bounds (RW 0xAD2860). An object keeps its own GeometryInfo (Object + 0xA8): Object::setGeometryActive.
-// INFERENCE: GeometryIsSmall / GeometryUsedForHealthBox rows are not read here (they do not change a shape's extent); a row's value that does not parse
-// is an error (PLAN rule 10), not a default.
+// INFERENCE: GeometryIsSmall does not change a shape's extent; a row's value that does not parse is an error (PLAN rule 10), not a default.
 
 #pragma once
 
@@ -52,6 +53,7 @@ struct Shape
 	float minorRadius = 1.0f;
 	float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;
 	bool active = true;
+	bool usedForHealthBox = true; ///< shape +0x21; GeometryUsedForHealthBox (RW 0xAD1730)
 	std::string name; ///< lane HUD-5: GeometryName (+ 0x1C)
 };
 
@@ -61,6 +63,8 @@ std::vector<Shape> shapesOf(const ThingTemplate &tt);
 const std::vector<Shape> &cachedShapesOf(const ThingTemplate &tt);
 // RW 0xAD1920
 float maxHeightAbovePosition(const std::vector<Shape> &shapes);
+// RW 0xAD1990: health-box height, active shapes whose usedForHealthBox flag is set
+float maxHeightForHealthBox(const std::vector<Shape> &shapes);
 // RW 0xAD2040: the box around the active shapes in the object's own space, from 0 .. 0 (each shape's offset +- its major radius in x, a box's minor and the
 // others' major radius in y; a sphere's offset z +- its major radius, the others' offset z .. offset z + height)
 void localBox(const std::vector<Shape> &shapes, float lo[3], float hi[3]);

@@ -196,6 +196,15 @@ std::vector<ObjectGeometry::Shape> ObjectGeometry::shapesOf(const ThingTemplate 
 			// toggles; with the quotes kept no gate ever opened in the pathfinder's map
 			shapes.back().name = asciiStringOf(e.tokens);
 		}
+		else if (e.row == "GeometryUsedForHealthBox")
+		{
+			// RW 0xAD1730: scanBool into the last shape +0x21, with no bounding-box refresh.
+			if (e.tokens.empty())
+			{
+				throw std::logic_error(tt.getName() + ": GeometryUsedForHealthBox has no value");
+			}
+			shapes.back().usedForHealthBox = sameNoCase(e.tokens[0], "Yes") || sameNoCase(e.tokens[0], "True") || sameNoCase(e.tokens[0], "1");
+		}
 		else if (e.row == "GeometryActive")
 		{
 			if (e.tokens.empty())
@@ -206,6 +215,22 @@ std::vector<ObjectGeometry::Shape> ObjectGeometry::shapesOf(const ThingTemplate 
 		}
 	}
 	return shapes;
+}
+
+float ObjectGeometry::maxHeightForHealthBox(const std::vector<Shape> &shapes)
+{
+	// RW 0xAD1990: both byte +0x20 (active) and +0x21 (used for health box) gate a shape.
+	float best = 0.0f;
+	for (const Shape &s : shapes)
+	{
+		if (!s.active || !s.usedForHealthBox)
+		{
+			continue;
+		}
+		const float extent = s.type == SHAPE_SPHERE ? s.majorRadius : s.height;
+		best = std::max(best, extent + s.offsetZ);
+	}
+	return best;
 }
 
 float ObjectGeometry::maxHeightAbovePosition(const std::vector<Shape> &shapes)
