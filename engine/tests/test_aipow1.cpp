@@ -501,10 +501,11 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 	const std::vector<std::string> ai = AISpecialPowerUpdate::stopLines();
 	REQUIRE(ai.size() == 2);
 	CHECK(ai[0].rfind("[S-1421]", 0) == 0);
-	CHECK(ai[0].find("51 of the 53 decisions run") != std::string::npos);
+	// pin: PORT-196 (fork issue 463) ported the spell book's ARMY_BREAKER (RW 0x9E92CA), so the sentence counts 52 of 53 — this pin moved with it
+	CHECK(ai[0].find("52 of the 53 decisions run") != std::string::npos);
 	CHECK(ai[0].find("SOUL_FREEZE") == std::string::npos); // lane RAI-POW ported it
 	CHECK(ai[1].rfind("[S-1875]", 0) == 0);
-	// the decisions still unported: ATTACK_HEAL_AOE and the 2 spell book ones (ARMY_BREAKER, HEAL); TREE_KILLER is ported by lane RAI-POW-3
+	// the decision still unported: the spell book's HEAL; ATTACK_HEAL_AOE is ported by RAI-POW-4, TREE_KILLER by RAI-POW-3, ARMY_BREAKER by PORT-196 (fork issue 463)
 	int unported = 0;
 	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
 	{
@@ -515,7 +516,8 @@ TEST_CASE("AIPOW-1: the ActionManager's stops [S-1871] .. [S-1874] and the compu
 			CHECK_MESSAGE(spellBook, TheAISpecialPowerTypeNames[t]);
 		}
 	}
-	CHECK(unported == 2); // RAI-POW-4 moved this from 3: ATTACK_HEAL_AOE is ported
+	// pin: PORT-196 ported ARMY_BREAKER: 3 -> 2 (RAI-POW-4) -> 1; the remaining one is the spell book's HEAL (stop S-7389)
+	CHECK(unported == 1);
 	CHECK(AISpecialPowerDecision::decisionPorted(21));
 	CHECK(AISpecialPowerDecision::decisionPorted(25));
 	CHECK(AISpecialPowerDecision::decisionPorted(34));
@@ -642,9 +644,9 @@ TEST_CASE("SUMMONLOC-1: end to end: a Hard computer's Dain summons his Royal Gua
 	MESSAGE("the Royal Guard summon ran after " << frame << " frames");
 	// engine pin (seed 5105): the module's 25-frame counter (RW 0x99302D) from its first update and the roll above Hard's chance pass on this frame
 	// lane FBSIM-1 (the scene's computer players build through their dozers, whose sites are now RotWK's phantoms until placed, RW 0x88D272 / 0x88D44F: the shared random stream and the AIs' play move), measured on the lane's tree (a CI host): 22 -> 24
-	// merge queue q29 (measured once on the merged tree and at each merge point): 23; community #113 moves it 22 -> 23 (its FlagCaptureSquad's draws, RW 0x9BC1A0,
+	// merge queue q29 (measured once on the merged tree and at each merge point): 23; community fork issue 113 moves it 22 -> 23 (its FlagCaptureSquad's draws, RW 0x9BC1A0,
 	// shift the shared random stream) and FBSIM-1 on that tree keeps 23
-	// merge queue q33 (measured at each merge point): #133's straight production exits move the scene's units and the shared random stream: 23 -> 22
+	// merge queue q33 (measured at each merge point): fork issue 133's straight production exits move the scene's units and the shared random stream: 23 -> 22
 	CHECK(frame == 22);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[11] == 1);
 }
@@ -680,7 +682,7 @@ TEST_CASE("AIPOW-1: end to end: a Hard computer's wounded Aragorn uses Athelas o
 	// test switch, measured): the corridor's routes move the frame on which the roll passes. Lane TARGET-1: 22: the mood scan's one-off random offset of its
 	// next check (RW 0x6686F0, GameLogicRandomValue line 0x2079 after the idle entry's resetNextMoodCheckTime RW 0x662DD9) draws from the logic generator
 	// before the power's roll. Merge queue q28 (the random stream moves with the merged batch; measured once on the merged tree and at each merge point): 26.
-	// Merge queue q29 (measured once on the merged tree and at each merge point): 22; community #113 moves it 26 -> 24 (its FlagCaptureSquad's draws) and
+	// Merge queue q29 (measured once on the merged tree and at each merge point): 22; community fork issue 113 moves it 26 -> 24 (its FlagCaptureSquad's draws) and
 	// FBSIM-1 24 -> 22 (the computer player's phantom sites). Lane PATH-REBUILD (RW 0x767B0E, the found paths bent and rounded: the routes move the frame
 	// on which the roll passes, as PATHPERF-1's corridor did; measured on the lane's tree): 23
 	CHECK(frame == 23);
@@ -1141,8 +1143,8 @@ TEST_CASE("RAI-POW end to end: a Hard computer's Angmar Necromancer runs Soul Fr
 	}
 	MESSAGE("Soul Freeze ran after " << frame << " frames");
 	// engine pin (seed 5203): the module's 25-frame counter (RW 0x99302D) from its first update and the roll above Hard's chance pass on this frame.
-	// Merge queue q43 (measured once on the merged tree and at each merge point): #226's own tree said 26; on the archive (q41's DECOMPFIX-1104B and q42
-	// move the random stream) the roll passes at 23 from #226's merge point on
+	// Merge queue q43 (measured once on the merged tree and at each merge point): fork issue 226's own tree said 26; on the archive (q41's DECOMPFIX-1104B and q42
+	// move the random stream) the roll passes at 23 from fork issue 226's merge point on
 	CHECK(frame == 23);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[44] == 1);
 	REQUIRE(necro->getTeam());
@@ -1198,7 +1200,7 @@ TEST_CASE("RAI-POW: the team special-power registry round-trips through a snapsh
 	CHECK(loaded1->specialPowerRecords().empty());
 }
 
-// review probe prtrkq (PR #226, Greptile P1 / Devin): an initialized Soul Freeze decision that went through a snapshot keeps deciding
+// review probe prtrkq (PR fork issue 226, Greptile P1 / Devin): an initialized Soul Freeze decision that went through a snapshot keeps deciding
 TEST_CASE("RAI-POW review probe: SOUL_FREEZE still decides after its module round-trips through a snapshot")
 {
 	OPENBFME_REQUIRE_START(s);
@@ -1573,7 +1575,7 @@ TEST_CASE("RAI-POW-2: the position sampler's membership (record + 0x10) round-tr
 	}
 }
 
-// ---- lane RAI-POW-2 (community #233): the economy debuffs (RW 0x9E74B7 / 0x9E726A) and the AIPlayer's enemy (RW 0x6AA5F5 / 0x8F47EB / 0x8F457D) ----------------------------
+// ---- lane RAI-POW-2 (community fork issue 233): the economy debuffs (RW 0x9E74B7 / 0x9E726A) and the AIPlayer's enemy (RW 0x6AA5F5 / 0x8F47EB / 0x8F457D) ----------------------------
 
 // (the helpers spellBookModule, readySpellPower, awaitEnemy, clearArmy and leaveOnlyTheCitadel are the structure breakers' above)
 
@@ -1739,7 +1741,7 @@ TEST_CASE("RAI-POW-2: DEBUFFPRODUCTIONBUILDING (RW 0x9E726A) takes the enemy FS_
 	a.advance(1);
 }
 
-// ---- lane RAI-POW-2 (community #234): CITADEL (RW 0x9E6CCB) ---------------------------------------------------------------------------------------------
+// ---- lane RAI-POW-2 (community fork issue 234): CITADEL (RW 0x9E6CCB) ---------------------------------------------------------------------------------------------
 
 TEST_CASE("RAI-POW-2: CITADEL (RW 0x9E6CCB) draws its point along the AI base -> enemy DOZER_FACTORY line, lines 0x49 / 0x51")
 {

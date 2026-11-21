@@ -625,6 +625,44 @@ bool assistTimerReady(GameLogic &logic, const Player &player)
 	found->second = logic.getFrame() + (unsigned)r;
 	return true;
 }
+// RW 0x9E9222 (BFME2 decomp AISpellBookArmyBreaker.cpp, DONOR retail 0x005D8571 of the same shape): the taken-player list (RW 0xDEC168 /
+// 0xDEC16C, 8-byte entries of { the player index (Player + 0x54, RW 0x9E9244 / 0x9E9256), the frame that player is free again }) is searched for the
+// caster's player; a missing entry is appended as { index, now } (RW 0x9E9267 -> RW 0x97D718) and is the one used, while an existing entry is used as found.
+// Then `mov eax, [esi + 4]; cmp eax, [ecx + 0x40]; ja 0x9E92C4` (RW 0x9E9289 .. 0x9E9295): a frame still in the future answers no and draws nothing;
+// otherwise the entry takes now + GetGameLogicRandomValue(lo, hi) "AISpellBookArmyBreaker.cpp" line 0x53 (RW 0x9E9297 .. 0x9E92BD, the bounds RW 0xDEC160 /
+// 0xDEC164) and the answer is yes. The two bounds are process statics that the initialisers RW 0xBCA418 / 0xBCA42F write as
+// ftol2(LOGICFRAMES_PER_SECOND (RW 0xD9F608, 5) * 15.0 (RW 0xBDC6CC)) and * 30.0 (RW 0xBDAE54): 75 and 150 frames, i.e. 15 and 30 seconds of logic
+// frames. They sit in the static-initialiser table 0xD8AB90 .. (with the list's own constructor RW 0xBCA446 at 0xD8ABB0), so they hold before the first
+// game: 75 / 150 here (INFERENCE on the table: its walker was not resolved; the values and their arithmetic are RW's).
+constexpr int kArmyBreakerDelayLo = (int)(LOGICFRAMES_PER_SECOND * 15.0); // RW 0xBCA418
+constexpr int kArmyBreakerDelayHi = (int)(LOGICFRAMES_PER_SECOND * 30.0); // RW 0xBCA42F
+
+bool armyBreakerPlayerFree(GameLogic &logic, const Player &player)
+{
+	std::vector<std::pair<int, unsigned>> &taken = logic.skirmishAI().armyBreakerTimers();
+	std::pair<int, unsigned> *found = nullptr;
+	for (std::pair<int, unsigned> &t : taken)
+	{
+		if (t.first == player.getPlayerIndex())
+		{
+			found = &t;
+			break;
+		}
+	}
+	if (!found)
+	{
+		taken.push_back({ player.getPlayerIndex(), logic.getFrame() }); // RW 0x9E9267
+		found = &taken.back();
+	}
+	if (found->second > logic.getFrame()) // RW 0x9E9289 .. 0x9E9295
+	{
+		return false;
+	}
+	const int r = logic.random().getValue(kArmyBreakerDelayLo, kArmyBreakerDelayHi, "AISpellBookArmyBreaker.cpp", 0x53);
+	found->second = logic.getFrame() + (unsigned)r;
+	return true;
+}
+
 } // namespace
 
 bool AISpecialPowerUpdate::decideAssistBattle(Object &obj)
@@ -1306,7 +1344,60 @@ bool AISpecialPowerUpdate::decideStructureBaseKill(Object &obj)
 	return decideStructureBreaker(obj); // RW 0x9E7010
 }
 
-// ---- CITADEL (lane RAI-POW-2, community #234) -------------------------------------------------------------------------------------------------------------------------------
+// ---- ARMY_BREAKER (lane PORT-196) ------------------------------------------------------------------------------------------------------------------------------------------
+
+bool AISpecialPowerUpdate::decideArmyBreaker(Object &obj)
+{
+	// RW 0x9E92CA: the caster's controlling player (RW 0x68B678) and the skirmish AI of that player (TheSkirmishAIManager RW 0xDE4938, RW 0x6A950B); the
+	// AI's brain (`mov esi, [eax + 0x164]`, RW 0x9E92E9) and its attacked-at list (+ 0x20 / + 0x24, RW 0x9E92F7): an empty list answers no. For each record
+	// in list order (RW 0x9E930E / 0x9E9313, `mov eax, [eax + edi*4]`): the position is copied from + 0x04 .. + 0x0C into the proposed location
+	// (RW 0x9E9316 .. 0x9E932F), the record's enemies' threat total (+ 0x1C, the scan of RW 0x6C6F01) must not be below the decision's range (+ 0x14,
+	// `movss xmm0, [eax + 0x1C]; comiss xmm0, [ebx + 0x14]; jb` at RW 0x9E9334 / 0x9E9339), and 0.5 (RW 0xC8E174, `mulss` at RW 0x9E933F) times that
+	// total must not be below the record's OTHER objects' threat total (+ 0x64, RW 0x9E9347): the spot is broken when the enemy force there is worth at
+	// least twice the friendly force. Then the location must pass RW 0xA0229F (RW 0x9E9356) and the caster's player must be free per RW 0x9E9222
+	// (RW 0x9E9369); the first record that passes all four is the answer. The + 0x1C / + 0x64 fields are the two ThreatRecords RW 0x6C6F01 constructs at
+	// the record's + 0x1C and + 0x64 and RW 0x6C7010 / 0x6C7035 fill: the enemy branch (relationship ENEMIES, RW 0x6ADC43) adds to the record + 0x1C
+	// (`movss [ebx]`, ebx = [esi + 0x1C]) with its categories at + 0x20 (i.e. + 0x1C + 4 + 4 * category), the other branch to + 0x64 (categories at
+	// + 0x68). The radius (+ 0x14) and the frame (+ 0x18) are not read by this decision.
+	GameLogic &logic = obj.logic();
+	const Player *player = obj.getControllingPlayer();
+	if (!player)
+	{
+		return false;
+	}
+	const AISkirmishPlayer *ai = logic.skirmishAI().findAI(player->getPlayerIndex()); // RW 0x9E92E4
+	if (!ai)
+	{
+		return false; // RW 0x9E92EF: no brain (a human's caster, or no skirmish AI)
+	}
+	if (ai->brain.attackedAt.empty()) // RW 0x9E92F7 / 0x9E9311
+	{
+		return false;
+	}
+	for (const AIAttackedAt &record : ai->brain.attackedAt)
+	{
+		if (record.enemies.v[0] < m_decision->range) // RW 0x9E9339 `comiss; jb`: the enemy total below the range leaves the record out
+		{
+			continue;
+		}
+		if (SimMath::mulf32(record.enemies.v[0], 0.5f) < record.others.v[0]) // RW 0x9E933F / 0x9E9347 `comiss; jb`
+		{
+			continue;
+		}
+		if (!setLocationIfValid(obj, record.position)) // RW 0x9E9356 -> RW 0xA0229F
+		{
+			continue;
+		}
+		if (!armyBreakerPlayerFree(logic, *player)) // RW 0x9E9369 -> RW 0x9E9222
+		{
+			continue;
+		}
+		return true;
+	}
+	return false;
+}
+
+// ---- CITADEL (lane RAI-POW-2, community fork issue 234) -------------------------------------------------------------------------------------------------------------------------------
 
 bool AISpecialPowerUpdate::decideCitadel(Object &obj)
 {

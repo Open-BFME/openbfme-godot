@@ -225,6 +225,12 @@ public:
 	// players first asked, RW 0x9E880B). Retail's is a static the process keeps across games; here it belongs to the game (cleared by reset), so the first
 	// game of a process is retail's and later ones start clean (INFERENCE, S-1421)
 	std::vector<std::pair<int, unsigned>> &spellBookAssistTimers() { return m_assistTimers; }
+	// lane PORT-196: the spell book ARMY_BREAKER decision's taken-player timer list (RW 0xDEC168 / 0xDEC16C, 8-byte entries). RW 0x9E9222 keys an
+	// entry by the casting player (Player + 0x54, RW 0x9E9244) and stores the frame that player is free again; the class's constructor RW 0x9E91EA empties
+	// the list when the game frame (RW 0xDE412C -> + 0x40) is above 1. The delay bounds are the process statics RW 0xDEC160 / 0xDEC164, which the
+	// initialisers RW 0xBCA418 / 0xBCA42F set to ftol2(LOGICFRAMES_PER_SECOND * 15.0) and * 30.0 (75 / 150 frames). Retail's list and bounds are
+	// process statics shared by every AI and every game; here they belong to the game (cleared by reset), as with the assist timers (S-1421's INFERENCE)
+	std::vector<std::pair<int, unsigned>> &armyBreakerTimers() { return m_armyBreakerTimers; }
 	// lane AIEXPAND-1: the EXPANSION heuristic's frame counter (+ 8 of the one AITargetHeuristicExpansionBase in TheAITargetHeuristicLibrary, ctor RW 0x97D00D,
 	// read by RW 0x97D035), shared by every AI. Retail's library is made once (RW 0x82EF7B) and its reset (RW 0x63F3BF) does nothing, so the count runs on
 	// across the games of a process; here it belongs to the game (cleared by reset), so the first game of a process is retail's (INFERENCE, S-417)
@@ -239,6 +245,7 @@ private:
 	std::uint32_t m_expansionHeuristicFrames = 0;
 	std::string m_mapFileName;
 	std::vector<std::pair<int, unsigned>> m_assistTimers;
+	std::vector<std::pair<int, unsigned>> m_armyBreakerTimers; ///< { the caster's player index (Player + 0x54), the frame it is free again }
 	AISkirmishPlayer *addAIPlayer(Player &player);
 	bool groupAccepts(const AISkirmishGroup &g, const Player &player) const;
 	int liveAICount(const AISkirmishGroup &g) const;
