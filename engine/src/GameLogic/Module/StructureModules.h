@@ -30,6 +30,15 @@
 //     ALMOST_FINAL fires EVERY frame. A phase fires one random entry of each non-empty FX list and OCL list: the index is one logic random draw (RW 0x8A78D5: random(0, size - 1),
 //     repeated only for a duplicate: with the default count 1 never).
 //     collapseHeight (RW 0x8A7A04): DestroyObjectWhenDone ? max(CollapseHeight, the template geometry's max height above position) : CollapseHeight.
+//   * RubbleRiseUpdate (Port 64, issue fork issue 176): create RW 0x64EAB7, data RW 0x6563F3, tables 0xC69408 + the DieMux table 0xC76BD8 at +8 (MinRubbleRiseDelay +0x38,
+//     MaxRubbleRiseDelay +0x3C, MinBurstDelay +0x40, MaxBurstDelay +0x44, BigBurstFrequency +0x48, RubbleRiseDamping +0x4C, RubbleHeight +0x50,
+//     MaxShudder +0x54, OCL and FXList by phase; data ctor RW 0x656350: the two rise delays 0, MinBurstDelay 9999, every FX / OCL count 1, MaxBurstDelay
+//     not written). Module vtable 0xC69310, update 0xC69304 -> RW 0x8A85D0, die 0xC69300 -> RW 0x8A83F6 (reset RW 0x8A83CE), phases RW 0x8A847C,
+//     done stuff RW 0x8A841C, xfer RW 0x8A8547 (+0x24 next-to-nothing, +0x28 burst frame, +0x2C state, +0x30 velocity, +0x34 height, +0x38 target
+//     height, +0x3C the saved position). The class is the collapse's reverse: while the object has a drawable and POST_RUBBLE (bit 59), the piece rises
+//     from where it lies to the terrain's layer height at (-gravity) * (1 - damping) * 20 per frame, firing INITIAL and BURST at once and then BURST or
+//     DELAY every [MinBurstDelay, MaxBurstDelay] frames; at the top POST_RUBBLE is swapped for POST_COLLAPSE (bit 60) and the module sleeps for ever.
+//     The two rise delays and the INI's RubbleHeight are parsed and read by no slot (S-346).
 //   * RespawnBody: create RW 0x6512F9, data RW 0x651334, tables 0xC71D68 + 0xC723FC (PermanentlyKilledByFilter +0x64, an ObjectFilter, default NONE RW 0x763D11; CanRespawn +0x68, default
 //     true, RW 0x8C56E6); ctor RW 0x8C547A over the ActiveBody ctor; the body table 0xC72430 is ActiveBody's but for slot 0x21, internalChangeHealth RW 0x8C553F: a delta that would kill
 //     (delta <= -health) is classed: CanRespawn false, or a killer (the info's source) that passes PermanentlyKilledByFilter, is permanent; ActiveBody's change follows; then the object's
@@ -189,6 +198,77 @@ private:
 	float m_velocity = 0.0f;      // +0x30
 	float m_currentHeight = 0.0f; // +0x34
 	Coord3D m_position{};         // +0x38
+};
+
+// ---- RubbleRiseUpdate (Port 64, issue fork issue 176) ------------------------------------------------------------------------------------------------------
+// RW phase name table 0xDB0ED0: INITIAL, DELAY, BURST, FINAL (four phases; StructureCollapseUpdate has five: no ALMOST_FINAL here)
+enum RubbleRisePhase
+{
+	RRPHASE_INITIAL = 0,
+	RRPHASE_DELAY,
+	RRPHASE_BURST,
+	RRPHASE_FINAL,
+	RRPHASE_COUNT
+};
+
+// the module's state word (RW +0x2C of the instance): 0 waits for the rubble, 1 rises, 2 is done
+enum RubbleRiseState
+{
+	RISESTATE_WAITING = 0,
+	RISESTATE_RISING,
+	RISESTATE_DONE
+};
+
+class RubbleRiseUpdateModuleData : public ModuleData
+{
+public:
+	DieMuxData m_dieMux;                              ///< RW +8 (table RW 0xC76BD8)
+	unsigned m_minRubbleRiseDelay = 0;                ///< +0x38 (RW 0x656350 writes 0; no slot of the class reads it, see the .cpp)
+	unsigned m_maxRubbleRiseDelay = 0;                ///< +0x3C
+	unsigned m_minBurstDelay = 9999;                  ///< +0x40 (RW 0x656350: 0x270F)
+	unsigned m_maxBurstDelay = 0;                     ///< +0x44 (not written by the retail constructor, as for the collapse)
+	int m_bigBurstFrequency = 0;                      ///< +0x48
+	float m_rubbleRiseDamping = 0.0f;                 ///< +0x4C
+	float m_rubbleHeight = 0.0f;                      ///< +0x50 (parsed; no slot reads it: the target height is the terrain's, RW 0x8A87AD)
+	float m_maxShudder = 0.0f;                        ///< +0x54
+	std::vector<std::string> m_ocl[RRPHASE_COUNT];    ///< +0x58..: one entry per name token, in file order
+	std::vector<std::string> m_fx[RRPHASE_COUNT];     ///< +0x88..
+	int m_oclCount[RRPHASE_COUNT] = { 1, 1, 1, 1 };   ///< +0xB8
+	int m_fxCount[RRPHASE_COUNT] = { 1, 1, 1, 1 };    ///< +0xC8
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+// RW: create 0x64EAB7 (0x48 bytes, vtable 0xC69310 / update 0xC69304 / die 0xC69300), data 0x6563F3, table 0xC69408. The reverse of
+// StructureCollapseUpdate: a rubble piece that was sunk under the terrain rises back to the ground once the object is POST_RUBBLE.
+class RubbleRiseUpdate : public UpdateModule, public DieModuleInterface
+{
+public:
+	OBFME_MODULE_XFER(RubbleRiseUpdate) // lane SAVE-4b
+	RubbleRiseUpdate(Thing *thing, const RubbleRiseUpdateModuleData *data);
+	DieModuleInterface *getDie() override { return this; }
+	void onDie(const DieModuleInterface::Event &event) override;
+	UpdateSleepTime update() override;
+	void crc(StateHasher &hasher) const override;
+	const RubbleRiseUpdateModuleData *data() const { return m_data; }
+	RubbleRiseState state() const { return m_state; }
+	unsigned nextBurstFrame() const { return m_nextBurstFrame; }
+	float riseVelocity() const { return m_riseVelocity; }
+	float currentHeight() const { return m_currentHeight; }
+	float targetHeight() const { return m_rubbleHeight; }
+	const Coord3D &risePosition() const { return m_risePosition; }
+
+private:
+	void resetRise();                    // RW 0x8A83CE
+	void doPhase(RubbleRisePhase phase); // RW 0x8A847C
+	float layerHeightAt(const Coord3D &p) const; // RW 0x8A87AD: W3DTerrainLogic vslot 0x1C with the object's layer
+	const RubbleRiseUpdateModuleData *m_data;
+	unsigned m_unused24 = 0;                      // RW +0x24 (written by the constructor and by the reset, read by nothing)
+	unsigned m_nextBurstFrame = 0;                // +0x28
+	RubbleRiseState m_state = RISESTATE_WAITING;  // +0x2C
+	float m_riseVelocity = 0.0f;                  // +0x30
+	float m_currentHeight = 0.0f;                 // +0x34
+	float m_rubbleHeight = 0.0f;                  // +0x38 (the terrain's height at the start, not the INI's RubbleHeight)
+	Coord3D m_risePosition{};                     // +0x3C
 };
 
 // ---- RespawnBody / DelayedDeathBody -------------------------------------------------------------------------------------------------------------

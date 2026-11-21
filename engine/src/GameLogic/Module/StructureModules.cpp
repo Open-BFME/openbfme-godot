@@ -13,7 +13,10 @@
 #include "Common/Player.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindHost.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -37,9 +40,9 @@ const char *const kPhaseNames[] = { "INITIAL", "DELAY", "BURST", "ALMOST_FINAL",
 // FXList = <phase> <name> [<name> ...] (RW 0x8A818F) and OCL = <phase> <name> ... (RW 0x8A81F2): the phase is looked up in the name table (an unknown one is an INI error), then one
 // entry per name token (the stores resolve a name to a list or to nothing: the FX and OCL stores are not loaded here, S-340, so the names are kept; "None" is a valid entry in retail
 // too: it stands for no list but still counts for the random pick)
-void parsePhaseNames(INI *ini, std::vector<std::string> *lists)
+void parsePhaseNames(INI *ini, std::vector<std::string> *lists, const char *const *phaseNames)
 {
-	const int phase = INI::scanIndexList(ini->getNextToken(), kPhaseNames);
+	const int phase = INI::scanIndexList(ini->getNextToken(), phaseNames);
 	for (const char *t = ini->getNextToken(); t; t = ini->getNextTokenOrNull())
 	{
 		lists[phase].push_back(t);
@@ -47,11 +50,11 @@ void parsePhaseNames(INI *ini, std::vector<std::string> *lists)
 }
 void parseCollapseFX(INI *ini, void *instance, void *, const void *)
 {
-	parsePhaseNames(ini, static_cast<StructureCollapseUpdateModuleData *>(instance)->m_fx);
+	parsePhaseNames(ini, static_cast<StructureCollapseUpdateModuleData *>(instance)->m_fx, kPhaseNames);
 }
 void parseCollapseOCL(INI *ini, void *instance, void *, const void *)
 {
-	parsePhaseNames(ini, static_cast<StructureCollapseUpdateModuleData *>(instance)->m_ocl);
+	parsePhaseNames(ini, static_cast<StructureCollapseUpdateModuleData *>(instance)->m_ocl, kPhaseNames);
 }
 
 #define SC_OFF(member) (int)offsetof(StructureCollapseUpdateModuleData, member)
@@ -77,6 +80,43 @@ const FieldParse kStructureCollapseParse[] = {
 	{ nullptr, nullptr, nullptr, 0 }
 };
 #undef SC_OFF
+
+// RubbleRiseUpdate: the same two parsers over its own four phase lists. RW 0x8A8A1D (FXList) and 0x8A8A82 (OCL) read the index through the phase names
+// table RW 0xDB0ED0 and push every following token into the 0xC-byte vector of that phase (FX base RW +0x88, OCL base +0x58, the same strides the collapse
+// uses). The stores resolve a name to a list (FX 0x5E20A2, OCL rowed) or to nothing; the FX and OCL stores are not loaded here (S-340), so the names are kept.
+const char *const kRubbleRisePhaseNames[] = { "INITIAL", "DELAY", "BURST", "FINAL", nullptr }; // RW 0xDB0ED0
+void parseRubbleRiseFX(INI *ini, void *instance, void *, const void *)
+{
+	parsePhaseNames(ini, static_cast<RubbleRiseUpdateModuleData *>(instance)->m_fx, kRubbleRisePhaseNames);
+}
+void parseRubbleRiseOCL(INI *ini, void *instance, void *, const void *)
+{
+	parsePhaseNames(ini, static_cast<RubbleRiseUpdateModuleData *>(instance)->m_ocl, kRubbleRisePhaseNames);
+}
+
+#define RR_OFF(member) (int)offsetof(RubbleRiseUpdateModuleData, member)
+// RW table 0xC69408 in the binary's row order (MinRubbleRiseDelay +0x38, MaxRubbleRiseDelay +0x3C, MinBurstDelay +0x40, MaxBurstDelay +0x44,
+// BigBurstFrequency +0x48, RubbleRiseDamping +0x4C, RubbleHeight +0x50, MaxShudder +0x54, OCL, FXList), then the DieMux table RW 0xC76BD8 at +8
+const FieldParse kRubbleRiseParse[] = {
+	{ "MinRubbleRiseDelay", INI::parseDurationUnsignedInt, nullptr, RR_OFF(m_minRubbleRiseDelay) },
+	{ "MaxRubbleRiseDelay", INI::parseDurationUnsignedInt, nullptr, RR_OFF(m_maxRubbleRiseDelay) },
+	{ "MinBurstDelay", INI::parseDurationUnsignedInt, nullptr, RR_OFF(m_minBurstDelay) },
+	{ "MaxBurstDelay", INI::parseDurationUnsignedInt, nullptr, RR_OFF(m_maxBurstDelay) },
+	{ "BigBurstFrequency", INI::parseInt, nullptr, RR_OFF(m_bigBurstFrequency) },
+	{ "RubbleRiseDamping", INI::parseReal, nullptr, RR_OFF(m_rubbleRiseDamping) },
+	{ "RubbleHeight", INI::parseReal, nullptr, RR_OFF(m_rubbleHeight) },
+	{ "MaxShudder", INI::parseReal, nullptr, RR_OFF(m_maxShudder) },
+	{ "OCL", parseRubbleRiseOCL, nullptr, 0 },
+	{ "FXList", parseRubbleRiseFX, nullptr, 0 },
+	{ "DeathTypes", ParseDeathTypeFlags, nullptr, RR_OFF(m_dieMux.m_deathTypes) },
+	{ "ExemptStatus", ParseObjectStatusMask, nullptr, RR_OFF(m_dieMux.m_exemptStatus) },
+	{ "RequiredStatus", ParseObjectStatusMask, nullptr, RR_OFF(m_dieMux.m_requiredStatus) },
+	{ "DamageAmountRequired", INI::parseReal, nullptr, RR_OFF(m_dieMux.m_damageAmountRequired) },
+	{ "MinKillerAngle", INI::parseAngleReal, nullptr, RR_OFF(m_dieMux.m_minKillerAngle) },
+	{ "MaxKillerAngle", INI::parseAngleReal, nullptr, RR_OFF(m_dieMux.m_maxKillerAngle) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+#undef RR_OFF
 
 void parseObjectFilterPtr(INI *ini, void *instance, void *store, const void *)
 {
@@ -139,6 +179,38 @@ void setBit(Object::ModelConditionBits &bits, int bit)
 {
 	bits[(size_t)bit >> 5] |= 1u << (bit & 31);
 }
+
+// RW 0x8A78D5 (StructureCollapseUpdate's copy, line 325) and RW 0x8A829D (RubbleRiseUpdate's own copy of the file static
+// buildNonDupRandomIndexList, line 272): `count` distinct indices of [0, size), every attempt one LOGIC draw random(0, size - 1), a duplicate redrawn.
+// Retail loops for ever when count > size and keeps at most MAX_IDX (0x20) picks; here that is a throw and a clamp. Callers read the draws in retail order.
+int pickPhaseIndices(GameLogic &logic, int size, int count, int picked[32], const char *file, int line)
+{
+	if (size <= 0)
+	{
+		return 0;
+	}
+	if (count > size)
+	{
+		throw std::logic_error(std::string(file) + ": a phase asks for more distinct entries than its list has (retail loops forever)");
+	}
+	const int n = count > 32 ? 32 : count;
+	for (int i = 0; i < n; ++i)
+	{
+		int idx;
+		bool again;
+		do
+		{
+			idx = logic.random().getValue(0, size - 1, file, line);
+			again = false;
+			for (int j = 0; j < i; ++j)
+			{
+				again = again || picked[j] == idx;
+			}
+		} while (again);
+		picked[i] = idx;
+	}
+	return n;
+}
 } // namespace
 
 void StructureCollapseUpdateModuleData::buildFieldParse(MultiIniFieldParse &p) { p.add(kStructureCollapseParse); }
@@ -182,6 +254,9 @@ void StructureModules::registerAll(ModuleFactory &modules)
 	bindRuntime<LifetimeUpdate, LifetimeUpdateModuleData>(modules, "LifetimeUpdate");
 	modules.bindTypedData<StructureCollapseUpdateModuleData>("StructureCollapseUpdate", MODULETYPE_BEHAVIOR);
 	bindRuntime<StructureCollapseUpdate, StructureCollapseUpdateModuleData>(modules, "StructureCollapseUpdate");
+	// Port 64: RW 0x659DF0 registration (name string 0xC0B148), create RW 0x64EAB7, data RW 0x6563F3, field table 0xC69408
+	modules.bindTypedData<RubbleRiseUpdateModuleData>("RubbleRiseUpdate", MODULETYPE_BEHAVIOR);
+	bindRuntime<RubbleRiseUpdate, RubbleRiseUpdateModuleData>(modules, "RubbleRiseUpdate");
 	// lane TOPPLE-1: RW 0xC69680 table, runtime RW 0x8A8BB4 (GameLogic/Module/StructureToppleUpdate.h)
 	modules.bindTypedData<StructureToppleUpdateModuleData>("StructureToppleUpdate", MODULETYPE_BEHAVIOR);
 	bindRuntime<StructureToppleUpdate, StructureToppleUpdateModuleData>(modules, "StructureToppleUpdate");
@@ -341,31 +416,11 @@ void StructureCollapseUpdate::doPhase(StructureCollapsePhase phase)
 	};
 	for (const Pass &pass : { Pass{ &m_data->m_fx[phase], m_data->m_fxCount[phase] }, Pass{ &m_data->m_ocl[phase], m_data->m_oclCount[phase] } })
 	{
-		const int size = (int)pass.list->size();
-		if (size <= 0)
-		{
-			continue;
-		}
-		if (pass.count > size)
-		{
-			throw std::logic_error("StructureCollapseUpdate: a phase asks for more distinct entries than its list has (retail loops forever)");
-		}
 		int picked[32];
-		const int count = pass.count > 32 ? 32 : pass.count;
+		const int count = pickPhaseIndices(logic, (int)pass.list->size(), pass.count, picked, "StructureCollapseUpdate.cpp", 325);
 		for (int i = 0; i < count; ++i)
 		{
-			int idx;
-			bool again;
-			do
-			{
-				idx = logic.random().getValue(0, size - 1, "StructureCollapseUpdate.cpp", 325);
-				again = false;
-				for (int j = 0; j < i; ++j)
-				{
-					again = again || picked[j] == idx;
-				}
-			} while (again);
-			picked[i] = idx;
+			const int idx = picked[i];
 			++c.collapseEffectsUnported; // hashed run counter, kept (lane FX-2 changes no hash)
 			if (pass.list == &m_data->m_fx[phase])
 			{
@@ -750,6 +805,201 @@ void LifetimeUpdate::crc(StateHasher &h) const
 	h.addU32(m_startFrame);
 }
 
+// ---- RubbleRiseUpdate (Port 64, issue fork issue 176) ------------------------------------------------------------------------------------------
+// RW FACTS (game.dat md5 daed3668, caveat S-001), the whole class read linearly:
+//   * registration RW 0x659DF0 (name string 0xC0B148, line 0xA7 of the factory init): create RW 0x64EAB7 (allocates 0x48, calls the constructor
+//     RW 0x8A8325) and data RW 0x6563F3 (allocates 0xD8, data ctor RW 0x656350, then the parse entry RW 0x8A8AE4).
+//   * data ctor RW 0x656350: DieMuxData at +8 (RW 0x8D2970); four OCL vectors at +0x58 and four FX vectors at +0x88 (0xC bytes each); the two rise
+//     delays +0x38 / +0x3C = 0, MinBurstDelay +0x40 = 0x270F, BigBurstFrequency +0x48 = 0, RubbleRiseDamping +0x4C = 0, RubbleHeight +0x50 = 0,
+//     MaxShudder +0x54 = 0; MaxBurstDelay +0x44 is NOT written (heap garbage in retail, as the collapse's); every OCL and FX count (+0xB8 / +0xC8) = 1.
+//   * parse entry RW 0x8A8AE4: field table RW 0xC69408 (userData 0) then the DieMux table RW 0xC76BD8 with userData 8.
+//   * instance ctor RW 0x8A8325: vtables 0xC69310 / +0xC 0xC69038 / +0x10 0xC69304 (update) / +0x20 0xC69300 (die); state +0x24 .. +0x44 zeroed;
+//     the base (RW 0x850C32) is told UPDATE_SLEEP_FOREVER, i.e. the module sleeps until it is woken.
+//   * update = vtable slot 0xC69304 -> RW 0x8A85D0; onDie = 0xC69300 -> RW 0x8A83F6; the reset it calls = RW 0x8A83CE; doPhase = RW 0x8A847C;
+//     doRubbleDoneStuff = RW 0x8A841C; xfer = the module table's slot 3 (RW 0x8A8547: +0x24, +0x28, +0x2C, +0x30, +0x34, +0x38 and the Coord3D at +0x3C).
+//   * update (RW 0x8A85D0) in retail order: with the state waiting (0), a drawable (Object::getDrawable RW 0x70E013) and POST_RUBBLE (bit 59: RW
+//     0x8A8603 reads word 0x110 bit 27, the flags are at Object + 0x10C, as AutoDepositUpdate's RUBBLE test says) -> phase INITIAL (0) at the object's
+//     position, state = rising (written twice, RW 0x8A8632 / 0x8A872D), two CLIENT random reals (RW 0x6D33AB) shudder the drawable's instance matrix
+//     (RW 0x6714C0), phase BURST (2), nextBurstFrame = now + logic random(MinBurstDelay, MaxBurstDelay) (RW 0x6D328E, line 0xAB),
+//     riseVelocity = (-gravity) * (1 - damping) * 20.0 (RW 0xBD2C98 = 1.0, GlobalData + 0xC4 gravity, RW 0xC693B0 = 20.0, x87 at 24 bits),
+//     the target height = TerrainLogic vslot 0x1C getLayerHeight(x, y, obj->getLayer() (RW 0x68BBE0), 0, 1) at RW 0x8A87AD, currentHeight = 0 and the
+//     start position is saved. Rising (1) with a drawable: currentHeight += riseVelocity (SSE, RW 0x8A87E3), two LOGIC random reals (RW 0x6D332C, line
+//     0xC4; the first goes to y, the second to x) around MaxShudder plus the saved position, z = saved z + currentHeight; at nextBurstFrame a phase fires
+//     - BURST when logic random(1, BigBurstFrequency) == 1 (line 0xCD) else DELAY (1) - and nextBurstFrame += logic random(MinBurstDelay, MaxBurstDelay)
+//     (line 0xD6); when currentHeight >= targetHeight - savedZ (RW 0x8A88C7, comiss): the object is put at (saved x, saved y, targetHeight), state = done,
+//     phase FINAL (3), doRubbleDoneStuff (RW 0x8A841C: the StructureCollapseUpdate module's bone FX stop, looked up by name 0xC0B138), POST_RUBBLE is
+//     cleared and POST_COLLAPSE (bit 60) set with the drawable notified after each (RW 0x68B53C twice, RW 0x8A8932 / 0x8A8949), the orientation is
+//     re-set, the body's particle systems update (object + 0x25C, slot 0x2C), the drawable's matrix translation is zeroed and the module returns
+//     UPDATE_SLEEP_FOREVER; every other exit returns UPDATE_SLEEP_NONE (1).
+//   * onDie (RW 0x8A83F6): when the DieMux applies (DieMuxData at data + 8), the reset (RW 0x8A83CE: +0x24 = 0, state = waiting, +0x28 = 0, velocity 0,
+//     currentHeight 0, targetHeight 0, setWakeFrame(UPDATE_SLEEP_NONE)).
+//   * doPhase (RW 0x8A847C): the FX list first (vector at data + 0x88 + 12 * phase, count at +0xC8), then the OCLs (data + 0x58, count +0xB8); each
+//     pass draws `count` distinct indices of [0, size) from the LOGIC generator (its own copy of buildNonDupRandomIndexList, RW 0x8A829D: random(0,
+//     size - 1), a duplicate redrawn) and plays every one through FXList::doFXPos (RW 0x494615) / ObjectCreationList::create (RW 0x5F00CA).
+// NOT PORTED (S-346): the drawable shudder and its instance matrix (client random), the bone FX stop (the structure lane's S-340), the body's particle
+// systems, the FX and OCL stores (the draw is made and the FX handed to the client as an event; an OCL would create objects), the two rise delays
+// (MinRubbleRiseDelay / MaxRubbleRiseDelay: no slot of the class reads +0x38 or +0x3C - the update, onDie, the reset, doPhase, the xfer and both
+// constructors were read - and the INI's RubbleHeight +0x50 is read by no slot either: the target is the terrain's height).
+void RubbleRiseUpdateModuleData::buildFieldParse(MultiIniFieldParse &p) { p.add(kRubbleRiseParse); }
+
+RubbleRiseUpdate::RubbleRiseUpdate(Thing *thing, const RubbleRiseUpdateModuleData *data)
+	: UpdateModule(thing, data)
+	, m_data(data)
+{
+	setWakeFrame(getObject(), UPDATE_SLEEP_FOREVER);
+}
+
+// RW 0x8A87AD: TheTerrainLogic vslot 0x1C getLayerHeight(x, y, layer, 0, 1) with the object's own layer (Object::getLayer RW 0x68BBE0)
+float RubbleRiseUpdate::layerHeightAt(const Coord3D &p) const
+{
+	Object *obj = getObject();
+	AIWorld *world = obj->logic().aiWorld();
+	if (world == nullptr)
+	{
+		// INFERENCE: a harness without TheAI (no pathfinder mounted) asks the terrain directly; retail always has TheTerrainLogic
+		return obj->logic().getGroundHeight(p.x, p.y);
+	}
+	ObjectPathfindAdapter *adapter = world->findAdapter(obj->getID());
+	const int layer = adapter != nullptr ? (int)adapter->getLayer() : (int)LAYER_GROUND;
+	return world->pathfinder().getLayerHeight(p.x, p.y, (PathfindLayerEnum)layer);
+}
+
+// RW 0x8A83CE: the die and the constructor put the module back to waiting and wake it
+void RubbleRiseUpdate::resetRise()
+{
+	m_unused24 = 0;
+	m_state = RISESTATE_WAITING;
+	m_nextBurstFrame = 0;
+	m_riseVelocity = 0.0f;
+	m_currentHeight = 0.0f;
+	m_rubbleHeight = 0.0f;
+	setWakeFrame(getObject(), UPDATE_SLEEP_NONE);
+}
+
+// RW 0x8A83F6
+void RubbleRiseUpdate::onDie(const DieModuleInterface::Event &event)
+{
+	Object *obj = getObject();
+	if (!m_data->m_dieMux.isDieApplicable(*obj, event))
+	{
+		return;
+	}
+	resetRise();
+}
+
+// RW 0x8A847C: one random entry of each non-empty list of the phase, the FX first and the OCLs after, on the LOGIC generator's draws
+void RubbleRiseUpdate::doPhase(RubbleRisePhase phase)
+{
+	Object *obj = getObject();
+	GameLogic &logic = obj->logic();
+	struct Pass
+	{
+		const std::vector<std::string> *list;
+		int count;
+		bool fx;
+	};
+	for (const Pass &pass : { Pass{ &m_data->m_fx[phase], m_data->m_fxCount[phase], true }, Pass{ &m_data->m_ocl[phase], m_data->m_oclCount[phase], false } })
+	{
+		int picked[32];
+		const int count = pickPhaseIndices(logic, (int)pass.list->size(), pass.count, picked, "RubbleRiseUpdate.cpp", 272);
+		for (int i = 0; i < count; ++i)
+		{
+			if (pass.fx)
+			{
+				// RW 0x494615 doFXPos(fx, target, null, 0, null): the target is the caller's position, the object's at the call
+				FXEvent e = FXEventLog::objectEvent(FXEvent::POSITION_FX, "RubbleRise", logic.getFrame(), (*pass.list)[(size_t)picked[i]], *obj);
+				e.hasTransform = false;
+				logic.fxEvents().emit(e);
+			}
+			// the OCL pass draws its indices the same way and would create at the target (RW 0x5F00CA): the OCL store is not loaded here (S-346)
+		}
+	}
+}
+
+// RW 0x8A85D0
+UpdateSleepTime RubbleRiseUpdate::update()
+{
+	Object *obj = getObject();
+	GameLogic &logic = obj->logic();
+	const RubbleRiseUpdateModuleData *d = m_data;
+	if (m_state == RISESTATE_WAITING && obj->clientHooks() && obj->testModelCondition(CombatNames::modelCondition("POST_RUBBLE")))
+	{
+		// RW 0x8A85EE: waiting, a drawable and POST_RUBBLE (the flags at Object + 0x10C, bit 59 = word 0x110 bit 27)
+		doPhase(RRPHASE_INITIAL);
+		m_state = RISESTATE_RISING;
+		// RW 0x8A8639 .. 0x8A8720: two CLIENT random reals set the drawable's instance matrix translation (the client's, no logic input)
+		m_state = RISESTATE_RISING; // RW 0x8A872D: retail writes the state a second time
+		doPhase(RRPHASE_BURST);
+		const unsigned now = logic.getFrame();
+		m_nextBurstFrame = now + (unsigned)logic.random().getValue((int)d->m_minBurstDelay, (int)d->m_maxBurstDelay, "RubbleRiseUpdate.cpp", 171);
+		if (!logic.settings().structureRulesLoaded)
+		{
+			throw std::logic_error("RubbleRiseUpdate: GameLogicSettings has no Gravity (GameData not loaded)");
+		}
+		// x87 at 24 bits, RW 0x8A8764: (-gravity) * (1 - damping), then * 20.0
+		m_riseVelocity = SimMath::pc24Mul(SimMath::pc24Mul(SimMath::pc24Sub(1.0f, d->m_rubbleRiseDamping), SimMath::subf32(0.0f, logic.settings().gravity)), 20.0f);
+		m_rubbleHeight = layerHeightAt(*obj->getPosition());
+		m_currentHeight = 0.0f;
+		m_risePosition = *obj->getPosition();
+	}
+	if (m_state == RISESTATE_RISING && obj->clientHooks())
+	{
+		const unsigned now = logic.getFrame();
+		m_currentHeight = SimMath::addf32(m_currentHeight, m_riseVelocity);
+		// RW 0x8A87FC / 0x8A8822: the first LOGIC draw (RW 0x6D332C) goes to y, the second to x
+		const float shudderY = logic.random().getValueReal(SimMath::subf32(0.0f, d->m_maxShudder), d->m_maxShudder, "RubbleRiseUpdate.cpp", 196);
+		const float shudderX = logic.random().getValueReal(SimMath::subf32(0.0f, d->m_maxShudder), d->m_maxShudder, "RubbleRiseUpdate.cpp", 196);
+		Coord3D p;
+		p.x = SimMath::pc24Add(shudderX, m_risePosition.x);
+		p.y = SimMath::pc24Add(shudderY, m_risePosition.y);
+		p.z = SimMath::addf32(m_risePosition.z, m_currentHeight);
+		obj->setPosition(&p);
+		if (now >= m_nextBurstFrame)
+		{
+			if (logic.random().getValue(1, d->m_bigBurstFrequency, "RubbleRiseUpdate.cpp", 205) == 1)
+			{
+				doPhase(RRPHASE_BURST);
+			}
+			else
+			{
+				doPhase(RRPHASE_DELAY);
+			}
+			m_nextBurstFrame += (unsigned)logic.random().getValue((int)d->m_minBurstDelay, (int)d->m_maxBurstDelay, "RubbleRiseUpdate.cpp", 214);
+		}
+		if (!(m_currentHeight < SimMath::subf32(m_rubbleHeight, m_risePosition.z)))
+		{
+			Coord3D finalPos;
+			finalPos.x = m_risePosition.x;
+			finalPos.y = m_risePosition.y;
+			finalPos.z = m_rubbleHeight;
+			obj->setPosition(&finalPos);
+			m_state = RISESTATE_DONE;
+			doPhase(RRPHASE_FINAL);
+			// RW 0x8A841C doRubbleDoneStuff: the StructureCollapseUpdate module's bone FX stop, not ported (S-340)
+			obj->setModelConditionState(CombatNames::modelCondition("POST_RUBBLE"), false);   // RW 0x8A8932 (bit 59)
+			obj->setModelConditionState(CombatNames::modelCondition("POST_COLLAPSE"), true);  // RW 0x8A8949 (bit 60)
+			obj->setOrientation(obj->getOrientation());
+			// RW 0x8A8964: the body's particle systems (object + 0x25C, slot 0x2C) - the body has none here (S-346)
+			// RW 0x8A8976 .. 0x8A8A09: the drawable's instance matrix translation is zeroed (client)
+			return UPDATE_SLEEP_FOREVER;
+		}
+	}
+	return UPDATE_SLEEP_NONE;
+}
+
+void RubbleRiseUpdate::crc(StateHasher &h) const
+{
+	UpdateModule::crc(h);
+	h.addU32(m_nextBurstFrame);
+	h.addU32((std::uint32_t)m_state);
+	h.addFloat(m_riseVelocity);
+	h.addFloat(m_currentHeight);
+	h.addFloat(m_rubbleHeight);
+	h.addFloat(m_risePosition.x);
+	h.addFloat(m_risePosition.y);
+	h.addFloat(m_risePosition.z);
+}
+
 // ---- lane SAVE-4b: the snapshots (OpenBFME native, S-4190: each class's fields in its crc's order) ---------------------------------------------------
 void StructureBody::xfer(Xfer &x)
 {
@@ -775,6 +1025,19 @@ void StructureCollapseUpdate::xfer(Xfer &x)
 	x.xferReal(&m_velocity);
 	x.xferReal(&m_currentHeight);
 	SnapshotXfer::coord3D(x, m_position);
+}
+
+void RubbleRiseUpdate::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	xferUpdateModule(x);
+	x.xferUnsignedInt(&m_unused24); // RW 0x8A8547 xfers +0x24 too
+	x.xferUnsignedInt(&m_nextBurstFrame);
+	SnapshotXfer::enumIn(x, m_state, RISESTATE_WAITING, RISESTATE_DONE, "a rubble rise's state");
+	x.xferReal(&m_riseVelocity);
+	x.xferReal(&m_currentHeight);
+	x.xferReal(&m_rubbleHeight);
+	SnapshotXfer::coord3D(x, m_risePosition);
 }
 
 void RespawnBody::xfer(Xfer &x)

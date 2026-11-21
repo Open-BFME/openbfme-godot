@@ -1,5 +1,20 @@
 # Acceptance stops
 
+## PORT-64 rubble rise stop (issue #176)
+PORT-64 ports `RubbleRiseUpdate` on the class's own slots (registration RW 0x659DF0, create RW 0x64EAB7, data RW 0x6563F3 / table RW 0xC69408,
+update RW 0x8A85D0, onDie RW 0x8A83F6, reset RW 0x8A83CE, phases RW 0x8A847C, xfer RW 0x8A8547) with synthetic `PORT-64*` coverage.
+**Not ported (S-346):** the drawable's shudder and its instance matrix (client random numbers, RW 0x6D33AB), the body's particle systems
+(RW 0x8A8964), `doRubbleDoneStuff`'s bone-FX stop (RW 0x8A841C, the structure lane's S-340), and the effect lists: the logic random draws of every
+phase are made in retail's order and the FX names are handed to the client as `FXEvent`s with the site `RubbleRise`, but no OCL is created (an OCL
+would create objects and draw more logic random numbers) and no FX list is played by the logic.
+**Fields without a reader:** `MinRubbleRiseDelay` (RW data +0x38) and `MaxRubbleRiseDelay` (+0x3C), and the INI's `RubbleHeight` (+0x50), are parsed
+and read by no slot of the class — the update, `onDie`, the reset, `doPhase`, the xfer and both constructors were read — and the donor BFME2 struct
+leaves 0x38..0x3F unnamed as well. The target height is the terrain's layer height under the piece (RW 0x8A87AD), not the INI value. Ennorath's 14
+objects set both delays to `000`, so the mod sees no difference; a mod that expected a delayed or a fixed-height rise would not get it. Where retail
+reads the two delays (if anywhere) is not established: no reader was found, this is a stop, not a guess.
+**The drawable gate:** RW's update requires `Object::getDrawable` (RW 0x70E013) before it starts the rise and before it moves. The port's stand-in for a
+drawable is `Object::clientHooks()` (lane SMOOTH-1, INFERENCE), so a headless run without client hooks leaves the module waiting — as retail does without
+a drawable — and the Godot client, which binds a hook to every object, sees the rise.
 ## PORT-5: a deferred giant-bird ability target (issue #57)
 
 `GiantBirdAIUpdate` now routes AI command `0x48` and keeps its object ID across
@@ -956,4 +971,3 @@ lane lands it MUST pass `logic.settings().maxRecruitRadius` the same way the scr
 (centre of the live members, priority / recruitable / DISABLED_HELD gates, nearest by the squared
 2D distance, repeat) or AI recruiting will diverge from retail. Do not split the AI side out of
 S-412 without the owner.
-
