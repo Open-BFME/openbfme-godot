@@ -50,6 +50,11 @@ const char *const TheFXTriggerNames[] = {
 	"NONE", "CATAPULT_ROCK", "TREBUCHET_ROCK",
 	nullptr };
 
+// RW 0xDB2B04, 5 names: PORT-45, the DamageCreationList's optional death-side token (ActiveBody parser RW 0x8C3F1F)
+const char *const TheDamageSideNames[] = {
+	"NONE", "FRONT_DESTROYED", "RIGHT_DESTROYED", "BACK_DESTROYED", "LEFT_DESTROYED",
+	nullptr };
+
 // RW 0xDA16BC, 3 names
 const char *const TheWeaponReloadNames[] = {
 	"YES", "NO", "RETURN_TO_BASE",

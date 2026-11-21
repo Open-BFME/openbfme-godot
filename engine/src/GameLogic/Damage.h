@@ -88,6 +88,8 @@ enum DeathType
 extern const char *const TheDamageNames[];      // RW 0xDA15A8 (28 names)
 extern const char *const TheWeaponDeathNames[]; // RW 0xDA1630 (24 names)
 extern const char *const TheDamageFXTypeNames[]; // RW 0xDA1510 (36 names)
+// PORT-45: ActiveBody's DamageCreationList death-side list (RW 0xDB2B04, 5 names)
+extern const char *const TheDamageSideNames[];
 
 // =============================================================================================================================
 // The deterministic damage core (lane WEAPON-1). Every function mirrors one retail routine and its operation order; "SSE" means
