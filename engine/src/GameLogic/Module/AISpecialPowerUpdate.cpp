@@ -59,16 +59,18 @@ namespace
 {
 const char *const kStop =
 	"[S-1421] AISpecialPowerUpdate (lanes MOD-4, AIPOW-1, RAI-POW, RAI-POW-3b, RAI-POW-2, RAI-POW-3, RAI-POW-4): the module (RW 0x8B73B7 / 0x8B714F / 0x8B708B), the decision framework (RW 0x993055 / "
-	"0x993307 / 0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 51 of the 53 decisions run "
-	"(ATTACK_HEAL_AOE RW 0x9E691D consumes the team's threat order, Team + 0x13C, written by the team's vslot 0x14 RW 0x7A59CB and erased RW 0x7A1C5E); not ported "
-	"(they answer no, counted): spell book "
-	"HEAL (RW 0x9E85C6: the ZH AIPlayer's list, Player + 0x2FC -> + 0x4, entries of type 0x1A); ARMY_BREAKER (RW 0x9E92CA: the brain's army trackers, "
-	"AI + 0x164 -> + 0x20); the per-frame "
-	"steering of a summoned helper (slot 1 of TARGETAOE_SUMMON RW 0x9EB961, ASSIST_BATTLE_* RW 0x9E8A42, SHROUD_REVEAL RW 0x9E7F0F: the helper is found through "
-	"the record's army and hero lists, RW 0x99316A, and steered by Object + 0xA4's goal position, RW 0x68B411; the counters run); INFERENCE: an unset "
+	"0x993307 / 0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 52 of the 53 decisions run "
+	"(ATTACK_HEAL_AOE RW 0x9E691D consumes the team's threat order, Team + 0x13C, written by the team's vslot 0x14 RW 0x7A59CB and erased RW 0x7A1C5E); the spell "
+	"book's ARMY_BREAKER is ported (lane PORT-196: RW 0x9E92CA over the brain's attacked-at records, AI + 0x164 -> + 0x20, with the taken-player timer RW 0x9E9222 "
+	"and the constructor RW 0x9E91EA). Not ported (it answers no, counted): the spell book's "
+	"HEAL (RW 0x9E85C6: the ZH AIPlayer's list, Player + 0x2FC -> + 0x4, entries of type 0x1A, whose producer is S-7389); the per-frame steering of a summoned "
+	"helper of ASSIST_BATTLE_BUFF / _DEBUFF (slot 1 RW 0x9E8A42) and SHROUD_REVEAL (slot 1 RW 0x9E7F0F), counted: their prologue (the helper found through the "
+	"record's army and hero lists, RW 0x99316A) is shared with TARGETAOE_SUMMON, whose own steering (RW 0x9EB961: the caster's victim RW 0x668303, the move RW "
+	"0x66C4CA, the two thresholds RW 0xC69574 / RW 0xBE5AF8) is ported; INFERENCE: an unset "
 	"SpecialPowerAIType is -1, the map object re-init (behaviour slot 0xB4, RW 0x8B7554) is the first update's, the AI's goal object (AIUpdate + 0x40) is the "
 	"AI's current victim (ZH donor), only SpecialAbilityUpdate answers RW 0x68C461's vslot 4, Object + 0xA0 bit 6 (the disabled exception of RW 0x696FD2) is "
-	"clear, the player info record lists are the live objects in id order (S-418), ASSIST_BATTLE's timer list (RW 0xDEC154) belongs to the game, the battle "
+	"clear, the player info record lists are the live objects in id order (S-418), ASSIST_BATTLE's timer list (RW 0xDEC154) and ARMY_BREAKER's "
+	"(RW 0xDEC168) belong to the game, the battle "
 	"stats sum in the partition's unsorted order";
 
 const char *const kStopSpellBook =
@@ -151,6 +153,7 @@ bool AISpecialPowerDecision::decisionPorted(int type)
 	case AISP_SPELLBOOK_STRUCTURE_BREAKER: case AISP_SPELLBOOK_STRUCTURE_BREAKER_PREF_WALLS: case AISP_SPELLBOOK_STRUCTURE_BASEKILL:
 	case AISP_SPELLBOOK_DEBUFFECONOMYBUILDING: case AISP_SPELLBOOK_DEBUFFPRODUCTIONBUILDING:
 	case AISP_SPELLBOOK_TREE_KILLER:
+	case AISP_SPELLBOOK_ARMY_BREAKER:
 	case AISP_BASIC_SELF_BUFF: case AISP_CAPTURE_BUILDING: case AISP_ENEMY_TYPE_KILLER: case AISP_ENEMY_TYPE_KILLER_RANGED: case AISP_ENEMY_TYPE_KILLER_STRUCTURES: case AISP_TOGGLE_MOUNTED:
 	case AISP_STANCEBATTLE: case AISP_STANCEAGGRESSIVE: case AISP_STANCEHOLDGROUND: case AISP_BASIC_SELF_DEBUFF: case AISP_MORGUL_BLADE: case AISP_GOBLIN_POISON:
 		return true;
@@ -248,6 +251,14 @@ void AISpecialPowerUpdate::init()
 				m_decision = std::make_unique<AISpecialPowerDecision>();
 				m_decision->type = m_data->m_specialPowerAIType;
 				m_decision->kind = k;
+				if (m_decision->type == AISP_SPELLBOOK_ARMY_BREAKER && obj->logic().getFrame() > 1 &&
+					!obj->logic().skirmishAI().armyBreakerTimers().empty())
+				{
+					// RW 0x9E91EA (the ARMY_BREAKER decision class's constructor, after its base RW 0xA01C6B): with the game frame (RW 0xDE412C ->
+					// + 0x40) above 1 the taken-player list RW 0xDEC168 / 0xDEC16C is emptied (`cmp dword ptr [eax + 0x40], 1; ja` at RW 0x9E91FD,
+					// then the vector's erase RW 0x8643F8 at RW 0x9E9219); frame 0 or 1 leaves it alone
+					obj->logic().skirmishAI().armyBreakerTimers().clear();
+				}
 				// the constructor's argument (RW 0x992724: 0x9E95F1(2) for DOMINATE_TROLL, 0x9E983E(0 / 1) for DOMINATE_ENEMY / TAME_THE_BEAST)
 				m_decision->variant = m_decision->type == AISP_DOMINATE_TROLL ? 2 : ((m_decision->type == AISP_TAME_THE_BEAST || m_decision->type == AISP_SPELLBOOK_ASSIST_BATTLE_DEBUFF) ? 1 : 0); // RW 0x9E88B3(0 / 1) for ASSIST_BATTLE_BUFF / _DEBUFF
 				if (m_decision->type == AISP_SPELLBOOK_SHROUD_REVEAL && obj->logic().terrain())
@@ -539,6 +550,8 @@ bool AISpecialPowerUpdate::decide(Object &obj)
 	case AISP_SPELLBOOK_ASSIST_BATTLE_BUFF:
 	case AISP_SPELLBOOK_ASSIST_BATTLE_DEBUFF:
 		return decideAssistBattle(obj);
+	case AISP_SPELLBOOK_ARMY_BREAKER:
+		return decideArmyBreaker(obj);
 	case AISP_SPELLBOOK_BUFFTERRAIN:
 		return decideBuffTerrain(obj);
 	case AISP_SPELLBOOK_REBUILD:

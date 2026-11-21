@@ -659,6 +659,7 @@ void SkirmishAIManager::reset()
 	m_attackedAtIds = 0; // RW 0x6A922D
 	m_expansionHeuristicFrames = 0;
 	m_assistTimers.clear();
+	m_armyBreakerTimers.clear();
 }
 
 const AISkirmishPlayer *SkirmishAIManager::findAI(int playerIndex) const
@@ -698,6 +699,20 @@ void SkirmishAIManager::crc(StateHasher &h) const
 	{
 		h.addI32(t.first);
 		h.addU32(t.second);
+	}
+	// lane PORT-196: the ARMY_BREAKER taken-player timer list (RW 0xDEC168 / 0xDEC16C): the caster's player index and the frame it is free again. The delay
+	// bounds are RW's constants (RW 0xBCA418 / 0xBCA42F: LOGICFRAMES_PER_SECOND * 15 / * 30) in both ports, so only the list is state. Hashed only while it
+	// holds an entry, behind a marker word (the rule the newer state follows: Player's supply centers 0x5C and light points 0x338), so a game whose AI never
+	// took ARMY_BREAKER keeps the hash this manager had before the lane (the perf1 / uber1 vectors among them)
+	if (!m_armyBreakerTimers.empty())
+	{
+		h.addU32(0x9E92CAu); // RW 0x9E92CA, the decision that fills the list
+		h.addU32((std::uint32_t)m_armyBreakerTimers.size());
+		for (const std::pair<int, unsigned> &t : m_armyBreakerTimers)
+		{
+			h.addI32(t.first);
+			h.addU32(t.second);
+		}
 	}
 	// the data the AI decides from (SkirmishAIData, armies, bases and their layouts, dozers, PlayerAITypes): a peer with other data diverges here
 	h.addBool(m_store != nullptr);
@@ -790,15 +805,15 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"(+ 0x108 AIUnitUpgrader, + 0x12C AIUpgradeScienceBuilder, the player info record's listeners: S-1876); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "
 		"byte-matched source (RotWK adds the code 9 failure RW 0x8F1048): a request left in the queue gives up its producer; its last call, the money saver "
 		"RW 0x8F0502, is ported by lane AI5 (S-413)",
-		"[S-417] skirmish ai tactical layer: the enemy manager, the targets and their ENEMY_STRUCTURE heuristics, the best target, the difficulty gate, the 10 "
+		"[S-417] skirmish ai tactical layer: the enemy manager, the targets and their ENEMY_STRUCTURE and OPPORTUNITY (One Ring RW 0x97CDA0, tech buildings "
+		"RW 0x97CE90) heuristics, the best target, the difficulty gate, the 10 "
 		"offensive prototypes' applicability, team counts and team sizes (RW 0x90BE31: SimpleAttack x2, FormationAttack x2, FlankAttack, PincerAttack, FeintAttack, "
 		"AIBasePenetrationTroopsTactic, SimpleSiege, SiegeGates) with the pick's draw, the SimpleAttack body, the team builder and (lane AI-2) the started "
 		"tactic's idle counters, position and idle end (RW 0x8F28DD / 0x8F135E / 0x8F27AD / 0x8F175A / 0x9B4DE7) and (r5) the bodies of FormationAttack, "
 		"FlankAttack, PincerAttack, FeintAttack and AIBasePenetrationTroopsTactic with their draws (FlankAttack RW 0x9B4642 / 0x9B4720, PincerAttack RW 0x9B4067, "
 		"FeintAttack RW 0x9B398D / 0x9B3A5A / 0x9B3AE4) are ported; lane BACKLOG6: AIGroup's stealth delay draw RW 0x774CEB is ported for the groups the formation "
 		"manager does not take (S-895); not ported: the siege bodies, the end's merge into a nearby AI team with its draw RW 0x8F1F08 (the units are released), "
-		"the tech-building OPPORTUNITY heuristic (only the One Ring OPPORTUNITY heuristic is "
-		"ported), the targetless tactics other than FarmKillSquad and FlagCaptureSquad, RW 0x90CCCB, the AI team objects; "
+		"the targetless tactics other than FarmKillSquad and FlagCaptureSquad, RW 0x90CCCB, the AI team objects; "
 		"lane RAI-DEF ported the DEFENSIVE heuristic (RW 0x97D74F, the player info record's position sampler groups) and the DEFENSIVE tactic (RW 0x90C436, "
 		"SimpleDefense RW 0x9B4F8F / 0x9B4EF0 / 0x9B4EB7, the recruit order RW 0x9A2CA5); "
 		"lane AIEXPAND-1 ported the EXPANSION heuristic (RW 0x97D035 / 0x97D191: the nearest free Player_N_Start as a position target; its frame "
@@ -812,9 +827,10 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"farm site pool is made at newGame in object list order (lane DECOMP-3: the economy structure count is the player info record's economy list)",
 		"[S-1876] skirmish ai upgrades (lane AI5, AIUpgrade.h): AIUnitUpgrader (+ 0x108: Register RW 0x9A155C, update RW 0x9A1696), "
 		"AIUpgradeScienceBuilder (+ 0x12C: Register RW 0x9A018B, update RW 0x9A0023 with RW 0x99FCC4 / 0x99FD0E / 0x99FE74 / 0x99FAEF), the upgrade and expansion "
-		"requests (RW 0x99F88B / 0x99F7EF, RW 0x9ED764 / 0x9ED8C4), the heuristics IMPORTANT, BOILINGOIL, FACTORY_UNITUNLOCK and FORTRESS and the record's "
+		"requests (RW 0x99F88B / 0x99F7EF, RW 0x9ED764 / 0x9ED8C4), the heuristics IMPORTANT, BOILINGOIL, FACTORY_UNITUNLOCK, FORTRESS and SUMMON_ANTI* "
+		"(RW 0x9ECF7F / 0x9ECC0D / 0x9EC8A1 / 0x9EC539), RW 0x695338's WALL_UPGRADE body test, the record's "
 		"listeners (RW 0x8E3D4C / 0x8E3D77) and the money saver / reserve (RW 0x8F0502, 0x99E766, 0x99E79A, the wrappers RW 0x961975 / 0x96190B, "
-		"S-413) are ported; not ported: the SUMMON_ANTI* heuristics (answer 3, counted), RW 0x695338's WALL_UPGRADE body test; INFERENCE: a plot's occupant is the port's CastleMemberBehavior occupant (S-952)",
+		"S-413) are ported; INFERENCE: a plot's occupant is the port's CastleMemberBehavior occupant (S-952)",
 		"[S-420] skirmish ai vs ai: games end through the fortress fall, the spawned worker's fade on its structure's delete (RW 0x85750D -> 0x85730B) and "
 		"unfinished structures as targets (lane DECOMP-2: RW's AI::findClosestEnemy RW 0x701443 -> 0x7006D7 and its attack test RW 0x68D6A6 / 0x6C9147 / "
 		"0x6C8652 never test UNDER_CONSTRUCTION); INFERENCE: the worker kill runs at the port's delete point, the defeat frames are engine pins",
@@ -889,8 +905,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"RW 0x8F14C1, is skipped and counted)",
 		"[S-1300] skirmish ai threat finder inference (lane AI-3): RW 0x7EE057 / 0x7EE166 / 0x68F0EC, the ThreatBreakdown categories (an object without one counts "
 		"twice in the total, RW 0x7EDB72) and the counter table RW 0x7EDC2F / 0x7ED963 are ported; object + 0x4B8 is taken as its constructor value 1 (its writer "
-		"RW 0x691A2F is not ported); an InactiveBody's health ratio is taken as 0; the ThreatBreakdown block is read from the template's raw lines (S-071): an "
-		"unknown AIKindOf (a load error in retail) leaves the category -1",
+		"RW 0x691A2F is not ported); an InactiveBody's health ratio is taken as 0; ThreatBreakdown's AIKindOf is typed-parsed into ThingTemplate (+ 0x530, RW 0x73C073 / 0x8ED505)",
 		"[S-1301] skirmish ai team group step (lane AI-3): RW 0x774F2B's idle helpers (RW 0x7728E8) and the group's speed matching "
 		"RW 0x77005F(1) (AIGroup::cohereMoveSpeed: the leader bands, the slowest member's speed, x0.7 ahead, x0.769 behind) are ported; Object::isAbleToAttack "
 		"(RW 0x691269) is ported in full (lane DECOMP-3)",
