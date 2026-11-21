@@ -45,7 +45,7 @@ std::vector<std::string> SpellStops::lines()
 		"JUST_BUILT, the health, onEnslave, the dispositions and their forces, ContainInsideSourceObject, VeterancyLevel, InheritScriptingName, the secondary "
 		"position's move and facing); not run (counted, noted once each as '[S-530] ObjectCreationList: not run: ...'): the other nugget kinds, PutInContainer, "
 		"ClearRemovables, TREE / SHRUB / OPTIMIZED_PROP templates, WaypointSpawnPoints, OffsetInLocalSpace, MoveUsesStrafeUpdate, StartingBusyTime, InvulnerableTime, "
-		"the FloatUpdate / FadeAndDieOrnamentUpdate / SpawnedModelConditionCreate dispositions; OCLSpecialPower runs CREATE_AT_LOCATION, USE_OWNER_OBJECT, "
+		"the FloatUpdate / SpawnedModelConditionCreate dispositions; OCLSpecialPower runs CREATE_AT_LOCATION, USE_OWNER_OBJECT, "
 		"CREATE_ABOVE_LOCATION, USE_SECONDARY_OBJECT_LOCATION and UpgradeName (lane SPELL-2); its secondary position, the map edge cases (0, 1, 2, 6) and the army "
 		"spawn points (7) are counted",
 		"[S-531] casting: the ActionManager test (RW 0x82DFB7) keeps only the module / percent-ready / requirements parts (unit cost, range, terrain, shroud and forbidden objects "

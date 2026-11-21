@@ -537,6 +537,7 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/Module/ObjectHelper.cpp
     src/GameLogic/Module/ActiveBody.cpp
     src/GameLogic/Module/LogicModules.cpp
+    src/GameLogic/Module/FadeAndDieOrnamentUpdate.cpp
     src/GameLogic/Object/Contain/HordeContainRuntime.cpp
     src/GameLogic/GameLogicSettings.cpp
     src/GameLogic/MapObjectLoop.cpp
@@ -915,6 +916,7 @@ add_executable(openbfme_tests
     ${OPENBFME_THREATLEVEL1_TESTS}
     ${OPENBFME_BUILDCLEAR1_TESTS}
     tests/test_main.cpp
+    tests/test_local_105.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
     tests/test_archive_order.cpp
