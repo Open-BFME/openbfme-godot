@@ -1023,6 +1023,8 @@ add_executable(openbfme_tests
     tests/test_local_8.cpp
     # lane LOCAL-62 (capturing a production building cancels and releases its queue, RW 0x69974D -> RW 0x8A1666)
     tests/test_local_62.cpp
+    # lane LOCAL-75 (issue #537, P-142 & P-145: Imladris library mages & Heldenkiller* ObjectFilter)
+    tests/test_local_75.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy

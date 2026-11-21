@@ -1315,25 +1315,34 @@ void unitsOf(const std::string &faction, Results &res)
 						res.fail(item, "the press sent nothing");
 						continue;
 					}
+					const bool playerUpgrade = up->getUpgradeType() == UPGRADE_TYPE_PLAYER;
+					const int cost = up->calcCostToBuild(g.rig.local, u);
 					const int expect = (int)std::ceil(up->getBuildTimeSeconds() * 5.0f);
 					bool got = false;
 					for (int f = 0; f < expect + 60 && !got; ++f)
 					{
 						g.step(1);
-						got = u->hasUpgrade(up);
+						u = g.logic().findObjectByID(uid);
+						// UPGRADE_TYPE_PLAYER (e.g. ImladrisLoremaster Tome upgrades) lands on Player (RW 0x6AEE22), not the Object
+						got = playerUpgrade ? g.rig.local->hasUpgradeComplete(up) : (u && u->hasUpgrade(up));
 					}
-					const int cost = up->calcCostToBuild(g.rig.local, u);
 					if (!got)
 					{
-						res.fail(item, str("%s not on the unit after %d frames", cb->m_upgradeName.c_str(), expect + 60));
+						if (playerUpgrade)
+						{
+							g.rig.local->removeUpgrade(up, true);
+						}
+						res.fail(item, str("%s not %s after %d frames", cb->m_upgradeName.c_str(), playerUpgrade ? "on the player" : "on the unit", expect + 60));
 						continue;
 					}
 					std::string members;
 					size_t without = 0, count = 0, carriers = 0;
-					if (u->getContain() && u->isKindOfName("HORDE")) // a horde passes its upgrades on (a transport's riders are not its members)
+					u = g.logic().findObjectByID(uid);
+					if (!playerUpgrade && u && u->getContain() && u->isKindOfName("HORDE")) // a horde passes its upgrades on (a transport's riders are not its members)
 					{
 						g.step(3);
-						for (Object *m : *u->getContain()->getContainedItemsList())
+						u = g.logic().findObjectByID(uid);
+						if (u && u->getContain()) for (Object *m : *u->getContain()->getContainedItemsList())
 						{
 							// the members the horde passes it to: those affected by it (RW 0x87566B -> RW 0x694914); a level of the horde
 							// (LevelUpUpgrade) stays on the horde
@@ -1351,6 +1360,11 @@ void unitsOf(const std::string &faction, Results &res)
 							}
 						}
 					}
+					if (playerUpgrade)
+					{
+						// Remove the player upgrade before the next spawn so DoCommandUpgrade on ImladrisLoremaster doesn't fire at creation (RW 0x6AE60C).
+						g.rig.local->removeUpgrade(up, true);
+					}
 					if (count == 0 && carriers > 0)
 					{
 						res.fail(item, str("no member has %s, though %zu member modules are triggered by it", cb->m_upgradeName.c_str(), carriers));
@@ -1364,7 +1378,8 @@ void unitsOf(const std::string &faction, Results &res)
 						// RW 0x87566B (HordeContain slot 0x174): the horde passes its upgrades to every member that is affected by them
 						res.fail(item, str("%zu of the %zu members lack %s", without, count, cb->m_upgradeName.c_str()));
 					}
-					res.pass(item, str("%s in %u frames, cost %d, on all %zu members it affects", cb->m_upgradeName.c_str(), g.frame() - pressFrame, cost, count));
+					res.pass(item, str("%s in %u frames, cost %d%s", cb->m_upgradeName.c_str(), g.frame() - pressFrame, cost,
+						playerUpgrade ? " (player upgrade)" : str(", on all %zu members it affects", count).c_str()));
 					continue;
 				}
 				if (other)
@@ -2265,7 +2280,7 @@ void fightsOf(const std::string &faction, Results &res)
 					{
 						Object *at = ats[k];
 						const size_t logged = g.hud->input().messageLog().size();
-						// community #74: the click goes where the member is drawn (the last completed frame's pose): a member still walking to its slot
+						// community fork issue 74: the click goes where the member is drawn (the last completed frame's pose): a member still walking to its slot
 						// stands a step ahead of its drawing
 						const Drawable *drawn = g.rig.game->drawables().findByObject(at->getID());
 						const Coord3D seen = drawn ? *drawn->getPosition() : *at->getPosition();
@@ -3012,9 +3027,9 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	// (RotWK's idle state RW 0x745A64 has no ZH frame <= 1 snap)
 	// merge queue q24 (CAMPUI-1, OFFMAP-1, SCRIPT-4, MODS-3 and the amoeba reach fix on q23's tree, measured once): the scene meets the 500 heuristic again,
 	// so the Taint line passes; it still asserts no effect of TaintSpecialPower of its own (S-1997 keeps the explanation)
-	// merge queue q26 (community #73's slot table centred on the horde, as #73's own run found): the scene misses the 500 heuristic again (1536 with the cast,
+	// merge queue q26 (community fork issue 73's slot table centred on the horde, as fork issue 73's own run found): the scene misses the 500 heuristic again (1536 with the cast,
 	// 1732 without), so Taint is a KNOWN line once more
-	// merge queue q37 (measured once on the merged tree and at each merge point): at #187's the Devastation scene still misses the 500 heuristic (1536 with
+	// merge queue q37 (measured once on the merged tree and at each merge point): at fork issue 187's the Devastation scene still misses the 500 heuristic (1536 with
 	// the cast, 1672 without); ATKRESET-1 (attack orders end the FiringDuration lock) moves the fight so it meets it (532 more lost with the cast), so its
 	// line passes; S-921 keeps the explanation (no effect of its own is asserted)
 	// merge queue q38 (measured once on the merged tree and at each merge point): LOCODIST-1's retail locomotor distance to the goal (RW 0x664127) moves the
@@ -3978,7 +3993,7 @@ TEST_CASE("factc upgrade effects: every Goblin and Angmar weapon and armour upgr
 	// change Boromir's HERO hit: S-2008 keeps the explanation)
 	// lane MODCOMPAT-MOD1 (BoredUpdate, measured at its commit): the trolls' logic random draw at their creation (RW 0x899F1F) moves the Angmar scene: no
 	// two-hit frame without the armour again, the line fails as ATTACKPATH-1 found
-	// merge queue q31 (#68's ambient wanderers draw from the game's random numbers; measured at each merge point): the scene without the armour has a
+	// merge queue q31 (fork issue 68's ambient wanderers draw from the game's random numbers; measured at each merge point): the scene without the armour has a
 	// two-hit frame again, so the line passes as in q23; the armour still does not change Boromir's HERO hit (S-2008 keeps the explanation)
 	// merge queue q33 (measured at each merge point): with MODCOMPAT-MOD1 on the archive's tree the scene without the armour keeps its two-hit frame
 	// (600 -> 300), so the line passes as in q31 (MODCOMPAT-MOD1's last expectation was measured on its older base)

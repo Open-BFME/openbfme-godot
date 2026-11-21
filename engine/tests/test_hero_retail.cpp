@@ -1649,7 +1649,7 @@ TEST_CASE("hero retail: MSG_DO_AUTO_ABILITY makes Eowyn cast Smite by herself at
 	AutoAbilityBehavior *aa = AutoAbilityBehavior::forPower(*hero, smite->getName());
 	REQUIRE(aa);
 	CHECK(aa->autoButton().empty());
-	// review DEVPORT-7e (the sibling of Sol #1): the enemy's identical message naming our Eowyn toggles nothing, on or off
+	// review DEVPORT-7e (the sibling of Sol fork issue 1): the enemy's identical message naming our Eowyn toggles nothing, on or off
 	auto forged = [&]() {
 		GameMessage m(MSG_DO_AUTO_ABILITY, g.enemy->getPlayerIndex());
 		m.appendIntegerArgument((int)smite->getID());
@@ -1747,8 +1747,7 @@ WyrmRun runWyrm(Shared &sh, const char *targetName, bool footprint)
 }
 } // namespace
 
-TEST_CASE("backlog8 retail: the Wyrm's auto reposition lands beside a large target, not inside it (AdjustAttackMeleePosition, RW 0x85DDA4 -> 0x6EEBC1); a "
-		  "small target and a target without a footprint take it at their own position")
+TEST_CASE("backlog8 retail: the Wyrm's auto reposition lands beside a large target, not inside it (AdjustAttackMeleePosition, RW 0x85DDA4 -> 0x6EEBC1); a small target and a target without a footprint take it at their own position")
 {
 	REQUIRE_RETAIL_WORLD(sh);
 	const WyrmRun inside = runWyrm(sh, "MordorOrcPit", false);  // control: the same large target, its cells free
@@ -2574,7 +2573,7 @@ struct HeroCastGroup
 		a = g.make(tt, g.me, 1000.0f, 1000.0f);
 		b = g.make(tt, g.me, 1000.0f, 1040.0f);
 		REQUIRE(a->getID() < b->getID()); // tolerance: only the order of the two ids matters (the tie rule)
-		victim = g.make(victimT, g.enemy, 1012.0f, 1020.0f);
+		victim = g.make(victimT, g.enemy, 1200.0f, 1020.0f); // clear of melee during warmup so it stays alive (RW 0x82DA08 refuses dead targets)
 		for (int i = 0; i < 10; ++i)
 		{
 			g.logic->runLogicFrame();
