@@ -33,6 +33,7 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/AttributeModifiers.h"
@@ -165,7 +166,7 @@ const FieldParse kSpecialPowerModuleFieldParse[] = {
 	{ "DistanceFromCommandCenter", INI::parseReal, nullptr, SP_OFF(m_distanceFromCommandCenter) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
-// community PR #36: BFME1's InitiateSound2 row (stored, not played) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
+// community PR fork issue 36: BFME1's InitiateSound2 row (stored, not played) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
 const FieldParse kBfme1SpecialPowerModule[] = {
 	{ "InitiateSound2", parseName, nullptr, SP_OFF(m_initiateSound2) },
 	{ nullptr, nullptr, nullptr, 0 },
@@ -1484,9 +1485,158 @@ void SpecialPowerModules::registerAll(ModuleFactory &modules)
 		}
 		return std::make_unique<OCLSpecialPower>(thing, typed);
 	});
+	ManTheWallsSpecialPower::registerClass(modules);
 	SpellBookPowers::registerAll(modules); // lane SPELL-2: the other spell book power classes
 	WeaponChangeSpecialPowerModule::registerClass(modules); // lane FACT-B: the Berserker's torch toggle
 	SpellEffectModules::registerAll(modules); // lane SPELL-2: DeletionUpdate, FireWeaponUpdate (the effect objects)
+}
+
+// ---- ManTheWallsSpecialPower -------------------------------------------------------------------------------------------------------
+// RW 0x8CB3D1 (DONOR BFME2 0x004C7063)
+ManTheWallsSpecialPower::ManTheWallsSpecialPower(Thing *thing, const SpecialPowerModuleData *data)
+	: SpecialPowerModule(thing, data)
+{
+}
+
+void ManTheWallsSpecialPower::doSpecialPower(unsigned options) // slot 10 (RW 0x8CBDBA)
+{
+	baseDo(nullptr, nullptr, options);
+	manTheWalls();
+}
+
+void ManTheWallsSpecialPower::effectAtLocation(const Coord3D &loc, const Object *target)
+{
+	(void)loc;
+	(void)target;
+	manTheWalls();
+}
+
+// RW 0x8CBDBA (DONOR BFME2 0x004C799B)
+void ManTheWallsSpecialPower::manTheWalls()
+{
+	Object *caster = getObject();
+	if (!caster)
+	{
+		return;
+	}
+	GameLogic &logic = caster->logic();
+	static const int kTacticalMarker = ObjectTemplateInfoBuilder::kindOfIndex("TACTICAL_MARKER");
+	static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
+
+	// Step 1: Query for allied TACTICAL_MARKER objects (RW 0x8CBCCE, DONOR BFME2 0x004C78AF)
+	struct MarkerEntry
+	{
+		Object *marker;
+		std::vector<Object *> members;
+	};
+	std::vector<MarkerEntry> markers;
+
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o->isKindOf((unsigned)kTacticalMarker) && caster->getRelationship(*o) == ALLIES)
+		{
+			markers.push_back({ o, {} });
+		}
+	}
+
+	if (markers.empty())
+	{
+		return;
+	}
+
+	// Step 2: Query for allied HORDE objects (RW 0x8CBDF6 .. 0x8CBE64)
+	std::vector<Object *> hordes;
+	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (o != caster && !o->isEffectivelyDead() && o->isKindOf((unsigned)kHorde) && caster->getRelationship(*o) == ALLIES)
+		{
+			hordes.push_back(o);
+		}
+	}
+
+	// Step 3: Assign hordes to markers (RW 0x8CBB53, DONOR BFME2 0x004C7734 / 0x004C76AC)
+	for (Object *horde : hordes)
+	{
+		const Coord3D &hordePos = *horde->getPosition();
+		struct Candidate
+		{
+			size_t markerIndex;
+			float distSq;
+		};
+		std::vector<Candidate> candidates;
+		candidates.reserve(markers.size());
+		for (size_t i = 0; i < markers.size(); ++i)
+		{
+			const Coord3D &mPos = *markers[i].marker->getPosition();
+			const float dx = mPos.x - hordePos.x;
+			const float dy = mPos.y - hordePos.y;
+			candidates.push_back({ i, dx * dx + dy * dy });
+		}
+		std::sort(candidates.begin(), candidates.end(), [](const Candidate &a, const Candidate &b) {
+			return a.distSq < b.distSq;
+		});
+
+		size_t chosenIndex = candidates[0].markerIndex;
+		bool found = false;
+		for (unsigned count = 0; count < 10; ++count)
+		{
+			for (const Candidate &c : candidates)
+			{
+				if (markers[c.markerIndex].members.size() <= count)
+				{
+					chosenIndex = c.markerIndex;
+					found = true;
+					break;
+				}
+			}
+			if (found)
+			{
+				break;
+			}
+		}
+		markers[chosenIndex].members.push_back(horde);
+	}
+
+	// Step 4: Issue group move order for each marker with members (RW 0x8CBEC3 -> 0x8CB5A6, DONOR BFME2 0x004C7167)
+	for (const MarkerEntry &entry : markers)
+	{
+		if (entry.members.empty())
+		{
+			continue;
+		}
+		std::vector<ObjectID> ids;
+		ids.reserve(entry.members.size());
+		for (Object *member : entry.members)
+		{
+			ids.push_back(member->getID());
+		}
+		AIGroup group(logic, ids);
+		group.groupMoveToPosition(*entry.marker->getPosition(), false, CMD_FROM_AI);
+	}
+}
+
+void ManTheWallsSpecialPower::crc(StateHasher &h) const
+{
+	SpecialPowerModule::crc(h);
+}
+
+void ManTheWallsSpecialPower::registerClass(ModuleFactory &modules)
+{
+	modules.bindTypedData<SpecialPowerModuleData>("ManTheWallsSpecialPower", MODULETYPE_BEHAVIOR);
+	modules.bindModuleProc("ManTheWallsSpecialPower", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
+		const auto *typed = dynamic_cast<const SpecialPowerModuleData *>(data);
+		if (!typed)
+		{
+			throw std::logic_error("ManTheWallsSpecialPower: the module data is not typed");
+		}
+		return std::make_unique<ManTheWallsSpecialPower>(thing, typed);
+	});
+}
+
+void ManTheWallsSpecialPower::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	SpecialPowerModule::xfer(x);
 }
 
 // ---- lane SAVE-4b: the snapshots (OpenBFME native, S-4190) ------------------------------------------------------------------------------------------------
