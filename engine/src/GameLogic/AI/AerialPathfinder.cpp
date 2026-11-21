@@ -8,8 +8,8 @@
 #include "Common/StateHash.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
-#include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Combat/CombatQueries.h"
+#include "GameLogic/ConstructionSite.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -76,6 +76,8 @@ float normalizeAngle(float a)
 	return a;
 }
 
+// RW 0x778072 (KindOf word 0 bit 2): only a mobile object gets the 1.2-radius 3D distance check below;
+// an IMMOBILE structure is tested at every sampled point that the geometry filter lets through.
 bool isMobileForSeparation(const Object &o)
 {
 	static const int kImmobile = ObjectTemplateInfoBuilder::kindOfIndex("IMMOBILE");
@@ -384,32 +386,18 @@ bool separation(const Flyer &flyer, const Coord3D &pos, float &worst, Coord3D &p
 {
 	Object &obj = *flyer.object;
 	GameLogic &logic = obj.logic();
+	// RW 0x778053 .. 0x778075: the victim loop skips KindOf INFANTRY (word 0 bit 8), CAVALRY (bit 9) and HORDE
+	// (word 3 bit 13 = KindOf 109); RW 0x778072's IMMOBILE bit decides which objects get the mobile distance check.
 	static const int kInfantry = ObjectTemplateInfoBuilder::kindOfIndex("INFANTRY");
 	static const int kCavalry = ObjectTemplateInfoBuilder::kindOfIndex("CAVALRY");
 	static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
 	const float radius = CombatQueries::boundingSphereRadius(obj);
-	// PartitionFilterWouldCollide(pos, the flyer's geometry, its angle, true): the 2D footprints (S-4041: RW 0xAD2CE0 is not ported)
-	std::vector<BuildPlacement::Footprint> mine;
-	BuildPlacement::footprintsOf(logic, *obj.getTemplate(), pos, obj.getOrientation(), mine);
-	auto wouldCollide = [&](Object &other) {
-		std::vector<BuildPlacement::Footprint> theirs;
-		if (!BuildPlacement::footprintsOf(logic, *other.getTemplate(), *other.getPosition(), other.getOrientation(), theirs))
-		{
-			return false;
-		}
-		for (const BuildPlacement::Footprint &a : mine)
-		{
-			for (const BuildPlacement::Footprint &b : theirs)
-			{
-				if (BuildPlacement::footprintsCollide(a, b))
-				{
-					return true;
-				}
-			}
-		}
-		return false;
-	};
-	PartitionFilterFn<decltype(wouldCollide)> filter(wouldCollide);
+	// RW 0x777FE7 .. 0x778016: PartitionFilterWouldCollide(pos, the flyer's GeometryInfo (+0xA8), its angle, true)
+	// with partition type 3 (FROM_BOUNDINGSPHERE_3D). Its constructor is RW 0x67C5F3 and its allow RW 0x66139C
+	// calls RW 0xAD2CE0 on the two 3D shape lists, the sampled position and the object's own position / angles.
+	// The 2D footprints ignored Z: an overlapping castle shell collided at the Swoop point above the keep and
+	// held the GIANT_BIRD flyer in the swoop state instead of letting it reach the attack (P-59).
+	ConstructionSite::GeometryFilter filter(pos, obj.geometryShapes(), obj.getOrientation(), true);
 	const PartitionHits hits = logic.partition().iterateObjectsInRange(pos, radius, FROM_BOUNDINGSPHERE_3D, { &filter }, ITER_FASTEST);
 	bool clear = true;
 	for (const PartitionHit &hit : hits)
@@ -441,6 +429,7 @@ bool separation(const Flyer &flyer, const Coord3D &pos, float &worst, Coord3D &p
 			}
 		}
 		Coord3D delta{ subf32(pos.x, them.getPosition()->x), subf32(pos.y, them.getPosition()->y), subf32(pos.z, them.getPosition()->z) }; // RW 0x5E3C12
+		// RW 0x7780B9 .. 0x7780D1: other.radius * 2 + self.radius - |delta|
 		const float overlap = subf32(addf32(mulf32(CombatQueries::boundingSphereRadius(them), 2.0f), radius), length3(delta));
 		if (worst < overlap)
 		{
@@ -714,8 +703,7 @@ bool computeAerialPath(const Flyer &flyer, const Coord3D &goalIn, AerialSpline &
 
 std::vector<std::string> stopLines()
 {
-	return { "S-4041: the aerial path (RW 0x778413) is ported without the no-fly zones (the map block AerialPathfindNoFlyZone is a recording stub: RW 0x777E54 "
-		     "answers 0), the 3D shape overlap of the separation's would-collide filter (2D footprints: "
-		     "RW 0xAD2CE0 is not ported, S-1020) and the x87 / CRT parity of its terminal search (S-081)" };
+	return { "S-4041: the aerial path (RW 0x778413) is ported without the no-fly zones (S-7326: the map block AerialPathfindNoFlyZone is a recording stub: "
+		     "RW 0x777E54 answers 0) and the x87 / CRT parity of its terminal search (S-081)" };
 }
 } // namespace AerialPathfinder
