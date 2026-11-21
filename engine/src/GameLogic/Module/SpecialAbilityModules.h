@@ -243,6 +243,10 @@ public:
 	unsigned captures() const { return m_captures; } // lane HERO-2: buildings captured (hashed)
 	// lane STARTRANGE-1: tests only
 	bool withinStartAbilityRangeForTest() { return withinStartAbilityRange(); }
+	// lane PORT-93: retail's ActiveLoopSound handle is module + 0x38 (RW 0x854054 keeps it there; RW 0x854014 reads it, RW 0x85311B removes it). The port keeps
+	// the handle on the audio side keyed by this module, like the other held loops (AudioApi::HELD_ABILITY_LOOP); these are the audio side's key and the test's view
+	std::uint32_t activeLoopKey() const { return m_activeLoopKey; }
+	bool activeLoopHeld() const { return m_activeLoopHeld; }
 	bool withinAbortRangeForTest() const { return withinAbortRange(); }
 	bool approachPointForTest(Coord3D &pos, float range) const { return approachPoint(pos, range); } // lane APPROACH-859
 
@@ -277,6 +281,10 @@ protected:
 	unsigned preparationFrames() const;            // RW 0x85241F (lane MODCOMPAT-MOD1)
 	bool conditionsAllow() const;                  // RW 0x851551
 	void endPreparation();                         // RW 0x85260A
+	// lane PORT-93 (ActiveLoopSound, data + 0x34): RW 0x854008 .. 0x85405B starts the loop at the trigger and keeps its handle at module + 0x38; RW 0x85311B ..
+	// 0x853131 (finishAbility) removes it and sets the handle back to 1
+	void startActiveLoopSound();
+	void stopActiveLoopSound();
 	void setUnpackingVariation();                  // the UnpackingVariation model condition (RW 0x853C64 .. 0x853CDE)
 	void applyCustomAnim();                        // RW 0x851C48
 	UpdateSleepTime calcSleep();                   // RW 0x85266D (an idle capture ability also releases its capture: releaseCapture)
@@ -314,6 +322,8 @@ protected:
 	unsigned m_abilitiesTriggered = 0;
 	unsigned m_captures = 0;
 	unsigned long long m_unported = 0;
+	std::uint32_t m_activeLoopKey;        ///< the audio side's holder key of this ability's loop (retail + 0x38 holds the handle; not logic state)
+	bool m_activeLoopHeld = false;        ///< retail's + 0x38 != 1 (saved, not hashed: as AudioLoopUpgrade's + 0x2C)
 };
 
 class WeaponFireSpecialAbilityUpdate : public SpecialAbilityUpdate

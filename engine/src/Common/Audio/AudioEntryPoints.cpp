@@ -538,7 +538,46 @@ void postHeldSound(int slot, const std::string &n, std::uint32_t holderId, std::
 		mgr->removeAudioEvent(it->second);
 		held.erase(it);
 	}
-	static const char *const kTag[HELD_SOUND_SLOTS] = { "building loop", "move loop", "upgrade loop" };
+	static const char *const kTag[HELD_SOUND_SLOTS] = { "building loop", "move loop", "upgrade loop", "ability loop" };
+	AudioLog::Scope scope(kTag[slot]);
+	const AudioHandle h = mgr->playSoundForObject(n, objectId);
+	if (h >= AHSV_FirstHandle)
+	{
+		held[holderId] = h;
+	}
+}
+
+// lane PORT-93: RW 0x85403E .. 0x854054: the ability's ActiveLoopSound starts only when the handle kept at module + 0x38 does not sound (RW 0x854014 calls the
+// manager's vslot 0xD0 = isCurrentlyPlaying with it, RW 0x854021 skips the add when it answers true). The holder's own entry is the retail handle: the port keeps
+// it on the audio side like the other held loops.
+void resumeHeldSound(int slot, const std::string &n, std::uint32_t holderId, std::uint32_t objectId)
+{
+	AudioManager *mgr = nullptr;
+	switch (route(Binding::Manager, [slot, n, holderId, objectId]() { resumeHeldSound(slot, n, holderId, objectId); }, &mgr))
+	{
+	case Route::Run:
+		break;
+	case Route::Deferred:
+		return; // S-814
+	case Route::Unbound:
+		g_without.fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
+	if (slot < 0 || slot >= HELD_SOUND_SLOTS)
+	{
+		return;
+	}
+	auto &held = g_heldSounds[slot];
+	auto it = held.find(holderId);
+	if (it != held.end() && mgr->isCurrentlyPlaying(it->second))
+	{
+		return; // RW 0x854021: the loop is still sounding, it is not added again
+	}
+	if (it != held.end())
+	{
+		held.erase(it); // the kept handle outlived its sound: dropped, then the event is added below
+	}
+	static const char *const kTag[HELD_SOUND_SLOTS] = { "building loop", "move loop", "upgrade loop", "ability loop" };
 	AudioLog::Scope scope(kTag[slot]);
 	const AudioHandle h = mgr->playSoundForObject(n, objectId);
 	if (h >= AHSV_FirstHandle)
