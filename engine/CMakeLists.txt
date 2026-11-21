@@ -738,7 +738,9 @@ endif()
 # ---- unit tests --------------------------------------------------------------------------
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
+include(cmake/Local114.cmake)
 add_executable(openbfme_tests
+    ${OPENBFME_LOCAL114_TESTS}
     ${OPENBFME_WIN1_TESTS}
     ${OPENBFME_DEP2_TESTS}
     ${OPENBFME_SMOOTH_TESTS}
