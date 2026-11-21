@@ -309,7 +309,7 @@ const FieldParse kLevelGrant[] = { // RW 0xC73550
 	{ "AcceptanceFilter", parseFilter, nullptr, LG_OFF(m_acceptanceFilter) },
 	{ nullptr, nullptr, nullptr, 0 },
 };
-// community PR #36: BFME1's LevelGrantSpecialPower rows (UseKindOf, AffectsKindOf as an ANY + KindOf filter) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
+// community PR fork issue 36: BFME1's LevelGrantSpecialPower rows (UseKindOf, AffectsKindOf as an ANY + KindOf filter) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
 const FieldParse kBfme1LevelGrant[] = {
 	{ "UseKindOf", INI::parseBool, nullptr, LG_OFF(m_useKindOf) },
 	{ "AffectsKindOf", parseLegacyUseKindOf, nullptr, LG_OFF(m_acceptanceFilter) },
@@ -1444,7 +1444,7 @@ void SpecialAbilityUpdate::triggerAbilityEffect()
 // raised before). The first trigger, with the object's contain (+ 0x258; none: nothing): without a target object the tree at the target location within
 // 5.0 (RW 0xBDAE58, TheTerrainLogic RW 0x67F52B(loc, 5, 1, 1)) becomes a tree object (RW 0x68449B) that is the target: not ported (S-860, counted). A
 // CHUNK_VENDOR target of 0x28 or a ROCK_VENDOR target of 0x27 hands out its GrabObject (the body's slot 0x74, made by RW 0x6D165E, produced by the object
-// and contained) and is hurt (RW 0x697E50): not ported (S-860, counted). Any other target the contain accepts (slot 0x98(target, 1, 0)) leaves the horde
+// and contained) and is hurt (RW 0x697E50): ported in PORT-78. Any other target the contain accepts (slot 0x98(target, 1, 0)) leaves the horde
 // that holds it (the holder's horde interface slot 0x38) and is contained (slot 0x9C); a GRAB_AND_KILL target (template + 0x114 bit 3) shows PREPARING
 // (Object + 0x114 bit 31). The second trigger with a target: a SHRUBBERY target shows CLUB (+ 0x114 bit 27); a GRAB_AND_KILL one is let go (slot 0xA4(target,
 // 0)), PREPARING clears on the object and the target, the object shows the UnpackingVariation's PACKING_TYPE and the ability has no target (+ 0x7D)
@@ -1474,8 +1474,49 @@ void SpecialAbilityUpdate::grabTrigger(int type)
 		const bool vendor = (kind(*t, kChunkVendor) && type == 0x28) || (kind(*t, kRockVendor) && type == 0x27);
 		if (vendor)
 		{
-			++m_unported; // RW 0x85415C .. 0x854348: the vendor's GrabObject (S-860)
-			obj->logic().noteStop("[S-860] SpecialAbilityUpdate: the grab of a ROCK_VENDOR / CHUNK_VENDOR (its GrabObject made and held, the vendor hurt, RW 0x85415C) is not ported");
+			// RW 0x85415C: missing body ends the ability; an empty or unknown name skips only creation.
+			BodyModuleInterface *body = t->getBodyModule();
+			if (!body)
+			{
+				return;
+			}
+			GameLogic &logic = obj->logic();
+			const std::string name = body->getGrabObjectName();
+			if (!name.empty())
+			{
+				const ThingTemplate *tt = logic.things().findTemplate(name); // RW 0x8541A8
+				if (Object *created = logic.newObject(tt, nullptr, ObjectStatusMaskType{})) // RW 0x8541DC
+				{
+					created->setProducer(obj); // RW 0x8541EC
+					contain->addToContain(created); // RW 0x8541F7
+				}
+			}
+			DamageInfo hit; // RW 0x8541FD .. 0x854247
+			hit.m_input.m_sourceID = 0;
+			hit.m_input.m_damageType = DAMAGE_STRUCTURAL;
+			constexpr int kClubbingFX = 7; // RW 0x85423D, DamageFXTypeNames index CLUBBING
+			hit.m_input.m_damageFXOverride = kClubbingFX;
+			hit.m_input.m_deathType = DEATH_NONE;
+			hit.m_input.m_amount = body->getGrabDamage();
+			t->doAttemptDamage(hit); // RW 0x697E50, not the delayed attemptDamage path
+			body = t->getBodyModule(); // RW 0x854254, 0x8542CE
+			const Coord2D offset = body->getGrabOffset();
+			const float *basis = obj->getBasis();
+			const float a = (float)SimMath::atan2d(basis[3], basis[0]); // RW 0x854285 -> 0xB261F0: fpatan on the transform, then fstp float (S-081)
+			const float sn = SimMath::sinf32(a), cs = SimMath::cosf32(a); // RW 0x8542A9, 0x8542B7; S-081
+			Coord3D pos = *obj->getPosition();
+			pos.x = SimMath::addf32(pos.x, SimMath::subf32(SimMath::mulf32(cs, offset.x), SimMath::mulf32(sn, offset.y)));
+			pos.y = SimMath::addf32(pos.y, SimMath::addf32(SimMath::mulf32(cs, offset.y), SimMath::mulf32(sn, offset.x)));
+			if (const std::string *fx = body->getGrabFXName())
+			{
+				FXEvent e = FXEventLog::objectEvent(FXEvent::POSITION_FX, "GrabFX", logic.getFrame(), *fx, *obj);
+				e.position = pos; // RW 0x8542BC .. 0x854346
+				e.secondaryPosition = pos; // RW 0x85430B: same position as the fifth argument
+				e.hasSecondaryPosition = true;
+				e.weaponSpeed = 100.0f; // RW 0x8542DC: constant 0xBD88D8
+				e.drawableMatrix = true; // RW 0x85432D -> 0x6765B9: the grabber drawable's transform
+				logic.fxEvents().emit(e);
+			}
 			return;
 		}
 		if (!contain->isValidContainerFor(*t, true, false)) // slot 0x98(target, 1, 0)
@@ -2884,8 +2925,8 @@ std::vector<std::string> SpecialAbilityModules::stopLines()
 		"(0x1A; SPECIAL_INFANTRY_CAPTURE_BUILDING 0x1D runs: lane HERO-2, S-1225), "
 		"SPECIAL_CHARGE_ATTACK (0x2A) in the trigger / preparation / packing (the 0x20 disguise trigger RW 0x8544CD runs: lane STEALTH-2; SPECIAL_SCREECH 0x89, the "
 		"disguise cancels 0x84 / 0x85: lane HERO-2; the grab enums SPECIAL_GRAB_PASSENGER / SPECIAL_GRAB_CHUNK 0x27 / 0x28 run since lane MODCOMPAT-MOD1: the "
-		"object grab, its hold, release and eat), the grab of a tree (RW 0x68449B makes it an object) and of a ROCK_VENDOR / CHUNK_VENDOR (its GrabObject, RW "
-		"0x85415C), the 0x28 unpack model condition (RW 0x85384C), the special objects (SpecialObject: no retail use), ContactPointOverride: counted (the "
+		"object grab, its hold, release and eat; ROCK_VENDOR / CHUNK_VENDOR runs since PORT-78, RW 0x85415C), the grab of a tree (RW 0x68449B makes it an object), "
+		"the 0x28 unpack model condition (RW 0x85384C), the special objects (SpecialObject: no retail use), ContactPointOverride: counted (the "
 		"unit cost + 0x80 is paid since lane NECRODIE-1, RW 0x85521F; ApproachUntilMembersInRange + 0xC5 runs since PORT-58, RW 0x85213E .. 0x852171)",
 		"[S-861] ToggleMountedSpecialAbilityUpdate: the toggle, CancelDisguiseWhenDismounting and MountedTemplate (the replacement RW 0x8B140D: Construction::"
 		"buildObjectNow, name, experience, health, team, SynchronizeTimerOnSpecialPower; the old object destroyed after its packing, RW 0x8B1E9A) run (lane "

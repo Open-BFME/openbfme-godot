@@ -14,6 +14,7 @@
 #pragma once
 
 #include "Common/Module.h"
+#include "Common/INIDataTypes.h"
 #include "GameLogic/ObjectTypes.h"
 
 #include <cstdint>
@@ -84,6 +85,10 @@ public:
 	// lane BACKLOG-1: RW vt[0x74], the body's GrabObject template name (ActiveBody RW 0x8C281E: the data's + 0x2C; InactiveBody RW 0x8C1B14: the empty string
 	// RW 0xBD0C3F). OpenContain's CHUNK_VENDOR / ROCK_VENDOR entry test reads it (RW 0x8660FC)
 	virtual std::string getGrabObjectName() const { return std::string(); }
+	// PORT-78: InactiveBody slots 0x78/0x7C/0x80: RW 0x851E97 (null), 0x70D41A (zero), 0x8C19EB (zero vector).
+	virtual const std::string *getGrabFXName() const { return nullptr; }
+	virtual float getGrabDamage() const { return 0.0f; }
+	virtual Coord2D getGrabOffset() const { return Coord2D{}; }
 	// lane XP-1: RW vt[0x5C] (ActiveBody RW 0x8C1CD5) setMaxHealth(newMax, changeType): 1 keeps the health ratio, 2 adds the difference to the health
 	// (the AttributeModifier HEALTH / HEALTH_MULT bonuses use 1). A body class without the override counts the call (bodyMaxHealthCallsIgnored)
 	virtual void setMaxHealth(float newMax, int changeType)

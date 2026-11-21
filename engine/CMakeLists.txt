@@ -196,6 +196,7 @@ include(cmake/Port6.cmake) # PORT-6: StealthDetectorUpdate/CanDetectWhileGarriso
 include(cmake/Port55.cmake) # PORT-55: SlaughterHordeContain, the citadel's cashback and CanAlwaysEnter (issue #165; OPENBFME_PORT55_TESTS)
 include(cmake/Port62.cmake) # PORT-62: TransportContain/FireGrabWeaponOnVictim, the GrabWeapon fire (OPENBFME_PORT62_TESTS)
 include(cmake/Port40.cmake) # PORT-40: AIData/MaxRecruitRadius (issue #125; OPENBFME_PORT40_TESTS)
+include(cmake/Port78.cmake) # PORT-78: vendor grab (issue #210)
 include(cmake/Port46.cmake) # PORT-46: ToggleMountedSpecialAbilityUpdate/OpacityTarget, the drawable fade (OPENBFME_PORT46_TESTS)
 include(cmake/Port13.cmake) # PORT-13: AIData/AttackMoveUsesFormations and the formation attack march (OPENBFME_PORT13_TESTS)
 include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the collide pickup (OPENBFME_PORT9_TESTS)
@@ -765,6 +766,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT55_TESTS}
     ${OPENBFME_PORT62_TESTS}
     ${OPENBFME_PORT40_TESTS}
+    ${OPENBFME_PORT78_TESTS}
     ${OPENBFME_PORT46_TESTS}
     ${OPENBFME_PORT13_TESTS}
     ${OPENBFME_PORT9_TESTS}
