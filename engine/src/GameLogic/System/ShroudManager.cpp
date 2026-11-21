@@ -1009,7 +1009,7 @@ ShroudManager::TemplateVision ShroudManager::templateVision(const ThingTemplate 
 	// the ThingTemplate ctor defaults ShroudClearingRange (+0x4C0) to -1 (RW 0x73FB7A, the constant at RW 0xBD19DC) and the Object ctor takes the VisionRange
 	// (+0x4BC) for a -1 (RW 0x69990F: the ucomiss at RW 0x699DE2, the store at RW 0x699DF9), so a template with no ShroudClearingRange row clears its
 	// VisionRange (Farsight's FarSeeingPing, PalantirVisionPing, EyeOfSauron). BFME2 1.06: the same (decomp ObjectConstructor.cpp:549-551); BFME1 too
-	// (Object::initObject in Open-BFME-1, community PR #36: Gondor's castle keep)
+	// (Object::initObject in Open-BFME-1, community PR fork issue 36: Gondor's castle keep)
 	v.shroudClearingRange = real(F_RANGE, -1.0f);
 	if (v.shroudClearingRange == -1.0f)
 	{
@@ -1018,9 +1018,12 @@ ShroudManager::TemplateVision ShroudManager::templateVision(const ThingTemplate 
 	v.visionSide = real(F_SIDE, 1.0f);
 	v.visionRear = real(F_REAR, 1.0f);
 	v.bonusPerFoot = real(F_PERFOOT, 0.0f);
-	v.bonusTestRadius = real(F_RADIUS, 0.0f);
-	v.maxBonus = real(F_MAX, 0.0f);
-	v.minBonus = real(F_MIN, 0.0f);
+	// ThingTemplate ctor defaults for omitted rows (RW 0x73FF17 MaxVisionBonusPercent 0.5, RW 0x73FF57 MinVisionBonusPercent -0.5,
+	// RW 0x740027 VisionBonusTestRadius 100, RW 0x74002F VisionBonusTestSegments 8)
+	v.bonusTestRadius = real(F_RADIUS, 100.0f);
+	v.maxBonus = real(F_MAX, 0.5f);
+	v.minBonus = real(F_MIN, -0.5f);
+	v.bonusTestSegments = 8;
 	if (const FieldValue *f = field(F_SEGMENTS))
 	{
 		if (const long long *i = std::get_if<long long>(f))
@@ -1394,7 +1397,7 @@ void ShroudManager::update()
 		{
 			m_prepared.resize(n);
 		}
-		// review of #62: the prepare reads the radii (CombatQueries::boundingCircleRadius, of the object and its horde or container), and a template's
+		// review of fork issue 62: the prepare reads the radii (CombatQueries::boundingCircleRadius, of the object and its horde or container), and a template's
 		// first read makes its movement info (AIWorld::movementInfo inserts into a map); made here, before the jobs, the jobs only find them. Without an
 		// AIWorld there is no movement info to make (CombatQueries::geometry throws): the jobs read a radius only for a builder or a horde member
 		if (m_logic.aiWorld())
@@ -1415,7 +1418,7 @@ void ShroudManager::update()
 			for (size_t i = begin; i < end; ++i)
 			{
 				Prepared &p = m_prepared[i];
-				std::vector<int> cells = std::move(p.cells); // its storage is kept (review #62: a reset allocated it again for every record, every frame)
+				std::vector<int> cells = std::move(p.cells); // its storage is kept (review fork issue 62: a reset allocated it again for every record, every frame)
 				p = Prepared();
 				p.cells = std::move(cells);
 				p.cells.clear();
