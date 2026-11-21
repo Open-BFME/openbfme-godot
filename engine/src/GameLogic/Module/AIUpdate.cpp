@@ -556,7 +556,27 @@ public:
 		}
 		return logic.settings().gravity;
 	}
-	bool hasStealthModule() const override { return StealthUpdate::of(obj()) != nullptr; } // RW 0x68FBD3
+	// Port 202, RW 0x5E7C08 .. 0x5E7C22: the sequence of the Climb portal's reveal (RW 0x66A143 .. 0x66A166, lane WALL-2), instruction for instruction
+	void revealDisguisedClimber() override { m_ai.revealDisguiseOnClimb(); }
+	// Port 202, RW 0x5E579A .. 0x5E57E8 (the wading updater's reads). The water query is the pathfinder's map view, as isUnderwater above; a game without a
+	// map has no water areas, and NO_Z_MOTIVE_FORCE's height there is the logic's ground query (layerHeightAt), so the answer is "dry", not an error
+	bool wadingWaterAt(float x, float y, WadingWater &out) const override
+	{
+		if (m_ai.m_adapter && m_ai.m_adapter->getLayer() != LAYER_GROUND) // RW 0x5E579A: Object::getLayer (RW 0x68BBE0) == 1
+		{
+			return false;
+		}
+		const PathfindTerrain *terrain = m_ai.m_world ? m_ai.m_world->pathfinder().terrainView() : nullptr;
+		float waterZ = 0.0f, terrainZ = 0.0f;
+		if (!terrain || !terrain->isUnderwater(x, y, &waterZ, &terrainZ)) // RW 0x5E57CB: TheTerrainLogic vslot 0x4C
+		{
+			return false;
+		}
+		out.waterZ = waterZ;
+		out.terrainZ = terrainZ;
+		out.wadeWaterDepth = obj().logic().settings().wadeWaterDepth; // RW 0x5E57D2 .. 0x5E57E3: TheAI -> + 0x18 -> + 0x98
+		return true;
+	}
 	bool isKindOfSubmarine() const override
 	{
 		static const int kSubmarine = CombatNames::kindOf("SUBMARINE"); // KindOf 187: template + 0x11F bit 3

@@ -49,7 +49,7 @@ int bitIndex(const char *const *names, const char *name)
 
 struct Bits
 {
-	int moving, walking, accelerate, decelerate, backingUp, turnLeft, turnRight, turnLeftHigh, turnRightHigh, emotionTerror, charging, overWater;
+	int moving, walking, accelerate, decelerate, backingUp, turnLeft, turnRight, turnLeftHigh, turnRightHigh, emotionTerror, charging, overWater, wading, swimming;
 	int statusAttacking, statusLeashed, statusContesting, statusHordeMember;
 	Bits()
 		: moving(bitIndex(TheModelConditionNames, "MOVING"))
@@ -64,6 +64,8 @@ struct Bits
 		, emotionTerror(bitIndex(TheModelConditionNames, "EMOTION_TERROR"))
 		, charging(bitIndex(TheModelConditionNames, "CHARGING"))
 		, overWater(bitIndex(TheModelConditionNames, "OVER_WATER"))
+		, wading(bitIndex(TheModelConditionNames, "WADING"))     // 239 (0xEF): obj + 0x128 bit 15
+		, swimming(bitIndex(TheModelConditionNames, "SWIMMING")) // 240 (0xF0): obj + 0x128 bit 16
 		, statusAttacking(bitIndex(TheObjectStatusNames, "IS_ATTACKING"))
 		, statusLeashed(bitIndex(TheObjectStatusNames, "LEASHED_RETURNING"))
 		, statusContesting(bitIndex(TheObjectStatusNames, "CONTESTING_BUILDING"))
@@ -176,8 +178,8 @@ const std::vector<std::string> &Locomotor::allStops()
 		"operation order and PC24 precision are reproduced through NumericState, the trigonometry is NumericState's deterministic double-double "
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
 		"S-084: locomotor cases not ported: the ZAxisBehaviors FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS and RELATIVE_TO_HIGHEST_LAYER, and the projectile / falling "
-		"special cases of RW 0x5E774A / 0x5E5785 (its ramp and walkway height hold is ported: lane WALL-4; the wall-scaling look-ahead RW 0x5E8956, the SCALING_WALLS z case "
-		"and the look-ahead's stealth reveal RW 0x5E8CB2 are ported: lane MECH-D; SURFACE_RELATIVE_HEIGHT's climbing stealth reveal RW 0x5E7C0A is not), and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
+		"special cases of RW 0x5E774A (its ramp and walkway height hold is ported: lane WALL-4; the wall-scaling look-ahead RW 0x5E8956, the SCALING_WALLS z case "
+		"and the look-ahead's stealth reveal RW 0x5E8CB2 are ported: lane MECH-D; the wading updater RW 0x5E5785 and SURFACE_RELATIVE_HEIGHT's reveal of a disguised climber RW 0x5E7C0A are ported: Port 202), and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
 		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
 		"constant-calling result, the transform write (RW 0x70BA76) are not run for non-WINGS appearances; an idle unit's height and sleep follow "
 		"the movers' last frame."
@@ -1319,6 +1321,56 @@ void Locomotor::moveTowardsPositionShip(LocomotorHost &host, const Coord3D &goal
 	moveForward(host, goal, onPathDistToGoal, desiredSpeed);
 }
 
+// ---- the wading updater (RW 0x5E5785; Port 202, fork issue 469) ---------------------------------------------------------------
+// TARGET FACTS (RotWK game.dat, caveat S-001), read linearly from the function's start. RW 0x5E5785(obj, pos, &z), ret 0xC; `this` is not read. Callers:
+// handleBehaviorZ's FLOATING_Z (RW 0x5E773E, answer dropped) and NO_Z_MOTIVE_FORCE (RW 0x5E7787, answer chooses the height) cases; no other xref.
+//   0x5E5795  waterZ = 0
+//   0x5E579A  Object::getLayer (RW 0x68BBE0) != 1 (the ground layer) -> the dry branch
+//   0x5E57AB  TheTerrainLogic (RW 0xDE4690) vslot 0x4C (isUnderwater, RW 0x67DAE6)(pos.x, pos.y, &waterZ, z, null): false -> the dry branch. The fourth
+//             argument is the caller's height local: the query leaves the ground height under the water there
+//   0x5E57D2  w = AIData WadeWaterDepth: TheAI (RW 0xDE4B40) -> + 0x18 -> + 0x98; depth = waterZ - *z (SSE subss)
+//   0x5E57E8  depth > w x 0.25 (RW 0xBD1904; SSE mulss, comiss, jbe) else the dry branch
+//   0x5E57F9  depth > w (comiss [w], jbe): RW 0x5E3BA5 with the flags RW 0x5E417A(kInit, 0xF0, 0xEF) built = RW 0x68D607(clear none, set { SWIMMING,
+//             WADING }): a swimming object carries both conditions
+//   0x5E581C  else, when SWIMMING (obj + 0x128 bit 16) is set or WADING (bit 15) is clear: SWIMMING cleared (and byte [obj + 0x12A], 0xFE), WADING set
+//             (or [obj + 0x128], 0x8000), RW 0x68B53C tells the drawable once
+//   0x5E5847  return true
+//   0x5E584B  the dry branch: RW 0x5E3B79 = RW 0x68D607(clear { SWIMMING, WADING }, set none); return false
+// RW 0x68D607 copies the flags, applies (flags & ~clear) | set (RW 0x671F84) and tells the drawable only when the copy differs (RW 0x68D632 .. 0x68D63F),
+// so an unchanged set is not handed to the host here. The function holds no cliff test and writes no other condition; DeepWaterDepth (+ 0x9C) is not read.
+bool Locomotor::updateWading(LocomotorHost &host, const Coord3D &pos, float &terrainZ)
+{
+	const Bits &b = bits();
+	const bool wading = host.testModelCondition(b.wading);
+	const bool swimming = host.testModelCondition(b.swimming);
+	LocomotorHost::WadingWater water;
+	if (host.wadingWaterAt(pos.x, pos.y, water))
+	{
+		terrainZ = water.terrainZ; // RW 0x5E57B5: the query's fourth argument is the caller's height local
+		const float depth = SimMath::subf32(water.waterZ, water.terrainZ);
+		if (depth > SimMath::mulf32(water.wadeWaterDepth, 0.25f)) // RW 0x5E57E8 .. 0x5E57F7, 0.25: RW 0xBD1904
+		{
+			if (depth > water.wadeWaterDepth) // RW 0x5E57F9
+			{
+				if (!wading || !swimming)
+				{
+					host.clearAndSetModelConditions({}, { b.swimming, b.wading }); // RW 0x5E57FE .. 0x5E5815
+				}
+			}
+			else if (swimming || !wading) // RW 0x5E581C .. 0x5E5831
+			{
+				host.clearAndSetModelConditions({ b.swimming }, { b.wading }); // RW 0x5E5833 .. 0x5E5842
+			}
+			return true;
+		}
+	}
+	if (wading || swimming)
+	{
+		host.clearAndSetModelConditions({ b.swimming, b.wading }, {}); // RW 0x5E584B .. 0x5E5862
+	}
+	return false;
+}
+
 // ---- handleBehaviorZ (RW 0x5E76AC): NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL ------------------------------------------------------------------
 void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 {
@@ -1343,11 +1395,12 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 	}
 	if (zAxis == Z_FLOATING_Z)
 	{
-		// RW 0x5E7709-0x5E7745: the pending position is the matrix position, the wading / cliff updater runs (RW 0x5E5785, not ported: S-084); the height
-		// the movers left in the matrix stays: no ground snap
+		// RW 0x5E7709-0x5E7745: the pending position is the matrix position, then the wading updater runs on it (Port 202, RW 0x5E773E; its answer is dropped,
+		// RW 0x5E7743); the height the movers left in the matrix stays: no ground snap
 		Coord3D p{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
 		host.setPendingPosition(p);
-		noteStopOf(1);
+		float terrainZ = 0.0f; // RW 0x5E7739
+		updateWading(host, p, terrainZ);
 		return;
 	}
 	if (zAxis == Z_SEA_LEVEL)
@@ -1405,8 +1458,8 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 		// PRECISE_Z_POS) is clear. The surface (RW 0x5E3960: the water's height under standing water, else the ground's) for SURFACE_RELATIVE_HEIGHT, 0 for
 		// ABSOLUTE_HEIGHT; the aim = RW 0x5E5D9A + the surface (x87 fadd, stored), or the goal's z with flag 8. The step: a dead object (+ 0x458 bit 0) GameData
 		// Gravity, else (((aim - z) x PreferredHeightDamping (+ 0x50) + z) - z) / (LOGICFRAMES_PER_SECOND (RW 0xD9F608, int 5) x 2.0) (SSE); a step other than 0
-		// moves the matrix to (x, y, z + step). A step above 0.5 (RW 0xBD869C) sets CLIMBING (obj + 0x118 bit 7) and reveals a stealthy object (RW 0x68FBD3 ->
-		// 0x7767A9: not ported, reported), else CLIMBING is cleared. The common tail (RW 0x5E7C40) follows.
+		// moves the matrix to (x, y, z + step). A step above 0.5 (RW 0xBD869C) sets CLIMBING (obj + 0x118 bit 7) and marks a disguised object detected (Port 202,
+		// RW 0x5E7C08 .. 0x5E7C22: RW 0x68FBD3, + 0x3C, RW 0x7767A9), else CLIMBING is cleared. The common tail (RW 0x5E7C40) follows.
 		Coord3D p{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
 		if (!(m_preferredHeight == 0.0f) || (m_flags & 0x8u))
 		{
@@ -1449,10 +1502,7 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 				{
 					host.setModelCondition(climbing, true);
 				}
-				if (host.hasStealthModule())
-				{
-					noteStopOf(1); // RW 0x5E7C0A: the stealth reveal of a climbing object is not ported
-				}
+				host.revealDisguisedClimber(); // RW 0x5E7C08 .. 0x5E7C22, on every climbing frame: CLIMBING already set does not skip it (RW 0x5E7BF8 jumps to 0x5E7C08)
 			}
 			else if (host.testModelCondition(climbing))
 			{
@@ -1472,14 +1522,20 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 	Coord3D pos{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
 	if (!host.zMotionSuppressed())
 	{
-		// RW 0x5E774A-0x5E7816: z comes from TheTerrainLogic->getLayerHeight at the object's layer (vslot 0x1C; RW 0x5E5785's water case on the ground layer
-		// is not ported, S-084). Lane WALL-4, RW 0x5E77AF .. 0x5E77EE: after the first second (TheGameLogic + 0x40 above LOGICFRAMES_PER_SECOND, RW 0xD9F608) an
+		// RW 0x5E774A-0x5E7816: the wading updater runs first (Port 202, RW 0x5E7787); while the object wades or swims the height is the ground's under the
+		// water, which TheTerrainLogic's water query left in the height local (RW 0x5E778E -> 0x5E77F0), and neither the layer query nor the hold below
+		// runs. Otherwise z comes from TheTerrainLogic->getLayerHeight at the object's layer (vslot 0x1C). S-084 stays noted for what that row still lists
+		// of this case (the height is the host's answer). Lane WALL-4, RW 0x5E77AF .. 0x5E77EE: after the first second (TheGameLogic + 0x40 above LOGICFRAMES_PER_SECOND, RW 0xD9F608) an
 		// object on the ramp layer or a raised walkway that is more than 20 (RW 0xBDBC6C, SSE) above that height keeps its own
 		noteStopOf(1);
-		float surface = host.groundHeightAt(pos.x, pos.y);
-		if (host.logicFrame() > (unsigned)LOGICFRAMES_PER_SECOND && host.isOnRampOrRaisedLayer() && SimMath::subf32(pos.z, surface) > 20.0f)
+		float surface = 0.0f; // RW 0x5E776B: the height local starts at 0
+		if (!updateWading(host, pos, surface))
 		{
-			surface = pos.z;
+			surface = host.groundHeightAt(pos.x, pos.y);
+			if (host.logicFrame() > (unsigned)LOGICFRAMES_PER_SECOND && host.isOnRampOrRaisedLayer() && SimMath::subf32(pos.z, surface) > 20.0f)
+			{
+				surface = pos.z;
+			}
 		}
 		pos.z = surface;
 		m_matrix.m[2][3] = pos.z;
