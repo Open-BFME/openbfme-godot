@@ -6,13 +6,19 @@
 // module tells TheLargeGroupAudio (GameLogic/LargeGroupAudioLink.h) where its object is and what state it is in; the maps there count the members.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; DONOR Open-BFME-2 LargeGroupAudioUpdate*.cpp (BFME2 0x004AB7C8 .. 0x004ABB4B) has the same structure):
-//   * data (size 0x20, ctor RW 0x8AF542, field table RW 0xC6B380): TimeBetweenUpdatesMin (parseDurationUnsignedInt, + 0x14, default ceil(0.005f * 500.0f)
-//     = 3 frames computed by the ctor on the x87: RW 0x8AF565 .. 0x8AF587), TimeBetweenUpdatesVariation (parseDurationUnsignedInt, + 0x18, 1),
-//     UnitWeight (RW 0x42EC11: an int in 0 .. 0xFFFF, + 0x1C, 1), Key (RW 0x7EEC77: every token of the line is added, RW 0x7EEB0C, to the data's key
-//     set + 8: the keys are interned in a std::map keyed by the name with StringBase's compare, RW 0x7EE97A -> 0x42C33B -> 0x4065D4: exact bytes, read
-//     like RW 0x406585). The ctor registers the data with RW 0x8AF518 (a registry at RW 0xDE9720 whose key union RW 0x8AF446 raises no error).
-//   * module (ctor RW 0x8AEF0C): + 0x28 / + 0x2C the stored position (0.0), + 0x30 the stored model condition flags (0x4C bytes), + 0x7C the stored
-//     status bits (0x10 bytes), + 0x8C the stored "stealthed" byte, + 0x8D "registered" (false), + 0x90 the stored frame (-1).
+//   * data (size 0x20, ctor RW 0x8AF542, copy ctor RW 0x8AF5B1, dtor RW 0x8AF643 / deleting RW 0x8AF68B, field table RW 0xC6B380):
+//     TimeBetweenUpdatesMin (parseDurationUnsignedInt, + 0x14, default ceil(0.005f * 500.0f) = 3 frames computed by the ctor on the x87:
+//     RW 0x8AF565 .. 0x8AF587), TimeBetweenUpdatesVariation (parseDurationUnsignedInt, + 0x18, 1), UnitWeight (RW 0x42EC11: an int in 0 .. 0xFFFF,
+//     + 0x1C, 1), Key (RW 0x7EEC77: every token of the line is added, RW 0x7EEB0C, to the data's LargeGroupAudioKeyMap + 8, copy ctor RW 0x007EE71C ->
+//     refcount inc RW 0x007EE532, dtor RW 0x007EEA18 -> refcount dec/erase RW 0x007EE86B, bitset union RW 0x007EEA7A -> vector resize RW 0x0064050F;
+//     the keys are interned in a std::map at RW 0xDE8890 keyed by the name with StringBase's compare, RW 0x7EE97A -> 0x42C33B -> 0x4065D4: exact bytes,
+//     read like RW 0x406585). The ctor registers the data with RW 0x8AF518 (a registry at RW 0xDE9720 whose key union RW 0x8AF446 has no retail caller).
+//   * module (ctor RW 0x8AEF0C, dtor RW 0x008AEFD7, deleting dtor RW 0x008AF216, member + 0x24 deleting thunk RW 0x008AEF8A, snapshot name getter
+//     RW 0x008AEF84, module name key getter RW 0x008AEF92): + 0x28 / + 0x2C the stored position (0.0), + 0x30 the stored model condition flags
+//     (0x4C bytes), + 0x7C the stored status bits (0x10 bytes), + 0x8C the stored "stealthed" byte, + 0x8D "registered" (false), + 0x90 the stored
+//     frame (-1).
+//   * getDisabledTypesToProcess (RW 0x008AF0D0, update interface RW 0xC6B408 slot 1; DONOR BFME2 0x004AB9D5): copies DISABLEDMASK_ALL (RW 0xDE8B90)
+//     via RW 0x007B3CE0 so disabled objects still run update() and report state/position changes to TheLargeGroupAudio.
 //   * the sleep time (RW 0x8AEEC3, BFME2 0x004AB7C8): GameLogicRandomValue(0, TimeBetweenUpdatesVariation, "LargeGroupAudioUpdate.cpp", 0xA7)
 //     (RW 0x6D328E) + TimeBetweenUpdatesMin + 1.
 //   * join (RW 0x8AF005; onObjectCreated, slot 5 RW 0x8AF232, calls it when not registered; the listener interface's slot 1 too): not registered and the
@@ -65,6 +71,8 @@ public:
 	void onObjectCreated() override; // slot 5, RW 0x8AF232
 	void onDelete() override;        // slot 8, RW 0x8AF241
 	UpdateSleepTime update() override; // RW 0x8AF246
+	// RW 0x008AF0D0 (update interface RW 0xC6B408 slot 1; DONOR BFME2 0x004AB9D5): copies DISABLEDMASK_ALL (RW 0xDE8B90) via RW 0x007B3CE0
+	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)0xFFFFFFFFu; }
 
 	// the listener interface (module + 0x20, RW 0xC6B400): slot 0 (RW 0x8AF16C -> 0x8AF09D) and slot 1 (RW 0x8AF174 -> 0x8AF005)
 	void objectBecameInaudible() { leave(); }

@@ -989,3 +989,78 @@ TEST_CASE("audio4 eva retail: a structure set to 1 health for building says noth
 	CHECK(att.stats().evaDamaged == 1);
 	CHECK(game.game->drawables().evaDamageStats().lastEvent.empty()); // no Eva installed: the pick is made, nothing reported
 }
+
+// RW 0x008AF0D0 (update interface RW 0xC6B408 slot 1; DONOR BFME2 0x004AB9D5): LargeGroupAudioUpdate::getDisabledTypesToProcess copies
+// DISABLEDMASK_ALL (RW 0xDE8B90) via RW 0x007B3CE0 so disabled objects still wake, draw logic RNG (RW 0x008AEEC3), and notify TheLargeGroupAudio
+// (RW 0x0060D5CB) with the member interface state (RW 0xC6B3D0 slots 0..10: RW 0x008AF17C, RW 0x008AF18E, RW 0x009D39B1, RW 0x008AF1A5,
+// RW 0x008F1161, RW 0x008AF1AE, RW 0x008AF1B7, RW 0x008AF1BF, RW 0x008AF1C6, RW 0x008A4A91, RW 0x006DA64A).
+TEST_CASE("audio4 LGA: LargeGroupAudioUpdate::getDisabledTypesToProcess returns DISABLEDMASK_ALL so disabled members wake and notify (RW 0x008AF0D0)")
+{
+	logictest::LogicWorld f;
+	LargeGroupAudioUpdate::registerClass(f.w.modules);
+	const std::string err = f.w.load(kLgaObjects, INI_LOAD_OVERWRITE, "lga.ini");
+	REQUIRE_MESSAGE(err.empty(), err);
+
+	LgaCapture sink;
+	LargeGroupAudioLink &link = f.logic->largeGroupAudio();
+	link.setSink(&sink);
+	link.enable(f.logic->getFrame()); // RW 0x0060D4D3
+	const UnsignedInt gate = f.logic->getFrame();
+
+	Object *o = f.make("Grunt");
+	REQUIRE(o != nullptr);
+	LargeGroupAudioUpdate *m = lgaModule(*o);
+	REQUIRE(m != nullptr);
+	CHECK(m->getDisabledTypesToProcess() == (DisabledMaskType)0xFFFFFFFFu);
+
+	while (sink.events.empty() && f.logic->getFrame() < gate + 10)
+	{
+		f.logic->runLogicFrame();
+	}
+	REQUIRE(sink.events.size() == 1);
+	const std::int32_t firstStoredFrame = m->storedFrame();
+	CHECK(firstStoredFrame == (std::int32_t)f.logic->getFrame());
+
+	const int kStunned = ModelCondition::indexOf("STUNNED");
+	const Coord3D oldPos = *o->getPosition();
+	Coord3D newPos = oldPos;
+	newPos.x += 45.0f;
+	newPos.y += 15.0f;
+	o->setDisabled(DISABLED_HELD, UPDATE_SLEEP_FOREVER);
+	CHECK(o->getDisabledMask() == (DisabledMaskType)(1u << DISABLED_HELD));
+	o->setModelConditionState(kStunned, true);
+	o->setPosition(&newPos);
+
+	f.logic->random().enableCallLog(true);
+	f.logic->random().clearCallLog();
+	while (sink.events.size() == 1 && f.logic->getFrame() < (UnsignedInt)firstStoredFrame + 6u)
+	{
+		f.logic->runLogicFrame();
+	}
+
+	size_t lgaDraws = 0;
+	for (const auto &c : f.logic->random().callLog())
+	{
+		if (c.file == "LargeGroupAudioUpdate.cpp" && c.line == 0xA7)
+		{
+			++lgaDraws;
+		}
+	}
+	CHECK(lgaDraws == 1u);
+	REQUIRE(sink.events.size() == 2);
+	const LargeGroupAudioEvent &ev = sink.events.back();
+	CHECK(ev.kind == LargeGroupAudioEvent::UPDATE);
+	CHECK(ev.storedX == oldPos.x);
+	CHECK(ev.storedY == oldPos.y);
+	CHECK(ev.x == newPos.x);
+	CHECK(ev.y == newPos.y);
+	CHECK((ev.storedConditions[(unsigned)kStunned >> 5] & (1u << ((unsigned)kStunned & 31u))) == 0u);
+	CHECK((ev.conditions[(unsigned)kStunned >> 5] & (1u << ((unsigned)kStunned & 31u))) != 0u);
+	CHECK(ev.weight == 2);
+	CHECK(ev.keys == &lgaData(*f.w.get("Grunt"))->m_keys);
+	CHECK_FALSE(ev.stealthed);
+	CHECK_FALSE(ev.storedStealthed);
+	CHECK((std::int32_t)ev.storedFrame == firstStoredFrame);
+	CHECK(m->storedFrame() == (std::int32_t)ev.frame);
+	link.setSink(nullptr);
+}

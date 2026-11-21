@@ -81,22 +81,23 @@ UpdateSleepTime LargeGroupAudioUpdate::sleepTime() const
 
 void LargeGroupAudioUpdate::fillEvent(LargeGroupAudioEvent &e, bool stealthed) const
 {
+	// Member interface (module + 0x24, vtable RW 0xC6B3D0): slots 0..10 (slot 11 is deleting dtor thunk RW 0x008AEF8A -> RW 0x008AF216 -> RW 0x008AEFD7)
 	const Object *obj = getObject();
 	e.frame = obj->logic().getFrame();
 	e.object = obj->getID();
-	e.keys = &m_data->m_keys;
-	e.weight = m_data->m_unitWeight;
-	e.storedX = m_storedX;
+	e.keys = &m_data->m_keys;                    // slot 7: RW 0x008AF1BF (DONOR BFME2 0x004ABAC4)
+	e.weight = m_data->m_unitWeight;             // slot 6: RW 0x008AF1B7 (DONOR BFME2 0x004ABABC)
+	e.storedX = m_storedX;                       // slot 0: RW 0x008AF17C (DONOR BFME2 0x004ABA81)
 	e.storedY = m_storedY;
-	e.x = obj->getPosition()->x;
+	e.x = obj->getPosition()->x;                 // slot 1: RW 0x008AF18E (DONOR BFME2 0x004ABA93)
 	e.y = obj->getPosition()->y;
-	e.storedConditions = m_storedConditions;
-	e.conditions = obj->getModelConditionBits();
-	e.storedStatus = m_storedStatus;
-	e.status = obj->getStatusBits();
-	e.storedStealthed = m_storedStealthed;
-	e.stealthed = stealthed;
-	e.storedFrame = (UnsignedInt)m_storedFrame;
+	e.storedConditions = m_storedConditions;     // slot 2: RW 0x009D39B1
+	e.conditions = obj->getModelConditionBits(); // slot 3: RW 0x008AF1A5 (DONOR BFME2 0x004ABAAA)
+	e.storedStatus = m_storedStatus;             // slot 4: RW 0x008F1161
+	e.status = obj->getStatusBits();             // slot 5: RW 0x008AF1AE (DONOR BFME2 0x004ABAB3)
+	e.storedStealthed = m_storedStealthed;       // slot 9: RW 0x008A4A91
+	e.stealthed = stealthed;                     // slot 8: RW 0x008AF1C6 -> RW 0x00694C0D(0) (DONOR BFME2 0x004ABACB)
+	e.storedFrame = (UnsignedInt)m_storedFrame;  // slot 10: RW 0x006DA64A
 }
 
 void LargeGroupAudioUpdate::store(bool stealthed)
