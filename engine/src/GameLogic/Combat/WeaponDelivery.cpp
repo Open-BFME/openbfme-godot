@@ -1103,10 +1103,6 @@ void openGate(GameLogic &logic, Object &victim)
 		}
 		return;
 	}
-	if (victim.findModule("GateProxyBehavior"))
-	{
-		logic.noteStop("[S-1940] OpenGateNugget: the victim's GateProxyBehavior (RW 0x911569) is not ported: its gate is not opened");
-	}
 }
 
 // RW 0x91161F (slot 6): max(Radius, 1.0) around `pos` (RW 0xA39300: FROM_BOUNDINGSPHERE_3D, no filter), each through slot 1 then RW 0x911516

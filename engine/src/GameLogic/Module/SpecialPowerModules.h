@@ -284,6 +284,24 @@ private:
 	ObjectID m_secondaryUsed = INVALID_ID; // USE_SECONDARY_OBJECT_LOCATION: the object found by the last cast (tests)
 };
 
+// RW 0x8CB3D1 (DONOR BFME2 0x004C7063)
+class ManTheWallsSpecialPower : public SpecialPowerModule
+{
+public:
+	OBFME_MODULE_XFER(ManTheWallsSpecialPower) // lane SAVE-4b
+	ManTheWallsSpecialPower(Thing *thing, const SpecialPowerModuleData *data);
+
+	void doSpecialPower(unsigned options) override; // slot 10 (RW 0x8CBDBA)
+	void crc(StateHasher &h) const override;
+	static void registerClass(ModuleFactory &modules);
+
+protected:
+	void effectAtLocation(const Coord3D &loc, const Object *target) override;
+
+private:
+	void manTheWalls(); // RW 0x8CBDBA (DONOR BFME2 0x004C799B)
+};
+
 class GameLogic;
 class Player;
 

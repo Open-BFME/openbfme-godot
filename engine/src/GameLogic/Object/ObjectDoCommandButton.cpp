@@ -327,13 +327,9 @@ void Object::doCommandButton(const CommandButton *button, CommandSourceType cmdS
 	}
 	case GUI_COMMAND_TOGGLE_GATE:
 	{
-		GateOpenAndCloseBehavior *gate = dynamic_cast<GateOpenAndCloseBehavior *>(findModule("GateOpenAndCloseBehavior")); // RW 0x6974B1
+		GateOpenAndCloseBehavior *gate = GateOpenAndCloseBehavior::findGate(*this); // RW 0x6974B1, RW 0x6974D6
 		if (!gate)
 		{
-			if (findModule("GateProxyBehavior")) // RW 0x6974D6
-			{
-				unported(*this, b, "doCommandButton", "a GateProxyBehavior gate, S-1940");
-			}
 			return;
 		}
 		if (!gate->isSettled()) // slot 10

@@ -127,6 +127,11 @@ void GateOpenAndCloseBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p)
 	p.add(kGateOpenAndClose); // RW 0xC07D08
 }
 
+void GateProxyBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	p.add(kGateOpenAndClose); // RW 0xC07D08
+}
+
 void AIGateUpdateModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
 	p.add(kAIGateUpdate); // RW 0xC6D0C4
@@ -191,7 +196,43 @@ Relationship GateOpenAndCloseBehavior::relationshipTo(const Player &player) cons
 
 GateOpenAndCloseBehavior *GateOpenAndCloseBehavior::findGate(const Object &obj)
 {
-	return dynamic_cast<GateOpenAndCloseBehavior *>(obj.findModule("GateOpenAndCloseBehavior"));
+	if (auto *gate = dynamic_cast<GateOpenAndCloseBehavior *>(obj.findModule("GateOpenAndCloseBehavior"))) // RW 0x6974B1
+	{
+		return gate;
+	}
+	return dynamic_cast<GateOpenAndCloseBehavior *>(obj.findModule("GateProxyBehavior")); // RW 0x6974D6
+}
+
+// RW 0x89CB19 (DONOR BFME2 0x0049936A)
+void GateOpenAndCloseBehavior::onObjectCreated()
+{
+	if (!getObject())
+	{
+		return;
+	}
+	if (getObject()->isEffectivelyDead())
+	{
+		// RW 0x89CB41 .. 0x89CB5B
+		setGeometry(true, true, true);
+		getObject()->logic().skirmishAI().unregisterGate(*this);
+	}
+	if (m_data->m_proxy.empty())
+	{
+		return;
+	}
+	GameLogic &logic = getObject()->logic();
+	for (Object *cand = logic.getFirstObject(); cand; cand = cand->getNextObject())
+	{
+		if (cand->getName() == m_data->m_proxy)
+		{
+			if (auto *other = dynamic_cast<GateOpenAndCloseBehavior *>(cand->findModule("GateProxyBehavior")))
+			{
+				other->setLinkedObjectID(getObject()->getID()); // RW 0x89CC00
+				setLinkedObjectID(cand->getID());               // RW 0x89CC06
+			}
+			break;
+		}
+	}
 }
 
 // RW 0x89C97A
@@ -538,6 +579,113 @@ void GateOpenAndCloseBehavior::crc(StateHasher &hasher) const
 	hasher.addU32(m_stateFrame);
 	hasher.addU32((std::uint32_t)m_request);
 	hasher.addBool(m_soundPlayed);
+	hasher.addU32((std::uint32_t)m_linkedObjectId); // Local 33: the proxy link is logic state
+}
+
+// ---- GateProxyBehavior --------------------------------------------------------------------------------------------------------------
+// RW 0x64DFA5 (DONOR BFME2 0x0024E2CC)
+GateProxyBehavior::GateProxyBehavior(Thing *thing, const GateProxyBehaviorModuleData *data)
+	: GateOpenAndCloseBehavior(thing, data)
+{
+}
+
+// RW 0x656693 (DONOR BFME2 0x00256996)
+bool GateProxyBehavior::resolveTarget() const
+{
+	if (m_linkedObjectId == 0 || !getObject())
+	{
+		m_targetGate = nullptr;
+		return false;
+	}
+	Object *obj = getObject()->logic().findObjectByID(m_linkedObjectId);
+	if (!obj)
+	{
+		m_targetGate = nullptr;
+		return false;
+	}
+	m_targetGate = dynamic_cast<GateOpenAndCloseBehavior *>(obj->findModule("GateOpenAndCloseBehavior"));
+	return m_targetGate != nullptr;
+}
+
+bool GateProxyBehavior::isOpen() const // slot 6 (RW 0x656747)
+{
+	return resolveTarget() ? m_targetGate->isOpen() : false;
+}
+
+bool GateProxyBehavior::isSettled() const // slot 10 (RW 0x656760)
+{
+	return resolveTarget() ? m_targetGate->isSettled() : false;
+}
+
+void GateProxyBehavior::open() // slot 7 (RW 0x65667C)
+{
+	if (resolveTarget())
+	{
+		m_targetGate->open();
+	}
+}
+
+void GateProxyBehavior::close() // slot 8 (RW 0x656719)
+{
+	if (resolveTarget())
+	{
+		m_targetGate->close();
+	}
+}
+
+void GateProxyBehavior::toggle() // slot 9 (RW 0x656730)
+{
+	if (resolveTarget())
+	{
+		m_targetGate->toggle();
+	}
+}
+
+GateOpenAndCloseBehavior::State GateProxyBehavior::state() const
+{
+	return resolveTarget() ? m_targetGate->state() : CLOSED;
+}
+
+GateOpenAndCloseBehavior::GeometryState GateProxyBehavior::geometryState() const
+{
+	return resolveTarget() ? m_targetGate->geometryState() : GEOMETRY_NONE;
+}
+
+float GateProxyBehavior::percent() const // slots 11 / 12 (RW 0x656779 / 0x6567A1)
+{
+	return resolveTarget() ? m_targetGate->percent() : 0.0f;
+}
+
+UpdateSleepTime GateProxyBehavior::update() // RW 0x64DF74
+{
+	return UPDATE_SLEEP_FOREVER;
+}
+
+void GateProxyBehavior::onObjectCreated() // RW 0x499475 / RW 0x89CB19
+{
+	GateOpenAndCloseBehavior::onObjectCreated();
+	if (m_linkedObjectId == 0 && getObject())
+	{
+		GameLogic &logic = getObject()->logic();
+		for (Object *cand = logic.getFirstObject(); cand; cand = cand->getNextObject())
+		{
+			if (auto *gate = dynamic_cast<GateOpenAndCloseBehavior *>(cand->findModule("GateOpenAndCloseBehavior")))
+			{
+				if (gate->data()->m_proxy == getObject()->getName())
+				{
+					setLinkedObjectID(cand->getID());
+					gate->setLinkedObjectID(getObject()->getID());
+					break;
+				}
+			}
+		}
+	}
+}
+
+void GateProxyBehavior::crc(StateHasher &hasher) const
+{
+	UpdateModule::crc(hasher);
+	hasher.addU32((std::uint32_t)m_linkedObjectId);
 }
 
 // ---- AIGateUpdate ------------------------------------------------------------------------------------------------------------------------
@@ -661,6 +809,7 @@ void AIGateUpdate::crc(StateHasher &hasher) const
 void GateModules::registerAll(ModuleFactory &modules)
 {
 	bind<GateOpenAndCloseBehavior, GateOpenAndCloseBehaviorModuleData>(modules, "GateOpenAndCloseBehavior");
+	bind<GateProxyBehavior, GateProxyBehaviorModuleData>(modules, "GateProxyBehavior");
 	bind<AIGateUpdate, AIGateUpdateModuleData>(modules, "AIGateUpdate");
 }
 
@@ -703,8 +852,7 @@ std::vector<std::string> GateModules::acceptanceStops()
 		"contact pass (AIWorld::processGateContacts, lane GATECOLLIDE-1; the units' pass pairs AI units only, S-581); not ported: the object interface call RW 0x68C3E6 at the start of the "
 		"update and the AI notification RW 0x68BE59(9); the pathfinder's gate-flag keeping removal (RW 0x6E861E) runs since lane WALLFOOT-1 and "
 		"FakePathfindPortalBehaviour since lane WALL-2 (PortalModules.h)",
-		"[S-1941] GateProxyBehavior and the Proxy link of GateOpenAndCloseBehavior (onObjectCreated RW 0x89CB19, Orthanc) are not ported: the messages and buttons find "
-		"only a GateOpenAndCloseBehavior",
+		"[S-1941] GateProxyBehavior and the Proxy link of GateOpenAndCloseBehavior (onObjectCreated RW 0x89CB19, Orthanc) are ported (Local 33: retail fallback and proxy forwarding run)",
 		"[S-1942] the gate sounds (SoundOpeningGateLoop / SoundFinishedOpeningGate / SoundClosingGateLoop / SoundFinishedClosingGate, RW 0x89C261 / 0x89C1A4) are "
 		"recorded, not played: the logic has no object sound path",
 	};
@@ -713,7 +861,9 @@ std::vector<std::string> GateModules::acceptanceStops()
 // ---- lane SAVE-4b: the snapshots (OpenBFME native, S-4190; retail's AIGateUpdate::xfer RW 0x8B4A69 (1, 2) holds two more ints) ----------------------
 void GateOpenAndCloseBehavior::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	// Local 33: version 2 adds the proxy link (+0x24); version 1 had none
+	XferVersion version{ 1, 2 };
+	x.xferVersion(version);
 	xferUpdateModule(x);
 	SnapshotXfer::enumIn(x, m_state, OPENING, CLOSED, "a gate's state");
 	SnapshotXfer::enumIn(x, m_geometryState, GEOMETRY_NONE, GEOMETRY_OPEN, "a gate's geometry state");
@@ -727,6 +877,21 @@ void GateOpenAndCloseBehavior::xfer(Xfer &x)
 	}
 	x.xferBool(&m_soundPlayed);
 	SnapshotXfer::strings(x, m_sounds);
+	if (version.current >= 2)
+	{
+		x.xferObjectID(&m_linkedObjectId);
+	}
+	else if (x.isLoading())
+	{
+		m_linkedObjectId = 0;
+	}
+}
+
+void GateProxyBehavior::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	xferUpdateModule(x);
+	x.xferObjectID(&m_linkedObjectId);
 }
 
 void AIGateUpdate::xfer(Xfer &x)

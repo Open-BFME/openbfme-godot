@@ -120,11 +120,11 @@ public:
 	UpdateSleepTime update() override;
 	void crc(StateHasher &hasher) const override;
 
-	bool isOpen() const { return m_state == OPEN; } // slot 6
-	bool isSettled() const { return m_settled; }    // slot 10
-	void open();                                     // slot 7
-	void close();                                    // slot 8
-	void toggle();                                   // slot 9
+	virtual bool isOpen() const { return m_state == OPEN; } // slot 6
+	virtual bool isSettled() const { return m_settled; }    // slot 10
+	virtual void open();                                     // slot 7
+	virtual void close();                                    // slot 8
+	virtual void toggle();                                   // slot 9
 	void changeWantOpenCount(int delta);             // RW 0x89BFE0
 	// RW 0x89C12F: true while the gate's OPEN (passable) geometry is the one in the pathfinder's map (the AI gate list's test)
 	bool openGeometryInPathfindMap() const;
@@ -134,6 +134,8 @@ public:
 	// walk passes it; every other caller leaves it false, as the port's update's redundant open call must not re-run the push-out scan every frame)
 	void setGeometry(bool openGeometry, bool scan, bool force = false);
 
+	void onObjectCreated() override; // RW 0x89CB19: link to proxy if Proxy named
+
 	// the collide interface (vtable RW 0xC668E0 slots 0 / 1)
 	CollideModuleInterface *getCollide() override { return this; }
 	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override; // RW 0x89C6F5: the repel
@@ -142,15 +144,22 @@ public:
 	void pushOut();
 	unsigned pushOutRequests() const { return m_pushOutRequests; }
 
-	State state() const { return (State)m_state; }
-	GeometryState geometryState() const { return (GeometryState)m_geometryState; }
-	float percent() const { return m_percent; }
+	virtual State state() const { return (State)m_state; }
+	virtual GeometryState geometryState() const { return (GeometryState)m_geometryState; }
+	virtual float percent() const { return m_percent; }
 	int wantOpenRequest() const { return m_request; }
 	// the sounds the gate would have started (stop S-1942: not played), in order: "opening", "closing", "opened", "closed"
 	const std::vector<std::string> &soundRequests() const { return m_sounds; }
+	const GateOpenAndCloseBehaviorModuleData *data() const { return m_data; }
 
-	// the gate interface of an object (its GateOpenAndCloseBehavior; GateProxyBehavior is not ported), null without one
+	ObjectID linkedObjectID() const { return m_linkedObjectId; } // RW +0x24 (+0x20 in UpdateModule)
+	void setLinkedObjectID(ObjectID id) { m_linkedObjectId = id; }
+
+	// the gate interface of an object (its GateOpenAndCloseBehavior or GateProxyBehavior), null without one
 	static GateOpenAndCloseBehavior *findGate(const Object &obj);
+
+protected:
+	ObjectID m_linkedObjectId = 0;   ///< +0x24 (+0x20 in UpdateModule)
 
 private:
 	void setOpenCloseState(int state); // RW 0x89C261
@@ -168,6 +177,39 @@ private:
 	bool m_soundPlayed = false;      ///< +0x48
 	std::vector<std::string> m_sounds;
 	unsigned m_pushOutRequests = 0; ///< diagnostics (not retail state, not hashed or saved)
+};
+
+class GateProxyBehaviorModuleData : public GateOpenAndCloseBehaviorModuleData
+{
+public:
+	static void buildFieldParse(MultiIniFieldParse &p); // RW 0x653CCA
+};
+
+// RW 0x64DFA5 (DONOR BFME2 0x0024E2CC)
+class GateProxyBehavior : public GateOpenAndCloseBehavior
+{
+public:
+	OBFME_MODULE_XFER(GateProxyBehavior) // lane SAVE-4b
+	GateProxyBehavior(Thing *thing, const GateProxyBehaviorModuleData *data);
+	~GateProxyBehavior() override = default;
+
+	UpdateSleepTime update() override; // RW 0x64DF74: returns UPDATE_SLEEP_FOREVER
+	void crc(StateHasher &hasher) const override;
+
+	bool isOpen() const override;      // slot 6 (RW 0x656747)
+	bool isSettled() const override;   // slot 10 (RW 0x656760)
+	void open() override;              // slot 7 (RW 0x65667C)
+	void close() override;             // slot 8 (RW 0x656719)
+	void toggle() override;            // slot 9 (RW 0x656730)
+	State state() const override;
+	GeometryState geometryState() const override;
+	float percent() const override;    // slots 11 / 12 (RW 0x656779 / 0x6567A1)
+
+	void onObjectCreated() override;   // RW 0x499475 / RW 0x89CB19
+
+private:
+	bool resolveTarget() const;        // RW 0x656693 (DONOR BFME2 0x00256996)
+	mutable GateOpenAndCloseBehavior *m_targetGate = nullptr;
 };
 
 class AIGateUpdateModuleData : public ModuleData
