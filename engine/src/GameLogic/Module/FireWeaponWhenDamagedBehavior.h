@@ -40,6 +40,20 @@
 // (ignore the ranges) = 1 and argument 7 (a projectile detonation: the weapon's nuggets are delivered at the victim at once, RW 0x6CB7BD) = 1; the
 // catalogue's "fireWeapon at an object" is this detonation variant); no source object: retail's fire at the own position. The update's continuous
 // weapons are unchanged. Without the feature, FireAtAttacker is an unknown field (retail's INI error).
+// THE 6 OWN FUNCTIONS THE NIGHTLY MAP STILL REPORTS AS `none` (each read from its first instruction; the class bound by create -> constructor ->
+// vtables RW 0xC5FF34 / RW 0xC5FE78 / RW 0xC5FE20): all of them are lifetime, name or interface plumbing, no simulation behaviour:
+//   * RW 0x885CB9 (the module vtable RW 0xC5FF34 slot 0) the scalar deleting destructor: the destructor RW 0x88579B, then operator delete RW 0x42F6A0
+//     when the flag is set (the port's ~FireWeaponWhenDamagedBehavior);
+//   * RW 0x8854C5 (slot 1) the destructor body: the UpgradeMux base's destruction (RW 0x4D0EAF) and nothing on the mux at +0x20 -- C++ lifetime;
+//   * RW 0x885885 (slot 2) Snapshot's name: `mov eax, 0xC0BA7C`, the literal "FireWeaponWhenDamagedBehavior" (the port's Module::getModuleClassName);
+//   * RW 0x88588B (slot 3) the module's xfer -- ported (FireWeaponWhenDamagedBehavior::xfer: RW 0x850C60, the mux RW 0x8D27E8, then per weapon a
+//     presence flag through slot 0x90 and the weapon's own snapshot through slot 0x30);
+//   * RW 0x8859F4 (slot 4) the module name key: NameKeyGenerator's key of "FireWeaponWhenDamagedBehavior" (the name table RW 0xC0BA7C through
+//     RW 0x5487EC, cached at RW 0xDE91D8) -- the port's Module::getModuleNameKey;
+//   * RW 0x862758 (the BehaviorModuleInterface table RW 0xC5FE78 slot 4, the sub-object module + 0xC) getDamage: `lea eax,[ecx-0xC] ... and eax,ecx`
+//     with `add ecx,0x1C`, i.e. the module's damage interface at module + 0x28 (its table RW 0xC5FE10) -- the port's getDamage();
+//   * RW 0x88744E (the mux table RW 0xC5FE20 slot 14) the upgrade data's + 0x135 byte, requiresAllConflictingTriggers (slot 13 is + 0x134, RW 0x887444)
+//     -- the port's UpgradeMux / UpgradeModuleData.
 // WHAT IS INFERENCE (OpenBFME):
 //   * the weapon names are resolved by the module's constructor (RW resolves them at the parse: the same templates unless a later INI replaces one);
 //   * an object without a WeaponSet fires through an ObjectWeapons host made for it (as FireWeaponUpdate, S-924: the shot's bonus conditions and attribute
