@@ -18,6 +18,8 @@
 #include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Module/AIUpdate.h"                 // lane PORT-39: the supply truck interface (RW 0x8F8862 -> vslot 0x17C)
+#include "GameLogic/Module/SupplyTruckAIUpdate.h"      // lane PORT-39: SupplyTruckAIInterface::getPreferredDockID (RW 0x8F8882)
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 
 namespace
@@ -114,6 +116,10 @@ int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, con
 			ai.build.economy.disabled = m_store->data().disableEconomyBuilding; // RW 0x8F02CC -> + 0xC4
 			AIUpgrade::init(ai, m_store->data()); // RW 0x8F02DD .. 0x8F030B: the listeners (unit upgrader, upgrade builder) and their Disable flags (lane AI5)
 			// RW 0x9A10D8 (unit builder init): copies the army's HeroBuildOrder (AIBaseBuilder::init, lane DECOMP-2)
+			// lane PORT-39: the gatherer counts, from the side's SideInfo and the player's difficulty. Retail runs RW 0x8F736E from RW 0x8F7D71 (AIPlayer's
+			// update, the player-info-record walk) and RW 0x8F858E; INFERENCE (S-4194): those two callers are not ported, so the port runs the counts at
+			// the one place the game knows them, this AI's init — the same values, one frame earlier than a retail AI's first update
+			initResourceGatherers(ai);
 		}
 	}
 	// RW 0x6A9E48: every playable player's default team's members (Player + 0x30C, Team::iterate_TeamMemberList RW 0x66362D, BFME2 decomp
@@ -450,6 +456,8 @@ void SkirmishAIManager::updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g)
 	}
 	// RW 0x6C7961 .. 0x6C797A: RW 0x6C75B5 (+ 0x178 != -1; not ported), the game phase RW 0x6C7677, AIPlayer::update RW 0x8F0EB4 (step 2: the in-progress list, the
 	// base builder and the request processor; the other sub systems are S-412), then the brain (S-412)
+	// lane PORT-39: AIPlayer + 0x34 (RW 0x8F858E) — the gatherer count and the order for one more (S-4194: the order is reported, the port makes no unit)
+	updateResourceGatherers(ai);
 	AIBaseBuilder::updatePhase(m_logic, ai);
 	AIBaseBuilder::update(m_logic, ai);
 	// the team builder (+ 0x90, RW 0x9A3366) runs inside AIPlayer::update after the unit builder; it draws no random value and touches only the tactic teams,
@@ -459,6 +467,102 @@ void SkirmishAIManager::updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g)
 	// the brain (+ 0x164, RW 0x6C74C2); the group's first AI owns the target chooser the others share (+ 0x18)
 	AITacticalAI::updateBrain(m_logic, ai, groupFirstAI(g));
 	++m_counters.brainUpdates;
+}
+
+// lane PORT-39, RW 0x8F736E(AI, object): RW's arguments are the AI (arg 1, ebx) and an object whose controlling player (RW 0x68BDA5 ->
+// `[obj + 0x10] + 0x58`, the side name) and difficulty (`[obj + 0x30]`, the player's + 0x2FC AI's AIPlayer + 0x30, RW 0x6AA61B) select the entry. The
+// port reads the same two values from the AI's own player (the AI is made for that player, RW 0x6C7C27's + 0x15C), so it needs no object:
+//   RW 0x8F73D2: `byte [ai + 0x46] = 1`;
+//   RW 0x8F73D6 .. 0x8F7422: `[0xDE4B40] + 0x18` (TheAI's data) `+ 0xF4` is the SideInfo list; walk it (`[entry + 0x1BC]` next) and `strcmp`
+//   (RW 0x4065AA) the object's side against the entry's `+ 0x4`; on a match take `[eax + 0x30]` (the difficulty) and read the entry's `+ 0x8`
+//   (0), `+ 0xC` (1) or `+ 0x10` (2) — `+ 0x8` also when the difficulty is neither 0 nor 1 (RW 0x8F7407);
+//   RW 0x8F7424: `[ai + 0x7C] = -1`; RW 0x8F7428 .. 0x8F742D: `[ai + 0x78] = count + 1`, and `[ai + 0x46] = 1` again.
+// A side with no entry leaves the AI's `+ 0x46` clear (the caller's early-outs), as retail does (no loop body runs).
+void SkirmishAIManager::initResourceGatherers(AISkirmishPlayer &ai)
+{
+	const Player *p = m_logic.players().getNthPlayer(ai.playerIndex);
+	if (!p)
+	{
+		return;
+	}
+	int difficulty = p->getSkirmishDifficulty(); // RW 0x6AA61B
+	if (difficulty < 0)
+	{
+		// outside a skirmish game the player has no AI and no difficulty: the port's -1 means "none" (Player::getSkirmishDifficulty)
+		difficulty = 0; // INFERENCE (S-4194): retail's `[obj + 0x30]` there is TheGameLogic's difficulty ([0xDE3BAC] + 0x1A5C4, RW 0x64501B)
+	}
+	for (const GameLogicSettings::AISideInfo &info : m_logic.settings().sideInfos)
+	{
+		if (info.side != p->getSide()) // RW 0x4065AA: strcmp, exact
+		{
+			continue;
+		}
+		const int index = difficulty == 1 ? 1 : (difficulty == 2 ? 2 : 0); // RW 0x8F740A / 0x8F7412
+		ai.hasSideInfo = true;
+		ai.needsResourceGatherers = true;      // RW 0x8F73D2 / 0x8F7429
+		ai.resourceGatherersHave = -1;         // RW 0x8F7424
+		ai.resourceGatherersWanted = info.resourceGatherers[index] + 1; // RW 0x8F7428 / 0x8F742D
+		return;
+	}
+}
+
+// lane PORT-39, RW 0x8F858E (AIPlayer + 0x34 of AIPlayer::update RW 0x8F0EB4; also called at RW 0x8F949C before the dozer bookkeeping and at RW 0x8F8802):
+//   RW 0x8F867A: `byte [ai + 0x46]` clear -> out;
+//   RW 0x8F8689 .. 0x8F8692: `[ai + 0x7C] < [ai + 0x78]` -> RW 0x8F88F7 (count the gatherers and order another);
+//   RW 0x8F88F7 .. 0x8F88E9: walk the player's teams (`[player + 0x34C]`) and every team's member list (RW 0x66362D), and for each member with the
+//   object status bit 1 (`[obj + 0x10A] & 1`, the port's OBJECT_STATUS_..., taken here as "alive and on the map") and an AI (`[obj + 0x260]`, the
+//   port's Object::getAIUpdateInterface) whose vslot 0x17C (the supply truck interface, RW 0x8AD2B2) is set — count it; the result goes to
+//   `[ai + 0x7C]` (RW 0x8F88EF). RW 0x8F8882 also keeps only the trucks whose vslot 0x3C (the preferred dock id) is the AI's `+ 0x74`, the economy sub
+//   system's supply center: S-4194, that sub system is not ported, so every live truck counts;
+//   RW 0x8F89EF: `[ai + 0x78] * 3 <= counted` -> RW 0x8F8B56 (a third of the wanted count in reserve ends the pass);
+//   RW 0x8F89FE .. 0x8F8B4A: the player's `+ 0x358` byte is remembered and set, then every object of TheObjectFactory's list (`[0xDE4A40] + 0xC`, the
+//   port's object list) with the status bit 1 goes through RW 0x8F5347(ai, 0, 0), the builder's "make me one of these" — the first object that accepts
+//   is the maker; RW 0x8F8B69: `[ai + 0x7C]++` and the object's AI vslot 0x14 takes the order (RW 0x66C609); RW 0x8F8B4A restores the byte.
+// What the port does (S-4194): the count is RW's and goes to the same field. The order is not made — the object RW 0x8F5347 asks for is the base
+// builder's business (fork issue 104) — so the port only tallies that the AI asked (AISkirmishPlayer::gathererRequests, a diagnostic: not hashed, not saved) and
+// leaves `[ai + 0x7C]` at the count RW would have after its own pass with no maker. Returns whether the AI is short of gatherers.
+bool SkirmishAIManager::updateResourceGatherers(AISkirmishPlayer &ai)
+{
+	if (!ai.needsResourceGatherers) // RW 0x8F867A
+	{
+		return false;
+	}
+	if (ai.resourceGatherersHave >= 0 && ai.resourceGatherersHave >= ai.resourceGatherersWanted) // RW 0x8F868C (`jl`)
+	{
+		return false;
+	}
+	const Player *p = m_logic.players().getNthPlayer(ai.playerIndex);
+	if (!p)
+	{
+		return false;
+	}
+	// RW 0x8F88F7: the live supply trucks of the player (RW 0x8F8862 the object's AI, RW 0x8F886E vslot 0x17C the supply truck interface).
+	// S-4194: RW 0x8F8882 keeps only the trucks whose preferred dock (vslot 0x3C) is `[ai + 0x74]`, the economy sub system's supply center; the port has no
+	// such choice (the AIPlayer's economy sub system is not ported), so every live truck counts. The count is RW's otherwise.
+	int counted = 0;
+	for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (!o->getControllingPlayer() || o->getControllingPlayer()->getPlayerIndex() != ai.playerIndex || o->isDestroyed()) // RW 0x8F8859 / 0x8F8941
+		{
+			continue;
+		}
+		AIUpdateInterface *update = o->getAIUpdateInterface(); // RW 0x8F8862
+		if (!update || !update->getSupplyTruckAIInterface())   // RW 0x8F886E
+		{
+			continue;
+		}
+		++counted;
+	}
+	ai.resourceGatherersHave = counted; // RW 0x8F88EF
+	// RW 0x8F89EF: the reserve check
+	if (ai.resourceGatherersWanted * 3 <= counted)
+	{
+		return false;
+	}
+	// RW 0x8F8B69's order: the maker is the base builder's (fork issue 104), so the port records the ask and leaves `[ai + 0x7C]` at RW's value for a pass where no
+	// object accepted (retail's `inc` runs only on the accepting object's branch, RW 0x8F8A39)
+	++ai.gathererRequests;
+	return true;
 }
 
 SkirmishAIManager::~SkirmishAIManager()
@@ -768,6 +872,14 @@ void SkirmishAIManager::crc(StateHasher &h) const
 				h.addI32(ai.enemyIndex);
 				h.addU32(ai.enemyRefreshFrame);
 			}
+			// lane PORT-39: the gatherer bookkeeping (AIPlayer + 0x46 / + 0x78 / + 0x7C). Only an AI whose side has a SideInfo entry is hashed, so every
+			// game whose data has none keeps its hash (retail's aidata.ini has the blocks; the recipes without AIData do not)
+			if (ai.needsResourceGatherers || ai.resourceGatherersWanted != 0 || ai.resourceGatherersHave != -1)
+			{
+				h.addBool(ai.needsResourceGatherers);
+				h.addI32(ai.resourceGatherersWanted);
+				h.addI32(ai.resourceGatherersHave);
+			}
 			AIBaseBuilder::crc(ai.build, h);
 			AITacticalAI::crc(ai.brain, h);
 		}
@@ -898,6 +1010,16 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"the idle army record RW 0x99E63B, the counter table RW 0x7EDC2F, the draw AITargetChooser.cpp 0xF7) is ported; inference: RW 0x6C7344 walks the "
 		"player's teams in its team list order (the port: the tactics in list order, offensive before targetless, each by team index); the target finder's "
 		"scan RW 0x6C6743 may reuse (RW 0x7EE166) is taken as a new scan; the idle army record reads the player info record's army list (lane DECOMP-3)",
+		"[S-4194] skirmish ai gatherers (lane PORT-39): AIData's SideInfo is read (row RW 0xC1CCF0 -> parser RW 0x70011F, whose entry table RW 0xC1D7D8 .. "
+		"0xC1D7F8 gives ResourceGatherersEasy / Normal / Hard through parseInt RW 0x42EC5E); RW 0x8F736E sets the AI's + 0x46 / + 0x78 / + 0x7C from its "
+		"side's entry and its difficulty (0 / 1 / 2 -> + 0x8 / + 0xC / + 0x10, any other difficulty -> + 0x8), and RW 0x8F858E counts the player's live "
+		"supply trucks (the objects whose AI answers vslot 0x17C, RW 0x8F886E) and orders one more while the count is short. Not ported: the order itself "
+		"(RW 0x8F89FE .. 0x8F8B4A, the 0x8F5347 walk over TheObjectFactory that asks the base builder; the base builder / dozer lane owns it, fork issue 104 - the "
+		"port counts, records the order in AISkirmishPlayer::gathererRequests and builds nothing), the preferred-dock filter of the count (RW 0x8F8882: "
+		"the AIPlayer economy sub system's supply center is not ported) and the block's other rows (BaseDefenseStructure1 + 0x1B8, SkillSet1 .. 5, recorded "
+		"by name and consumed like the AIData catch-all's). INFERENCE: the counts run at the AI's init in newGame instead of AIPlayer RW 0x8F7D71 / "
+		"RW 0x8F0EB4's call sites, and a player without a skirmish difficulty (-1) takes the Easy count where retail reads TheGameLogic's difficulty "
+		"(RW 0x64501B)",
 	};
 }
 

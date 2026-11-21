@@ -74,6 +74,13 @@ struct AISkirmishPlayer
 	std::uint32_t retryTimer = 0;             ///< AIPlayer + 0x158 = LOGICFRAMES_PER_SECOND * 30 at creation (RW 0x8F0855)
 	int enemyIndex = -1;                      ///< AIPlayer + 0xA0: the cached enemy player (RW 0x8F47EB), -1 when none
 	std::uint32_t enemyRefreshFrame = 0;      ///< AIPlayer + 0x9C: the frame the enemy cache refreshes (RW 0x8F47EB: now + 25)
+	// lane PORT-39: AIPlayer + 0x46 / + 0x78 / + 0x7C, the resource gatherer bookkeeping of RW 0x8F736E (set at the new game) and RW 0x8F858E (the
+	// builder's update: counts the player's supply trucks, makes a new one while there are fewer than + 0x78)
+	bool needsResourceGatherers = false;      ///< + 0x46: the AI wants gatherers (set with the counts at RW 0x8F73D2 / 0x8F7429)
+	int resourceGatherersWanted = 0;          ///< + 0x78: the SideInfo count of the AI's difficulty + 1 (RW 0x8F7428)
+	int resourceGatherersHave = -1;           ///< + 0x7C: the gatherers counted, -1 until the first count (RW 0x8F7424); + 1 means "one is on the way"
+	bool hasSideInfo = false;                 ///< the AI's side has an AIData SideInfo entry (not state: data every peer reads alike)
+	unsigned long long gathererRequests = 0;  ///< the passes that asked for a gatherer (a diagnostic for S-4194: no object is asked, so RW 0x8F8B69's `inc` has no maker)
 	const SkirmishAIStore *store = nullptr;   ///< the data the AI reads (not state)
 	AIBuildState build;                       ///< step 2: the base builder, the build requests, the dozer list, the game phase (AIBaseBuilder.h)
 	std::vector<std::shared_ptr<AIBuildRequest>> *farmSites = nullptr; ///< the manager's farm site pool (RW: a global vector, RW 0xDE9EEC)
@@ -168,6 +175,12 @@ public:
 	// RW 0x6A9D9C: historical registration order; dead and captured flags stay listed.
 	const std::vector<ObjectID> &captureFlags() const { return m_captureFlags; }
 	const AISkirmishGroup *findGroup(int playerIndex) const;
+	// lane PORT-39: RW 0x8F736E, the gatherer counts of an AI from its side's AIData SideInfo entry and its difficulty (retail runs it from the AIPlayer
+	// update RW 0x8F7D71, not ported: the port runs it at the AI's init in newGame, S-4194) and RW 0x8F858E, the count of the player's live supply trucks
+	// and the order for one more (AIPlayer + 0x34; updateAI runs it every frame). The tests drive them directly: `updateResourceGatherers` returns whether
+	// the AI was short (RW 0x8F868C) and leaves the count and the order tally in the AI
+	void initResourceGatherers(AISkirmishPlayer &ai);
+	bool updateResourceGatherers(AISkirmishPlayer &ai);
 	// manager + 0xA3C: the players with a player info record (every playable player of a started game), in index order
 	const std::vector<int> &infoPlayers() const { return m_infoPlayers; }
 	// RW 0xDE9EEC: the farm site pool (made at newGame)

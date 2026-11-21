@@ -147,7 +147,7 @@ public:
 	// lane PORTERFOG-1, RW 0x670A50 Drawable::fadeOut(frames) called by the simulation (a porter starting its work, RW 0x88DDC1): the drawable fades out over
 	// `frames` client frames (0: at once) and is hidden once its opacity * 255 is below 1 (RW 0x675B7E)
 	virtual void fadeOut(Object &obj, UnsignedInt frames) { (void)obj; (void)frames; }
-	// TOP20 #24, RW 0x672D28 Drawable::setShadowsEnabled called by the simulation (SlowDeathBehavior's beginSlowDeath with ShadowWhenDead No, RW 0x860F44 ..
+	// TOP20 fork issue 24, RW 0x672D28 Drawable::setShadowsEnabled called by the simulation (SlowDeathBehavior's beginSlowDeath with ShadowWhenDead No, RW 0x860F44 ..
 	// 0x860F58): the drawable's status bit 2 (+ 0x114) and every draw module's vslot 0x30; client only
 	virtual void setShadowsEnabled(Object &obj, bool enabled) { (void)obj; (void)enabled; }
 	// RW 0x67B78C -> 0x6D4789: a qualifying hit on a local hero, independently of the EVA gate.
@@ -254,6 +254,15 @@ struct GameLogicSettings
 		std::vector<std::pair<std::string, int>> targets;
 	};
 	std::vector<AttackPriorityDef> attackPriorityDefs; ///< the AIData list (+ 0xFC) head first
+	// lane PORT-39: an `SideInfo <side>` block of AIData (0x1C0 bytes, ctor RW 0x6FFF8C, vtable RW 0xC1D734; the list is AIData + 0xF4, each entry's
+	// + 0x1BC the next). The only fields the port reads are the three gatherer counts; the block's other rows (BaseDefenseStructure1 + 0x1B8 and the five
+	// SkillSet lists + 0x14 / + 0x68 / + 0xBC / + 0x110 / + 0x164) are not ported (stop S-4194). A later block of the same side re-parses the entry.
+	struct AISideInfo
+	{
+		std::string side;                ///< + 0x4 the block's name
+		int resourceGatherers[3] = { 0, 1, 2 }; ///< + 0x8 Easy, + 0xC Normal, + 0x10 Hard (RW 0x6FFFB2 .. 0x6FFFBC: 0, 1, 2)
+	};
+	std::vector<AISideInfo> sideInfos; ///< the AIData list, the newest block first (each new SideInfo is pushed at the head, RW 0x70011F)
 	bool forceModelsToFollowTimeOfDay = false;       ///< GameData ForceModelsToFollowTimeOfDay (a new drawable gets NIGHT)
 	bool forceModelsToFollowWeather = false;         ///< GameData ForceModelsToFollowWeather (SNOW)
 	bool bodyThresholdsLoaded = false;               ///< the two thresholds below were read from GameData (an ActiveBody that needs them throws when not)
@@ -463,7 +472,7 @@ public:
 	// lane SPELL-3: TheTerrainLogic + 0x578, the map's optimized trees (GameLogic/Map/TerrainTrees.h); filled by MapObjectLoop, hashed once a tree changed
 	TerrainTrees &trees() { return *m_trees; }
 	const TerrainTrees &trees() const { return *m_trees; }
-	// PORT 17 (issue #73): TheThreatFinderManager (RW 0xDE8888), the named threat areas of a map (GameLogic/System/ThreatFinder.h). Not a subsystem
+	// PORT 17 (issue fork issue 73): TheThreatFinderManager (RW 0xDE8888), the named threat areas of a map (GameLogic/System/ThreatFinder.h). Not a subsystem
 	// with an update: retail only adds and removes finders and looks them up by name (RW 0x7EE260); a finder scans when it is asked. Its state is
 	// the finders' and it travels with them (each finder's module xfers it, RW 0x7EDF70), so it is not a state-hash section of its own
 	ThreatFinderManager &threatFinders() { return *m_threatFinders; }
