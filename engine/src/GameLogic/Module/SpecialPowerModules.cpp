@@ -165,7 +165,7 @@ const FieldParse kSpecialPowerModuleFieldParse[] = {
 	{ "DistanceFromCommandCenter", INI::parseReal, nullptr, SP_OFF(m_distanceFromCommandCenter) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
-// community PR #36: BFME1's InitiateSound2 row (stored, not played) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
+// community PR fork issue 36: BFME1's InitiateSound2 row (stored, not played) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
 const FieldParse kBfme1SpecialPowerModule[] = {
 	{ "InitiateSound2", parseName, nullptr, SP_OFF(m_initiateSound2) },
 	{ nullptr, nullptr, nullptr, 0 },
@@ -1145,8 +1145,61 @@ const ObjectCreationList *OCLSpecialPower::pickOCL() const
 	return TheObjectCreationListStore ? TheObjectCreationListStore->findObjectCreationList(oclName) : nullptr;
 }
 
-void OCLSpecialPower::createOCL(const ObjectCreationList *ocl, const Coord3D &where, bool hasSecondary)
+// PORT-249: RW 0x5F08C2, the generic nugget's vtable (RW 0xBF72F8) slot 5, which RW 0x5EFB95 asks of every nugget of the list with the (object, location)
+// pair; the answer folds an AND over the list, so one refusal refuses the cast. The placement part (RW 0x5F091B .. 0x5F0B6B) is not ported (S-7426):
+// counted, and the nugget answers yes.
+bool OCLSpecialPower::nuggetAllowsCreate(Object &obj, const OCLNugget &nugget)
 {
+	if (nugget.count != 1)
+	{
+		return true; // RW 0x5F08D5: a Count other than 1 answers yes
+	}
+	if (nugget.spreadFormation)
+	{
+		return true; // RW 0x5F08DB: the byte at + 0xAB (SpreadFormation) set answers yes
+	}
+	if (nugget.objectNames.empty())
+	{
+		return false; // RW 0x5F08EB: the names vector is empty (its byte size is below 4) answers no
+	}
+	if (!obj.logic().things().findTemplate(nugget.objectNames.front()))
+	{
+		return false; // RW 0x5F08FF .. 0x5F0916: the first name is not a template answers no
+	}
+	// RW 0x5F091B: with the template's KindOf + 0x115 bit 0 set, a placement walk (the build assistant's RW 0x798F70 and the partition's RW 0x72D72F);
+	// without it, the + 0x108 bit 7 / bit 10 branches: the formation path or one object placed at the location + Offset through RW 0xDE8200's vslot 0x44
+	++m_unportedPlacementTests;
+	obj.logic().noteStop("[S-7426] OCLSpecialPower's nugget test (RW 0x5F08C2): the placement branch (RW 0x5F091B .. 0x5F0B6B: the build assistant's "
+						 "placement and the formation walk) is not ported: the nugget answers yes");
+	return true;
+}
+
+// PORT-249: RW 0x8C744B, OCLSpecialPower's answer for the interface slot 0x48 (asked before the base RW 0x897E01). Linearly: RW 0x8C7457 asks the
+// object's disabled mask (Object + 0x1C8, RW 0x9325B4: any of its one word's bits) and answers no when a bit is set (RW 0x8C7460); then, with a list
+// (RW 0x8C7393), a location and an object (RW 0x8C746D .. 0x8C747E), RW 0x8C72C3 forwards the pair to the list's nuggets (RW 0x5EFB95): one that answers
+// no answers no (RW 0x8C748D). The base's own tests follow at RW 0x8C7492.
+bool OCLSpecialPower::locationRequirementsMet(Object &obj, const Coord3D &loc)
+{
+	if (obj.getDisabledMask() != 0)
+	{
+		return false; // RW 0x9325B4 (called at RW 0x8C7457): any bit of the disabled mask
+	}
+	const ObjectCreationList *ocl = pickOCL(); // RW 0x8C7393
+	if (ocl)
+	{
+		for (const OCLNugget &nugget : ocl->nuggets())
+		{
+			if (!nuggetAllowsCreate(obj, nugget))
+			{
+				return false; // RW 0x8C72C3 -> RW 0x5EFB95
+			}
+		}
+	}
+	(void)loc; // RW 0x5EFB95 hands the location to the nugget test; the ported part of RW 0x5F08C2 reads only the nugget and the template
+	return true;
+}
+
+void OCLSpecialPower::createOCL(const ObjectCreationList *ocl, const Coord3D &where, bool hasSecondary){
 	if (!ocl)
 	{
 		return; // RW 0x8C7690: no list, nothing made

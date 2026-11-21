@@ -153,6 +153,14 @@ public:
 	bool isReadyForDisplay() const override;
 	float getPercentReadyForDisplay() const override;
 	void pauseCountdown(bool pause) override; // slot 0x24 (RW 0x896756; ScavengerSpecialPower overrides it, RW 0x8C88CF)
+	// PORT-249: the class's own tests of the module's location requirements (interface slot 0x48, table RW 0xC73890), asked before the base RW 0x897E01
+	// and answered true by every class that does not override the slot; OCLSpecialPower's override is RW 0x8C744B
+	virtual bool locationRequirementsMet(Object &obj, const Coord3D &loc)
+	{
+		(void)obj;
+		(void)loc;
+		return true;
+	}
 	void doSpecialPower(unsigned options) override;
 	void doSpecialPowerAtObject(Object *target, unsigned options) override;
 	void doSpecialPowerAtLocation(const Coord3D &loc, unsigned options) override;
@@ -264,6 +272,7 @@ public:
 };
 
 class ObjectCreationList;
+struct OCLNugget;
 class OCLSpecialPower : public SpecialPowerModule
 {
 public:
@@ -272,6 +281,11 @@ public:
 	const OCLSpecialPowerModuleData *data() const { return m_data; }
 	const std::vector<ObjectID> &created() const { return m_created; }
 	ObjectID secondaryObject() const { return m_secondaryUsed; }
+	// PORT-249: RW 0x8C744B, this class's answer for the interface's slot 0x48 (interface table RW 0xC73890): the base RW 0x897E01 refuses first on the
+	// caster's disabled mask (RW 0x9325B4, Object + 0x1C8), then every nugget of the list RW 0x8C7393 picks must accept the (object, location) pair
+	// (RW 0x8C72C3 -> RW 0x5EFB95), and only then does the base answer
+	bool locationRequirementsMet(Object &obj, const Coord3D &loc) override; // RW 0x8C744B
+	unsigned long long unportedPlacementTests() const { return m_unportedPlacementTests; } // tests: the placement branch of RW 0x5F091B
 	void doSpecialPower(unsigned options) override;                          // RW 0x8C73EF
 	void doSpecialPowerAtObject(Object *target, unsigned options) override;  // RW 0x8C73D7
 	void doSpecialPowerAtLocation(const Coord3D &loc, unsigned options) override; // RW 0x8C75D8
@@ -282,6 +296,9 @@ private:
 	const OCLSpecialPowerModuleData *m_data;
 	std::vector<ObjectID> m_created; // the objects of the last cast (tests, the HUD)
 	ObjectID m_secondaryUsed = INVALID_ID; // USE_SECONDARY_OBJECT_LOCATION: the object found by the last cast (tests)
+	// PORT-249: nuggets whose RW 0x5F08C2 test reached the placement branch (RW 0x5F091B), which is not ported (stop S-7426): counted, the nugget answers yes
+	unsigned long long m_unportedPlacementTests = 0;
+	bool nuggetAllowsCreate(Object &obj, const OCLNugget &nugget);
 };
 
 class GameLogic;
