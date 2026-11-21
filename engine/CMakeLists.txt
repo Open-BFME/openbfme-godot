@@ -203,6 +203,7 @@ include(cmake/Port7.cmake) # PORT-7: AnimalAIUpdate's enemy scan (OPENBFME_PORT7
 include(cmake/Port58.cmake) # PORT-58: SpecialAbilityUpdate/ApproachUntilMembersInRange (OPENBFME_PORT58_TESTS)
 include(cmake/Port10.cmake) # PORT-10: FlammableUpdate/RunToWater (issue #65; OPENBFME_PORT10_TESTS)
 include(cmake/Port17.cmake) # PORT-17: ThreatFinderUpdate + the threat-finder script action (issue #73; appends to OPENBFME_SIM_SOURCES; OPENBFME_PORT17_TESTS)
+include(cmake/Port76.cmake) # PORT-76: SpawnBehavior/FadeInTime, spawned units fade in (issue fork issue 208; OPENBFME_PORT76_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
 include(cmake/Fx2.cmake)        # FX-2: effects in the live game (appends to OPENBFME_SIM_SOURCES; OPENBFME_FX2_SOURCES / OPENBFME_FX2_TESTS)
@@ -764,6 +765,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT6_TESTS}
     ${OPENBFME_PORT55_TESTS}
     ${OPENBFME_PORT62_TESTS}
+    ${OPENBFME_PORT76_TESTS}
     ${OPENBFME_PORT40_TESTS}
     ${OPENBFME_PORT46_TESTS}
     ${OPENBFME_PORT13_TESTS}
