@@ -925,3 +925,76 @@ void AIFollowPathState::crc(StateHasher &h) const
 		m_move->crc(h);
 	}
 }
+
+// ---- Local 114 (fork issue 798): AIMoveAndEvacuateState (states 28 & 29) & AIMoveAndDeleteState (state 30) ----
+
+// RW 0x00750512 (DONOR BFME2 0x0034EB7E AIMoveAndEvacuateState::onEnter)
+StateReturnType AIMoveAndEvacuateState::onEnter()
+{
+	Object *obj = ai().getObject();
+	if (!obj)
+	{
+		return STATE_FAILURE;
+	}
+	machine().lock();
+	m_origin = *obj->getPosition();
+	m_adjustsDestination = true;
+	m_goalPosition = machine().goalObject() ? *machine().goalObject()->getPosition() : machine().goalPosition();
+	return AIMoveToMachineState::onEnter();
+}
+
+// RW 0x00755734 (DONOR BFME2 0x00353C27 AIMoveAndEvacuateState::update)
+StateReturnType AIMoveAndEvacuateState::update()
+{
+	Object *obj = ai().getObject();
+	if (!obj || obj->isEffectivelyDead())
+	{
+		return STATE_FAILURE;
+	}
+	const StateReturnType status = AIMoveToMachineState::update();
+	if (status != STATE_CONTINUE)
+	{
+		if (obj->isEffectivelyDead())
+		{
+			return STATE_FAILURE;
+		}
+		ai().aiEvacuate(false, CMD_FROM_AI);
+		if (Team *team = obj->getTeam())
+		{
+			team->setActive();
+		}
+	}
+	return status;
+}
+
+// RW 0x0074B9BB (DONOR BFME2 0x00349FD0 AIMoveAndEvacuateState::onExit)
+void AIMoveAndEvacuateState::onExit(StateExitType status)
+{
+	machine().unlock();
+	machine().setGoalPosition(m_origin);
+	machine().clearGoalAngle();
+	AIMoveToMachineState::onExit(status);
+}
+
+void AIMoveAndEvacuateState::crc(StateHasher &h) const
+{
+	AIMoveToMachineState::crc(h);
+	h.addFloat(m_origin.x);
+	h.addFloat(m_origin.y);
+	h.addFloat(m_origin.z);
+}
+
+StateReturnType AIMoveAndDeleteState::update()
+{
+	Object *obj = ai().getObject();
+	if (!obj || obj->isEffectivelyDead())
+	{
+		return STATE_FAILURE;
+	}
+	const StateReturnType status = AIMoveToMachineState::update();
+	if (status != STATE_CONTINUE)
+	{
+		obj->logic().destroyObject(obj);
+	}
+	return status;
+}

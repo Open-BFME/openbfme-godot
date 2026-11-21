@@ -69,6 +69,9 @@ enum AIStateType
 	AI_WAIT = 8,
 	AI_MOVE_OUT_OF_THE_WAY = 26,
 	AI_MOVE_AND_TIGHTEN = 27,
+	AI_MOVE_AND_EVACUATE = 28,           // Local 114 (fork issue 798): RW 0x753755: AIMoveAndEvacuateState (AICMD 0x03, RW 0x0066B6B8)
+	AI_MOVE_AND_EVACUATE_AND_EXIT = 29,  // Local 114 (fork issue 798): RW 0x753755: AIMoveAndEvacuateState -> AI_MOVE_AND_DELETE (AICMD 0x04, RW 0x0066B72D)
+	AI_MOVE_AND_DELETE = 30,             // RW 0x753755: AIMoveAndDeleteState (AICMD 0x38, RW 0x0066B7A2)
 	AI_BUSY = 42,
 	AI_FOLLOW_PATH_AS_TEAM = 54,        // lane BACKLOG-8 r2: RotWK's state 54 (RW 0x753B27: AIFollowPathAsTeamState, isAttack = false)
 	AI_FOLLOW_PATH_AS_TEAM_ATTACK = 61, // lane PORT-13: RotWK's state 61 (RW 0x753B4E: AIFollowPathAsTeamState, isAttack = true)
@@ -378,4 +381,27 @@ struct KeptSubMachines
 			m.reset();
 		}
 	}
+};
+
+// Local 114 (fork issue 798): AIMoveAndEvacuateState (states 28 = 0x1C and 29 = 0x1D, ctor RW 0x0074477D, onEnter RW 0x00750512, update RW 0x00755734, onExit RW 0x0074B9BB, xfer RW 0x00742821;
+// DONOR BFME2 0x0034EB7E / 0x00353C27 / 0x00349FD0).
+class AIMoveAndEvacuateState : public AIMoveToMachineState
+{
+public:
+	explicit AIMoveAndEvacuateState(AIStateMachine &m) : AIMoveToMachineState(m, "AIMoveAndEvacuateState") {}
+	StateReturnType onEnter() override;
+	StateReturnType update() override;
+	void onExit(StateExitType status) override;
+	void crc(class StateHasher &hasher) const override;
+	void xfer(class Xfer &x) override;
+private:
+	Coord3D m_origin{ 0.0f, 0.0f, 0.0f }; // RW state + 0x4C..0x54
+};
+
+// AIMoveAndDeleteState (state 30 = 0x1E, AICMD 0x38 RW 0x0066B7A2; DONOR BFME2 0x0034A02D AIMoveAndDeleteStateUpdate.cpp).
+class AIMoveAndDeleteState : public AIMoveToMachineState
+{
+public:
+	explicit AIMoveAndDeleteState(AIStateMachine &m) : AIMoveToMachineState(m, "AIMoveAndDeleteState") {}
+	StateReturnType update() override;
 };
