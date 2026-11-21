@@ -118,6 +118,10 @@ protected:
 	void processUpgradeCreationTriggers();
 	// RW 0x867AD4 OpenContain::scatterToNearbyPosition
 	void scatterToNearbyPosition(Object *rider);
+	// RW 0x86AAAE .. 0x86ABCB (lane PORT-97, issue fork issue 245): FadePassengerOnEnter, the client fade of a rider that enters
+	void fadePassengerOnEnter(Object *rider);
+	// RW 0x86AD95 .. 0x86AEA1: FadePassengerOnExit, the client fade of a rider that leaves (the exit reads no FadeReverse)
+	void fadePassengerOnExit(Object *rider);
 
 	const TransportContainModuleData *m_transport;
 	int m_extraSlotsInUse = 0;                 // RW + 0x100
