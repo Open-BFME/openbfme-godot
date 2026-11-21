@@ -15,6 +15,7 @@
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/Weapon.h" // PORT-114: the GameData WeaponBonus row builds the global WeaponBonusSet (RW 0x6CB559)
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
@@ -69,6 +70,7 @@ struct BlockState
 	unsigned blocks = 0; ///< bit 0 GameData, 1 AIData, 2 MultiplayerSettings: which blocks were read
 	bool minDistFromEdgeOfMapForBuildSeen = false; // PORT-12: the seen mask already uses all 32 bits
 	bool maxCastleRadiusSeen = false;              // lane BUILDCLEAR-1
+	bool weaponBonusSeen = false;                  // PORT-114: the same reason
 	std::set<std::string> unapplied; ///< "Block.Field" of the fields no row of this lane reads
 };
 
@@ -100,6 +102,23 @@ void parseMaxCastleRadius(INI *ini, void *instance, void *store, const void *)
 {
 	INI::parseReal(ini, instance, store, nullptr);
 	static_cast<BlockState *>(instance)->maxCastleRadiusSeen = true;
+}
+
+// PORT-114 (issue fork issue 298): the GameData row WeaponBonus (RW 0xC004D0, parser RW 0x6CB559 = WeaponBonusSet::parseWeaponBonusSetPtr, GlobalData +0xAD0).
+// RotWK's parser dereferences the pointer the GlobalData constructor already made (BFME2 ctor 0x002369CB stores the object built by 0x00235A21, every
+// entry 1.0) and parses one `<CONDITION> <FIELD> <percent>` entry into it (RW 0x6CA45B). The port's settings have no constructor to hang that allocation
+// on, so the set is made on the first line exactly as WeaponTemplate::parseWeaponBonus does it (RW 0x6CB5AB, the same class): with no line the pointer
+// stays null, which RW's only reader treats as "no global bonus" (it tests the pointer at RW 0x6CA7CF and skips the add), and an empty set would add
+// value - 1.0 = 0.0 to every field anyway (RW 0x6CA434), so the two forms answer alike.
+void parseWeaponBonus(INI *ini, void *instance, void *store, const void *)
+{
+	auto *slot = static_cast<std::shared_ptr<WeaponBonusSet> *>(store);
+	if (!*slot)
+	{
+		*slot = std::make_shared<WeaponBonusSet>();
+	}
+	(*slot)->parseWeaponBonusSet(ini);
+	static_cast<BlockState *>(instance)->weaponBonusSeen = true;
 }
 
 // the line without its ; or // comment
@@ -156,7 +175,7 @@ bool firstTokenIsEnd(const std::string &line)
 // `=` is a nested block of the block being read (AIData's SideInfo / SkirmishBuildList, with their own Structure / SkillSet sub blocks). Retail reads
 // these blocks token by token (ZH AI::parseSkirmishBuildList / BuildListInfo::parseStructure / AI::parseSideInfo through initFromINI; RotWK's AIData
 // field names at RW 0x81D3A4 SkirmishBuildList, 0x81D3B8 SideInfo, 0x81D738 .. 0x81D768 SkillSet5 .. 1): every sub block ends at its own End, and
-// the indentation means nothing (lane MODCOMPAT-1: Ennorath writes `SkirmishBuildList Rohan` at column 0 with deeper Ends, which the old
+// the indentation means nothing (lane MODCOMPAT-1: retail writes `SkirmishBuildList Rohan` at column 0 with deeper Ends, which the old
 // indentation rule read past the AIData block's own End). So the skip counts them: a line whose first token opens one of those sub blocks goes a
 // level deeper, an End goes a level up, and the block ends at the End of its own level.
 void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
@@ -320,6 +339,9 @@ const FieldParse kGameDataFields[] = {
 	{ "UseBehindBuildingMarker", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.useBehindBuildingMarker) },
 	{ "DefaultOcclusionDelay", parseNoting<INI::parseDurationUnsignedInt>, 0, (int)offsetof(BlockState, values.defaultOcclusionDelay) },
 	{ "OccludedColorLuminanceScale", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.occludedColorLuminanceScale) },
+	// PORT-114 (issue fork issue 298): GameData WeaponBonus, row RW 0xC004D0 (parser RW 0x6CB559, GlobalData +0xAD0), the global weapon bonus set the object's
+	// computeBonus adds (RW 0x6CA7AC -> 0x6CA7CF load, 0x6CA4B5 / 0x6CA434 add)
+	{ "WeaponBonus", parseWeaponBonus, nullptr, (int)offsetof(BlockState, values.globalWeaponBonusSet) },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kAIDataFields[] = {
@@ -558,6 +580,7 @@ bool finish(Load &l, unsigned blockBit, const char *blockName, const std::vector
 	out.builderMoveLoaded = (l.state().seen & SEEN_BUILDERMOVE) != 0; // lane BUILD-3
 	out.builderFadeLoaded = (l.state().seen & (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN)) == (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN); // lane PORTERFOG-1
 	out.repairDamageDelayLoaded = (l.state().seen & SEEN_REPAIR_DELAY) != 0;
+	out.weaponBonusLoaded = l.state().weaponBonusSeen; // PORT-114
 	out.guardRulesLoaded = (l.state().seen & (SEEN_GUARD_CHASE | SEEN_GUARD_SCAN | SEEN_GUARD_RETURN)) == (SEEN_GUARD_CHASE | SEEN_GUARD_SCAN | SEEN_GUARD_RETURN); // lane PLAY-4
 	out.sellPercentageLoaded = (l.state().seen & SEEN_SELL) != 0; // lane FACT-A
 	if ((l.state().seen & (SEEN_VSTRUCT | SEEN_VUNIT)) == (SEEN_VSTRUCT | SEEN_VUNIT))
@@ -744,7 +767,7 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addFloat(artilleryMaxFriendlyFire);
 	if (maxRecruitRadius != 400.0f)
 	{
-		h.addFloat(maxRecruitRadius); // lane PORT-40: retail 2.01 and Ennorath set 400.0 (default\aidata.ini:32, the mod keeps it), so a game with
+		h.addFloat(maxRecruitRadius); // lane PORT-40: retail 2.01 and retail set 400.0 (default\aidata.ini:32, the mod keeps it), so a game with
 		                             // that data is unchanged; a map.ini / mod AIData block with another value is hashed (as lane STEALTHFLY1 above)
 	}
 	h.addU32((std::uint32_t)attackPriorityDefs.size());
@@ -810,6 +833,19 @@ void GameLogicSettings::crc(StateHasher &h) const
 	for (const std::string &b : standardPublicBones)
 	{
 		h.addString(b);
+	}
+	// PORT-114 (issue fork issue 298): the global WeaponBonus set changes every weapon's delay, range and damage (RW 0x6CA7AC), so it is a simulation input. Hashed
+	// only when data sets it: a game whose GameData has no WeaponBonus line (retail 2.01 gamedata.ini) keeps its old hash exactly
+	h.addBool(globalWeaponBonusSet != nullptr);
+	if (globalWeaponBonusSet)
+	{
+		for (int c = 0; c < WEAPONBONUS_CONDITION_COUNT; ++c)
+		{
+			for (int f = 0; f < WEAPONBONUS_FIELD_COUNT; ++f)
+			{
+				h.addFloat(globalWeaponBonusSet->get(c, f));
+			}
+		}
 	}
 	h.addString(specialPowerViewObject); // lane SPELL-2
 	for (unsigned c : initialCredits)

@@ -183,6 +183,7 @@ include(cmake/FactB.cmake)      # OPENBFME_FACTB_TESTS (lane FACT-B: Isengard an
 include(cmake/Port4.cmake) # OPENBFME_PORT4_TESTS
 include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
+include(cmake/Port114.cmake) # PORT-114: GameData WeaponBonus, the global weapon bonus set (issue #298; OPENBFME_PORT114_TESTS)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
 include(cmake/Port12.cmake) # PORT-12: BuildAssistant edge margin / SupplyBuildBorder (issue #67; OPENBFME_PORT12_TESTS)
@@ -760,6 +761,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT20_TESTS}
     ${OPENBFME_PORT22_TESTS}
     ${OPENBFME_PORT24_TESTS}
+    ${OPENBFME_PORT114_TESTS}
     ${OPENBFME_PORT1_TESTS}
     ${OPENBFME_PORT6_TESTS}
     ${OPENBFME_PORT55_TESTS}

@@ -125,7 +125,9 @@ public:
 	std::uint32_t currentFrame() override { return m_w.owner().logic().getFrame(); }
 	GameLogicRandom &logicRandom() override { return m_w.owner().logic().random(); }
 	std::uint32_t weaponBonusConditionMask() override { return m_w.owner().weaponBonusConditionMask(); }
-	const WeaponBonusSet *globalWeaponBonusSet() override { return nullptr; } // GameData's WeaponBonus set is not loaded (S-320): the bonus of no condition is 1.0
+	// PORT-114 (issue fork issue 298): GameData's global WeaponBonus set (RW 0x6CA7CF: `mov ecx,[eax+0xAD0]` with eax = [0xDE4364], tested before the add at
+	// RW 0x6CA4B5); null when no GameData block of the load set named WeaponBonus, which is RW's own null test
+	const WeaponBonusSet *globalWeaponBonusSet() override { return m_w.owner().logic().settings().globalWeaponBonusSet.get(); }
 	float rateOfFireAttributeProduct() override { return 1.0f; }              // the attribute modifiers (S-320)
 	// lane PERF-WS: the two reads below run on the logic job pool (computeWeaponStatusConditions through Weapon::getStatus): keep them reads when
 	// S-320 is ported

@@ -88,6 +88,7 @@ class ThingFactory;
 class ThingTemplate;
 class UpdateModule;
 class ObjectWeapons; // lane PERF-WS
+class WeaponBonusSet; // PORT-114: GameData WeaponBonus (GameLogic/Weapon.h)
 class TerrainLogic;
 class UpgradeTypeTable;
 class AIWorld;
@@ -147,7 +148,7 @@ public:
 	// lane PORTERFOG-1, RW 0x670A50 Drawable::fadeOut(frames) called by the simulation (a porter starting its work, RW 0x88DDC1): the drawable fades out over
 	// `frames` client frames (0: at once) and is hidden once its opacity * 255 is below 1 (RW 0x675B7E)
 	virtual void fadeOut(Object &obj, UnsignedInt frames) { (void)obj; (void)frames; }
-	// TOP20 #24, RW 0x672D28 Drawable::setShadowsEnabled called by the simulation (SlowDeathBehavior's beginSlowDeath with ShadowWhenDead No, RW 0x860F44 ..
+	// TOP20 fork issue 24, RW 0x672D28 Drawable::setShadowsEnabled called by the simulation (SlowDeathBehavior's beginSlowDeath with ShadowWhenDead No, RW 0x860F44 ..
 	// 0x860F58): the drawable's status bit 2 (+ 0x114) and every draw module's vslot 0x30; client only
 	virtual void setShadowsEnabled(Object &obj, bool enabled) { (void)obj; (void)enabled; }
 	// RW 0x67B78C -> 0x6D4789: a qualifying hit on a local hero, independently of the EVA gate.
@@ -368,6 +369,9 @@ struct GameLogicSettings
 	bool useBehindBuildingMarker = true;
 	unsigned defaultOcclusionDelay = 15;
 	float occludedColorLuminanceScale = 0.5f;
+	// PORT-114 (fork issue 298): GameData's global WeaponBonus set (row RW 0xC004D0, parser RW 0x6CB559, GlobalData + 0xAD0).
+	std::shared_ptr<WeaponBonusSet> globalWeaponBonusSet;
+	bool weaponBonusLoaded = false;
 	unsigned initialCredits[5] = { 0, 0, 0, 0, 0 };  ///< MultiplayerSettings InitialCreditsVeryLow .. VeryHigh: the lobby's money choices
 	// lane CHAT-1: MultiplayerSettings MaxBeaconsPerPlayer (+ 0x18): a player's beacons at most (retail multiplayer.ini: 3). INFERENCE: the default is ZH's
 	// MultiplayerSettings constructor value (RotWK's constructor was not read). Not hashed (crc below): data every peer of a game reads alike (the profile)
@@ -463,7 +467,7 @@ public:
 	// lane SPELL-3: TheTerrainLogic + 0x578, the map's optimized trees (GameLogic/Map/TerrainTrees.h); filled by MapObjectLoop, hashed once a tree changed
 	TerrainTrees &trees() { return *m_trees; }
 	const TerrainTrees &trees() const { return *m_trees; }
-	// PORT 17 (issue #73): TheThreatFinderManager (RW 0xDE8888), the named threat areas of a map (GameLogic/System/ThreatFinder.h). Not a subsystem
+	// PORT 17 (issue fork issue 73): TheThreatFinderManager (RW 0xDE8888), the named threat areas of a map (GameLogic/System/ThreatFinder.h). Not a subsystem
 	// with an update: retail only adds and removes finders and looks them up by name (RW 0x7EE260); a finder scans when it is asked. Its state is
 	// the finders' and it travels with them (each finder's module xfers it, RW 0x7EDF70), so it is not a state-hash section of its own
 	ThreatFinderManager &threatFinders() { return *m_threatFinders; }
