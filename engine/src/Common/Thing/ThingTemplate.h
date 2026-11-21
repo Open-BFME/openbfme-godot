@@ -179,7 +179,7 @@ public:
 	// VIS-1: the same slots by index: the row-name table (shared by the templates of one factory, fixed by the binary's field table) and the slot's live value
 	// (nullptr when never set), so a hot reader resolves a name once per table and still reads the current value
 	const std::vector<std::string> *fieldNameTable() const { return m_fieldNames; }
-	// community PR #36 (Common/BfmeGame.h): the template comes from BFME1 data; the simulation gates BFME1 behaviour on it (RotWK / BFME2 never set it)
+	// community PR fork issue 36 (Common/BfmeGame.h): the template comes from BFME1 data; the simulation gates BFME1 behaviour on it (RotWK / BFME2 never set it)
 	bool bfme1Data() const { return m_bfme1; }
 	const FieldValue *fieldAt(size_t slot) const
 	{
@@ -242,6 +242,11 @@ public:
 	bool armorCopiedFromDefault() const { return m_armorCopiedFromDefault; }
 	bool weaponsCopiedFromDefault() const { return m_weaponsCopiedFromDefault; }
 	ModuleParseMode moduleParsingMode() const { return m_moduleParsingMode; }
+	// Local 15 (fork issue 136): ThingTemplate label rows (RW 0xDA3DF8, parser RW 0x73D3E0)
+	std::string displayName() const;
+	std::string description() const;
+	std::string displayNameStrategic() const;
+	std::string descriptionStrategic() const;
 
 private:
 	friend class ThingFactory;
@@ -268,7 +273,7 @@ private:
 	// names of the slots, shared by every template of one factory
 	std::vector<FieldValue> m_fields;
 	const std::vector<std::string> *m_fieldNames = nullptr;
-	bool m_bfme1 = false; // community PR #36: made by a ThingFactory for BFME1 data
+	bool m_bfme1 = false; // community PR fork issue 36: made by a ThingFactory for BFME1 data
 	const std::unordered_map<std::string, size_t> *m_fieldIndex = nullptr; ///< the factory's name -> slot index of m_fieldNames (unique names)
 	std::vector<RawBlock> m_rawBlocks;
 	RawBlockAnswer m_threatCategory;

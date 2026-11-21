@@ -337,7 +337,9 @@ ArmyDescription describeArmy(const ArmySummaryDescription &d, const ThingFactory
 	}
 	for (const std::string &h : heroes)
 	{
-		out.heroLabels.push_back(fieldString(things.findTemplate(h)->findField("DisplayName")));
+		// RW 0x9D8AA5 / 0x9D8B1D: hero army names format with GetDisplayNameStrategic RW 0x80EFD0
+		const ThingTemplate *tt = things.findTemplate(h);
+		out.heroLabels.push_back(tt ? tt->displayNameStrategic() : std::string());
 	}
 	for (size_t i = 0; i < counts.size(); ++i)
 	{

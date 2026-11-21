@@ -2431,7 +2431,7 @@ void AptStrategicHUD::applyArmyPanel(ArmyPanelView &v)
 	int cp = 0;
 	if (h)
 	{
-		setText("_MemberName", text(h->name)); // the DisplayName label's text
+		setText("_MemberName", text(h->name)); // RW 0x9F6FF7: GetDisplayNameStrategic label's text
 		setText("_MemberRank", formatOne(text("APT:RankLabel"), std::to_string(h->rank), 0.0, false));
 		if (h->progress >= 0.0f)
 		{
