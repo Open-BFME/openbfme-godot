@@ -674,3 +674,84 @@ TEST_CASE("PORTERFOG-1: an Isengard porter at work keeps its shroud record but s
 	CHECK(sm->hasRecord(*porterObj));
 	CHECK(sm->lookRadius(*porterObj) == radius);
 }
+
+#include "CombatTestUtil.h"
+#include "ProdTestUtil.h"
+
+TEST_CASE("BUILD-3: DozerAIUpdate::loadPostProcess (RW 0x0088D186) enforces phantom inertness and clears dangling phantom id")
+{
+	// Source of expectations: RotWK 2.01 RW 0x0088D186 -> RW 0x0088D0D8 (makePhantomStructureInert).
+	const char ini[] =
+		"Object UpL109Porter\n"
+		"  KindOf = INFANTRY SELECTABLE DOZER\n"
+		"  Geometry = CYLINDER\n"
+		"  GeometryMajorRadius = 8\n"
+		"  GeometryMinorRadius = 8\n"
+		"  GeometryHeight = 20\n"
+		"  ArmorSet\n"
+		"    Conditions = None\n"
+		"    Armor = NoArmor\n"
+		"  End\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 200\n"
+		"  End\n"
+		"  Behavior = DozerAIUpdate ModuleTag_AI\n"
+		"    RepairHealthPercentPerSecond = 10%\n"
+		"  End\n"
+		"  LocomotorSet\n"
+		"    Locomotor = WalkerLoco\n"
+		"    Condition = SET_NORMAL\n"
+		"    Speed = 40\n"
+		"  End\n"
+		"End\n"
+		"Object UpL109Structure\n"
+		"  KindOf = STRUCTURE SELECTABLE IMMOBILE\n"
+		"  BuildCost = 250\n"
+		"  BuildTime = 10.0\n"
+		"  Geometry = CYLINDER\n"
+		"  GeometryMajorRadius = 20\n"
+		"  GeometryMinorRadius = 20\n"
+		"  GeometryHeight = 20\n"
+		"  ArmorSet\n"
+		"    Conditions = None\n"
+		"    Armor = NoArmor\n"
+		"  End\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 400\n"
+		"  End\n"
+		"  Behavior = GettingBuiltBehavior ModuleTag_Build\n"
+		"    RebuildTimeSeconds = 10\n"
+		"  End\n"
+		"End\n";
+	combattest::CombatWorld w(ini);
+	w.logic->productionSettings() = prodtest::defaultSettings();
+	w.logic->settings().buildRulesLoaded = true;
+	w.playerOf('A')->depositMoney(1000, false);
+	w.frames(3);
+
+	Object *porter = w.spawn("UpL109Porter", 200.0f, 200.0f, 0.0f, w.teamA());
+	REQUIRE(porter != nullptr);
+	DozerAIUpdate *dozer = dynamic_cast<DozerAIUpdate *>(porter->getAIUpdateInterface());
+	REQUIRE(dozer != nullptr);
+	const ThingTemplate *bldgTmpl = w.w.things.findTemplate("UpL109Structure");
+	REQUIRE(bldgTmpl != nullptr);
+
+	Object *phantom = dozer->construct(*bldgTmpl, Coord3D{ 500.0f, 200.0f, 0.0f }, 0.0f, *w.playerOf('A'), false);
+	REQUIRE(phantom != nullptr);
+	REQUIRE(dozer->unplacedStructure() == phantom->getID());
+
+	w.logic->friend_containEnterWorld(*phantom);
+	phantom->friend_setEffectivelyDead(false);
+	REQUIRE(phantom->isInWorld());
+	REQUIRE_FALSE(phantom->isEffectivelyDead());
+
+	dozer->loadPostProcess();
+	CHECK(phantom->isEffectivelyDead());
+	CHECK_FALSE(phantom->isInWorld());
+	CHECK(dozer->unplacedStructure() == phantom->getID());
+
+	w.logic->destroyObject(phantom);
+	w.frames(1);
+	dozer->loadPostProcess();
+	CHECK(dozer->unplacedStructure() == INVALID_ID);
+}
