@@ -544,6 +544,7 @@ void LargeGroupBonusUpdate::xfer(Xfer &x)
 	x.xferUnsignedInt(&m_lastCount);
 }
 
+// RW 0x00887EE4 (DONOR BFME2 0x00884857; dtor RW 0x00887DAE / RW 0x00887EC8, name RW 0x00887D63, getModuleNameKey RW 0x00887D69)
 void PassiveAreaEffectBehavior::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);

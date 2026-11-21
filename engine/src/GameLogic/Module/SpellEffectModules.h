@@ -23,7 +23,7 @@
 //   * FloodUpdate (lane SPELL-3; the spell book's Flood, Arwen's flood): module data table RW 0xC631D8 { FloodMember (RW 0x891696: a 0x38-byte member parsed
 //     with RW 0xC63080 { MemberTemplateName + 0 (parseAsciiString), ControlPointOffsetOne .. Four + 4 / + 0x10 / + 0x1C / + 0x28 (parseCoord3D RW 0x42F247),
 //     MemberSpeed + 0x34 (parseReal RW 0x42ED00) }, appended to the list at data + 8), AngleOfFlow + 0xC (parseAngleReal RW 0x42EE15), DirectionIsRelative
-//     + 0x10 (parseBool) }; constructor RW 0x891713; the module keeps a list of { member object id, its path (Coord3D vector), the path index } at + 0x20 and
+//     + 0x10 (parseBool) }; constructor RW 0x891713, dtor RW 0x00891AE4 / scalar deleting dtor RW 0x00891C93, name getter RW 0x00891768, getModuleNameKey RW 0x0089176E, xfer RW 0x00891B72 (DONOR BFME2 0x0088D738 / 0x0088D73E / 0x0088DAB4 / 0x0088DB42 / 0x0088DC63); the module keeps a list of { member object id, its path (Coord3D vector), the path index } at + 0x20 and
 //     a members-made flag at + 0x24:
 //       - the path (RW 0x8912C5): angle = AngleOfFlow, plus the object's orientation through normalizeAngle (RW 0x644FD0) when DirectionIsRelative; each
 //         control point is (c * x - s * y) + pos.x, (x * s + c * y) + pos.y, z = 0 with s / c the MSVCR71 sin / cos of the angle (RW 0xA3CF90 / 0xA3CF84,

@@ -5,6 +5,7 @@
 #include "Common/ModEngineFeatures.h"
 #include "GameClient/ControlBarCommands.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Module/StructureToppleUpdate.h"
 #include "GameLogic/ScriptEngine/AttackPriority.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -3034,5 +3035,17 @@ void Object::xfer(Xfer &x)
 		x.beginBlock();
 		m->xfer(x);
 		x.endBlock();
+	}
+}
+
+// RW 0x0068D58C (DONOR BFME2 0x0068CEBC)
+void Object::topple(const Coord3D *toppleDirection, float toppleSpeed, unsigned options)
+{
+	if (ToppleUpdate *t = dynamic_cast<ToppleUpdate *>(findModule("ToppleUpdate")))
+	{
+		if (t->isAbleToBeToppled())
+		{
+			t->applyTopplingForce(toppleDirection, toppleSpeed, options);
+		}
 	}
 }

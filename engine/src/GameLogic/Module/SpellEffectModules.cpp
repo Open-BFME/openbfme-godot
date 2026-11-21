@@ -501,7 +501,7 @@ void FireWeaponUpdate::xfer(Xfer &x)
 	}
 }
 
-// the flood's members (their ids, paths and cursors)
+// RW 0x00891B72 (DONOR BFME2 0x0088DB42; dtor RW 0x00891AE4 / RW 0x00891C93, name RW 0x00891768, getModuleNameKey RW 0x0089176E): the flood's members (their ids, paths and cursors)
 void FloodUpdate::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
