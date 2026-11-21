@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "Common/Audio/LargeGroupAudioHandOff.h"
 #include "Common/INIDataTypes.h"
 #include "GameLogic/ObjectTypes.h"
 
@@ -140,6 +141,7 @@ private:
 		Coord3D position;
 		std::uint32_t handle = 0;  ///< 0: no sound queued or playing
 		bool startedOnce = false;  ///< a one-shot sound plays once per qualification
+		LargeGroupAudioHandOff handOff; ///< Port 100: the glide counter while a handed-off sound travels to this cell (RW 0x9D8018)
 	};
 public:
 	// tests: the group sounds (key "map/sound/cellx,celly" -> position, handle)

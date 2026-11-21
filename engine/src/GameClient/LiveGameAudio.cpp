@@ -571,7 +571,8 @@ void LiveGameAudio::largeGroupUpdate()
 	// INFERENCE (S-248): the per-cell rules EA documents at the top of LargeGroupAudio.ini; RW's Sound block runtime is not decoded. Per map and Sound block:
 	// the block's members (LgaRuntime, from the modules' calls) are counted (UnitWeight each) in a grid of Size cells; a cell starts its sound at
 	// StartThreshold and stops below StopThreshold; the sound sits at the cell's weighted centre and moves toward it at most MaximumAudioSpeed per logic
-	// frame. Ducking, hand-off between cells and the burning-cell key are not ported.
+	// frame. Port 100: the hand-off between cells is ported below (a displaced cell's sound is transferred, not stopped / restarted);
+	// ducking and the burning-cell key are not ported.
 	const LargeGroupAudioStore &store = m_audio.ini().largeGroupAudio;
 	m_lga->apply(store);
 	if (store.maps().empty())
@@ -613,6 +614,15 @@ void LiveGameAudio::largeGroupUpdate()
 					c.second.z += at.z * (float)m.weight;
 				}
 			}
+			// Port 100: the cells of this Sound block that stay live this pass (a new cell at StartThreshold, a playing one at
+			// StopThreshold), before any group is made: a displaced cell's sound is handed to a live cell, as RW's update does
+			// (the displaced loop RW 0x972136.. runs before the cell-start loop RW 0x972238..)
+			std::map<std::pair<int, int>, bool> liveCells;
+			for (const auto &kv : cells)
+			{
+				const bool playing = m_groups.count(map.name + "/" + snd.name + "/" + std::to_string(kv.first.first) + "," + std::to_string(kv.first.second)) != 0;
+				liveCells[kv.first] = kv.second.first >= (int)(playing ? map.stopThreshold : map.startThreshold);
+			}
 			for (const auto &kv : cells)
 			{
 				const std::string key = map.name + "/" + snd.name + "/" + std::to_string(kv.first.first) + "," + std::to_string(kv.first.second);
@@ -628,27 +638,64 @@ void LiveGameAudio::largeGroupUpdate()
 					}
 					Group g;
 					g.position = centre;
+					// Port 100 (RW 0x9721C7): a cell of this Sound block that stopped qualifying this pass hands its playing sound
+					// to this cell instead of the sound being stopped and a new one started: the handle and its position carry
+					// over, and the glide counter is the map's HandOffModeDuration. No field (0): no hand-off, the current
+					// behaviour (the old cell is stopped below, this cell starts its own sound).
+					if (map.handOffModeDurationFrames > 0)
+					{
+						const std::string prefix = map.name + "/" + snd.name + "/";
+						for (auto donor = m_groups.begin(); donor != m_groups.end(); ++donor)
+						{
+							if (donor->first.rfind(prefix, 0) != 0 || donor->second.handle == 0)
+							{
+								continue;
+							}
+							// the donor's cell, read back out of its key (".../cellx,celly")
+							const std::string cellPart = donor->first.substr(prefix.size());
+							const size_t comma = cellPart.find(',');
+							const std::pair<int, int> donorCell(std::stoi(cellPart.substr(0, comma)), std::stoi(cellPart.substr(comma + 1)));
+							if (liveCells.count(donorCell) && liveCells[donorCell])
+							{
+								continue; // still qualifying itself: not displaced
+							}
+							g.position = donor->second.position;
+							g.handle = donor->second.handle;
+							g.startedOnce = donor->second.startedOnce;
+							g.handOff.begin(map.handOffModeDurationFrames);
+							m_groups.erase(donor);
+							break;
+						}
+					}
 					it = m_groups.emplace(key, g).first;
 				}
 				else if (weight < (int)map.stopThreshold)
 				{
-					continue; // dropped below: not marked live, stopped below
+					continue; // dropped below: not marked live, stopped below (or handed off above)
 				}
-				// the sound follows the group's centre at MaximumAudioSpeed (world units per logic frame)
+				// the sound follows the group's centre: during a hand-off by the 1/steps glide, else at MaximumAudioSpeed
+				// (world units per logic frame) (RW 0x9D8018, LargeGroupAudioHandOff::advance)
 				Group &g = it->second;
-				const float dx = centre.x - g.position.x, dy = centre.y - g.position.y;
-				const float d = std::sqrt(dx * dx + dy * dy);
-				const float step = map.maximumAudioSpeed;
-				if (d > step && d > 0.0f)
+				if (g.handOff.active())
 				{
-					g.position.x += dx * step / d;
-					g.position.y += dy * step / d;
+					g.position = g.handOff.advance(g.position, centre, map.maximumAudioSpeed);
 				}
 				else
 				{
-					g.position = centre;
+					const float dx = centre.x - g.position.x, dy = centre.y - g.position.y;
+					const float d = std::sqrt(dx * dx + dy * dy);
+					const float step = map.maximumAudioSpeed;
+					if (d > step && d > 0.0f)
+					{
+						g.position.x += dx * step / d;
+						g.position.y += dy * step / d;
+					}
+					else
+					{
+						g.position = centre;
+					}
+					g.position.z = centre.z;
 				}
-				g.position.z = centre.z;
 				// playback: a looping sound that is neither queued nor playing (culled by distance, finished, refused) is started again at the current position;
 				// a one-shot sound plays once per qualification. The playing / pending event follows the moving position (review r2 fix 2)
 				const auto info = m_audio.ini().infos.find(snd.sound);

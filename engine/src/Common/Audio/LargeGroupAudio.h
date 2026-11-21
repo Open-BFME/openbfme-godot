@@ -20,6 +20,8 @@
 #pragma once
 
 #include "Common/Audio/AudioEventInfo.h"
+#include "Common/Audio/LargeGroupAudioHandOff.h"
+#include "Common/INIDataTypes.h"
 #include "GameLogic/BitFlags.h"
 
 #include <string>
@@ -52,7 +54,7 @@ struct LargeGroupAudioMap
 	ObjectStatusMaskType excludedObjectStatusBits{};
 	unsigned short startThreshold = 0;
 	unsigned short stopThreshold = 0;
-	unsigned handOffModeDurationFrames = 0;
+	unsigned handOffModeDurationFrames = 0; ///< RW: one byte at map + 0xE4 (the parser RW 0x73B071 refuses more than 255 frames)
 	bool ignoreStealthedUnits = true;
 };
 
