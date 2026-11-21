@@ -186,11 +186,17 @@ int shroudAt(Object &obj, const Coord3D &loc)
 bool moduleAllows(Object &obj, SpecialPowerModuleInterface &m, const SpecialPowerTemplate &t, const Coord3D *locOrNull)
 {
 	GameLogic &logic = obj.logic();
+	// PORT-249: the module's own location tests come first (RW 0x8C744B, OCLSpecialPower's slot 0x48, which answers on the caster's disabled mask and its
+	// list's nuggets and then calls the base RW 0x897E01 below); every other class inherits the true of SpecialPowerModule
+	SpecialPowerModule *spm = dynamic_cast<SpecialPowerModule *>(&m);
+	if (locOrNull && spm && !spm->locationRequirementsMet(obj, *locOrNull))
+	{
+		return false;
+	}
 	if (!m.requirementsMet())
 	{
 		return false;
 	}
-	const SpecialPowerModule *spm = dynamic_cast<const SpecialPowerModule *>(&m);
 	if (locOrNull && spm && spm->spData()->m_useDistanceFromCommandCenter)
 	{
 		const Coord3D &loc = *locOrNull;
