@@ -65,6 +65,8 @@ enum Seen : unsigned
 struct BlockState
 {
 	GameLogicSettings values;
+	// lane PORT-39: the entry an `SideInfo` block is parsed into before the settings take it (see parseSideInfoBlock)
+	GameLogicSettings::AISideInfo sideInfoScratch;
 	unsigned seen = 0;
 	unsigned blocks = 0; ///< bit 0 GameData, 1 AIData, 2 MultiplayerSettings: which blocks were read
 	bool minDistFromEdgeOfMapForBuildSeen = false; // PORT-12: the seen mask already uses all 32 bits
@@ -156,12 +158,12 @@ bool firstTokenIsEnd(const std::string &line)
 // `=` is a nested block of the block being read (AIData's SideInfo / SkirmishBuildList, with their own Structure / SkillSet sub blocks). Retail reads
 // these blocks token by token (ZH AI::parseSkirmishBuildList / BuildListInfo::parseStructure / AI::parseSideInfo through initFromINI; RotWK's AIData
 // field names at RW 0x81D3A4 SkirmishBuildList, 0x81D3B8 SideInfo, 0x81D738 .. 0x81D768 SkillSet5 .. 1): every sub block ends at its own End, and
-// the indentation means nothing (lane MODCOMPAT-1: Ennorath writes `SkirmishBuildList Rohan` at column 0 with deeper Ends, which the old
+// the indentation means nothing (lane MODCOMPAT-1: retail writes `SkirmishBuildList Rohan` at column 0 with deeper Ends, which the old
 // indentation rule read past the AIData block's own End). So the skip counts them: a line whose first token opens one of those sub blocks goes a
 // level deeper, an End goes a level up, and the block ends at the End of its own level.
-void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
+// The skip itself, shared by the catch-all row and by the SideInfo block's own leftover rows (a `Row = value` line is consumed and never opens a level).
+void skipNestedBlock(INI *ini, const void *userData)
 {
-	static_cast<BlockState *>(instance)->unapplied.insert(std::string(ini->getCurBlockStart()) + "." + static_cast<const char *>(userData));
 	const std::string header = ini->currentLineText();
 	if (withoutComment(header).find('=') != std::string::npos)
 	{
@@ -190,6 +192,12 @@ void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
 			++depth;
 		}
 	}
+}
+
+void noteUnapplied(INI *ini, void *instance, void *, const void *userData)
+{
+	static_cast<BlockState *>(instance)->unapplied.insert(std::string(ini->getCurBlockStart()) + "." + static_cast<const char *>(userData));
+	skipNestedBlock(ini, userData);
 }
 
 #define SEEN_DATA(bit) ((const void *)(std::uintptr_t)(bit))
@@ -235,6 +243,69 @@ void parseAttackPriorityBlock(INI *ini, void *instance, void *, const void *)
 	}
 	def->targets.clear(); // RW 0x75E707
 	ini->initFromINI(def, kAttackPriorityFields);
+}
+
+// lane PORT-39, RW 0x70011F (the AIData row SideInfo, RW 0xC1CCF0): `SideInfo <side>`. A list entry the name matches is parsed into (the `strcmp` walk of
+// RW 0x4065AA over `[AIData + 0x18] + 0xF4`, each entry's + 0x1BC next: the name is exact), else a new entry (0x1C0 bytes, ctor RW 0x6FFF8C: Easy 0, Normal 1,
+// Hard 2) is pushed at the list head. Then the block's own lines are read against RW 0xC1D7D8 .. 0xC1D7F8: `ResourceGatherersEasy` + 0x8,
+// `ResourceGatherersNormal` + 0xC, `ResourceGatherersHard` + 0x10, all parseInt RW 0x42EC5E.
+// The block's other rows (RW 0xC1D808 BaseDefenseStructure1, RW 0xC1D818 .. 0xC1D858 SkillSet1 .. 5) are consumed and recorded by name, like the AIData
+// catch-all's: retail and retail data may set them, and a block this lane reads must not turn a game's data into a load error. The block itself stays listed
+// as `AIData.SideInfo` in the unapplied fields for the same reason (what it carries beyond the three counts is not applied, S-4194).
+// The block is parsed into BlockState::sideInfoScratch (a copy of the entry, its three ints at a fixed place in the state, the way RW's table addresses its
+// entry's fields) and the entry takes the result: a table row's store is a byte offset from the object the block parser was given, and the entry itself lives
+// in the settings' vector, not in that object.
+int sideInfoScratchOffset()
+{
+	static const int offset = [] {
+		BlockState probe;
+		return (int)((const char *)probe.sideInfoScratch.resourceGatherers - (const char *)&probe);
+	}();
+	return offset;
+}
+
+// The SideInfo block's own leftover rows (BaseDefenseStructure1, SkillSet1 .. 5, a mod's extras): recorded by the block's name too, so the report says
+// where in the file they were, and a nested row (`SkillSet1` with `Science = ..` lines and its own End) is skipped to its End like the catch-all's.
+void noteSideInfoUnapplied(INI *ini, void *instance, void *, const void *userData)
+{
+	static_cast<BlockState *>(instance)->unapplied.insert(std::string(ini->getCurBlockStart()) + ".SideInfo." + static_cast<const char *>(userData));
+	skipNestedBlock(ini, userData);
+}
+
+void parseSideInfoBlock(INI *ini, void *instance, void *, const void *)
+{
+	BlockState *state = static_cast<BlockState *>(instance);
+	state->unapplied.insert(std::string(ini->getCurBlockStart()) + ".SideInfo");
+	std::vector<GameLogicSettings::AISideInfo> &list = state->values.sideInfos;
+	const std::string name = ini->getNextToken();
+	GameLogicSettings::AISideInfo *info = nullptr;
+	for (GameLogicSettings::AISideInfo &i : list)
+	{
+		if (i.side == name)
+		{
+			info = &i;
+			break;
+		}
+	}
+	if (!info)
+	{
+		list.insert(list.begin(), GameLogicSettings::AISideInfo());
+		info = &list.front();
+		info->side = name;
+	}
+	// a re-parsed block keeps the rows the earlier one set (RW parses into the entry it found)
+	state->sideInfoScratch = *info;
+	const int base = sideInfoScratchOffset();
+	FieldParse rows[] = {
+		{ "ResourceGatherersEasy", INI::parseInt, nullptr, base },                          // row RW 0xC1D7D8, entry + 0x8
+		{ "ResourceGatherersNormal", INI::parseInt, nullptr, base + (int)sizeof(int) },      // row RW 0xC1D7E8, entry + 0xC
+		{ "ResourceGatherersHard", INI::parseInt, nullptr, base + (int)(2 * sizeof(int)) },  // row RW 0xC1D7F8, entry + 0x10
+		{ nullptr, noteSideInfoUnapplied, nullptr, 0 }
+	};
+	ini->initFromINI(state, rows);
+	info->resourceGatherers[0] = state->sideInfoScratch.resourceGatherers[0];
+	info->resourceGatherers[1] = state->sideInfoScratch.resourceGatherers[1];
+	info->resourceGatherers[2] = state->sideInfoScratch.resourceGatherers[2];
 }
 
 const FieldParse kGameDataFields[] = {
@@ -357,6 +428,8 @@ const FieldParse kAIDataFields[] = {
 	{ "AttackIgnoreInsignificantBuildings", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.attackIgnoreInsignificantBuildings) },
 	{ "ArtilleryMaxFriendlyFire", parseNoting<INI::parsePercentToReal>, 0, (int)offsetof(BlockState, values.artilleryMaxFriendlyFire) },
 	{ "AttackPriority", parseAttackPriorityBlock, nullptr, 0 },
+	// lane PORT-39: the side info block (row RW 0xC1CCF0, parser RW 0x70011F): before the catch-all, so `AIData.SideInfo` is no longer merely skipped
+	{ "SideInfo", parseSideInfoBlock, nullptr, 0 },
 	// lane AIDATA-1: ChaseFromBehindLimit (row RW 0xC1CEF0, + 0xD0) and SkirmishGroupFudgeDistance (row RW 0xC1CC30, + 0x58), parseReal RW 0x42ED00
 	{ "ChaseFromBehindLimit", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.chaseFromBehindLimit) },
 	{ "SkirmishGroupFudgeDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.skirmishGroupFudgeDistance) },
@@ -744,7 +817,7 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addFloat(artilleryMaxFriendlyFire);
 	if (maxRecruitRadius != 400.0f)
 	{
-		h.addFloat(maxRecruitRadius); // lane PORT-40: retail 2.01 and Ennorath set 400.0 (default\aidata.ini:32, the mod keeps it), so a game with
+		h.addFloat(maxRecruitRadius); // lane PORT-40: retail 2.01 and retail set 400.0 (default\aidata.ini:32, the mod keeps it), so a game with
 		                             // that data is unchanged; a map.ini / mod AIData block with another value is hashed (as lane STEALTHFLY1 above)
 	}
 	h.addU32((std::uint32_t)attackPriorityDefs.size());
@@ -757,6 +830,19 @@ void GameLogicSettings::crc(StateHasher &h) const
 		{
 			h.addString(t.first);
 			h.addI32(t.second);
+		}
+	}
+	// lane PORT-39: the paths the AI reads (AIData SideInfo, the gatherer counts by difficulty). Only a game whose data has such a block is hashed, so
+	// every existing game's hash is unchanged
+	if (!sideInfos.empty())
+	{
+		h.addU32((std::uint32_t)sideInfos.size());
+		for (const AISideInfo &s : sideInfos)
+		{
+			h.addString(s.side);
+			h.addI32(s.resourceGatherers[0]);
+			h.addI32(s.resourceGatherers[1]);
+			h.addI32(s.resourceGatherers[2]);
 		}
 	}
 	h.addBool(forceModelsToFollowTimeOfDay);

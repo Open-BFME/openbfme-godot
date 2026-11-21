@@ -481,17 +481,18 @@ void AIStatCollector::xfer(Xfer &x)
 
 void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 {
-	// version 2 (lane AI5): the upgrade / expansion requests and the unit upgrader / upgrade builder states. Version 3 (community #113) adds the capture-flag
+	// version 2 (lane AI5): the upgrade / expansion requests and the unit upgrader / upgrade builder states. Version 3 (community fork issue 113) adds the capture-flag
 	// history, which cannot be recovered from current KindOf flags: older snapshots are refused. Version 4 (lane AIEXPAND-1): the EXPANSION heuristic's frame
 	// counter, SimpleExpansion's request and plain structure requests. Version 5 (lane RAI-DEF): the DEFENSIVE target's defense size (+ 0x2C) and a
 	// SimpleDefense team's recruit origin (+ 0x324 / + 0x328). A version 3 / 4 snapshot predates the DEFENSIVE heuristic, so no such target or tactic is in
 	// it: the fields load at 0 / none
-	// version 6 (lane RAI-POW-2, community #233): each AI's cached enemy player and its refresh frame, written only when some AI's cache holds a value, so
+	// version 6 (lane RAI-POW-2, community fork issue 233): each AI's cached enemy player and its refresh frame, written only when some AI's cache holds a value, so
 	// a game that never asked for an enemy keeps version 5's bytes
 	// version 7 (lane RAI-SMALL): the groups' task vectors (RW 0x8EDB2C), written only when some group holds a task. Retail's group task list is never
 	// filled by the AI code, so a live game keeps version 5 or 6; a version 5 / 6 snapshot has no tasks
 	bool enemyCache = x.isLoading();
 	bool hasTasks = x.isLoading();
+	bool gatherers = x.isLoading();
 	for (const std::unique_ptr<AISkirmishGroup> &g : m_groups)
 	{
 		if (!g->tasks.empty())
@@ -504,10 +505,14 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 			{
 				enemyCache = true;
 			}
+			if (kv.second->needsResourceGatherers || kv.second->resourceGatherersWanted != 0 || kv.second->resourceGatherersHave != -1)
+			{
+				gatherers = true;
+			}
 		}
 	}
 	// a task list needs the enemy-cache fields too: version 7 always carries version 6's bytes
-	const int written = hasTasks ? 7 : (enemyCache ? 6 : 5);
+	const int written = gatherers ? 8 : (hasTasks ? 7 : (enemyCache ? 6 : 5));
 	XferVersion v{ 3, (std::uint8_t)written };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
@@ -704,6 +709,17 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 				if (x.isLoading())
 				{
 					AIXfer::inRange(ai->enemyIndex, -1, m_logic.players().getPlayerCount() - 1, "skirmish ai: the cached enemy player of an AI");
+				}
+			}
+			if (v.current >= 8)
+			{
+				// lane PORT-39: the gatherer bookkeeping of RW 0x8F736E / 0x8F858E (AIPlayer + 0x46 / + 0x78 / + 0x7C)
+				x.xferBool(&ai->needsResourceGatherers);
+				x.xferInt(&ai->resourceGatherersWanted);
+				x.xferInt(&ai->resourceGatherersHave);
+				if (x.isLoading())
+				{
+					ai->hasSideInfo = ai->needsResourceGatherers;
 				}
 			}
 			AIXfer::inRange(ai->playerIndex, 0, m_logic.players().getPlayerCount() - 1, "skirmish ai: the player of an AI");

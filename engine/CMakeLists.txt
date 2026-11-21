@@ -186,6 +186,7 @@ include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
 include(cmake/Port12.cmake) # PORT-12: BuildAssistant edge margin / SupplyBuildBorder (issue #67; OPENBFME_PORT12_TESTS)
+include(cmake/Port39.cmake) # PORT-39: AIData SideInfo ResourceGatherers (issue #124; OPENBFME_PORT39_TESTS)
 include(cmake/Port15.cmake) # PORT-15: LockWeaponCreate/Object::setWeaponLock (OPENBFME_PORT15_TESTS)
 include(cmake/Port18.cmake) # PORT-18: hold fire
 include(cmake/Port20.cmake) # PORT-20: GarrisonContain/onSelling (OPENBFME_PORT20_TESTS)
@@ -767,6 +768,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT40_TESTS}
     ${OPENBFME_PORT46_TESTS}
     ${OPENBFME_PORT13_TESTS}
+    ${OPENBFME_PORT39_TESTS}
     ${OPENBFME_PORT9_TESTS}
     ${OPENBFME_PORT7_TESTS}
     ${OPENBFME_PORT58_TESTS}

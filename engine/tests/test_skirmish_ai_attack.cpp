@@ -379,7 +379,14 @@ TEST_CASE("skirmish ai attack: the tactical layer's stops are reported (S-417 no
 		s1876 += l.rfind("[S-1876]", 0) == 0 ? 1 : 0;
 	}
 	CHECK(s1876 == 1);
-	CHECK(SkirmishAIManager::stopLines().size() == 22); // S-410 (with S-411), S-412, S-415, S-416, S-413, S-414, S-417, S-419, S-1876, S-420, S-418, S-890, S-892, S-1500, S-1501, S-1502 (lane MOVE-2), S-893, S-894, S-895, S-1300, S-1301, S-1302
+	// lane PORT-39: + S-4194 (the gatherer order's maker, the preferred-dock filter and the block's leftover rows)
+	int s4194 = 0;
+	for (const std::string &l : SkirmishAIManager::stopLines())
+	{
+		s4194 += l.rfind("[S-4194]", 0) == 0 ? 1 : 0;
+	}
+	CHECK(s4194 == 1);
+	CHECK(SkirmishAIManager::stopLines().size() == 23); // S-410 (with S-411), S-412, S-415, S-416, S-413, S-414, S-417, S-419, S-1876, S-420, S-418, S-890, S-892, S-1500, S-1501, S-1502 (lane MOVE-2), S-893, S-894, S-895, S-1300, S-1301, S-1302, S-4194
 }
 
 TEST_CASE("skirmish ai economy: each of the 7 factions as the Medium computer on Evendim builds its farms from the map's FarmTemplate sites (RW 0x8EEF8F)")
