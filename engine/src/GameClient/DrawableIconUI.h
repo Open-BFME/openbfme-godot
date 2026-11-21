@@ -116,6 +116,7 @@ private:
 		float heightOffset = 10.0f; ///< HealthBoxHeightOffset
 	};
 	const TemplateBox &boxOf(const ThingTemplate &tt);
+	friend struct DrawableIconUITestAccess; // tests read boxOf (PORT-102); a `#define private public` changes the MSVC symbol name and does not link
 	std::map<const ThingTemplate *, TemplateBox> m_boxes;
 	std::set<std::string> m_notes;
 };
