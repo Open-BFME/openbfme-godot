@@ -341,8 +341,10 @@ void parseLocomotorSet(INI *ini, void *instance, void *store, const void *userDa
 //   SHIP 0x5E613F (lane SHIP-1).
 // NOT ported (reported through Locomotor::unverified(), acceptance stops S-081, S-084):
 //   x87/SSE parity of the CRT trigonometry, the remaining ZAxisBehaviors
-//   FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS and RELATIVE_TO_HIGHEST_LAYER, the cliff / wading
-//   condition updates of RW 0x5E5785, and the HORDE mover's formation path nodes (types 2, 3, 7, 8).
+//   FIXED_RELATIVE_TO_GROUND_AND_BUILDINGS and RELATIVE_TO_HIGHEST_LAYER, and the HORDE mover's formation path nodes (types 2, 3, 7, 8).
+// Port 202 (fork issue 469): the wading updater RW 0x5E5785 that handleBehaviorZ calls for NO_Z_MOTIVE_FORCE (RW 0x5E7787) and FLOATING_Z (RW 0x5E773E)
+//   sets and clears the model conditions WADING and SWIMMING from the water's depth against AIData WadeWaterDepth (it holds no cliff test), and the
+//   SURFACE_RELATIVE_HEIGHT / ABSOLUTE_HEIGHT climb marks a disguised object detected (RW 0x5E7C0A). Locomotor::updateWading, LocomotorMove.cpp.
 // =====================================================================================================
 
 // RW +0x68: three rows of four floats (3x3 rotation, translation in column 3).
@@ -465,8 +467,28 @@ public:
 	virtual bool aiStateActive() const { return true; }
 	// GlobalData + 0xC4 (GameData Gravity, per frame^2): a dead object's height step
 	virtual float gravity() const { throw std::logic_error("Locomotor: GameData Gravity is not available to this host"); }
-	// RW 0x68FBD3: the object has a stealth module (behaviour list + 0x4B4 whose slot answers true); the CLIMBING reveal RW 0x5E7C0A then applies (not ported)
-	virtual bool hasStealthModule() const { return false; }
+	// Port 202, RW 0x5E7C08 .. 0x5E7C22 (the CLIMBING step of SURFACE_RELATIVE_HEIGHT / ABSOLUTE_HEIGHT): the object's StealthUpdate (RW 0x68FBD3) whose
+	// disguise template (+ 0x3C, a dword compared with 0 at RW 0x5E7C15) is set marks it detected (RW 0x7767A9(0, 1, null, 1)). An object without that
+	// module, or one that wears no disguise, is left alone (RW 0x5E7C13 / 0x5E7C18), which is all a host without stealth modules has to answer.
+	virtual void revealDisguisedClimber() {}
+	// ---- Port 202: the wading updater (RW 0x5E5785) ----
+	// What RW 0x5E579A .. 0x5E57E8 reads before it compares: the object is on the ground layer (Object::getLayer RW 0x68BBE0 == 1) and TheTerrainLogic vslot
+	// 0x4C (isUnderwater, RW 0x67DAE6)(x, y, &waterZ, &terrainZ, null) finds standing water over the point. Then true with the water's height, the ground's
+	// under it and AIData WadeWaterDepth (TheAI RW 0xDE4B40 -> + 0x18 -> + 0x98). False off the ground layer and on dry land, with `out` untouched. A host
+	// that has no terrain to ask (the default) has no water to wade in.
+	struct WadingWater
+	{
+		float waterZ = 0.0f;
+		float terrainZ = 0.0f;
+		float wadeWaterDepth = 0.0f;
+	};
+	virtual bool wadingWaterAt(float x, float y, WadingWater &out) const
+	{
+		(void)x;
+		(void)y;
+		(void)out;
+		return false;
+	}
 };
 
 // lane FLY-1: the GIANT_BIRD movers (RW 0x5E91E2 the path mover, RW 0x5E4CD3 the hover; LocomotorGiantBird.cpp). They read GiantBirdAIUpdate's aerial fields
@@ -551,6 +573,8 @@ public:
 	// locomotor's turn rate.
 	void rotateTowardsWrapper(LocomotorHost &host, const Coord3D &goal, float *outRelAngle);
 	void handleBehaviorZ(LocomotorHost &host, const Coord3D &goal);                                                       // RW 0x5E76AC
+	// Port 202, RW 0x5E5785: WADING / SWIMMING from the water over `pos`; true while the object wades or swims, `terrainZ` then holds the ground under the water
+	bool updateWading(LocomotorHost &host, const Coord3D &pos, float &terrainZ);
 	// ---- lane FLY-1: the GIANT_BIRD movers (LocomotorGiantBird.cpp) ----
 	// RW 0x5E91E2: one step along GiantBirdAIUpdate's aerial path: `pathDistance` advances by the aerial speed, the object goes to the path's point there
 	// (turned and pitched by the points half a look-ahead behind and ahead), the speed moves toward `goalSpeed`; true when the path is used up (the AI's

@@ -286,7 +286,8 @@ public:
 	int currentWeaponStatusWriteBack() override { return base().currentWeaponStatusWriteBack(); }
 	bool aiStateActive() const override { return base().aiStateActive(); }
 	float gravity() const override { return base().gravity(); }
-	bool hasStealthModule() const override { return base().hasStealthModule(); }
+	void revealDisguisedClimber() override { base().revealDisguisedClimber(); }                                          // Port 202, RW 0x5E7C08
+	bool wadingWaterAt(float x, float y, WadingWater &out) const override { return base().wadingWaterAt(x, y, out); } // Port 202, RW 0x5E5785
 
 	GiantBirdFlight *aerialFlight() override { return &m_ai.m_flight; }
 	bool aerialQuery(float distance, Coord3D &out) override { return AerialPathfinder::query(m_ai.m_spline, distance, out); }
@@ -882,7 +883,7 @@ public:
 				const WeaponTemplate &wt = *w->currentWeapon()->getTemplate();
 				if (wt.m_hasGrabNugget && !wt.m_fireFXs[0].empty())
 				{
-					// Local 22 (#163), RW 0x76B84C .. 0x76B894 (DONOR BFME2 0x00368DE2 AIGiantBirdAttackStateOnEnter.cpp:431): when o has a drawable
+					// Local 22 (fork issue 163), RW 0x76B84C .. 0x76B894 (DONOR BFME2 0x00368DE2 AIGiantBirdAttackStateOnEnter.cpp:431): when o has a drawable
 					// (RW 0x76B856), fireFX->doFXPos(&victim->m_position, o.getDrawable()->getTransformMatrix(), wt.m_weaponSpeed, &victim->m_position).
 					FXEvent e = FXEventLog::objectEvent(FXEvent::POSITION_FX, "GiantBirdGrabFX", o.logic().getFrame(), wt.m_fireFXs[0], o);
 					e.position = *victim->getPosition();
@@ -1764,11 +1765,11 @@ bool GiantBirdAIUpdate::routeCommand(const RoutedCommand &c)
 		}
 		return true;
 	case 0x48:
-		// RW 0x76DAF4: retail reads the ID without a null test and faults; the port cancels the command (owner decision 2026-11-06, #57).
+		// RW 0x76DAF4: retail reads the ID without a null test and faults; the port cancels the command (owner decision 2026-11-06, fork issue 57).
 		// INFERENCE: reachability of that read after the target's removal is not proved; the adjacent branch RW 0x76A139 returns without touching the machine.
 		if (!c.target)
 		{
-			o.logic().noteStop("[PORT-5] missing GiantBird ability target: command cancelled (INFERENCE, RW 0x76DAF4; owner decision #57)");
+			o.logic().noteStop("[PORT-5] missing GiantBird ability target: command cancelled (INFERENCE, RW 0x76DAF4; owner decision fork issue 57)");
 			return true;
 		}
 		if (mobile)
