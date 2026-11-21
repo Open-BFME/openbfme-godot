@@ -657,6 +657,22 @@ float SymbioticStructuresBody::estimateDamage(const DamageInfoInput &input) cons
 	BodyModuleInterface *b = symbioteBody();
 	return b ? b->estimateDamage(input) : 0.0f;
 }
+// RW body vslots 0x40 / 0x44 forward to the resolved symbiote (RW 0x8C4FD7 / 0x8C5100).
+bool SymbioticStructuresBody::lastDamageRecordType(int &type) const
+{
+	BodyModuleInterface *b = symbioteBody();
+	return b && b->lastDamageRecordType(type);
+}
+bool SymbioticStructuresBody::lastDamageRecordNoEffect(bool &noEffect) const
+{
+	BodyModuleInterface *b = symbioteBody();
+	return b && b->lastDamageRecordNoEffect(noEffect);
+}
+UnsignedInt SymbioticStructuresBody::lastDamageFrame() const
+{
+	BodyModuleInterface *b = symbioteBody();
+	return b ? b->lastDamageFrame() : 0xFFFFFFFFu;
+}
 void SymbioticStructuresBody::crc(StateHasher &h) const
 {
 	ActiveBody::crc(h);

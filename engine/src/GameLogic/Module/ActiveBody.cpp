@@ -199,6 +199,10 @@ void ActiveBody::crc(StateHasher &h) const
 	{
 		h.addU32((std::uint32_t)m_lastDamageType ^ 0xFA40u); // lane FX-4: hashed only when a hit set it (a game without hits keeps its hash)
 	}
+	if (m_lastDamageNoEffect)
+	{
+		h.addU32(0xD178u); // Local 30, RW 0x744203: record +0x78; false leaves hash unchanged
+	}
 }
 
 void ActiveBody::evaluateVisualCondition()
@@ -474,14 +478,35 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 		info.m_output.m_actualDamageDealt = amount;
 		info.m_output.m_actualDamageClipped = SimMath::subf32(m_previousHealth, m_currentHealth);
 		// (16)
-		m_lastDamageFrame = logic.getFrame();
-		m_lastDamager = info.m_input.m_sourceID;
-		m_lastDamagerPlayerMask = info.m_input.m_sourcePlayerMask; // lane CAMP-1
-		m_lastDamageType = info.m_input.m_damageType;               // lane FX-4: the record's + 0x10 (RW 0x7441E0 copies the whole input)
-		m_lastAttackerTaken = false; // lane PLAY-4: RW 0x8C42FA (+ 0xB6 cleared with the record)
+		// Local 30, RW 0x8C4294 .. 0x8C42F5: a record from this or the previous frame is retained unless the incoming source exists and either the
+		// previous source is gone or the incoming source is INFANTRY, CAVALRY, or one of RW 0x68DAE6's five significant-building kinds
+		// (Object::isFactionStructure: FS_POWER, FS_FACTORY, FS_BASE_DEFENSE, FS_TECHNOLOGY, FS_CASH_PRODUCER).
+		// The subtraction is unsigned, including frame zero (0 - 1 == 0xFFFFFFFF == initial frame). All parts of the record are replaced together.
+		const UnsignedInt now = logic.getFrame();
+		bool replaceRecord = m_lastDamageFrame != now && m_lastDamageFrame != now - 1u;
+		if (!replaceRecord)
+		{
+			const Object *previousSource = logic.findObjectByID(m_lastDamager);
+			const Object *incomingSource = logic.findObjectByID(info.m_input.m_sourceID);
+			if (incomingSource)
+			{
+				replaceRecord = !previousSource || incomingSource->isKindOfName("INFANTRY") || incomingSource->isKindOfName("CAVALRY") ||
+				                incomingSource->isKindOfName("FS_POWER") || incomingSource->isKindOfName("FS_FACTORY") ||
+				                incomingSource->isKindOfName("FS_BASE_DEFENSE") || incomingSource->isKindOfName("FS_TECHNOLOGY") ||
+				                incomingSource->isKindOfName("FS_CASH_PRODUCER");
+			}
+		}
+		if (replaceRecord)
+		{
+			m_lastDamageFrame = now;
+			m_lastDamager = info.m_input.m_sourceID;
+			m_lastDamagerPlayerMask = info.m_input.m_sourcePlayerMask; // lane CAMP-1: record + 0xC
+			m_lastDamageType = info.m_input.m_damageType;               // lane FX-4: record + 0x10
+			m_lastDamageNoEffect = info.m_output.m_noEffect;           // RW 0x744203: record + 0x78
+			m_lastAttackerTaken = false;                               // RW 0x8C42FA: record + 0xB6 cleared with the record
+		}
 		// lane CAMP-1, RW 0x8C430F .. 0x8C4341: the last damage record's source object, when it exists, marks its controlling player as an attacker of the
-		// victim's controlling player (RW 0x6AAC05). INFERENCE: retail runs this after the record block whether or not the record changed this hit; here only
-		// when it did
+		// victim's controlling player (RW 0x6AAC05). Runs after the record block whether or not the record changed this hit (reads m_lastDamager).
 		if (const Object *source = logic.findObjectByID(m_lastDamager))
 		{
 			Player *victimPlayer = obj.getControllingPlayer();
@@ -722,7 +747,7 @@ void ActiveBody::attemptHealing(DamageInfo &info)
 // current DamageInfo pointer is null outside a hit (a snapshot is taken between frames); the armour report flag is the report's.
 void ActiveBody::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 2 }; // 2: lane FX-4's last damage type
+	XferVersion v{ 1, 3 }; // 2: lane FX-4's last damage type, 3: Local 30's last damage no-effect
 	x.xferVersion(v);
 	xferBehaviorModule(x);
 	x.xferReal(&m_currentHealth);
@@ -745,6 +770,18 @@ void ActiveBody::xfer(Xfer &x)
 	if (v.current >= 2)
 	{
 		SnapshotXfer::enumIn(x, m_lastDamageType, 0, SnapshotXfer::nameCount(TheDamageNames) - 1, "a body's last damage type");
+	}
+	else
+	{
+		m_lastDamageType = DAMAGE_UNDEFINED;
+	}
+	if (v.current >= 3)
+	{
+		x.xferBool(&m_lastDamageNoEffect); // RW 0x744203: DamageInfo + 0x78
+	}
+	else
+	{
+		m_lastDamageNoEffect = false;
 	}
 }
 

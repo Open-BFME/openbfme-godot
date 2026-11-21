@@ -279,12 +279,29 @@ TEST_CASE("fx4 runtime: a hit that makes the state worse plays the new state's F
 	o->friend_bindToClient(nullptr);
 }
 
+TEST_CASE("fx4 runtime: a source-less frame-zero hit retains the initial damage record")
+{
+	FxWorld w;
+	Object *o = w.unit("TdfxProbe", 'B', 400, 300);
+	REQUIRE(o != nullptr);
+	REQUIRE(w.logic->getFrame() == 0);
+	DamageInfo water = hit(30.0f, DAMAGE_WATER);
+	o->attemptDamage(water);
+	int type = -1;
+	REQUIRE(o->getBodyModule()->lastDamageRecordType(type));
+	CHECK(type == DAMAGE_UNDEFINED); // -1 equals frame - 1 with unsigned wrap; the missing source retains the old record
+	CHECK(bySite(w.events(), FXEvent::POSITION_FX).size() == 1); // UNDEFINED is not excluded by ALL -WATER
+}
+
 TEST_CASE("fx4 runtime: the damage type of the hit filters the entries (Damage*Types), the record is written before the modules hear of the change")
 {
 	FxWorld w;
 	Object *o = w.unit("TdfxProbe", 'B', 400, 300);
 	REQUIRE(o != nullptr);
-	DamageInfo water = hit(30.0f, DAMAGE_WATER); // the first hit of the object: retail copies it into the record (RW 0x7441E0) before the loop RW 0x8C4395
+	// At frame zero a source-less hit retains the initial frame -1 record (RW 0x8C4294 .. 0x8C42CB).
+	// Advance one frame so this test exercises the damage-type filter with a freshly copied record.
+	w.frames(1);
+	DamageInfo water = hit(30.0f, DAMAGE_WATER); // retail copies it into the record (RW 0x7441E0) before the loop RW 0x8C4395
 	o->attemptDamage(water);
 	REQUIRE(o->getBodyModule()->getDamageState() == BODY_DAMAGED);
 	std::vector<FXEvent> ev = w.events();
@@ -366,7 +383,7 @@ TEST_CASE("fx4 bones: RandomBone draws the logic random among the drawable's bon
 	w.combat().setLaunchOffsets(nullptr);
 }
 
-TEST_CASE("fx4 save: the last damage record's type round-trips in ActiveBody's xfer version 2; a version 1 body loads and keeps UNDEFINED")
+TEST_CASE("fx4 save: the last damage record's type round-trips in ActiveBody's xfer version 3; version 1 and 2 load with defaults")
 {
 	FxWorld w;
 	Object *a = w.unit("TdfxProbe", 'B', 400, 300);
@@ -375,6 +392,7 @@ TEST_CASE("fx4 save: the last damage record's type round-trips in ActiveBody's x
 	REQUIRE(a != nullptr);
 	REQUIRE(b != nullptr);
 	REQUIRE(c != nullptr);
+	w.frames(1); // at frame zero the initial -1 record survives a source-less hit (RW 0x8C4294 .. 0x8C42CB)
 	DamageInfo water = hit(10.0f, DAMAGE_WATER);
 	a->attemptDamage(water);
 	ActiveBody *ba = dynamic_cast<ActiveBody *>(a->getBodyModule());
@@ -386,25 +404,41 @@ TEST_CASE("fx4 save: the last damage record's type round-trips in ActiveBody's x
 	XferSave saved;
 	ba->xfer(saved);
 	REQUIRE_FALSE(saved.data().empty());
-	CHECK(saved.data()[0] == 2); // the version
+	CHECK(saved.data()[0] == 3); // includes the record's noEffect byte
 	XferLoad load(saved.data());
 	bb->xfer(load);
 	REQUIRE(load.atEnd());
 	int type = -1;
 	REQUIRE(bb->lastDamageRecordType(type));
 	CHECK(type == DAMAGE_WATER);
+	bool noEffect = true;
+	REQUIRE(bb->lastDamageRecordNoEffect(noEffect));
+	CHECK_FALSE(noEffect);
 	XferSave again;
 	bb->xfer(again);
 	CHECK(again.data() == saved.data());
-	// version 1 (before lane FX-4): the same layout without the trailing type
-	std::vector<std::uint8_t> v1 = saved.data();
+	// version 2 (before Local 30): without the trailing noEffect byte (loads cleanly with default false)
+	std::vector<std::uint8_t> v2 = saved.data();
+	v2[0] = 2;
+	v2.pop_back();
+	XferLoad oldV2(v2);
+	bc->xfer(oldV2);
+	REQUIRE(oldV2.atEnd());
+	REQUIRE(bc->lastDamageRecordType(type));
+	CHECK(type == DAMAGE_WATER);
+	REQUIRE(bc->lastDamageRecordNoEffect(noEffect));
+	CHECK_FALSE(noEffect);
+	// version 1 (before lane FX-4): without the record's damage type and noEffect
+	std::vector<std::uint8_t> v1 = v2;
 	v1[0] = 1;
 	v1.resize(v1.size() - 4);
-	XferLoad old(v1);
-	bc->xfer(old);
-	REQUIRE(old.atEnd());
+	XferLoad oldV1(v1);
+	bc->xfer(oldV1);
+	REQUIRE(oldV1.atEnd());
 	REQUIRE(bc->lastDamageRecordType(type));
 	CHECK(type == DAMAGE_UNDEFINED);
+	REQUIRE(bc->lastDamageRecordNoEffect(noEffect));
+	CHECK_FALSE(noEffect);
 }
 
 TEST_CASE("fx4 shake: W3DView::shake (RW 0x486D86) adds the type's intensity with the distance falloff, caps it and ignores far epicenters")
