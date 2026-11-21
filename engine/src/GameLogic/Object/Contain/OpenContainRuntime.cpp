@@ -856,6 +856,26 @@ void OpenContain::onSelling()
 	orderAllPassengersToExit((int)CMD_FROM_AI); // RW 0x86562A: the virtual, so a horde garrison orders its riders out through RW 0x991027
 }
 
+// RW 0x00865631 (DONOR BFME2 0x00462516): contain vslot 0x68 onContainedAboutToTakeDamage(rider, damageSource, info)
+void OpenContain::onContainedAboutToTakeDamage(Object *rider, const void *damageSource, DamageInfo *info)
+{
+	if (!rider || !damageSource || !info)
+	{
+		return;
+	}
+	const int type = info->m_input.m_damageType;
+	if (type == DAMAGE_PASSENGER || type == DAMAGE_UNRESISTABLE)
+	{
+		if (info->m_input.m_kill)
+		{
+			removeFromContain(rider, false); // RW 0x865660: contain slot 0xA4(rider, false)
+		}
+		return;
+	}
+	info->m_input.m_amount = 0.0f; // RW 0x865669
+	info->m_input.m_kill = false;  // RW 0x86566D
+}
+
 // RW 0x86588C: `xor eax, eax; cmp byte [ecx + 0xE1], al; je` (the byte cleared by the sale, RW 0x865623), then `mov ecx, [ecx + 4]` (the module data)
 // `cmp byte [ecx + 0x83], al` (KillPassengersOnDeath, data + 0x83): 1 only when both are set
 bool OpenContain::getKillPassengersOnDeath() const
