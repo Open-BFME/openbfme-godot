@@ -478,10 +478,13 @@ const char *AIGroup::forceAttackStopLine()
 {
 	return "[S-2480] force attack (lane PLAY-2): MSG_DO_FORCE_ATTACK_GROUND (RW 0x77AF93) and MSG_DO_FORCE_ATTACK_OBJECT (RW 0x77AED3) run with the group's "
 		"weapon locks, groupAttackPosition and aiAttackPosition (state 9); not ported: the passengers of a container that lets them fire and the slaves of a "
-		"spawner in groupAttackPosition (RW 0x77229A: the container's allowed-to-fire test, its passenger list and SpawnBehaviorInterface slot 4 have no port), the contain module's "
-		"weapon lock pass-through (Object::setWeaponLock / releaseWeaponLock, contain slots 0x168 / 0x16C) and the AI hook of the lock, the object form's "
+		"spawner in groupAttackPosition (RW 0x77229A: the container's allowed-to-fire test, its passenger list and SpawnBehaviorInterface slot 4 have no port), "
+		"the object form's "
 		"reserved-id branch (victim id 99999999 with the GameData flag + 0xBC: TerrainLogic RW 0x68449B makes a real object of the terrain prop at the click "
-		"and attacks it), the outside-the-playable-area refusal (Object + 0x458 bit 3 is never set); INFERENCE: PartitionFilterPossibleToAttack of the "
+		"and attacks it), the outside-the-playable-area refusal (Object + 0x458 bit 3 is never set); the group's weapon lock and its release are Object::setWeaponLock "
+		"(RW 0x69121A) and Object::releaseWeaponLock (RW 0x68DF11) with their contain pass-through, slots 0x168 / 0x16C (PORT-115, issue fork issue 299); PLAY-2's "
+		"\"AI hook of the lock\" is not in RW 0x69121A, read in full: the contain's slot 0x168, SWITCHED_WEAPONS (RW 0x62684D) and the weapon set's lock "
+		"(RW 0x6C97F9) only; INFERENCE: PartitionFilterPossibleToAttack of the "
 		"ContinueAttackRange search is the non-forced canAttackObject";
 }
 
@@ -500,18 +503,17 @@ bool AIGroup::isIdle() const
 
 bool AIGroup::setWeaponLockForGroup(int slot, WeaponLockType type)
 {
-	static const int kSwitchedWeapons = ObjectTemplateInfoBuilder::objectStatusIndex("SWITCHED_WEAPONS"); // RW status 0x51
 	bool any = false;
 	for (Object *o : m_members)
 	{
 		ObjectWeapons *w = o->getWeapons();
 		Weapon *before = w ? w->currentWeapon() : nullptr;
-		// RW 0x69121A: the object status SWITCHED_WEAPONS = (permanent and slot != PRIMARY), then the weapon set's lock (RW 0x6C97F9); no weapon set: false
-		if (kSwitchedWeapons >= 0)
-		{
-			o->setStatus((unsigned)kSwitchedWeapons, type == LOCKED_PERMANENTLY && slot != 0);
-		}
-		if (w && w->setWeaponLock(slot, type))
+		// PORT-115 (issue fork issue 299): RW 0x76FAE9 calls Object::setWeaponLock (RW 0x69121A), not the weapon set's lock alone: the member's contain (+ 0x258) takes
+		// the same lock first (contain slot 0x168; OpenContain's RW 0x8656D6, whose callback RW 0x8656A7 runs RW 0x69121A on every contained object in list
+		// order through slot 0x110) — this is how a horde's members keep the slot the button named (the archers' Barrage, Command_ArcherBombard's TERTIARY,
+		// whose members' bombard bow is not auto-choosable from AI) — then SWITCHED_WEAPONS (status 0x51) = (permanent and slot != PRIMARY) and the member's
+		// own set (RW 0x6C97F9), whose answer is the member's (no weapon set: false)
+		if (ObjectWeapons::setObjectWeaponLock(*o, slot, type))
 		{
 			any = true;
 		}
@@ -531,10 +533,9 @@ void AIGroup::releaseWeaponLockForGroup(WeaponLockType type)
 {
 	for (Object *o : m_members)
 	{
-		if (ObjectWeapons *w = o->getWeapons())
-		{
-			w->releaseWeaponLock(type); // RW 0x68DF11 -> RW 0x6C98E6 (a destroyed object, status + 0x94 bit 0, is not a member)
-		}
+		// PORT-115 (issue fork issue 299): RW 0x76FB78 calls Object::releaseWeaponLock (RW 0x68DF11), the twin of the lock above: a destroyed object (status + 0x94
+		// bit 0) returns at once, the contain's slot 0x16C releases the contained objects first, then the member's own set (RW 0x6C98E6)
+		ObjectWeapons::releaseObjectWeaponLock(*o, type);
 	}
 }
 

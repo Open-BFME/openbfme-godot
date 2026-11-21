@@ -106,6 +106,10 @@ public:
 	// LOCKED_PERMANENTLY and slot is not PRIMARY) (RW 0x62684D), then the object's own set (RW 0x6C97F9). Its result; false without an ObjectWeapons
 	static bool setObjectWeaponLock(Object &obj, int slot, WeaponLockType type);
 	void releaseWeaponLock(WeaponLockType type);
+	// PORT-115 (issue fork issue 299): RW 0x68DF11 Object::releaseWeaponLock(type), the twin of setObjectWeaponLock: a destroyed object (Object + 0x94 bit 0) returns at
+	// once (RW 0x68DF14); the object's contain (+ 0x258) first releases the passengers through contain slot 0x16C (OpenContain's RW 0x86570B with the callback
+	// RW 0x8656C5: Object::releaseWeaponLock on every contained object, contain list order, through slot 0x110), then the object's own set (RW 0x6C98E6)
+	static void releaseObjectWeaponLock(Object &obj, WeaponLockType type);
 	// RW 0x6C80E5 (reloadAmmo on every weapon of the set, instantly when `now`)
 	void reloadAllAmmo(bool now);
 	// lane FLY-1: RW 0x6CEE4C (Weapon::reloadAmmo) on the current weapon (RW 0x68B58C(0)); nothing without one

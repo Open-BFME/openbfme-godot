@@ -765,6 +765,34 @@ void ObjectWeapons::releaseWeaponLock(WeaponLockType type)
 	}
 }
 
+// RW 0x68DF11 (see the header): the passengers first (contain slot 0x16C), then the object's own set — the same shape as
+// setObjectWeaponLock (RW 0x69121A), so a group lock and its release reach the same objects
+void ObjectWeapons::releaseObjectWeaponLock(Object &obj, WeaponLockType type)
+{
+	if (obj.isDestroyed()) // RW 0x68DF14: Object + 0x94 bit 0
+	{
+		return;
+	}
+	if (ContainModuleInterface *c = obj.getContain())
+	{
+		if (const ContainModuleInterface::ContainedItemsList *items = c->getContainedItemsList())
+		{
+			const std::vector<Object *> riders(items->begin(), items->end()); // RW 0x86570B walks the contain's slot 0x110
+			for (Object *r : riders)
+			{
+				if (r)
+				{
+					releaseObjectWeaponLock(*r, type); // RW 0x8656C5
+				}
+			}
+		}
+	}
+	if (ObjectWeapons *w = obj.getWeapons())
+	{
+		w->releaseWeaponLock(type); // RW 0x68DF3D -> RW 0x6C98E6
+	}
+}
+
 // RW 0x6C80E5
 void ObjectWeapons::reloadAllAmmo(bool now)
 {
