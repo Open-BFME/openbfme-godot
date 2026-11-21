@@ -167,6 +167,7 @@ include(cmake/Combat.cmake)     # OPENBFME_COMBAT_SOURCES / OPENBFME_COMBAT_TEST
 include(cmake/Structure.cmake)  # OPENBFME_STRUCTURE_SOURCES / OPENBFME_STRUCTURE_TESTS (lane COMBAT-2)
 include(cmake/Spell.cmake)      # OPENBFME_SPELL_SOURCES / OPENBFME_SPELL_TESTS (lane SPELL-1)
 include(cmake/Port43.cmake)     # PORT-43: GameData/PowerLimit -> GameLogic + 0x118 (issue #128; OPENBFME_PORT43_TESTS)
+include(cmake/Port244.cmake)   # PORT-244: PreTriggerUnstealthTime in SpecialAbilityUpdate::handlePackingProcessing (fork issue 568; OPENBFME_PORT244_TESTS)
 include(cmake/Render.cmake)     # OPENBFME_RENDER_SOURCES / OPENBFME_RENDER_TESTS (lane RENDER-1, client / draw only)
 include(cmake/SkirmishAI.cmake) # OPENBFME_SKIRMISH_AI_SOURCES / OPENBFME_SKIRMISH_AI_TESTS (lane AI-1)
 include(cmake/Vis.cmake)        # OPENBFME_VIS_SOURCES / OPENBFME_VIS_TESTS (lane VIS-1)
@@ -755,6 +756,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT11_TESTS}
     ${OPENBFME_PORT12_TESTS}
     ${OPENBFME_PORT164_TESTS}
+    ${OPENBFME_PORT244_TESTS}
     ${OPENBFME_PORT15_TESTS}
     ${OPENBFME_PORT18_TESTS}
     ${OPENBFME_PORT20_TESTS}

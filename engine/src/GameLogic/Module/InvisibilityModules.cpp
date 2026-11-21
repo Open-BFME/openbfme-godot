@@ -1030,7 +1030,8 @@ UpdateSleepTime StealthUpdate::evaluate()
 			{
 				th->unhide(); // slot 0x5C
 			}
-			// RW 0x77784E: the client's hint look
+			// RW 0x777850 -> RW 0x776759 (StealthUpdate::hintDetectableWhileUnstealthed, HintDetectableConditions at data + 0x10): writes Drawable + 0x358
+			// for the local player's unported heat-vision second material pass (S-1042, S-7396)
 			markAsDetected(0, 1, nullptr, true); // RW 0x77785D
 		}
 	}
