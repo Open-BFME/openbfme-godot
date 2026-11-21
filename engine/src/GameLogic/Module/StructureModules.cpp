@@ -765,6 +765,7 @@ void InactiveBody::xfer(Xfer &x)
 	x.xferBool(&m_dieCalled);
 }
 
+// RW 0x008A8110 (UpdateModule::xfer + version 1 + fields +0x24..+0x40; OpenBFME native snapshot order, S-4190)
 void StructureCollapseUpdate::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
