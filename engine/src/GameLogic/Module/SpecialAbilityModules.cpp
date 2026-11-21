@@ -309,7 +309,7 @@ const FieldParse kLevelGrant[] = { // RW 0xC73550
 	{ "AcceptanceFilter", parseFilter, nullptr, LG_OFF(m_acceptanceFilter) },
 	{ nullptr, nullptr, nullptr, 0 },
 };
-// community PR #36: BFME1's LevelGrantSpecialPower rows (UseKindOf, AffectsKindOf as an ANY + KindOf filter) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
+// community PR fork issue 36: BFME1's LevelGrantSpecialPower rows (UseKindOf, AffectsKindOf as an ANY + KindOf filter) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
 const FieldParse kBfme1LevelGrant[] = {
 	{ "UseKindOf", INI::parseBool, nullptr, LG_OFF(m_useKindOf) },
 	{ "AffectsKindOf", parseLegacyUseKindOf, nullptr, LG_OFF(m_acceptanceFilter) },
@@ -1624,7 +1624,18 @@ bool SpecialAbilityUpdate::handlePackingProcessing()
 	}
 	if (--m_packFramesLeft != 0)
 	{
-		// RW 0x851EC1: LoseStealthOnTrigger's unstealth PreTriggerUnstealthTime before the end (S-859)
+		if (m_data->m_loseStealthOnTrigger && m_packFramesLeft < m_data->m_preTriggerUnstealthFrames)
+		{
+			// RW 0x852030 .. 0x85206E (in SpecialAbilityUpdate::handlePackingProcessing RW 0x851E9F; DONOR BFME2 0x0044EFEC, SpecialAbilityUpdate.cpp:1410):
+			// when LoseStealthOnTrigger (+0xB0) is set and the decremented frame counter (+0x28) is below PreTriggerUnstealthTime (+0x8C),
+			// StealthUpdate (RW 0x68FBD3 -> RW 0x7767A9(0, 1, null, true)) and InvisibilityManager (RW 0x81C32C(object, null, 0, 1)) mark the object detected.
+			Object *obj = getObject();
+			if (StealthUpdate *st = StealthUpdate::of(*obj))
+			{
+				st->markAsDetected(0, 1, nullptr, true);
+			}
+			obj->logic().invisibility().markDetected(obj, nullptr, 0, 1);
+		}
 		return true;
 	}
 	Object *obj = getObject();
