@@ -79,6 +79,8 @@ public:
 	// contain slot 0x64, the sale's call (RW 0x796806): RW 0x86561F clears the kill-on-death byte (module + 0xE1) and then orders every rider out with
 	// CMD_FROM_AI through vslot 0x80 (GarrisonContain / HordeGarrisonContain answer that slot with RW 0x991027 instead of RW 0x867D6A)
 	void onSelling() override;
+	// contain slot 0x68 (RW 0x00865631, DONOR BFME2 0x00462516): ejects rider on lethal PASSENGER / UNRESISTABLE, else zeroes damage amount and kill flag
+	void onContainedAboutToTakeDamage(Object *rider, const void *damageSource, struct DamageInfo *info) override;
 	// RW 0x86588C `cmp byte [ecx + 0xE1], 0` then `mov ecx, [ecx + 4]` (the module data) `cmp byte [ecx + 0x83], 0` (KillPassengersOnDeath): the byte above
 	// AND the data's row. Read by GarrisonContain::onRemoving (RW 0x87C0B6), HordeGarrisonContain::onDie (RW 0x87CF7D) and TransportContain's die (RW 0x87AE29)
 	bool getKillPassengersOnDeath() const;

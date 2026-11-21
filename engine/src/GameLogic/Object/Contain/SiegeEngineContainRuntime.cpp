@@ -24,6 +24,7 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectFilterMatch.h"
@@ -589,6 +590,35 @@ void SiegeEngineContainT<Base, Horde>::xfer(Xfer &x)
 	SnapshotXfer::checkRange(m_crewCount, 0, m_siege->m_crewMax, "a siege engine's crew count");
 	x.xferBool(&m_hasMinePassenger);
 	x.xferBool(&m_exitBlocked);
+}
+
+// RW 0x0087F0CF (SiegeEngineContain, DONOR BFME2 0x0047BE23) / RW 0x0087FF18 (HordeSiegeEngineContain, DONOR BFME2 0x0047CDC8)
+// contain slot 0x88: removes every crew member via removeFromContain(c, false); HordeSiegeEngineContain also flings with GameLogicRandomValue(3, 8)
+template <class Base, bool Horde>
+void SiegeEngineContainT<Base, Horde>::evacuateCrew(int source)
+{
+	(void)source;
+	Object *container = this->getObject();
+	while (!m_crew.empty())
+	{
+		Object *c = m_crew.front();
+		this->removeFromContain(c, false); // RW 0x87F0EA / RW 0x87FF40: contain slot 0xA4(c, false)
+		if (!m_crew.empty() && m_crew.front() == c)
+		{
+			m_crew.pop_front();
+			--m_crewCount;
+		}
+		if (Horde && container)
+		{
+			if (PhysicsBehavior *phys = PhysicsBehavior::find(*container))
+			{
+				const float *cb = container->getBasis();
+				const int r = container->logic().random().getValue(3, 8, "C:\\projects\\BFME2\\Code\\GameEngine\\Source\\GameLogic\\Object\\Contain\\HordeContain\\HordeSiegeEngineContain.cpp", 0x338);
+				const float rf = (float)r;
+				phys->fling(Coord3D{ SimMath::mulf32(cb[0], rf), SimMath::mulf32(cb[3], rf), rf });
+			}
+		}
+	}
 }
 
 template class SiegeEngineContainT<TransportContain, false>;

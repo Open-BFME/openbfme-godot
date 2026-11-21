@@ -167,8 +167,19 @@ public:
 	virtual bool getEntryPosition(Coord3D &out) const { (void)out; return false; }
 	virtual bool getEntryOffset(Coord3D &out) const { (void)out; return false; }
 	virtual bool getExitOffset(Coord3D &out) const { (void)out; return false; }
+	// slot 0x68 onContainedAboutToTakeDamage (OpenContain RW 0x00865631; HordeTransportContain, HordeGarrisonContain, HordeSiegeEngineContain,
+	// TunnelContain, SlaughterHordeContain, CitadelSlaughterHordeContain RW 0x0087A3A4)
+	virtual void onContainedAboutToTakeDamage(Object *rider, const void *damageSource, struct DamageInfo *info)
+	{
+		(void)rider;
+		(void)damageSource;
+		(void)info;
+	}
 	// slot 0x80 orderAllPassengersToExit (HordeGarrisonContain RW 0x87CE8F -> 0x991027); `source` is a CommandSourceType
 	virtual void orderAllPassengersToExit(int source) { (void)source; }
+	// slot 0x88 evacuateCrew (OpenContain RW 0x009F3A3C no-op; SiegeEngineContain RW 0x0087F0CF, HordeSiegeEngineContain RW 0x0087FF18;
+	// called by FlammableUpdate::onDamage at ignition RW 0x00890666 with CMD_FROM_AI = 2)
+	virtual void evacuateCrew(int source = 2) { (void)source; }
 	// slot 0x44 onObjectWantsToEnterOrExit (ZH OpenContain::onObjectWantsToEnterOrExit; AIEnterState RW 0x751699 / 0x752B67, AIExitState RW 0x74352D): 0 enter,
 	// 1 exit, 2 neither
 	virtual void onObjectWantsToEnterOrExit(Object *obj, int wants) { (void)obj; (void)wants; }

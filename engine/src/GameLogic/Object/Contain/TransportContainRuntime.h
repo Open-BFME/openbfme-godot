@@ -141,6 +141,7 @@ public:
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override; // RW 0x87A48C
 	bool addToContain(Object *obj) override;                                                      // RW 0x87A677
 	void removeFromContain(Object *obj) override;                                                 // RW 0x87A6D3
+	void onContainedAboutToTakeDamage(Object *rider, const void *damageSource, struct DamageInfo *info) override; // RW 0x0087A3A4
 	void orderAllPassengersToExit(int source) override;                                           // RW 0x87A559 -> 0x991027
 	void exitObjectViaDoor(Object *obj, int door) override;                                       // RW 0x87A89E
 	void onDie(const DieModuleInterface::Event &event) override;                                  // RW 0x87AE0A

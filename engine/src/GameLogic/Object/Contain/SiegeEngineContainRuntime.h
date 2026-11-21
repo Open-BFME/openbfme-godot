@@ -53,6 +53,7 @@ public:
 	void createPayload() override;
 
 	const SiegeEngineContainModuleData &siegeData() const { return *m_siege; }
+	void evacuateCrew(int source = 2) override; // RW 0x0087F0CF (SiegeEngineContain) / RW 0x0087FF18 (HordeSiegeEngineContain) contain slot 0x88
 	int crewCount() const { return m_crewCount; }
 	bool hasMinePassenger() const { return m_hasMinePassenger; }
 	// RW 0x7640C1(obj, the container's player) with CrewMax >= 1: the object would be crew

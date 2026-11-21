@@ -384,10 +384,16 @@ void FlammableUpdate::onDamage(const DamageInfo &info)
 	}
 	m_flameDamageLimit = 0.0f;
 	tryToIgnite();
-	if (obj->getContain())
+	if (ContainModuleInterface *contain = obj->getContain())
 	{
-		noteStop(*obj, m_data->m_burnContained ? "FlammableUpdate: BurnContained's damage to the passengers (RW 0x8905B9) is not ported"
-											   : "FlammableUpdate: the contain module's slot 0x88(2) at ignition (RW 0x890656) is not ported");
+		if (m_data->m_burnContained)
+		{
+			noteStop(*obj, "FlammableUpdate: BurnContained's damage to the passengers (RW 0x8905B9) is not ported");
+		}
+		else
+		{
+			contain->evacuateCrew(2 /*CMD_FROM_AI*/); // RW 0x00890656 .. 0x00890666: contain slot 0x88(2)
+		}
 	}
 }
 

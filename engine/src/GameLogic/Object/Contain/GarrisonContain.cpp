@@ -1186,6 +1186,17 @@ void GarrisonContain::containReactToTransformChange()
 // ---------------------------------------------------------------------------------------------------------------------------------
 
 // RW 0x991027 (the horde garrison's slot 0x80): every rider: a horde gets slot 0x84 (its AI command 0x3E), another rider with an AI gets aiExit (command 0x1A)
+// RW 0x0087A3A4 (DONOR BFME2 0x00479C0C): contain vslot 0x68 on HordeGarrisonContain (and subclasses TunnelContain, SlaughterHordeContain,
+// CitadelSlaughterHordeContain): forwards to OpenContain::onContainedAboutToTakeDamage (RW 0x00865631) only when rider->getContain() == nullptr
+void GarrisonContain::onContainedAboutToTakeDamage(Object *rider, const void *damageSource, DamageInfo *info)
+{
+	if (isHordeGarrison() && rider && rider->getContain() != nullptr)
+	{
+		return;
+	}
+	OpenContain::onContainedAboutToTakeDamage(rider, damageSource, info);
+}
+
 void GarrisonContain::orderAllPassengersToExit(int source)
 {
 	const ContainedItemsList &list = *getContainedItemsList(); // RW 0x991027 reads contain slot 0x118 (a tunnel answers its network's list)
