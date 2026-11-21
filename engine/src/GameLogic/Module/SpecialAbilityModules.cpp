@@ -7,6 +7,7 @@
 #endif
 
 #include "GameLogic/Module/SpecialAbilityModules.h"
+#include "Common/Audio/AudioRequests.h"
 #include "GameLogic/Combat/CombatLineOfSight.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -26,6 +27,7 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingFactory.h"
 #include "GameClient/FXList.h"
+#include <atomic>
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -309,7 +311,7 @@ const FieldParse kLevelGrant[] = { // RW 0xC73550
 	{ "AcceptanceFilter", parseFilter, nullptr, LG_OFF(m_acceptanceFilter) },
 	{ nullptr, nullptr, nullptr, 0 },
 };
-// community PR #36: BFME1's LevelGrantSpecialPower rows (UseKindOf, AffectsKindOf as an ANY + KindOf filter) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
+// community PR fork issue 36: BFME1's LevelGrantSpecialPower rows (UseKindOf, AffectsKindOf as an ANY + KindOf filter) (BFME1 data only, Common/BfmeGame.h); RotWK's table stays the binary's
 const FieldParse kBfme1LevelGrant[] = {
 	{ "UseKindOf", INI::parseBool, nullptr, LG_OFF(m_useKindOf) },
 	{ "AffectsKindOf", parseLegacyUseKindOf, nullptr, LG_OFF(m_acceptanceFilter) },
@@ -481,9 +483,20 @@ void SpecialDisguiseUpdateModuleData::buildFieldParse(MultiIniFieldParse &p)
 // ---------------------------------------------------------------------------------------------------------------------------------
 // SpecialAbilityUpdate
 // ---------------------------------------------------------------------------------------------------------------------------------
+namespace
+{
+// the audio side's holder keys of the ability loops (lane PORT-93): one per module instance, as AudioLoopUpgrade::soundKey
+std::uint32_t nextAbilityLoopKey()
+{
+	static std::atomic<std::uint32_t> next{ 1 };
+	return next.fetch_add(1, std::memory_order_relaxed);
+}
+} // namespace
+
 SpecialAbilityUpdate::SpecialAbilityUpdate(Thing *thing, const SpecialAbilityUpdateModuleData *data)
 	: UpdateModule(thing, data)
 	, m_data(data)
+	, m_activeLoopKey(nextAbilityLoopKey())
 {
 	friend_setNextCallFrame((UnsignedInt)UPDATE_SLEEP_FOREVER); // RW 0x851D42: RW 0x850C32(object, 0x3FFFFFFF)
 }
@@ -745,6 +758,29 @@ void SpecialAbilityUpdate::restartPersistent() // RW 0x8524BC
 		--m_persistentLeft;
 	}
 	m_prepFrames = m_data->m_persistentPrepFrames;
+}
+
+// lane PORT-93: RW 0x854008 .. 0x85405B (the tail of SpecialAbilityUpdate::triggerAbilityEffect). The data's ActiveLoopSound (+ 0x34) empty: nothing (RW 0x854008
+// tests module + 0x34). Else the manager (RW 0xDE42FC) is asked whether the kept handle at module + 0x38 still sounds (vslot 0xD0 = isCurrentlyPlaying, RW 0x854014
+// / 0x854019): it does, so the loop is not added a second time (RW 0x854021), else the event is built for the object's player (RW 0x853FD0 .. 0x853FF6: the
+// TriggerSound's construction, the same block) with the object's id (RW 0x854023 / 0x854026, RW 0x6DB5B3) and added through the manager's vslot 0x64 (RW 0x85404B);
+// its result is stored at + 0x38 (RW 0x854054). The port keeps that handle on the audio side, keyed by this module (AudioApi::resumeHeldSound).
+void SpecialAbilityUpdate::startActiveLoopSound()
+{
+	if (m_data->m_activeLoopSound.empty())
+	{
+		return;
+	}
+	AudioApi::resumeHeldSound(AudioApi::HELD_ABILITY_LOOP, m_data->m_activeLoopSound, m_activeLoopKey, getObject()->getID());
+	m_activeLoopHeld = true;
+}
+
+// lane PORT-93: RW 0x85311B pushes module + 0x38 to the manager's vslot 0x6C (removeAudioEvent) and RW 0x853131 stores 1 back into + 0x38 (the value the
+// constructor's RW 0x851D42 leaves); both run before the preparation's end (RW 0x853134 -> 0x85260A). Removal of a handle that does not sound is a no-op (RW 0x45CEE9).
+void SpecialAbilityUpdate::stopActiveLoopSound()
+{
+	AudioApi::stopHeldSound(AudioApi::HELD_ABILITY_LOOP, m_activeLoopKey);
+	m_activeLoopHeld = false;
 }
 
 // RW 0x85260A
@@ -1362,7 +1398,14 @@ void SpecialAbilityUpdate::triggerAbilityEffect()
 			p->science().addSkillPoints((float)skill, false); // RW 0x782AA4(points, 0)
 		}
 	}
-	// RW 0x853F9C: the light points (no manager in a skirmish, S-531); RW 0x853FC0: TriggerSound / ActiveLoopSound (client)
+	// RW 0x853F9C: the light points (no manager in a skirmish, S-531); RW 0x853FC0: TriggerSound (client; added for the object before the loop below,
+	// BFME2 0x85116E the same order); RW 0x854008: ActiveLoopSound
+	if (!m_data->m_triggerSound.empty())
+	{
+		const Player *p = obj->getControllingPlayer();
+		AudioApi::playSoundForObject(m_data->m_triggerSound, obj->getID(), p ? p->getPlayerIndex() : -1);
+	}
+	startActiveLoopSound(); // RW 0x854008
 	const SpecialPowerTemplate *t = m_data->m_specialPowerTemplate;
 	const int type = t ? t->m_type : 0;
 	if (type == 0x80 || type == 0x8F)
@@ -1822,7 +1865,9 @@ void SpecialAbilityUpdate::finishAbility(bool ownerDying, bool aborted)
 	{
 		(void)ai; // RW 0x853105: AI + 0x3CA = 0 and RW 0x6630D7 (the AI's goal flag: S-859)
 	}
-	// RW 0x85311A: the prep and active loop sounds stop (client)
+	// RW 0x85311B .. 0x853131: the active loop's handle (+ 0x38) is removed and set to 1 before the preparation ends (RW 0x85310D removes the prep
+	// loop's + 0x34 inside endPreparation, RW 0x85260A)
+	stopActiveLoopSound();
 	endPreparation();
 	if (SpecialPowerModule *spm = mySpecialPowerModule())
 	{
@@ -2934,7 +2979,10 @@ std::vector<std::string> SpecialAbilityModules::hero2StopLines()
 // them) follow in declaration order, then the counters the crc hashes.
 void SpecialAbilityUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	// lane PORT-93: version 2 adds whether the ActiveLoopSound's handle is held (RW 0x8528C8 / 0x8528DB transfer the two handles; here the audio side keeps
+	// them, so what is saved is the fact, then startActiveLoopSound / stopActiveLoopSound re-post or drop it on load)
+	XferVersion version{ 1, 2 };
+	x.xferVersion(version);
 	xferUpdateModule(x);
 	x.xferInt(&m_triggerCount);
 	x.xferUnsignedInt(&m_packFramesLeft);
@@ -2961,6 +3009,22 @@ void SpecialAbilityUpdate::xfer(Xfer &x)
 	x.xferUnsignedInt(&m_abilitiesTriggered);
 	x.xferUnsignedInt(&m_captures);
 	SnapshotXfer::u64(x, m_unported);
+	if (version.current >= 2)
+	{
+		bool held = m_activeLoopHeld;
+		x.xferBool(&held);
+		if (x.isLoading())
+		{
+			if (held)
+			{
+				startActiveLoopSound(); // the loaded game hears the loop the save heard
+			}
+			else
+			{
+				stopActiveLoopSound();
+			}
+		}
+	}
 }
 
 // the special weapon is made on first use (specialWeapon): a load makes it when the snapshot's was made, then loads its state

@@ -39,14 +39,21 @@ void postWeaponFireSound(const std::string &eventName, std::uint32_t objectId, s
 //   HELD_MOVE_LOOP:     AIInternalMoveToState's move loop (startMoveSound RW 0x748C0B keeps it at state + 0x40; onEnter RW 0x74DAE4 / onExit RW 0x748E06 remove)
 //   HELD_UPGRADE_LOOP:  AudioLoopUpgrade's SoundToPlay (RW 0x8BBE71 adds, module + 0x2C; RW 0x8BBEFE / 0x8BBCB6 / 0x8BBF5A remove; holder = the module's own
 //                       key, AudioLoopUpgrade::soundKey: an object can carry several, e.g. IsengardFortressCitadel four)
+//   HELD_ABILITY_LOOP:  SpecialAbilityUpdate's ActiveLoopSound (data + 0x34; RW 0x854008 .. 0x85405B starts it at the trigger, module + 0x38; RW 0x85311B ..
+//                       0x853131 removes it in finishAbility; holder = the module's own key, one ability of one object)
 enum HeldSoundSlot
 {
 	HELD_BUILDING_LOOP = 0,
 	HELD_MOVE_LOOP = 1,
 	HELD_UPGRADE_LOOP = 2,
-	HELD_SOUND_SLOTS = 3
+	HELD_ABILITY_LOOP = 3,
+	HELD_SOUND_SLOTS = 4
 };
 void postHeldSound(int slot, const std::string &eventName, std::uint32_t holderId, std::uint32_t objectId);
+// lane PORT-93: RW 0x854008 .. 0x85405B (the trigger of every special ability): when the data's ActiveLoopSound (data + 0x34) is set and the manager says the
+// kept handle (module + 0x38) is not playing (RW 0xDE42FC vslot 0xD0), the event is added for the object (RW 0x6DB5B3) through the manager's vslot 0x64 and its
+// handle kept at + 0x38 (RW 0x854054). Already playing: nothing is added, so one active ability sounds once. Mirrors postHeldSound's holder bookkeeping.
+void resumeHeldSound(int slot, const std::string &eventName, std::uint32_t holderId, std::uint32_t objectId);
 void stopHeldSound(int slot, std::uint32_t holderId);
 // the sounds of a slot that are still kept (the report, the tests); the handle `holderId` keeps in `slot` (0: none)
 size_t heldSounds(int slot);
