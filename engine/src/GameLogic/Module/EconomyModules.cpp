@@ -39,6 +39,9 @@ void EconomyModules::registerAll(ModuleFactory &modules)
 	bindRuntime<CommandPointsUpgrade, CommandPointsUpgradeModuleData>(modules, "CommandPointsUpgrade");
 	modules.bindTypedData<CostModifierUpgradeModuleData>("CostModifierUpgrade", MODULETYPE_BEHAVIOR);
 	bindRuntime<CostModifierUpgrade, CostModifierUpgradeModuleData>(modules, "CostModifierUpgrade");
+	// lane PORT-65 (issue fork issue 177): the class RW registers at RW 0x65013C (create RW 0x650104, data proc RW 0x8BA1AB, constructor RW 0x8B9F57)
+	modules.bindTypedData<SpellRechargeModifierUpgradeModuleData>("SpellRechargeModifierUpgrade", MODULETYPE_BEHAVIOR);
+	bindRuntime<SpellRechargeModifierUpgrade, SpellRechargeModifierUpgradeModuleData>(modules, "SpellRechargeModifierUpgrade");
 	modules.bindTypedData<RefundDieModuleData>("RefundDie", MODULETYPE_BEHAVIOR);
 	bindRuntime<RefundDie, RefundDieModuleData>(modules, "RefundDie");
 	modules.bindTypedData<PillageModuleData>("PillageModule", MODULETYPE_BEHAVIOR);

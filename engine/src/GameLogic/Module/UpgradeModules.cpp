@@ -37,6 +37,16 @@ void parseNameList(INI *ini, void *instance, void *store, const void *)
 	INI::parseAsciiStringVector(ini, instance, store, nullptr);
 }
 
+#define SR_OFF(member) (int)offsetof(SpellRechargeModifierUpgradeModuleData, member)
+// the names and the case are the game's table RW 0xC6F0D0; Percentage -> RW 0x8BA26F, StartsActive -> RW 0x42E558, LabelForPalantirString -> RW 0x42EE5E
+const FieldParse kSpellRechargeFieldParse[] = {
+	{ "Percentage", parsePercentageAppend, nullptr, SR_OFF(m_percentage) },
+	{ "StartsActive", INI::parseBool, nullptr, SR_OFF(m_startsActive) },
+	{ "LabelForPalantirString", INI::parseAsciiString, nullptr, SR_OFF(m_labelForPalantirString) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+#undef SR_OFF
+
 #define CP_OFF(member) (int)offsetof(CommandPointsUpgradeModuleData, member)
 const FieldParse kCommandPointsFieldParse[] = {
 	{ "CommandPoints", INI::parseInt, nullptr, CP_OFF(m_commandPoints) },
@@ -58,6 +68,13 @@ const FieldParse kCostModifierFieldParse[] = {
 };
 #undef CM_OFF
 } // namespace
+
+// RW 0x8BA294 (the data proc RW 0x8BA1AB pushes into the factory; the base's table has 8 entries, then RW 0xC6F0D0)
+void SpellRechargeModifierUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	buildBaseFieldParse(p);
+	p.add(kSpellRechargeFieldParse);
+}
 
 void CommandPointsUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
@@ -222,6 +239,88 @@ void CostModifierUpgrade::onCapture(Player *oldOwner, Player *newOwner)
 			setUpgradeExecuted(true); // RW 0x8B9CCA: setUpgradeExecuted(true)
 		}
 	}
+}
+
+// ---- SpellRechargeModifierUpgrade (lane PORT-65) -------------------------------------------------------------------------------------
+SpellRechargeModifierUpgrade::SpellRechargeModifierUpgrade(Thing *thing, const SpellRechargeModifierUpgradeModuleData *data)
+	: UpgradeModule(thing, data)
+	, m_data(data)
+{
+}
+
+void SpellRechargeModifierUpgrade::giveUpgrade()
+{
+	// RW 0x8B9F9A's path (the class's give, as CostModifierUpgrade's): the implementation unless executed, then executed
+	if (!isAlreadyUpgraded())
+	{
+		giveSelfUpgrade();
+	}
+}
+
+void SpellRechargeModifierUpgrade::takeUpgrade()
+{
+	processUpgradeRemoval();
+}
+
+void SpellRechargeModifierUpgrade::upgradeImplementation()
+{
+	// RW 0x8BA139: the controlling player's count + 1, then the discount from the Percentage vector at that count
+	if (Player *owner = getObject()->getControllingPlayer())
+	{
+		owner->science().addSpellRechargeModifier(m_data->m_percentage); // RW 0x6AAAE0, RW 0x6AAAEE
+	}
+}
+
+void SpellRechargeModifierUpgrade::processUpgradeRemoval()
+{
+	// RW 0x8B9FE0: only an executed upgrade (mux slot 0), then the count - 1 and the discount again; the flag stays (the mux's removeUpgrade
+	// RW 0x8D2688 clears it after the removal)
+	if (!isAlreadyUpgraded())
+	{
+		return;
+	}
+	if (Player *owner = getObject()->getControllingPlayer())
+	{
+		owner->science().removeSpellRechargeModifier(m_data->m_percentage); // RW 0x6AAAE7, RW 0x6AAAEE
+	}
+}
+
+void SpellRechargeModifierUpgrade::onBuildComplete()
+{
+	// RW 0x8B9FB6: StartsActive (+ 0x144) runs the implementation and marks the upgrade executed (mux slot 9); the + 0x20 flag is set either way
+	if (m_data->m_startsActive)
+	{
+		upgradeImplementation();
+		setUpgradeExecuted(true);
+	}
+	m_flag20 = true; // RW 0x8B9FDA
+}
+
+void SpellRechargeModifierUpgrade::onCapture(Player *oldOwner, Player *newOwner)
+{
+	// RW 0x8BA05E: the old owner loses one, the new one gains one, both re-apply the discount for their new count; the upgrade is marked executed.
+	// No executed test (unlike CostModifierUpgrade's onCapture RW 0x8B9C4D).
+	if (oldOwner)
+	{
+		oldOwner->science().removeSpellRechargeModifier(m_data->m_percentage); // RW 0x8BA073 .. 0x8BA0C4
+	}
+	if (newOwner)
+	{
+		newOwner->science().addSpellRechargeModifier(m_data->m_percentage); // RW 0x8BA0D2 .. 0x8BA123
+	}
+	setUpgradeExecuted(true); // RW 0x8BA12D (mux slot 9)
+}
+
+void SpellRechargeModifierUpgrade::xfer(Xfer &x)
+{
+	// RW 0x8B9D39, version (1, 2): the version, the + 0x20 byte at 2 and above (RW 0x8B9D57: slot 0x90 = xferBool), then UpgradeModule's (the mux)
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
+	if (v.current >= 2)
+	{
+		x.xferBool(&m_flag20);
+	}
+	UpgradeModule::xfer(x);
 }
 
 // ---- lane SAVE-4b: the snapshots (UpgradeModule's: the classes keep no state of their own) ----
