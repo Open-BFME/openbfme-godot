@@ -568,7 +568,7 @@ StealthUpdate::StealthUpdate(Thing *thing, const StealthUpdateModuleData *data)
 	setWakeFrame(getObject(), UPDATE_SLEEP(1)); // RW 0x776EEC
 }
 
-// RW 0x776BF8
+// RW 0x0077730B -> RW 0x776BF8
 void StealthUpdate::onObjectCreated()
 {
 	maskOf(m_data->m_requiredUpgradeNames, m_requiredUpgrades);
@@ -719,6 +719,7 @@ void StealthUpdate::swapDisguise()
 		playFX(m_data->m_disguiseFX); // RW 0x777103: DisguiseFX (data + 0x40)
 		m_disguised = true;
 	}
+	m_xferRestoreDisguise = false; // RW 0x007772FB (DONOR BFME2 StealthUpdateLogic.cpp:1216)
 }
 
 // RW 0x7767A9
@@ -1046,6 +1047,10 @@ UpdateSleepTime StealthUpdate::evaluate()
 UpdateSleepTime StealthUpdate::update()
 {
 	Object *obj = getObject();
+	if (m_xferRestoreDisguise) // RW 0x007779ED .. 0x00777A2F (DONOR BFME2 0x003756A8): restore disguise drawable after load
+	{
+		swapDisguise(); // RW 0x00776F03 (clears m_xferRestoreDisguise at RW 0x007772FB)
+	}
 	if (of(*obj) != this) // RW 0x777A30 .. 0x777A90: only the object's StealthUpdate runs
 	{
 		return m_enabled ? UPDATE_SLEEP_NONE : UPDATE_SLEEP_FOREVER;
@@ -1195,6 +1200,7 @@ void StealthDetectorUpdate::xfer(Xfer &x)
 	x.xferUnsignedInt(&m_marks);
 }
 
+// RW 0x00776C7D (OpenBFME native snapshot layout, S-4190); loadPostProcess RW 0x00776E23 arms m_xferRestoreDisguise on load.
 void StealthUpdate::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
@@ -1221,6 +1227,8 @@ void StealthUpdate::xfer(Xfer &x)
 	{
 		checkLoadedUpgradeMask(m_requiredUpgrades, "a stealth update's required upgrades");
 		checkLoadedUpgradeMask(m_forbiddenUpgrades, "a stealth update's forbidden upgrades");
+		// RW 0x00776E23 (StealthUpdate::loadPostProcess, DONOR BFME2 0x00374AE8): arm +0x47 when loaded with a disguise template (+0x3C).
+		m_xferRestoreDisguise = (m_disguiseTemplate != nullptr);
 	}
 	x.xferBool(&m_active);
 }
