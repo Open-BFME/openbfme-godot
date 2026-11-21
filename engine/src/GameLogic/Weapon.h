@@ -300,6 +300,9 @@ public:
 	bool m_shareTimers = false;            // 0x16A
 	bool m_noVictimNeeded = false;         // 0x16B
 	bool m_rotatingTurret = false;         // 0x16C
+	// RW 0x6C9C50 (`mov al,[ecx+0x16c]`, its address in the field-getter table RW 0xC7B568) and RW 0x6C9C6B through the weapon:
+	// with the flag the launch transform of a projectile is turned by the turret's angle and pitch (RW 0x6CAD58 -> RW 0x6CAD6E .. 0x6CB43B)
+	bool rotatingTurret() const { return m_rotatingTurret; }
 	bool m_shouldPlayUnderAttackEvaEvent = true; // 0x16D
 	bool m_instantLoadClipOnActivate = false; // 0x16E
 	bool m_lockWhenUsing = false;          // 0x16F

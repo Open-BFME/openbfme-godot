@@ -14,6 +14,7 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AI/TurretAI.h"
 #include "GameLogic/Combat/BezierSegment.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -296,9 +297,8 @@ void BezierProjectileBehavior::projectileLaunchAtObjectOrPosition(const Object *
 // no drawable or no bone, RW 0x6CACDA) composed with the launcher's transform (RW 0x70BCE7 Object::convertBonePosToWorldPos). TARGET FACTS: a launcher with status
 // INSIDE_GARRISON (bit 0x3A, RW 0x6CAC0F) inside a container whose contain module says so (vslot 0xB0, bit 29 of the answer) asks the CONTAINER's AI, drawable and
 // transform instead; the turret composition (RW 0x6CAD3F..0x6CB43B) runs when the slot's weapon is a turret weapon (WeaponTemplate + 0x16C) and the launcher's AI names a
-// turret for the slot (RW 0x66246B). This port's AI has no turrets (every slot answers TURRET_INVALID, so the composition is never reached) and the garrison branch is
-// not ported (counted: CombatState::Counters::garrisonLaunchUnported, stop S-360); both fall back to the launcher's own drawable and transform, the branch retail
-// takes when the status is clear.
+// turret for the slot (RW 0x66246B). The garrison branch is not ported (counted: CombatState::Counters::garrisonLaunchUnported, stop S-360): it falls back to the
+// launcher's own drawable and transform, the branch retail takes when the status is clear.
 // The products and sums are retail's SSE order: W[r][c] = (T[r][2] * B[2][c] + T[r][1] * B[1][c]) + T[r][0] * B[0][c], the translation adding T[r][3] last.
 void BezierProjectileBehavior::calcLaunchTransform(const Object &launcher, int wslot, int barrel, Coord3D &pos, float basis[9])
 {
@@ -335,6 +335,35 @@ void BezierProjectileBehavior::calcLaunchTransform(const Object &launcher, int w
 	else if (offsets->launchOffset(*source, wslot, barrel, bone))
 	{
 		++logic.combat().counters().launchBonesFound;
+	}
+	// RW 0x6CAD3F .. 0x6CB43B: the slot's weapon (WeaponSet + 0x34C, RW 0x6C81B0) whose template carries RotatingTurret (+ 0x16C,
+	// RW 0x6CAD58) on a turret of the source's AI (RW 0x66246B; TURRET_INVALID skips at RW 0x6CAD65) turns the launch transform by the
+	// turret's current angle and pitch. RW 0x4C36F8 and RW 0x4C3711 zero both points the launch-offset query answers (turretRotPos,
+	// turretPitchPos), so the donor's translate / pre-rotate / translate-back pair (BFME2 WeaponProjectileLaunch.cpp,
+	// Weapon::calcProjectileLaunchPosition) is Rz(angle) * Ry(-pitch) about the model origin; RW 0x6CAD6E .. 0x6CB43B is that pair
+	// inlined (RW 0xA3CF84 / RW 0xA3CF90 = the CRT sin / cos, of -pitch first and then of the angle).
+	const Weapon *slotWeapon = launcher.getWeapons() ? launcher.getWeapons()->weaponInSlot(wslot) : nullptr;
+	float turretAngle = 0.0f, turretPitch = 0.0f;
+	const AIUpdateInterface *turretAI = source->getAIUpdateInterface();
+	const int turret = turretAI ? turretAI->whichTurretForWeaponSlot(wslot, &turretAngle, &turretPitch) : TURRET_INVALID;
+	if (slotWeapon && slotWeapon->getTemplate()->rotatingTurret() && turret != TURRET_INVALID)
+	{
+		const float ca = SimMath::cosDet(turretAngle), sa = SimMath::sinDet(turretAngle);
+		const float cp = SimMath::cosDet(-turretPitch), sp = SimMath::sinDet(-turretPitch);
+		// R = Rz(angle) * Ry(-pitch): WWMath Matrix3D::In_Place_Pre_Rotate_Z / _Y with the points at the origin
+		const float r[9] = { SimMath::mulf32(ca, cp), -sa, SimMath::mulf32(ca, sp), SimMath::mulf32(sa, cp), ca, SimMath::mulf32(sa, sp), -sp, 0.0f, cp };
+		float turned[12];
+		for (int row = 0; row < 3; ++row)
+		{
+			for (int c = 0; c < 4; ++c)
+			{
+				float v = SimMath::addf32(SimMath::mulf32(r[row * 3 + 0], bone[c]), SimMath::mulf32(r[row * 3 + 1], bone[4 + c]));
+				v = SimMath::addf32(v, SimMath::mulf32(r[row * 3 + 2], bone[8 + c]));
+				turned[row * 4 + c] = v;
+			}
+		}
+		std::memcpy(bone, turned, sizeof(turned));
+		++logic.combat().counters().turretedLaunches;
 	}
 	const float *t = source->getBasis();
 	const Coord3D &p = *source->getPosition();

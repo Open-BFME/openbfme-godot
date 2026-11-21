@@ -503,7 +503,7 @@ const char *TurretAI::stopLine()
 {
 	return "[S-1106] TurretAI (lane GARRISON-2): the turret's sounds and the client's reactToTurretChange, the enemy AI's targeter list (no aim prevention), the bridge attack "
 	       "points, the AI's mood timer (AI + 0x21C: the turret's idle sleeps use the AI's MoodAttackCheckRate) and mood matrix (RW 0x664E18), "
-	       "the pitch of AllowsPitch turrets and the turreted launch composition RW 0x6CAD3F .. 0x6CB43B (S-360) are not ported";
+	       "the pitch of AllowsPitch turrets is not ported (the turreted launch composition RW 0x6CAD3F .. 0x6CB43B is, PORT-28)";
 }
 
 Object &TurretAI::owner() const

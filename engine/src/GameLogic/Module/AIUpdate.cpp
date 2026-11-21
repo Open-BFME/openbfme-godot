@@ -2293,6 +2293,26 @@ float AIUpdateInterface::turretTurnRate() const
 	return m_turret ? m_turret->data().m_turnRate : 0.0f;
 }
 
+// RW 0x66246B getWhichTurretForWeaponSlot: walks the AI's one turret (AI + 0x20C, step 4, bound 1 at RW 0x66248F); a slot the
+// turret controls (RW 0x8DC4ED at RW 0x662482) answers the turret's index (RW 0x6624C5) with its angle (+ 0x18, RW 0x6624A5)
+// and pitch (+ 0x1C, RW 0x6624B9); no turret, or a slot on none: -1 (RW 0x662494)
+int AIUpdateInterface::whichTurretForWeaponSlot(int slot, float *angle, float *pitch) const
+{
+	if (!m_turret || !m_turret->isWeaponSlotOnTurret(slot))
+	{
+		return TURRET_INVALID;
+	}
+	if (angle)
+	{
+		*angle = m_turret->getTurretAngle();
+	}
+	if (pitch)
+	{
+		*pitch = m_turret->getTurretPitch();
+	}
+	return m_turret->whichTurret();
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // the OpenBFME state hash
 // ---------------------------------------------------------------------------------------------------------------------------------
