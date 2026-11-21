@@ -332,6 +332,7 @@ include(cmake/Bridge1.cmake)    # BRIDGE-1: retail bridges crossed and destroyed
 include(cmake/Siege1.cmake)     # SIEGE-1: the siege units (appends to OPENBFME_SIM_SOURCES; OPENBFME_SIEGE1_TESTS)
 include(cmake/Castlearea1.cmake) # CASTLEAREA-1: the castle area triggers (OPENBFME_CASTLEAREA1_TESTS)
 include(cmake/Weather1.cmake)   # WEATHER-1: snow, rain, darkness, lightning, the weather sound (client sources; OPENBFME_WEATHER1_TESTS)
+include(cmake/Port64.cmake)     # PORT-64: RubbleRiseUpdate, the rubble rise of a destroyed camp or castle piece (OPENBFME_PORT64_TESTS)
 include(cmake/Bldfx1.cmake)     # FEAT-BLDFX-1: the FXList nugget sinks, scorches, decals, light pulses, camera shakers (OPENBFME_BLDFX1_SOURCES / _TESTS)
 include(cmake/Decompfix1109.cmake) # DECOMPFIX-1109: FLEECHASE-1, ENTERADJUST-1, REQTHROTTLE-1 (OPENBFME_DECOMPFIX1109_TESTS)
 include(cmake/Port5.cmake)      # PORT-5: the bird's deferred ability target (OPENBFME_PORT5_TESTS)
@@ -750,6 +751,7 @@ add_executable(openbfme_tests
     ${OPENBFME_FACTB_TESTS}
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_PORT54_TESTS}
+    ${OPENBFME_PORT64_TESTS}
     ${OPENBFME_PORT4_TESTS}
     ${OPENBFME_PORT8_TESTS}
     ${OPENBFME_PORT11_TESTS}
