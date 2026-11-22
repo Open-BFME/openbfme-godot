@@ -49,6 +49,8 @@
 
 // Common/Audio/AudioIni.h pulls GameLogic/ObjectFilter.h (another ModelConditionFlags than Common/ModelState.h): forward declared here.
 class AudioIniState;
+// GameClient/MapChunks.h's polygon trigger: the map's trigger list a map.ini block looks its TriggerArea up in (applyMapIni)
+struct TriggerArea;
 
 class RetailObjectWorld
 {
@@ -124,9 +126,11 @@ public:
 	};
 	// Loads <mapDir>\map.ini and <mapDir>\solo.ini (load type 2) into a world as a fresh load makes it: when an earlier map or game changed
 	// this world, it is reloaded first (reload()). mapDir is the map's directory (MapClassification::mapDirectory), e.g. "maps\\map wor fangorn"
-	// in the archives or a user map's folder (lane MOD-5). Throws
+	// in the archives or a user map's folder (lane MOD-5). `mapTriggers` is the trigger list of the map being applied (its TriggerAreas chunk: the
+	// list LiveGame hands the ScriptEngine at newGame, and the list RW's TerrainLogic holds at RW 0xDA21FC); the AerialPathfindNoFlyZone block looks
+	// its TriggerArea up there (RW 0x6825F6). Null/absent: no block finds a trigger. Throws
 	// std::logic_error before load() and while a game of this world whose map is applied is live.
-	MapIniResult applyMapIni(const std::string &mapDir);
+	MapIniResult applyMapIni(const std::string &mapDir, const std::vector<TriggerArea> *mapTriggers = nullptr);
 
 	// Lane MAPRESET-1 (stop S-3808, the owner's decision of 2026-10-12: a deliberate departure from RotWK, whose PlayerTemplateStore and
 	// SkirmishAIManager keep a map's map.ini blocks for the session: their reset is the empty RW 0x63F3BF, and GameLogic::reset drops only
@@ -220,6 +224,7 @@ private:
 		CreateAHeroSystem m_createAHero;              // HERO-2
 		std::vector<MissionObjective> m_mapObjectives; // lane CAMPUI-1: map.ini's MissionObjectiveList
 		bool m_mapObjectivesParsed = false;
+		const std::vector<TriggerArea> *m_mapTriggers = nullptr; // PORT-318: the trigger list the map.ini being applied is parsed against
 		std::unique_ptr<AudioIniState> m_audio;
 		std::unique_ptr<SkirmishAIStore> m_skirmishAI;
 		WeaponStores m_weaponStores; // WEAPON-1: the Weapon, Armor and DamageFX blocks have real parsers
