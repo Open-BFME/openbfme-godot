@@ -17,7 +17,8 @@
 
 enum class ModEngineFeature
 {
-	// Edain Unchained 4.4.3 (its game.dat: install/ENGINEPATCHES_README.md names the patches)
+	// Edain Unchained 4.4.3 (its game.dat: install/ENGINEPATCHES_README.md names the patches). Patch 2.02 9.8.6's lotrbfme2ep1.exe carries two
+	// of them as the same code: commandset-limit (.cmdext) and observer-command-range (.obscmd)
 	EdainUnchainedHerobarKindOf,       // KindOf HEROBAR (bit 222) / HEROBAR_GROUP (bit 223) in the name table (.hbar)
 	EdainUnchainedQueueIgnoreCP,       // CommandButton QueueIgnoreCP (.qcp)
 	EdainUnchainedCommandSetLimit,     // CommandSet slots 1..64 (.cmdext)

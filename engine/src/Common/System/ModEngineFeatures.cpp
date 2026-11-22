@@ -72,6 +72,20 @@ const std::vector<ModEngineFeatures::Profile> &ModEngineFeatures::knownBinaries(
 			"LAN game info (OpenBFME's lobby already carries them)" },
 		{ "7a4068f87ea5c3b98e03ae4e83e2b806", "Patch 2.02 lotrbfme2ep1.exe (a whole game binary)", {},
 			"install / copy-protection checks (none in OpenBFME); EA's frame pacing restored (presentation timing, not lockstep state)" },
+		// Patch 2.02 9.8.5 / 9.8.6 (2026-11-21): the first 2.02 binary with engine patches (the Ennorath team's, in named sections like Edain's).
+		// Its .cmdext is Edain Unchained's commandset-limit (the same populate hook at +0x47D after RW 0x71CF0A, CommandSet 0xA0 -> 0x11C, the
+		// bound 0x21 -> 0x40 at RW 0x7950E2 / 0x80C8E3 / 0x80C8FC / 0x80C91D) and its .obscmd is Edain's observer-command-range (RW 0x941BD2:
+		// commands 0x37 / 0x38, PUSH / POP_VISIBLE_COMMAND_RANGE, pass for an inactive local player). The rest is listed in the notes; the
+		// sections' purpose comes from the decoded hooks and, where marked, from the patch's own notes (2.02 Patch Notes.txt).
+		{ "fc32e4c4142b5c607b90972eaf448400", "Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary)",
+			{ F::EdainUnchainedCommandSetLimit, F::EdainUnchainedObserverCommandRange },
+			"not yet re-implemented, game rules: Hold Ground no longer stopping units (.stancem at RW 0x862161), the building limit check of "
+			"placement (.bldcap, .bldlvl, .bldext: by the patch notes), units leaving a container together on Evacuate (.padsel: by the patch "
+			"notes), the upgrade limit 5120 (.upg5k: OpenBFME holds 2048 upgrades, S-5303); interface and replays: select every building of a "
+			"kind (.bldgrp), chat in replays and muting a player (.rpchat, .chatmut), replay pause (.rppause), the map search (.mapfind), hotkeys "
+			"and text shortcuts (.hotkeys, .keydef, .keycmd, .txtclip), the camera zoom reset (.camfix), the settings menu's resolutions, 30 / 60 "
+			"FPS and Delay Fix switch (.optui, .optfix, .ressort, .fpsvar, .fpsdraw, .fxrate, .dlyfix), War of the Ring with 8 players, online "
+			"and without a host for land transfer (.wotrui, .wotrobs, .wtrview, .wtrdisp, .lobfac), a 500 ms throttle (.spstore)" },
 		{ "a6ce9397ee16376e7c84a72218ffe03a", "2.02 Delayfix Addon lotrbfme2ep1.exe", {},
 			"install checks (none in OpenBFME); the 2.01 frame pacing (OpenBFME's)" },
 		{ "f7ce90438eb50da4ce63804ba2688b6b", "RJ-RotWK launcher (a Qt program that starts the game, not a game binary)", {}, "" },

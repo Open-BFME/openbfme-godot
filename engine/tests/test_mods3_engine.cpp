@@ -54,6 +54,21 @@ TEST_CASE("MODS-3: a known modified game binary turns its profile's features on;
 	CHECK_FALSE(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobarKindOf));
 }
 
+TEST_CASE("MODS-3: Patch 2.02 9.8.6's game binary turns on Edain's commandset-limit and observer-command-range only, and names what is missing")
+{
+	Retail guard;
+	std::string error;
+	REQUIRE_MESSAGE(ModEngineFeatures::activate({ "fc32e4c4142b5c607b90972eaf448400" }, &error), error);
+	CHECK(ModEngineFeatures::activeProfiles() == std::vector<std::string>{ "Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary)" });
+	CHECK(ModEngineFeatures::identityFeatures() ==
+		std::vector<std::string>{ "mod-engine:edain-unchained.commandset-limit", "mod-engine:edain-unchained.observer-command-range" });
+	CHECK(CommandSet::slotCapacity() == 64);
+	CHECK_FALSE(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobarKindOf));
+	const std::vector<std::string> stops = ModEngineFeatures::stopLines();
+	REQUIRE(stops.size() == 1);
+	CHECK(stops[0].rfind("S-5304: Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary): not yet re-implemented, game rules: Hold Ground", 0) == 0);
+}
+
 TEST_CASE("MODS-3: edain-unchained.herobar-kindof: HEROBAR is KindOf bit 222 and HEROBAR_GROUP bit 223 only with the feature")
 {
 	Retail guard;
