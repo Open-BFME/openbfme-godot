@@ -29,6 +29,8 @@
 //   DONOR  Open-BFME-1 Rva0076C080 / Rva0075F0E0 (names for the above), ZH W3DModelDraw.cpp (setModelState render object reuse,
 //          bones, hide / show).
 //
+// Presentation repair requested by the owner: S-5920 reports a missing movement clip replaced by a compatible,
+// matching movement cycle from the same module. Shared by BFME2 / RotWK and BFME1 data mode; simulation is unchanged.
 // What is NOT retail knowledge (stops, docs/STOPS.md):
 //   S-090  the setModelState virtual (RW 0x4C451D) and the pieces of the retail routines that need engine objects this core does
 //          not have: the shared-model-flags / attached-model update of replaceModelConditionState, the sequential-animation flag
@@ -217,9 +219,9 @@ public:
 		{
 			return m_pending;
 		}
-		if (m_whichAnim >= 0 && m_whichAnim < (int)m_curAnimState->animations.size())
+		if (const W3DAnimationInfo *playing = playbackAnimationInfo())
 		{
-			const W3DAnimationInfo &info = m_curAnimState->animations[(size_t)m_whichAnim];
+			const W3DAnimationInfo &info = *playing;
 			if (info.fadeBeginFrame > 0.0f && info.fadeEndFrame > info.fadeBeginFrame)
 			{
 				return true; // RW 0x4B54D0 .. 0x4B54EB: the ramp's test
@@ -335,11 +337,19 @@ private:
 	bool isIdleLike(const AnimationStateInfo &state) const; // RW 0x4B424F
 	float currentAnimFraction() const;                      // RW 0x4B2785
 	const HAnimClass *resolveAnimation(const W3DAnimationInfo &info, std::string *resolved, std::string *error);
+	const HAnimClass *repairMissingMovementAnimation(const AnimationStateInfo &state, std::string *resolved);
+	const W3DAnimationInfo *playbackAnimationInfo() const
+	{
+		if (m_movementRepairInfo) return m_movementRepairInfo;
+		return m_curAnimState && m_whichAnim >= 0 && m_whichAnim < (int)m_curAnimState->animations.size()
+			? &m_curAnimState->animations[(size_t)m_whichAnim] : nullptr;
+	}
 	void startAnimation(const HAnimClass *anim, const std::string &clipName, const W3DAnimationInfo &info, int animationIndex, float startFrame,
 		float speedFactor);
 	void setTrack(int slot, const W3DDrawTrack &track);
 	void clearTrack(int slot);
 	void promote();
+	void activateQueuedMovementRepair();
 	void initBlend(const W3DDrawTrack &incoming);
 	bool trackComplete(const W3DDrawTrack &t, bool flag) const; // RW 0x4B271C
 	void stepTrack(W3DDrawTrack &t, float elapsedMs);
@@ -370,6 +380,10 @@ private:
 	const AnimationStateInfo *m_curAnimState = nullptr; // RW +0x18
 	int m_whichAnim = -1;                   // RW +0x44
 	int m_lastAnim = 0;                     // RW +0x88
+	const W3DAnimationInfo *m_movementRepairInfo = nullptr; // S-5920: playback metadata; requested state / index stay retail's.
+	const HAnimClass *m_movementRepairAnimation = nullptr; // Pair Distance with this cycle's duration when visible or incoming.
+	float m_queuedMovementRepairSpeedFactor = 1.0f;
+	bool m_movementRepairQueued = false; // S-5920: a waiting repair must not retime the visible blend.
 
 	const RenderObjPrototype *m_model = nullptr;
 	std::string m_modelName; // lower case, the render object identity

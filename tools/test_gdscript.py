@@ -123,6 +123,7 @@ CI_GATES = scripts("""
 # Denylist part 2: manual dedicated invocations only, not pytest skips. Having
 # retail paths, a GPU or an opt-in environment variable must not schedule these.
 DENYLIST = {
+    "wotr_hud_viewport_test.gd": "manual: private RotWK/BFME2 assets, built extension and GPU readback; strategic HUD viewport/render/window-input regression",
     "tutorial_builders_test.gd": "manual: installed tutorial construction and dozer pathfinding",
     "mission_script_presentation_test.gd": "manual: mounted retail tutorials and GPU/rendered marker checks",
     "wotr_setup_dialog_test.gd": "manual: needs private RotWK/BFME2 assets and the built extension; checks retail setup dialog coverage and picks with a synthetic preview",

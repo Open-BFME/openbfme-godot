@@ -166,11 +166,13 @@ include(cmake/Build.cmake)      # BUILD-1: construction, castles, dozers (append
 include(cmake/Combat.cmake)     # OPENBFME_COMBAT_SOURCES / OPENBFME_COMBAT_TESTS (lane COMBAT-1)
 include(cmake/Structure.cmake)  # OPENBFME_STRUCTURE_SOURCES / OPENBFME_STRUCTURE_TESTS (lane COMBAT-2)
 include(cmake/Spell.cmake)      # OPENBFME_SPELL_SOURCES / OPENBFME_SPELL_TESTS (lane SPELL-1)
+include(cmake/Port43.cmake)     # PORT-43: GameData/PowerLimit -> GameLogic + 0x118 (issue #128; OPENBFME_PORT43_TESTS)
 include(cmake/Render.cmake)     # OPENBFME_RENDER_SOURCES / OPENBFME_RENDER_TESTS (lane RENDER-1, client / draw only)
 include(cmake/SkirmishAI.cmake) # OPENBFME_SKIRMISH_AI_SOURCES / OPENBFME_SKIRMISH_AI_TESTS (lane AI-1)
 include(cmake/Vis.cmake)        # OPENBFME_VIS_SOURCES / OPENBFME_VIS_TESTS (lane VIS-1)
 include(cmake/Upgrade.cmake)    # OPENBFME_UPGRADE_SOURCES / OPENBFME_UPGRADE_TESTS (lane UPGRADE-1)
 include(cmake/Render2.cmake)    # RENDER-2: launch bones, construction look (appends to OPENBFME_SIM_SOURCES; OPENBFME_RENDER2_TESTS)
+include(cmake/Port164.cmake)   # PORT-164: the GiantBird contact point through getBestContactPoint mode 1 (OPENBFME_PORT164_TESTS)
 include(cmake/Render3.cmake)    # OPENBFME_RENDER3_TESTS (lane RENDER-3, client / draw only)
 include(cmake/Render4.cmake)    # OPENBFME_RENDER4_SOURCES / _TESTS / _GODOT_SOURCES (lane RENDER-4, client / draw only)
 include(cmake/Glow1.cmake)      # OPENBFME_GLOW1_SOURCES / _TESTS / _GODOT_SOURCES (lane GLOW-1, client / draw only)
@@ -190,7 +192,9 @@ include(cmake/Port18.cmake) # PORT-18: hold fire
 include(cmake/Port20.cmake) # PORT-20: GarrisonContain/onSelling (OPENBFME_PORT20_TESTS)
 include(cmake/Port22.cmake) # PORT-22: the siege deploy's approach offset, Pathfinder::adjustMeleeOffset (OPENBFME_PORT22_TESTS)
 include(cmake/Port24.cmake) # PORT-24: Object/ForceLuaRegistration (OPENBFME_PORT24_TESTS)
+include(cmake/Port1.cmake) # PORT-1: AIAttackFireWeaponState/FinishAttackOnceStarted (OPENBFME_PORT1_TESTS)
 include(cmake/Port6.cmake) # PORT-6: StealthDetectorUpdate/CanDetectWhileGarrisoned (OPENBFME_PORT6_TESTS)
+include(cmake/Port253.cmake)   # PORT-253: Upgrade modules (issue #601; OPENBFME_PORT253_TESTS)
 include(cmake/Port55.cmake) # PORT-55: SlaughterHordeContain, the citadel's cashback and CanAlwaysEnter (issue #165; OPENBFME_PORT55_TESTS)
 include(cmake/Port62.cmake) # PORT-62: TransportContain/FireGrabWeaponOnVictim, the GrabWeapon fire (OPENBFME_PORT62_TESTS)
 include(cmake/Port40.cmake) # PORT-40: AIData/MaxRecruitRadius (issue #125; OPENBFME_PORT40_TESTS)
@@ -199,6 +203,8 @@ include(cmake/Port13.cmake) # PORT-13: AIData/AttackMoveUsesFormations and the f
 include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the collide pickup (OPENBFME_PORT9_TESTS)
 include(cmake/Port7.cmake) # PORT-7: AnimalAIUpdate's enemy scan (OPENBFME_PORT7_TESTS)
 include(cmake/Port58.cmake) # PORT-58: SpecialAbilityUpdate/ApproachUntilMembersInRange (OPENBFME_PORT58_TESTS)
+include(cmake/Port10.cmake) # PORT-10: FlammableUpdate/RunToWater (issue #65; OPENBFME_PORT10_TESTS)
+include(cmake/Port17.cmake) # PORT-17: ThreatFinderUpdate + the threat-finder script action (issue #73; appends to OPENBFME_SIM_SOURCES; OPENBFME_PORT17_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
 include(cmake/Fx2.cmake)        # FX-2: effects in the live game (appends to OPENBFME_SIM_SOURCES; OPENBFME_FX2_SOURCES / OPENBFME_FX2_TESTS)
@@ -331,6 +337,11 @@ include(cmake/Weather1.cmake)   # WEATHER-1: snow, rain, darkness, lightning, th
 include(cmake/Bldfx1.cmake)     # FEAT-BLDFX-1: the FXList nugget sinks, scorches, decals, light pulses, camera shakers (OPENBFME_BLDFX1_SOURCES / _TESTS)
 include(cmake/Decompfix1109.cmake) # DECOMPFIX-1109: FLEECHASE-1, ENTERADJUST-1, REQTHROTTLE-1 (OPENBFME_DECOMPFIX1109_TESTS)
 include(cmake/Port5.cmake)      # PORT-5: the bird's deferred ability target (OPENBFME_PORT5_TESTS)
+include(cmake/Port256.cmake)   # PORT-256: the weapon-switching powers (OPENBFME_PORT256_TESTS)
+include(cmake/Port426.cmake) # PORT-426: Shift on a production button queues five units (fork issue 426; OPENBFME_PORT426_TESTS)
+include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elven wood grid (appends to OPENBFME_SIM_SOURCES; OPENBFME_TAINTAREA1_TESTS)
+include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
+include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-objects test RW 0x796D37 (OPENBFME_BUILDCLEAR1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -732,6 +743,7 @@ endif()
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
+    ${OPENBFME_PORT426_TESTS}
     ${OPENBFME_WIN1_TESTS}
     ${OPENBFME_DEP2_TESTS}
     ${OPENBFME_SMOOTH_TESTS}
@@ -748,11 +760,14 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT8_TESTS}
     ${OPENBFME_PORT11_TESTS}
     ${OPENBFME_PORT12_TESTS}
+    ${OPENBFME_PORT164_TESTS}
+    ${OPENBFME_PORT253_TESTS}
     ${OPENBFME_PORT15_TESTS}
     ${OPENBFME_PORT18_TESTS}
     ${OPENBFME_PORT20_TESTS}
     ${OPENBFME_PORT22_TESTS}
     ${OPENBFME_PORT24_TESTS}
+    ${OPENBFME_PORT1_TESTS}
     ${OPENBFME_PORT6_TESTS}
     ${OPENBFME_PORT55_TESTS}
     ${OPENBFME_PORT62_TESTS}
@@ -762,6 +777,8 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT9_TESTS}
     ${OPENBFME_PORT7_TESTS}
     ${OPENBFME_PORT58_TESTS}
+    ${OPENBFME_PORT10_TESTS}
+    ${OPENBFME_PORT17_TESTS}
     ${OPENBFME_PLAY4_TESTS}
     ${OPENBFME_MAPRESET1_TESTS}
     ${OPENBFME_APT_TESTS}
@@ -777,6 +794,7 @@ add_executable(openbfme_tests
     ${OPENBFME_COMBAT_TESTS}
     ${OPENBFME_STRUCTURE_TESTS}
     ${OPENBFME_SPELL_TESTS}
+    ${OPENBFME_PORT43_TESTS}
     ${OPENBFME_RENDER_TESTS}
     ${OPENBFME_SKIRMISH_AI_TESTS}
     ${OPENBFME_VIS_TESTS}
@@ -833,6 +851,7 @@ add_executable(openbfme_tests
     ${OPENBFME_UI6_TESTS}
     ${OPENBFME_OWNERFIX3_TESTS}
     ${OPENBFME_ANTICHEAT_TESTS}
+    ${OPENBFME_PORT256_TESTS}
     ${OPENBFME_SELPERF1_TESTS}
     ${OPENBFME_GARRISON3_TESTS}
     ${OPENBFME_BACKLOG1_TESTS}
@@ -900,6 +919,9 @@ add_executable(openbfme_tests
     ${OPENBFME_WEATHER1_TESTS}
     ${OPENBFME_DECOMPFIX1109_TESTS}
     ${OPENBFME_PORT5_TESTS}
+    ${OPENBFME_TAINTAREA1_TESTS}
+    ${OPENBFME_THREATLEVEL1_TESTS}
+    ${OPENBFME_BUILDCLEAR1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
@@ -980,6 +1002,7 @@ add_executable(openbfme_tests
     tests/test_lua_runtime.cpp
     tests/test_lua_events.cpp
     tests/test_lua_engine.cpp
+    tests/test_stunned_ai_update.cpp
     tests/test_lua_retail.cpp
     tests/test_lua_draw.cpp
     tests/test_lua_binary_facts.cpp
@@ -1006,6 +1029,10 @@ add_executable(openbfme_tests
     tests/test_logic_retail.cpp
     # lane LOCAL-8 (RespawnUpdate ButtonImage, AutoRespawnAtObjectFilter, DeathAnimationTime)
     tests/test_local_8.cpp
+    # upgrade completion name in the interface and its feedback (RW 0x8A2080 .. 0x8A223B)
+    tests/test_local_10.cpp
+    # lane LOCAL-62 (capturing a production building cancels and releases its queue, RW 0x69974D -> RW 0x8A1666)
+    tests/test_local_62.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy
@@ -1013,7 +1040,8 @@ add_executable(openbfme_tests
     tests/test_econ_resources.cpp
     tests/test_econ_hash.cpp
     tests/test_econ_retail.cpp
-    tests/test_falsedef_retail.cpp)
+    tests/test_falsedef_retail.cpp
+    tests/test_capcrash1.cpp)
 target_sources(openbfme_tests PRIVATE
     tests/test_coverage_online_shell.cpp
     tests/test_coverage_simple_screens.cpp

@@ -17,6 +17,10 @@
 #include "StructureArena.h"
 
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Module/ConstructionModules.h"
+#include "GameLogic/ObjectTemplateInfo.h"
+#include "GameClient/LogicSnapshot.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "GameLogic/Module/StructureModules.h"
 #include "GameLogic/VictoryConditions.h"
 #include "GameLogic/System/TerrainResourceManager.h"
@@ -252,6 +256,174 @@ Outcome fightStructure(const StructRow &row, float bountyPercent, bool recordHas
 	return out;
 }
 } // namespace
+
+
+TEST_CASE("p23 diag: a dwarven hearth heals a wounded porter")
+{
+	if (!hudtest::haveWorld("p23 diag")) { return; }
+	SharedWorld &s = shared();
+	Arena a(s, "FactionDwarves", "FactionMordor");
+	Object *hearth = a.place("DwarvenHearth", 0, 500.0f, 500.0f);
+	Object *worker = a.place("DwarvenPorter", 0, 560.0f, 500.0f);
+	a.logic.runLogicFrame();
+	a.logic.runLogicFrame();
+	REQUIRE(worker->getBodyModule() != nullptr);
+	worker->getBodyModule()->setInitialHealth(50);
+	const int pi = a.player(0)->getPlayerIndex();
+	std::printf("  diag P-23: hearth %p worker health %.0f/%.0f, allied %d, filter pass?\n", (void *)hearth, worker->getBodyModule()->getHealth(),
+		worker->getBodyModule()->getMaxHealth(), worker->getTeam()->getRelationship(a.player(0)->getDefaultTeam()) == ALLIES ? 1 : 0);
+	(void)pi;
+	for (int f = 0; f < 120; ++f)
+	{
+		a.logic.runLogicFrame();
+		if ((f % 20) == 0)
+		{
+			std::printf("  diag P-23 f%d health %.1f\n", f, worker->getBodyModule()->getHealth());
+		}
+	}
+	CHECK(worker->getBodyModule()->getHealth() > worker->getBodyModule()->getMaxHealth() * 0.5f); // tolerance: the aura tick phase decides the exact health; the check is that it heals well past half
+	// the same aura over a horde's members (the owner's soldiers): one member damaged inside the radius
+	Object *horde = a.place("DwarvenAxeThrowerHorde", 0, 500.0f, 560.0f);
+	a.logic.runLogicFrame();
+	REQUIRE(horde->getContain() != nullptr);
+	Object *member = nullptr;
+	if (const ContainModuleInterface::ContainedItemsList *l = horde->getContain()->getContainedItemsList())
+	{
+		for (Object *m : *l)
+		{
+			if (m && m->getBodyModule())
+			{
+				member = m;
+				break;
+			}
+		}
+	}
+	REQUIRE(member != nullptr);
+	member->getBodyModule()->setInitialHealth(50);
+	const float start = member->getBodyModule()->getHealth();
+	for (int f = 0; f < 120; ++f)
+	{
+		a.logic.runLogicFrame();
+	}
+	std::printf("  diag P-23 horde member: %.1f -> %.1f\n", start, member->getBodyModule()->getHealth());
+	CHECK(member->getBodyModule()->getHealth() > start); // tolerance: the aura tick phase; only the direction is asserted
+	// the owner's case: a unit damaged by an ATTACK (lastDamageFrame set) must heal after the 4 s gate
+	Object *hurt = a.place("DwarvenPorter", 0, 560.0f, 500.0f);
+	a.logic.runLogicFrame();
+	REQUIRE(hurt->getBodyModule() != nullptr);
+	DamageInfo hit;
+	hit.m_input.m_damageType = DAMAGE_SLASH;
+	hit.m_input.m_amount = 250.0f;
+	hurt->getBodyModule()->attemptDamage(hit);
+	const float hurtStart = hurt->getBodyModule()->getHealth();
+	for (int f = 0; f < 120; ++f)
+	{
+		a.logic.runLogicFrame();
+	}
+	std::printf("  diag P-23 attacked worker: %.1f -> %.1f\n", hurtStart, hurt->getBodyModule()->getHealth());
+	CHECK(hurt->getBodyModule()->getHealth() > hurtStart); // tolerance: the aura tick phase; only the direction is asserted
+	// the owner's visual area: a 440 decal (2.2 x the 200 heal radius). A porter at 300 (inside the decal, outside the aura) must tell.
+	Object *far = a.place("DwarvenPorter", 0, 800.0f, 500.0f);
+	a.logic.runLogicFrame();
+	REQUIRE(far->getBodyModule() != nullptr);
+	DamageInfo farHit;
+	farHit.m_input.m_damageType = DAMAGE_SLASH;
+	farHit.m_input.m_amount = 250.0f;
+	far->getBodyModule()->attemptDamage(farHit);
+	const float farStart = far->getBodyModule()->getHealth();
+	for (int f = 0; f < 120; ++f)
+	{
+		a.logic.runLogicFrame();
+	}
+	std::printf("  diag P-23 worker at 300: %.1f -> %.1f\n", farStart, far->getBodyModule()->getHealth());
+}
+
+TEST_CASE("p23 fix: a hearth whose aura slept while the foundation was effectively dead heals after revival")
+{
+	if (!hudtest::haveWorld("p23 fix")) { return; }
+	// reported in play: the live Hearth never healed. The aura's update returned UPDATE_SLEEP_FOREVER while the placed structure was flagged
+	// effectively dead (a foundation), and neither construction completion nor the save restore woke it. The fix keeps the aura on its ping delay while
+	// dead and wakes it on load; this test reproduces the slept state and expects healing after the structure is alive again.
+	SharedWorld &s = shared();
+	Arena a(s, "FactionDwarves", "FactionMordor");
+	Object *hearth = a.place("DwarvenHearth", 0, 500.0f, 500.0f);
+	Object *worker = a.place("DwarvenPorter", 0, 560.0f, 500.0f);
+	a.logic.runLogicFrame();
+	REQUIRE(worker->getBodyModule() != nullptr);
+	hearth->friend_setEffectivelyDead(true); // the foundation frame
+	for (int f = 0; f < 40; ++f)
+	{
+		a.logic.runLogicFrame();
+	}
+	hearth->friend_setEffectivelyDead(false);
+	a.logic.runLogicFrame();
+	worker->getBodyModule()->setInitialHealth(50);
+	const float start = worker->getBodyModule()->getHealth();
+	for (int f = 0; f < 120; ++f)
+	{
+		a.logic.runLogicFrame();
+	}
+	std::printf("  diag P-23 revived: %.1f -> %.1f\n", start, worker->getBodyModule()->getHealth());
+	CHECK(worker->getBodyModule()->getHealth() > start); // tolerance: the aura tick phase; only the direction is asserted
+}
+
+TEST_CASE("p10 retail: each horde member presents its own shroud status at the vision edge (the logic snapshot, not the horde centre)")
+{
+	if (!hudtest::haveWorld("p10 retail")) { return; }
+	SharedWorld &s = shared();
+	hudtest::Rig r(s);
+	Player *enemy = r.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	const ICoord2D *hi = r.logic().aiWorld()->pathfinder().getExtent();
+	const Coord3D spot = r.freeSpot((float)hi->x * 10.0f * 0.5f, (float)hi->y * 10.0f * 0.5f, 350.0f);
+	Object *horde = r.make("GoblinFighterHorde", spot.x, spot.y, enemy);
+	r.frame(3);
+	REQUIRE(horde != nullptr);
+	ShroudManager *sm = r.logic().shroud();
+	REQUIRE(sm != nullptr);
+	const int pi = r.local ? r.local->getPlayerIndex() : 0; // the observer is the local player, not the horde's owner
+	sm->setDisplayed(true);
+	sm->shroudMapForPlayer(pi);
+	std::vector<Object *> members;
+	if (const ContainModuleInterface::ContainedItemsList *l = horde->getContain() ? horde->getContain()->getContainedItemsList() : nullptr)
+	{
+		members.assign(l->begin(), l->end());
+	}
+	REQUIRE(members.size() >= 2); // tolerance: the horde payload count is data; at least two members make the test meaningful
+	const Object *first = members.front();
+	sm->revealCircle(first->getPosition()->x, first->getPosition()->y, 15.0f, 1u << pi, true);
+	sm->reevaluateAll();
+	int clear = 0, shrouded = 0, records = 0, inWorld = 0;
+	std::string line;
+	for (Object *m : members)
+	{
+		const ObjectShroudStatus st = sm->clientObjectStatus(*m, pi);
+		clear += st <= OBJECTSHROUD_PARTIAL_CLEAR ? 1 : 0;
+		shrouded += st == OBJECTSHROUD_SHROUDED ? 1 : 0;
+		records += sm->hasRecord(*m) ? 1 : 0;
+		inWorld += m->isInWorld() ? 1 : 0;
+		int cx = 0, cy = 0;
+		sm->worldToCell(m->getPosition()->x, m->getPosition()->y, cx, cy);
+		line += " " + std::to_string((int)st) + "/" + std::to_string((int)sm->getCellStatus(pi, cx, cy));
+	}
+	std::printf("  info: P-10: %zu members, clear %d, shrouded %d, records %d, inWorld %d, statuses:%s; horde record %d inWorld %d status %d\n", members.size(), clear, shrouded,
+		records, inWorld, line.c_str(), sm->hasRecord(*horde) ? 1 : 0, horde->isInWorld() ? 1 : 0, (int)sm->clientObjectStatus(*horde, pi));
+	{
+		const std::shared_ptr<const LogicSnapshot> snap = LogicSnapshot::build(r.logic(), nullptr, false, 0, pi);
+		std::string snapLine;
+		int snapShrouded = 0;
+		for (Object *m : members)
+		{
+			const ObjectSnapshot *rec = snap->find(m->getID());
+			snapLine += " " + std::to_string(rec ? (rec->shroudedForLocal ? 4 : rec->objectShroud) : -1);
+			snapShrouded += rec && rec->shroudedForLocal ? 1 : 0;
+		}
+		const ObjectSnapshot *recH = snap->find(horde->getID());
+		std::printf("  info: P-10 snapshot: %d shrouded, statuses:%s; horde %d\n", snapShrouded, snapLine.c_str(), recH ? (recH->shroudedForLocal ? 4 : recH->objectShroud) : -1);
+	}
+	CHECK(clear >= 1); // tolerance: at least one clear cell; the exact count follows the shroud merge
+	CHECK(shrouded >= 1); // tolerance: at least one shrouded cell; the exact count follows the shroud merge
+}
 
 TEST_CASE("structure retail: a Gondor horde destroys the barracks of every faction: hits, collapse, rubble, pathfinder, bounty")
 {

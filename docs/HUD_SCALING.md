@@ -64,3 +64,9 @@ retain their existing coordinate mapping.
 - `retail strategic HUD widescreen:*`: installed RotWK and BFME2 panels at
   4:3, 16:9, 21:9, 8K and a narrower viewport, repeated resizing, Fit mode,
   authored matrices and END PHASE mouse input.
+- `godot/tests/wotr_hud_viewport_test.gd`: installed RotWK and BFME2 through
+  the real Godot shell, viewport, canvas and window-input paths. GPU corner
+  artwork is compared with a 4:3 reference at the same height through repeated
+  widescreen resizing and Fit. END PHASE clicks use independent window pixels,
+  including input after a resize before the next tick/render. Run without
+  `--headless`; missing GPU/install prerequisites exit 77.

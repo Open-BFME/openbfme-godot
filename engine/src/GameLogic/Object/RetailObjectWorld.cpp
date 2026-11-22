@@ -14,6 +14,7 @@
 #include "GameLogic/Module/PickupStuffUpdate.h"
 #include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/BoredUpdate.h"
+#include "GameLogic/Module/ThreatFinderUpdate.h"
 #include "GameLogic/ActionManager.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Module/SpawnBehavior.h"
@@ -666,6 +667,10 @@ std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 		out.push_back(l);
 	}
 	for (const std::string &l : RebuildHoleBehavior::acceptanceStops()) // MODCOMPAT-MOD1
+	{
+		out.push_back(l);
+	}
+	for (const std::string &l : ThreatFinderUpdate::stopLines()) // PORT 17 (issue #73, S-7184)
 	{
 		out.push_back(l);
 	}

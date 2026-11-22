@@ -1638,7 +1638,10 @@ bool ObjectWeapons::fireCurrentWeapon(Object *victim, const Coord3D *pos)
 	// (a ready weapon while the fired one reloads), and the attack left at RW 0x751482's weapon-changed gate before the run-through could run
 	// (fork issue 395 Q2: "the charge does not happen"). ClipSize 0 is unlimited (0x7FFFFFFF at reloadWithBonus), so a clipless weapon never
 	// answers reloaded and keeps its lock until the state releases it (RW 0x74D8D2 at the charge exit).
-	if (reloaded)
+	// The object-target overload RW 0x69200A differs: it ignores privateFireWeapon's answer and releases only when IdleAfterFiringDelay (template
+	// + 0x78) is -1 (`cmp [eax+0x78], -1; jnz` at RW 0x692090, release at RW 0x69209A). The port keeps its earlier rule there (reloaded or
+	// -1), so only position targets change here; dropping `reloaded` from the object path is a follow-up.
+	if (victim ? (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu) : reloaded)
 	{
 		releaseWeaponLock(LOCKED_TEMPORARILY);
 	}

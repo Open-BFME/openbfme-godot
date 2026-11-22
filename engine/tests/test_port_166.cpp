@@ -196,27 +196,40 @@ struct LockWorld : CombatWorld
 };
 } // namespace
 
-// the victim's MaxHealth 15 shows the shots (15 -> 5 -> dead); one frame after the order the dispatch has run
-TEST_CASE("PORT-166 the ordered slot lock survives the shot that starts the reload (RW 0x6920AD .. 0x69212B)")
+// a position target (fireCurrentWeapon's position overload RW 0x6920AD): the release is gated on privateFireWeapon's reloaded answer (RW 0x692122),
+// so the shot that starts the clipless weapon's reload keeps the ordered lock (the fork's charge path, RW 0x74D826 -> RW 0x6920AD)
+TEST_CASE("PORT-166 the ordered slot lock survives a position shot that starts the reload (RW 0x6920AD .. 0x69212B)")
 {
 	LockWorld w;
 	Object *hero = w.unit("P166Hero", 'A', 300, 300);
-	Object *victim = w.unit("P166Victim", 'B', 450, 300); // 150 apart, both weapons' AttackRange 300: the shot fires without a walk
-	w.orderPrimaryAt(hero, victim);
-	const int shotFrame = w.runUntilHealth(victim, 5.0f, 20); // 15 - the first shot's Damage 10
-	std::printf("  info: PORT-166 shot frame %d, status %d, locked %d, state %u\n", shotFrame, w.weaponStatus(hero), w.locked(hero) ? 1 : 0,
-		w.state(hero));
-	REQUIRE(shotFrame >= 0); // tolerance: the dispatch frame can shift by one on another compiler's float rounding (PER_SHOT in range)
-	CHECK(w.health(victim) == 5.0f);                                // exactly one PRIMARY hit landed
-	CHECK(w.weaponStatus(hero) == (int)WEAPON_BETWEEN_FIRING_SHOTS); // the reload window runs from the shot (RW 0x6920AD), not from the order
-	// the mechanism under test: the shot does NOT release the ordered lock. The port's ZH-era `|| IdleAfterFiringDelay == -1` released it here
-	// (the field defaults to 0xFFFFFFFF), and that release is what let the next chooseWeapon flip the slot into the "locked weapon changed" gate
-	CHECK(w.locked(hero));
-	// what happens after this frame is another mechanism's: AIWaitUntilFinishedFiringState::onExit (AIAttack.cpp) releases the same lock when the
-	// firing wait ends - a ZH-derived line with no RW address of its own. Whether RW's generic attack keeps the lock across the reload is unverified
-	// (INFERENCE, S-7326's neighbour question): the fork's charge path never enters that state and keeps the lock to its own exit (RW 0x74D8D2),
-	// which is the chain this fix is the vanilla part of. So only the shot's own release - fireCurrentWeapon's, the RW-read one - is asserted here.
-	w.frames(60); // run whatever the attack does out before teardown (a mid-attack teardown is a harness hazard, not this mechanism's)
+	Object *victim = w.unit("P166Victim", 'B', 450, 300); // 150 apart, inside AttackRange 300
+	ObjectWeapons *ow = hero->getWeapons();
+	REQUIRE(ow);
+	REQUIRE(ow->setWeaponLock(PRIMARY_WEAPON, LOCKED_TEMPORARILY));
+	const Coord3D pos = *victim->getPosition();
+	const bool reloaded = ow->fireCurrentWeapon(nullptr, &pos);
+	std::printf("  info: PORT-166 position shot: reloaded %d, status %d, locked %d\n", reloaded ? 1 : 0, w.weaponStatus(hero), w.locked(hero) ? 1 : 0);
+	CHECK_FALSE(reloaded);
+	CHECK(w.weaponStatus(hero) == (int)WEAPON_BETWEEN_FIRING_SHOTS); // the reload window runs from the shot
+	CHECK(w.locked(hero)); // the ZH-era `|| IdleAfterFiringDelay == -1` released it here
+	w.frames(30);
+}
+
+// an object target (the object overload RW 0x69200A): retail ignores privateFireWeapon's answer there and releases the ordered lock when
+// IdleAfterFiringDelay is -1 (`cmp [eax+0x78], -1` at RW 0x692090, release at RW 0x69209A); the P166 weapons leave it unset (-1), so the shot frees it
+TEST_CASE("PORT-166 neighbour: an object shot with IdleAfterFiringDelay unset releases the ordered lock (RW 0x69200A .. 0x69209A)")
+{
+	LockWorld w;
+	Object *hero = w.unit("P166Hero", 'A', 300, 300);
+	Object *victim = w.unit("P166Victim", 'B', 450, 300);
+	ObjectWeapons *ow = hero->getWeapons();
+	REQUIRE(ow);
+	REQUIRE(ow->setWeaponLock(PRIMARY_WEAPON, LOCKED_TEMPORARILY));
+	ow->fireCurrentWeapon(victim, nullptr);
+	std::printf("  info: PORT-166 object shot: status %d, locked %d\n", w.weaponStatus(hero), w.locked(hero) ? 1 : 0);
+	CHECK(w.weaponStatus(hero) == (int)WEAPON_BETWEEN_FIRING_SHOTS);
+	CHECK_FALSE(w.locked(hero));
+	w.frames(30);
 }
 
 TEST_CASE("PORT-166 neighbour: a single-weapon order is the same before and after - nothing can flip to")
