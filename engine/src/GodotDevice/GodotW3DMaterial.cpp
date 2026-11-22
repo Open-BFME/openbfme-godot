@@ -220,6 +220,9 @@ void W3D_Ensure_Light_Globals()
 	rs->global_shader_parameter_add(StringName("sel_grid"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4(0.0f, 0.0f, 1.0f, 0.0f));
 	rs->global_shader_parameter_add(StringName("sel_grid2"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4(0.0f, 0.0f, 0.0f, 0.0f));
 	rs->global_shader_parameter_add(StringName("sel_alpha_ref"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 96.0f);
+	// lane BLOBSHADOW-1: the SHADOW_DECAL blob accumulation texture and its ground rectangle (godot/shaders/blob_shadows.gdshaderinc; width 0 = none)
+	rs->global_shader_parameter_add(StringName("blob_shadow_tex"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
+	rs->global_shader_parameter_add(StringName("blob_shadow_rect"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4(0.0f, 0.0f, 0.0f, 0.0f));
 	// The terrain shader blends the targeted power's texture with selection decals into ALBEDO.
 	rs->global_shader_parameter_add(StringName("radius_cursor_texture"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
 	rs->global_shader_parameter_add(StringName("radius_cursor_transform"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4());

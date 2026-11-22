@@ -268,6 +268,7 @@ include(cmake/Autocast1.cmake)  # AUTOCAST-1: the ability autocast toggle and gl
 include(cmake/CampUi1Stance.cmake) # CAMPUI-1: the stance toggle's radial (OPENBFME_CAMPUI1_STANCE_SOURCES / _TESTS)
 include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
 include(cmake/Hover1.cmake)     # HOVER-1: every on-hover text (OPENBFME_HOVER1_CLIENT_SOURCES / OPENBFME_HOVER1_TESTS)
+include(cmake/Blobshadow1.cmake) # BLOBSHADOW-1: the SHADOW_DECAL blob shadows (client only; OPENBFME_BLOBSHADOW1_*)
 include(cmake/Hud7.cmake)       # HUD-7: a tester's HUD items (OPENBFME_HUD7_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
 include(cmake/Decomp2.cmake)    # DECOMP-2: stops closed with the BFME2 decomp map (OPENBFME_DECOMP2_TESTS)
@@ -388,6 +389,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_HUD5_CLIENT_SOURCES}
     ${OPENBFME_HUD6_CLIENT_SOURCES}
     ${OPENBFME_HOVER1_CLIENT_SOURCES}
+    ${OPENBFME_BLOBSHADOW1_CLIENT_SOURCES}
     ${OPENBFME_CAH1_SOURCES}
     ${OPENBFME_SDK0_SOURCES}
     ${OPENBFME_SDK2_SOURCES}
@@ -663,6 +665,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotMouse.cpp
     src/GodotDevice/GodotInGameHud.cpp
     src/GodotDevice/GodotPlacementGhost.cpp # BUILD-5
+    ${OPENBFME_BLOBSHADOW1_DEVICE_SOURCES} # BLOBSHADOW-1
     src/GodotDevice/GodotPathfindView.cpp
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
@@ -865,6 +868,7 @@ add_executable(openbfme_tests
     ${OPENBFME_CAMPUI1_STANCE_TESTS}
     ${OPENBFME_HUD6_TESTS}
     ${OPENBFME_HOVER1_TESTS}
+    ${OPENBFME_BLOBSHADOW1_TESTS}
     ${OPENBFME_HUD7_TESTS}
     ${OPENBFME_CAH1_TESTS}
     ${OPENBFME_SDK0_TESTS}

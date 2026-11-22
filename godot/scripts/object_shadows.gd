@@ -29,9 +29,12 @@ static func configure(sun: DirectionalLight3D, lighting: Dictionary, lod: int = 
 	# lane MAPCAST-1: RotWK's own shadow map (ShadowLOD High / UltraHigh) draws every visible object, so the models that throw no volume shadow
 	# (SHADOW_DECAL infantry, cavalry, trees; SHADOW_NONE) cast into the map too; at Medium only the volume casters' substitute is drawn
 	ClassDB.class_call_static("W3DInstancer", "set_retail_shadow_mapping", enabled and lod >= 3)
+	# lane BLOBSHADOW-1: retail's UseShadowDecals / UseShadowVolumes (ShadowLOD Low and Medium draw the SHADOW_DECAL blobs, Medium the volumes)
+	ClassDB.class_call_static("GameWorld", "set_shadow_decals", lod == 1 or lod == 2, lod == 2)
 
 static func disable() -> void:
 	RenderingServer.directional_shadow_atlas_set_size(4096, false) # Godot's default, so a later scene does not inherit ours
 	RenderingServer.global_shader_parameter_set("w3d_shadow", Vector4(1.0, 1.0, 1.0, 0.0))
 	ClassDB.class_call_static("W3DInstancer", "set_shadow_maps_enabled", false)
 	ClassDB.class_call_static("W3DInstancer", "set_retail_shadow_mapping", false)
+	ClassDB.class_call_static("GameWorld", "set_shadow_decals", false, false)

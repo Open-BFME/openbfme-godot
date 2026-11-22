@@ -39,6 +39,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DStreakDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DVegetationSway.h"
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotBlobShadows.h" // lane BLOBSHADOW-1: m_blobs
 #include "GameEngineDevice/W3DDevice/GameClient/HouseColor.h" // lane HCKEY-1: EntryView::staticKeyPalette
 
 #include <godot_cpp/classes/immediate_mesh.hpp>
@@ -571,6 +572,11 @@ public:
 	// lane OPTS-2: the texture reduction of the static detail level for the W3D textures loaded from now on (W3DMaterialFactory::Set_Texture_Reduction)
 	static void set_texture_reduction(int64_t reduction);
 	static int64_t get_texture_reduction();
+	// lane BLOBSHADOW-1: the static detail level's UseShadowDecals / UseShadowVolumes (GlobalData + 0x61 / + 0x60; ShadowLOD Low and Medium draw the
+	// SHADOW_DECAL blobs, Medium the volumes; both off while shadow mapping is on, RW 0x601D5B), from object_shadows.gd
+	static void set_shadow_decals(bool decals, bool volumes);
+	// lane BLOBSHADOW-1: the last frame's blobs { count, rect, missing_textures }
+	Dictionary get_blob_report() const;
 	// a select message and an attack-object message (MSG_DO_ATTACK_OBJECT) for the objects `ids` on `target`, through the lockstep command path. { ok, error, player, objects }
 	Dictionary order_attack(const Array &ids, int64_t target);
 
@@ -796,6 +802,7 @@ private:
 		Transform3D lastXf;
 		bool haveXf = false;
 		bool fogHidden = false; ///< VIS-1: the local player cannot see the object (RW 0xB4E890 SHROUDED)
+		bool fogLook = false;   ///< lane BLOBSHADOW-1: drawn as fogged (a ghost of a structure seen before): retail draws its blob not (setFullyObscuredByShroud)
 		std::vector<EntryView> entries;
 		// lane OCCLUDE-1: this frame's entries for the occlusion lists, noted by refresh_view and listed by refresh_views in drawable order
 		std::vector<std::uint32_t> occlusionCalls;
@@ -828,6 +835,20 @@ private:
 	Color m_shroudParamColor;
 	void refresh_streaks(bool record = true); ///< RENDER-1: W3DStreakDraw trails of the live drawables (S-391)
 	void remove_view(uint32_t drawableId);
+	void update_blob_shadows(); ///< lane BLOBSHADOW-1 (GodotGameWorldBlobs.cpp): the frame's SHADOW_DECAL blobs into m_blobs
+	BlobShadowLayer m_blobs;
+	float m_blobRect[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	// the resolved blob of a (template, module, model state); `has` false: none. Cleared with the shadow switches (the OR_DECAL forms follow volumes)
+	struct BlobSpecCache
+	{
+		bool resolved = false;
+		bool has = false;
+		BlobShadow::Spec spec;
+	};
+	std::map<std::tuple<const void *, const void *, const void *>, BlobSpecCache> m_blobSpecs;
+	bool m_blobSpecsVolumes = false;
+	static inline bool s_shadowDecals = false;
+	static inline bool s_shadowVolumes = false;
 
 	Ref<RetailFileSystem> m_fs;
 	std::unique_ptr<RetailObjectWorld> m_world;
