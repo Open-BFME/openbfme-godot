@@ -67,6 +67,13 @@ func _run() -> void:
 	inst.update_now()
 	for shadow in shadow_nodes:
 		_check(shadow.multimesh.visible_instance_count == 2, "retail's shadow map adds the mapping-only caster")
+	# review of #407: the boolean form ends a mapping-only caster too
+	inst.set_instance_cast_shadow(a, false)
+	inst.update_now()
+	for shadow in shadow_nodes:
+		_check(shadow.multimesh.visible_instance_count == 1, "set_instance_cast_shadow(false) ends a mapping-only caster")
+	inst.set_instance_shadow_caster(a, 2)
+	inst.update_now()
 	ClassDB.class_call_static("W3DInstancer", "set_retail_shadow_mapping", false)
 	inst.update_now()
 	for shadow in shadow_nodes:

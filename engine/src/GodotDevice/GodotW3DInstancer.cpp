@@ -553,12 +553,8 @@ void W3DInstancer::set_instance_occlusion(int64_t instance, bool occluder, int s
 
 void W3DInstancer::set_instance_cast_shadow(int64_t instance, bool enabled)
 {
-	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
-	Instance &inst = Instances[(size_t)instance];
-	if (inst.Removed || inst.CastShadow == enabled) return;
-	inst.CastShadow = enabled;
-	note_pose_dirty();
-	mark_model(instance);
+	// lane MAPCAST-1 (review of #407): the boolean form sets the whole caster kind, so `false` also ends a kind-2 (retail map only) caster
+	set_instance_shadow_caster(instance, enabled ? 1 : 0);
 }
 
 void W3DInstancer::set_instance_shadow_caster(int64_t instance, int kind)
