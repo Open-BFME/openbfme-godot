@@ -90,6 +90,7 @@ class UpdateModule;
 class ObjectWeapons; // lane PERF-WS
 class TerrainLogic;
 class UpgradeTypeTable;
+class UpgradeTemplate;
 class AIWorld;
 class Economy;
 class CombatState;
@@ -269,6 +270,8 @@ struct GameLogicSettings
 	float supplyBuildBorder = 0.0f;
 	int maxLineBuildObjects = 0;
 	float minDistFromEdgeOfMapForBuild = 0.0f;
+	bool maxCastleRadiusLoaded = false; ///< lane BUILDCLEAR-1: GameData read MaxCastleRadius (BFME1's GameData has no such row)
+	float maxCastleRadius = 0.0f;       ///< GameData MaxCastleRadius (GlobalData + 0x1220): isLocationClearOfObjects' range
 	// lane BUILD-3 (GameData, RW GlobalData + 0x11E4): BuilderMoveFromNewStructureDistance, the walk of a porter out of the structure it built (RW 0x88D6AE); loaded when a block read it
 	bool builderMoveLoaded = false;
 	float builderMoveFromNewStructureDistance = 0.0f;
@@ -600,6 +603,19 @@ public:
 	static constexpr size_t kBeaconNotices = 64;
 	void noteBeacon(BeaconNotice::Kind kind, int playerIndex, ObjectID object, const Coord3D &position);
 	const std::vector<BeaconNotice> &beaconNotices() const { return m_beaconNotices; }
+	// Presentation only: an upgrade completed in ProductionUpdate (RW 0x8A2080 .. 0x8A223B).
+	// Consumed by the issuing player's HUD to display the completion message, play sounds, and emit radar event.
+	struct UpgradeCompleteNotice
+	{
+		std::uint32_t seq = 0;
+		int playerIndex = -1;
+		ObjectID producerID = INVALID_ID;
+		const UpgradeTemplate *upgrade = nullptr;
+		Coord3D position{ 0.0f, 0.0f, 0.0f };
+	};
+	static constexpr size_t kUpgradeCompleteNotices = 64;
+	void noteUpgradeComplete(int playerIndex, ObjectID producerID, const UpgradeTemplate *upgrade, const Coord3D &position);
+	const std::vector<UpgradeCompleteNotice> &upgradeCompleteNotices() const { return m_upgradeCompleteNotices; }
 	void noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex);
 	const std::vector<RadarEventNotice> &radarEventNotices() const { return m_radarEventNotices; }
 	// bumped when a logic-side radar input is written (an attack frame, a script or construction notice). The HUD reads those once per
@@ -1057,6 +1073,8 @@ private:
 	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
 	std::vector<BeaconNotice> m_beaconNotices; ///< lane CHAT-1: oldest first, at most kBeaconNotices
 	std::uint32_t m_beaconSeq = 0;
+	std::vector<UpgradeCompleteNotice> m_upgradeCompleteNotices;
+	std::uint32_t m_upgradeCompleteSeq = 0;
 	std::uint32_t m_radarEventSeq = 0;
 	std::uint32_t m_radarLogicWrites = 0; // see noteRadarLogicWrite
 	ObjectClientHooks *m_clientHooks = nullptr;

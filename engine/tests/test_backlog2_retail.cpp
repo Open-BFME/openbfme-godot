@@ -462,7 +462,9 @@ TEST_CASE("BACKLOG2 S-951: a captured camp flag's unpack (MSG_CASTLE_UNPACK) cos
 		++wait;
 	}
 	CHECK(cb->state() == CastleBehavior::STATE_UNPACKING);
-	// Camp_Men: the camp's floor, keep, five walls, five defence nodes and six building foundations (the rock goes to the neutral player)
+	// Camp_Men: the camp's floor, keep, eleven walls, five defence nodes and six building foundations (the rock goes to the neutral player). Lane BUILDCLEAR-1:
+	// the layout's 11 GBCampWall entries are a ring of touching segments; RotWK's member test (RW 0x796E9A: bit 0x100, the CampFlag is BASE_SITE) ignores the
+	// castle's own members, so all 11 stand (ZH's overlap rule let neighbouring segments refuse each other and kept 5)
 	std::map<std::string, int> made;
 	Object *keep = nullptr;
 	for (ObjectID id : cb->ownedObjects())
@@ -473,7 +475,7 @@ TEST_CASE("BACKLOG2 S-951: a captured camp flag's unpack (MSG_CASTLE_UNPACK) cos
 		keep = o->getTemplate()->getName() == "GondorCampKeep" ? o : keep;
 	}
 	CHECK(made["GondorCampKeep"] == 1);
-	CHECK(made["GBCampWall"] == 5);
+	CHECK(made["GBCampWall"] == 11);
 	CHECK(made["GondorBuildingFoundation"] == 6);
 	REQUIRE(keep);
 	CHECK(keep->getControllingPlayer() == c.men);

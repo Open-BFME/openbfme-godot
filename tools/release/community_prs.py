@@ -160,7 +160,7 @@ def public_tree(git_dir: str | None, sha: str) -> str:
 
 
 def containment_problem(git_dir: str | None, base: str, head: str, tree: str) -> str:
-    """'' when the diff base..head is contained in tree (it applies in reverse, exactly), else what is not"""
+    """'' when the diff base..head is contained in tree (it applies in reverse: its lines exactly, one line of context), else what is not"""
     diff = git(git_dir, "-c", "core.quotepath=false", "diff", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv",
                "--src-prefix=a/", "--dst-prefix=b/", base, head).stdout
     if not diff.strip():
@@ -168,7 +168,9 @@ def containment_problem(git_dir: str | None, base: str, head: str, tree: str) ->
     with tempfile.TemporaryDirectory() as tmp:
         env = {"GIT_INDEX_FILE": str(Path(tmp, "index"))}
         git(git_dir, "read-tree", tree, env=env)
-        r = git(git_dir, "apply", "--cached", "--check", "-R", "-p1", "--whitespace=nowarn", "-", input=diff, env=env, check=False)
+        # -C1: every line the pull request adds or removes must match exactly, but only one line of context on each side: the archive's
+        # port may sit next to a line a later lane changed (#336: a later include three lines below its CMake line refused 7 nightlies)
+        r = git(git_dir, "apply", "--cached", "--check", "-R", "-p1", "-C1", "--whitespace=nowarn", "-", input=diff, env=env, check=False)
     if r.returncode:
         lines = [x for x in r.stderr.decode(errors="replace").splitlines() if x.strip()][:6]
         return "its changes are not all in the public tree being synced: " + "; ".join(lines)

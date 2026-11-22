@@ -35,10 +35,11 @@ const FieldParse kFields[] = { { "DefaultRadius", INI::parseReal, nullptr, (int)
 const char *const kRadiusKey = "objectThreatFinderRadius";
 const char *const kStop =
 	"[S-7184] ThreatFinderUpdate (PORT 17, ported: create RW 0x64F96A, slot 45 RW 0x7EDECE, update RW 0x7EDDB6, TheThreatFinderManager RW 0xDE8888, "
-	"the script action RW 0x7C68AA): NOT ported: the condition that reads the same finders (RW 0x608BCA), which is ScriptConditions.cpp's (PORT 16), so "
-	"a map script can set a counter from a named threat area but cannot test the area in a condition; INFERENCE: the record's category comes from "
+	"the script actions RW 0x7C68AA and RW 0x608BCA's THREAT_FINDER branch, SET_COUNTER_TO_UNIT_THREAT): INFERENCE: the record's category comes from "
 	"ThreatBreakdown's AIKindOf through the ported RotWK reader (AIThreatFinder::threatCategory, RW 0x530); a save written before the port (the "
-	"module's block version 1, an unported shell) loads with no finder, so its map's named areas answer nothing until the map is started again";
+	"module's block version 1, an unported shell) loads with no finder, so its map's named areas answer nothing until the map is started again; "
+	"RotWK's Object::xfer (RW 0x697F28) does not save the script threat cache (+ 0x464 / + 0x468), the OpenBFME object snapshot does (the state hash "
+	"covers it), so for up to 5 s after a load a RotWK game answers the cached value where retail refreshes at once";
 } // namespace
 
 // ---- the module ----------------------------------------------------------------------------------------------------------------------------

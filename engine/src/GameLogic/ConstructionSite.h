@@ -84,6 +84,15 @@ private:
 // the object's own geometry (Object + 0xA8): the template's shapes with the object's active flags (lane HUD-5's Object::geometryActive)
 std::vector<ObjectGeometry::Shape> objectShapes(const Object &obj);
 
+// lane BUILDCLEAR-1: the bounds RW 0xAD2860 computes for a GeometryInfo of these shapes: + 0x10 (the bounding circle, 0.01 without shapes) and + 0x14 (the
+// bounding sphere). The BFME2 decomp names them getMajorRadius / getBoundingCircleRadius (its guesses); the values are this port's PathfindGeometry radii.
+struct GeometryBounds
+{
+	float circle = 0.01f;
+	float sphere = 0.0f;
+};
+GeometryBounds geometryBounds(const std::vector<ObjectGeometry::Shape> &shapes);
+
 // RW 0x7940A6 (BuildAssistant) / RW 0x8582A5 (FoundationAIUpdate: no TAINT test)
 bool isRemovableForConstruction(GameLogic &logic, const Object *obj);
 bool isRemovableForFoundation(GameLogic &logic, const Object *obj);

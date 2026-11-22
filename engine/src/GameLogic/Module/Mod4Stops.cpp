@@ -12,7 +12,8 @@ const std::vector<std::string> &Mod4Stops::classes()
 
 std::vector<std::string> Mod4Stops::lines()
 {
-	// PORT 17 (issue #73) ported the lane's last class, ThreatFinderUpdate: [S-1424] is closed, and what that port does not do - the condition that reads
-	// the same finders, RW 0x608BCA - is the module's own stop, [S-7184] (ThreatFinderUpdate::stopLines, in the world's acceptance stops too)
+	// PORT 17 (issue #73) ported the lane's last class, ThreatFinderUpdate: [S-1424] is closed, and what remains of it (old saves without a finder; lane
+	// THREATLEVEL-1 ported RW 0x608BCA, the threat counter actions, which is not a condition) is the module's own stop, [S-7184] (ThreatFinderUpdate::stopLines,
+	// in the world's acceptance stops too)
 	return {};
 }
