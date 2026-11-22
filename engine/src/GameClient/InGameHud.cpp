@@ -3,6 +3,7 @@
 
 #include "Common/BfmeGame.h"
 #include "GameClient/InGameHud.h"
+#include "GameClient/MouseoverTooltip.h"
 #include "GameClient/BeaconClientUpdate.h"
 #include "Common/Audio/AudioEntryPoints.h"
 #include "GameLogic/BeaconCommands.h"
@@ -207,6 +208,9 @@ bool InGameHud::boot(std::string *error)
 	{
 		m_errors.push_back("rally marker: " + (settingsError.empty() ? std::string("GameData has no DownwindAngle") : settingsError));
 	}
+	// lane HOVER-2: GameData's DebugAI, which the mouse-over tool tip reads (absent: reported by the tool tip, S-7185)
+	m_debugAI = gameData.debugAI;
+	m_haveDebugAI = gameData.haveDebugAI;
 	// lane CHAT-1: the message lines' InGameUI rows (data\ini\ingameui.ini + language.ini's MessageFont)
 	{
 		InGameUIMessageSettings ms;
@@ -568,6 +572,7 @@ void InGameHud::update(double seconds)
 		}
 	}
 	part(m_updateParts.input);
+	updateMouseoverTooltip(); // lane HOVER-2: after the translators set this frame's mouse-over hint
 	// lane INPUT-1: the SPELL_STORE meta (the ` key): RW 0x71C6AF closes the open store, else opens it (the Palantir's powers button path)
 	while (m_spellToggleSeen < m_input->ui().spellStoreToggles())
 	{
@@ -781,6 +786,34 @@ bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
 // lane RADAR-1: the radar's events (Radar.h): the local player's attacked objects (RW 0x67B4B7), the events' end (RW 0x6D8E2B), then
 // W3DRadar::drawEvents (RW 0x44DE58) for the picture the device drew last (the events end in the radar's update, Radar::advanceClock) and the Palantir's pings; the window pixels go to the movie's stage units
 // (RW 0x6D5AD9: the Apt player's scale)
+// lane HOVER-2: RW 0x69F637's tool tip (MouseoverTooltip.h). The hint's object is InGameUI's mouse-over object (SelectionXlat sets it on every
+// MSG_MOUSEOVER_DRAWABLE_HINT and clears it on a location hint); over the HUD, while scrolling or selecting, and with no object the request is empty
+// (INFERENCE S-7185: ZH's window manager clears it on every mouse event before createMouseoverHint runs)
+void InGameHud::updateMouseoverTooltip()
+{
+	InGameUI &ui = m_input->ui();
+	UnicodeString text;
+	if (m_pointerSeen && !m_modal && !ui.isScrolling() && !ui.isSelecting() && ui.mouseoverObject() != INVALID_ID && !isOverGui(m_pointerX, m_pointerY))
+	{
+		GameLogic &logic = m_config.game.logic();
+		if (const Object *obj = logic.findObjectByID(ui.mouseoverObject()))
+		{
+			MouseoverTooltip::Inputs in;
+			in.localPlayer = m_config.game.players().getLocalPlayer();
+			in.networkGame = ui.networkGame();
+			in.debugAI = m_debugAI;
+			in.haveDebugAI = m_haveDebugAI;
+			const ICoord2D pixel{ m_pointerX, m_pointerY };
+			in.groundUnderPointer = [this, &logic, pixel](Coord3D &out) { return m_config.view.screenToTerrain(pixel, logic, out); };
+			MouseoverTooltip::Result r = MouseoverTooltip::compose(*obj, logic, m_config.gameText, in);
+			text = r.text;
+			m_mouseoverUnported.insert(r.unported.begin(), r.unported.end());
+		}
+	}
+	m_mouseoverTooltip = text;
+	m_wm->setWorldTooltip(text);
+}
+
 void InGameHud::updateRadarEvents()
 {
 	// What a logic frame writes (an object's radar attack frame, the scripts' event notices) is read once per logic frame.
@@ -1545,6 +1578,14 @@ std::vector<std::string> InGameHud::stops() const
 	std::vector<std::string> out = m_input->stops();
 	out.push_back("[S-6101] player message log: BFME2 recovered six-entry message, positioning and fade routines ported; independent RotWK display-routine verification remains outstanding");
 	out.push_back(DrawablePick::stopLine()); // lane QA-1: the HUD's pick is the drawn-model ray test, not S-284's geometry volumes
+	for (const std::string &l : MouseoverTooltip::acceptanceStops()) // lane HOVER-2
+	{
+		out.push_back(l);
+	}
+	for (const std::string &u : m_mouseoverUnported)
+	{
+		out.push_back("[S-7185] met: " + u);
+	}
 	out.push_back("[S-1201] context commands (lane QA-1): a click with a builder on our rising structure is MSG_RESUME_CONSTRUCTION, on our damaged finished structure "
 				  "MSG_DO_REPAIR (CommandTranslator::evaluateContextCommand), by ZH ActionManager::canResumeConstructionOf / canRepairObject (a DOZER of the same player); "
 				  "RotWK's ActionManager checks and the order of its context checks are not read");
