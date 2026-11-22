@@ -204,7 +204,7 @@ public:
 
 	// the members, in insertion order
 	Object *getFirstMember() const { return m_head; }
-	// lane AIPOW-1: retail's member list (Team + 0x38, walked by RW 0x66362D / 0x6632C9) starts at the NEWEST member (Object::prependToTeamMemberList RW
+	// lane AIPOW-1: retail's member list (Team + 0x38, walked by RW 0x0066362D / RW 0x006632C9) starts at the NEWEST member (Object::prependToTeamMemberList RW
 	// 0x68AD89 links each new member at the head), so retail's order is this list's reverse: walk from here with friend_teamPrev
 	Object *getLastMember() const { return m_tail; }
 	unsigned getMemberCount() const { return m_count; }
@@ -284,6 +284,24 @@ public:
 	Team *getFirstTeam() const { return m_teams.empty() ? nullptr : m_teams.front(); }
 	// lane CAMP-1: the head of retail's instance list (prototype + 0x334): a new team is PREPENDED (RW 0x79FA5C -> RW 0x79F9D0), so the head is the newest
 	Team *getNewestTeam() const { return m_teams.empty() ? nullptr : m_teams.back(); }
+	// Both editions: RW 0x007A0086 (DONOR BFME2 0x0039D731 TeamPrototype::findTeamByID): 0 -> nullptr; scans prototype's team instances (+0x334) by TeamID.
+	Team *findTeamByID(TeamID id) const
+	{
+		if (id == 0)
+		{
+			return nullptr;
+		}
+		for (Team *t : m_teams)
+		{
+			if (t && t->getID() == id)
+			{
+				return t;
+			}
+		}
+		return nullptr;
+	}
+	// Both editions: RW 0x007A00B0 (DONOR BFME2 0x0039D75B TeamPrototype::countTeamInstances): counts non-null Team instances in prototype's instance list (+0x334).
+	int countTeamInstances() const { return static_cast<int>(m_teams.size()); }
 	// lane CAMP-1H: the TeamTemplateInfo's scripts (read from the dict once)
 	const TeamTemplateScripts &templateScripts() const;
 

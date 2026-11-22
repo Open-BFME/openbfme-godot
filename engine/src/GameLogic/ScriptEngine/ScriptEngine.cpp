@@ -293,7 +293,7 @@ bool ScriptEngine::runTeamCreateActions(TeamPrototype &proto)
 
 // ---- names ------------------------------------------------------------------------------------------------------------------------------------
 
-// RW 0x72C43C: "Side/name" -> (Side, name); a name without '/' belongs to the current side
+// RW 0x0072C43C (split) / RW 0x0072CDAB (DONOR BFME2 0x0032B389 Rva0032B389Join: "Side/name" join): a name without '/' belongs to the current side
 std::pair<std::string, std::string> ScriptEngine::qualify(const std::string &name) const
 {
 	const size_t slash = name.find('/');
@@ -315,6 +315,7 @@ ScriptEngine::Counter &ScriptEngine::counter(const std::string &name)
 	return m_counters[qualify(name)];
 }
 
+// Both editions: RW 0x00608249 (DONOR BFME2 0x0020881A ScriptEngine::rva0020881A)
 bool *ScriptEngine::findFlag(const std::string &name)
 {
 	auto it = m_flags.find(qualify(name));
@@ -338,6 +339,7 @@ ScriptEngine::RSide *ScriptEngine::findSide(const std::string &name)
 	return nullptr;
 }
 
+// Both editions: RW 0x007B712D (DONOR BFME2 0x003B6633 Rva003B573E::rva003B6633) -> RW 0x007B6287 (DONOR BFME2 0x003B573E Rva003B573E::rva003B573E)
 ScriptEngine::RScript *ScriptEngine::findScriptIn(RGroup &g, const std::string &name)
 {
 	for (std::unique_ptr<RScript> &s : g.scripts)
@@ -373,8 +375,8 @@ ScriptEngine::RGroup *ScriptEngine::findGroupIn(RGroup &g, const std::string &na
 	return nullptr;
 }
 
-// RW 0x604A5D: the qualified name's side list (RW 0x604986: the player whose name key is the side part), then the script by name in it
-// (INFERENCE: RW 0x7B72EC's name index covers the list's scripts at every group depth; the first in file order wins)
+// RW 0x00604A5D: the qualified name's side list (RW 0x00604986: the player whose name key is the side part), then the script by name in it
+// (RW 0x007B72C3 ScriptList::findScriptByName: the name index covers the list's scripts at every group depth; the first in file order wins).
 ScriptEngine::RScript *ScriptEngine::findScript(const std::string &name)
 {
 	const std::pair<std::string, std::string> q = qualify(name);
@@ -382,6 +384,7 @@ ScriptEngine::RScript *ScriptEngine::findScript(const std::string &name)
 	return side ? findScriptIn(side->root, q.second) : nullptr;
 }
 
+// Both editions: RW 0x007B72EC (DONOR BFME2 0x003B6911 ScriptList::rva003B6911) looks up a script group by name in the side's ScriptList.
 ScriptEngine::RGroup *ScriptEngine::findGroup(const std::string &name)
 {
 	const std::pair<std::string, std::string> q = qualify(name);
@@ -572,6 +575,21 @@ const std::vector<std::string> *ScriptEngine::findObjectList(const std::string &
 		}
 	}
 	return nullptr;
+}
+
+// Both editions: RW 0x00603B6A (DONOR BFME2 0x00204224 ObjectTypes::getNthInList)
+std::string ScriptEngine::objectListGetNth(const std::string &list, int index) const
+{
+	if (index < 0)
+	{
+		return std::string();
+	}
+	const std::vector<std::string> *types = findObjectList(list);
+	if (!types || static_cast<size_t>(index) >= types->size())
+	{
+		return std::string();
+	}
+	return (*types)[static_cast<size_t>(index)];
 }
 
 // ---- the named object cache ---------------------------------------------------------------------------------------------------------------------
@@ -942,7 +960,7 @@ bool ScriptEngine::evaluateConditionsNoContext(const Script &s)
 	return false;
 }
 
-// RW 0x6092A9
+// RW 0x006092A9 (Condition::getUiFlags RW 0x007B327D -> ScriptEngine::getConditionTemplate RW 0x00603263)
 bool ScriptEngine::evaluateCondition(const ScriptCondition &c)
 {
 	++m_stats.conditionsEvaluated;
@@ -968,7 +986,7 @@ bool ScriptEngine::evaluateCondition(const ScriptCondition &c)
 	}
 }
 
-// RW 0x60C1C9
+// RW 0x0060C1C9 (ScriptAction::getUiFlags RW 0x007B3355 -> ScriptEngine::getActionTemplate RW 0x00603270)
 void ScriptEngine::executeActions(const std::vector<ScriptActionRec> &actions, RScript &s)
 {
 	// lane MODS-3: opt-in diagnostic only (OPENBFME_TRACE_SCRIPTS=<side name> or "*"): every action a script of that side runs, to stderr; no
@@ -1389,7 +1407,11 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 		std::vector<std::string> names;
 		if (const std::vector<std::string> *list = findObjectList(what))
 		{
-			names = *list;
+			// RW 0x00605B1B .. 0x00605B67: walks index 0 .. size - 1 via ObjectTypes::getNthInList (RW 0x00603B6A)
+			for (int i = 0; static_cast<size_t>(i) < list->size(); ++i)
+			{
+				names.push_back(objectListGetNth(what, i));
+			}
 		}
 		else
 		{
@@ -1617,8 +1639,8 @@ void ScriptEngine::adjustMsecTimer(const ScriptActionRec &a, bool milliseconds, 
 	c.value += secondsToFrames(s);
 }
 
-// RW 0x604ADD / 0x604BA1: the group of that name, then the script of that name (the team instance bookkeeping RW 0x7A4DDE for a condition team
-// is part of S-1183)
+// The team instance bookkeeping for a condition team is part of S-1183.
+// Both editions: RW 0x00604ADD (enableScript) / RW 0x00604BA1 (disableScript): the group of that name, then the script of that name.
 void ScriptEngine::enableScript(const ScriptActionRec &a, bool enable)
 {
 	const std::string &name = param(a.params, 0).stringValue;
