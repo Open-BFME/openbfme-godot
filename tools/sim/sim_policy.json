@@ -897,6 +897,10 @@
    "reason": "lane SAVE-2: GameWorld's saves (writes the running recording's log to a file, lists the Save folder, starts a loaded save's catch-up and hands the game over with a continuing recording; the catch-up's audio is silenced, its queued effects dropped): client side, never part of the logic state"
   },
   {
+   "glob": "src/GodotDevice/GodotGameWorldPrewarm.cpp",
+   "reason": "lane PERF-4: GameWorld's load-time model prewarm and spare-time waves (W3D model, texture and material builds kept in the draw cache) and the two-second pivot-fade warm-up: client rendering, reads the logic's templates and objects, never writes simulation state; its wall-clock timings are load-report and wave-pacing data only"
+  },
+  {
    "glob": "src/GameNetwork/OrdersIntoFog.cpp",
    "reason": "ANTICHEAT-1's offline fog check: runs beside replay playback and only READS the simulation's state (object positions, the shroud) to report orders on objects the ordering player could not see; it never writes simulation state, sends no command and feeds nothing back (test_orders_into_fog: the state hash with and without the check is identical). Its findings are server-side reports, not game state, so they need no cross-machine determinism"
   },

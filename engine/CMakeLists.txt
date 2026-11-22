@@ -667,6 +667,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotInGameHud.cpp
     src/GodotDevice/GodotPlacementGhost.cpp # BUILD-5
     src/GodotDevice/GodotPathfindView.cpp
+    src/GodotDevice/GodotGameWorldPrewarm.cpp # PERF-4: client model prewarm, excluded from the sim audit
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
     src/GodotDevice/GodotShaderBudget.cpp # SHADER-BUDGET-1

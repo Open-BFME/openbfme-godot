@@ -140,6 +140,7 @@
 #include <fstream>
 #include <chrono>
 #include <cmath>
+#include <set>
 
 // the binary's model condition names (GameLogic/BitFlags.h: not included here, its ModelConditionFlags typedef collides with Common/ModelState.h)
 extern const char *const TheModelConditionNames[];
@@ -797,6 +798,10 @@ void GameWorld::clear_scene()
 	m_views.clear();
 	m_dynamicModels.clear();
 	m_staticModels.clear();
+	m_prewarmQueue.clear();
+	m_prewarmCursor = 0;
+	m_prewarmNextMs = 0.0;
+	m_prewarmBuilt = m_prewarmFailed = 0;
 	m_buffInstances.clear(); // lane SPELL-4: the buffs' instances went with the instancer
 	m_staticId = m_dynamicId = 0;
 	m_textureClock = 0.0;
@@ -1389,10 +1394,16 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		}
 	}
 	dyn->set_house_colors_enabled(m_houseColors);
+	// S-029 (1): no pivot-fade dither for the first two seconds of a game (the black dither pixels are conspicuous on snowy maps)
+	begin_fade_warmup();
 	dyn->set_playing(false); // time only enters through set_instance_pose
 	dyn->set_pose_culling(m_perf3Client); // PiP supplies an additional frustum when a second camera sees the live objects.
 	dyn->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the same frusta decide what is drawn
 	timings["static_layer_ms"] = timing::elapsedMs(t0);
+	// lane PERF-4 (owner report 2026-11-10): build the local faction's unit / building / placement-flag / move-hint models now, while the
+	// loading screen covers the map; their meshes, textures and materials are then cached for the first spawn or first placement. Its own
+	// timing is outside static_layer_ms, so the load report's total does not count it twice.
+	prewarm_match_models(*dyn, timings);
 
 	t0 = nowMs();
 	refresh_shroud(true);
@@ -2461,6 +2472,7 @@ void GameWorld::advance(double delta)
 	{
 		return;
 	}
+	prewarm_wave_tick(); // lane PERF-4: one spare-time model per wave; while paused it has no game frame to disturb
 	if (m_paused)
 	{
 		// the simulation and the animations stand still; the streak ribbons still face the camera of this frame (the camera moves while paused)
