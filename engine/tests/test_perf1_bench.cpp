@@ -584,6 +584,10 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: PORT-12 hashes MinDistFromEdgeOfMapForBuild in GameLogicSettings::crc (RotWK GlobalData +0xA68; BFME2 1.06's data/ini/gamedata.ini carries the
 // same 30.0 row) and refuses a footprint sample inside the active boundary's margin (RW 0x794BF2 .. 0x794C5A): all three vectors move from frame 0.
 // Re-measured once (OPENBFME_PERF1_REGEN=1, Windows MSVC) on this tree with the other open ports merged; every pin above is otherwise as it was.
+// pin: BUILDCLEAR-1 (isLocationClearOfObjects as RotWK's RW 0x796D37, the options in RotWK's numbering) moves the skirmish from frame 2197 only: every
+// placement check before it answers as before (both runs logged, 136 checks), and there Isengard's computer player checks its next Furnace site with
+// 0x85 (terrain, overlap, fogged objects ignored): the retail clear test refuses it (code 8) where ZH's overlap rule passed it and the porter's 0x49F
+// gate refused it a step later. The big battle does not move. Re-measured once on this lane's head (OPENBFME_PERF1_REGEN=1).
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

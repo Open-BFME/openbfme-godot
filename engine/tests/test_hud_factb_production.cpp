@@ -165,6 +165,25 @@ void buildEveryStructure(const std::string &faction, Results &res)
 		const ThingTemplate *tt = s.world->things().findTemplate(e->name);
 		const Coord3D start = siteFor(g, n++, 300.0f);
 		Object *porter = g.rig.make(builderName, start.x, start.y);
+		// lane BUILDCLEAR-1: a WALL_HUB build is legal only within its MaxBuildoutDistance (MEN_FORTRESS_WALL_EFFECTIVE_RADIUS = 1500) of one of the player's
+		// COMMANDCENTERs (RW 0x796C66 / 0x6B00F3); the bare map gives the player none, so a citadel stands nearby while a hub is built
+		Object *centre = factb::hasKindOf(*tt, "WALL_HUB") ? [&]() {
+			const Coord3D c = g.rig.freeSpot(start.x, start.y - 700.0f, 300.0f);
+			return g.rig.make("MenFortressCitadel", c.x, c.y);
+		}() : nullptr;
+		struct CentreGone
+		{
+			factb::HudGame &g;
+			Object *o;
+			~CentreGone()
+			{
+				if (o && !o->isDestroyed())
+				{
+					g.logic().destroyObject(o);
+				}
+			}
+		} centreGone{ g, centre };
+		REQUIRE((!centre || factb::hasKindOf(*static_cast<const ThingTemplate *>(centre->getTemplate()), "COMMANDCENTER")));
 		g.step(2);
 		if (!g.select(porter))
 		{

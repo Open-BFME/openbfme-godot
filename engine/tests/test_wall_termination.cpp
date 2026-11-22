@@ -11,7 +11,8 @@ namespace
 const char kDefinitions[] =
  "Object TerrainWallHub\n KindOf = STRUCTURE IMMOBILE WALL_HUB\n BuildCost = 20\n Geometry = BOX\n GeometryMajorRadius = 4\n GeometryMinorRadius = 10\n GeometryHeight = 20\n Behavior = WallHubBehavior Hub\n SegmentTemplateName = TerrainWallTile\n DefaultSegmentTemplateName = TerrainWallTile\n HubCapTemplateName = TerrainWallHub\n CliffCapTemplateName = TerrainWallEnd\n BuilderRadius = 10\n End\nEnd\n"
  "Object TerrainWallTile\n KindOf = STRUCTURE IMMOBILE WALL_SEGMENT\n BuildCost = 10\n Geometry = BOX\n GeometryMajorRadius = 4\n GeometryMinorRadius = 10\n GeometryHeight = 20\nEnd\n"
- "ChildObject TerrainWallEnd TerrainWallTile\n BuildCost = 7\nEnd\n";
+ "ChildObject TerrainWallEnd TerrainWallTile\n BuildCost = 7\nEnd\n"
+ "Object TerrainWallCC\n KindOf = STRUCTURE IMMOBILE COMMANDCENTER\nEnd\n";
 
 Object *prepare(CombatWorld &w)
 {
@@ -19,6 +20,7 @@ Object *prepare(CombatWorld &w)
 	w.logic->settings().allowedHeightVariationForBuilding = 10;
 	w.logic->settings().maxLineBuildObjects = 50;
 	Object *hub = w.unit("TerrainWallHub", 'A', 300, 500);
+	w.unit("TerrainWallCC", 'A', 100, 100); // lane BUILDCLEAR-1: the hub caps (WALL_HUB builds) need a COMMANDCENTER within MaxBuildoutDistance (RW 0x796C66)
 	hub->getControllingPlayer()->getMoney()->deposit(1000, false);
 	for (int y = 0; y < 100; ++y)
 		for (int x = 45; x < 50; ++x) w.terrain.cliff.insert({x, y});
