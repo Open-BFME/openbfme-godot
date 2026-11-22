@@ -335,6 +335,7 @@ include(cmake/Weather1.cmake)   # WEATHER-1: snow, rain, darkness, lightning, th
 include(cmake/Bldfx1.cmake)     # FEAT-BLDFX-1: the FXList nugget sinks, scorches, decals, light pulses, camera shakers (OPENBFME_BLDFX1_SOURCES / _TESTS)
 include(cmake/Decompfix1109.cmake) # DECOMPFIX-1109: FLEECHASE-1, ENTERADJUST-1, REQTHROTTLE-1 (OPENBFME_DECOMPFIX1109_TESTS)
 include(cmake/Port5.cmake)      # PORT-5: the bird's deferred ability target (OPENBFME_PORT5_TESTS)
+include(cmake/Port426.cmake) # PORT-426: Shift on a production button queues five units (fork issue 426; OPENBFME_PORT426_TESTS)
 include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elven wood grid (appends to OPENBFME_SIM_SOURCES; OPENBFME_TAINTAREA1_TESTS)
 include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
 include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-objects test RW 0x796D37 (OPENBFME_BUILDCLEAR1_TESTS)
@@ -739,6 +740,7 @@ endif()
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
+    ${OPENBFME_PORT426_TESTS}
     ${OPENBFME_WIN1_TESTS}
     ${OPENBFME_DEP2_TESTS}
     ${OPENBFME_SMOOTH_TESTS}
