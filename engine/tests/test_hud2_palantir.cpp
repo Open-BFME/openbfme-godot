@@ -454,6 +454,45 @@ TEST_CASE("hud2 palantir: a selected unit and a selected building show their Sel
 	}
 }
 
+TEST_CASE("hordeportrait1 retail: a horde shows its most experienced non-banner member's SelectPortrait (RW 0x694F06 -> RW 0x694BF8 -> vslot 0x54)")
+{
+	if (!haveWorld("hordeportrait1"))
+	{
+		return;
+	}
+	PalantirRig h(shared());
+	const Coord3D c = h.rig.freeSpot(2800, 1400, 200.0f);
+	// the hobbits: the horde has no SelectPortrait of its own, its members (RohanHobbit) have UPHobbits
+	Object *hobbits = h.rig.make("RohanHobbitFriendsHorde", c.x, c.y);
+	// Angmar's orc warriors: the horde's own SelectPortrait is the thrall master's, the warriors' is KUGundOrcPortrait; the banner carrier is skipped
+	Object *orcs = h.rig.make("AngmarOrcWarriors", c.x + 250.0f, c.y);
+	REQUIRE(hobbits != nullptr);
+	REQUIRE(orcs != nullptr);
+	h.rig.lookAt({ c.x, c.y, 0 });
+	h.frames(20);
+	REQUIRE(hobbits->getContain() != nullptr);
+	REQUIRE_FALSE(hobbits->getContain()->getContainedItemsList()->empty());
+	REQUIRE(orcs->getContain() != nullptr);
+	REQUIRE_FALSE(orcs->getContain()->getContainedItemsList()->empty());
+	CHECK(h.templatePortrait(*hobbits).empty());
+	CHECK(h.templatePortrait(*orcs) == "KUThrallMasterPortrait");
+	AptPalantir *p = h.hud->palantir();
+
+	h.hud->input().ui().selectObject(hobbits->getID());
+	h.frames(10);
+	CHECK(p->portraitShown() == "UPHobbits");
+	REQUIRE(p->imageForClip(p->portraitKey(), "") != nullptr);
+	CHECK(p->imageForClip(p->portraitKey(), "")->image == "UPHobbits");
+	// a member alone: the same portrait (RW 0x693A1A: the horde that contains it)
+	const Object *member = hobbits->getContain()->getContainedItemsList()->front();
+	CHECK(PalantirCommandUI::objectPortrait(*member) == "UPHobbits");
+
+	h.hud->input().ui().deselectAll(false);
+	h.hud->input().ui().selectObject(orcs->getID());
+	h.frames(10);
+	CHECK(p->portraitShown() == "KUGundOrcPortrait");
+}
+
 TEST_CASE("hud2 palantir: passive contents are removed on context changes, deselection and selected-unit destruction")
 {
 	if (!haveWorld("hud2 palantir passive context"))
