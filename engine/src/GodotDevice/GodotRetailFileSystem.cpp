@@ -631,6 +631,10 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			std::unique_ptr<Win32BIGFileSystem> merged = std::make_unique<Win32BIGFileSystem>();
 			ModMountOptions overlayOptions;
 			overlayOptions.md5CachePath = toNative(ProjectSettings::get_singleton()->globalize_path("user://mod-md5-cache.tsv"));
+			for (const ModEngineFeatures::LeftOutArchive &l : ModEngineFeatures::leftOutArchives()) // lane MODS-3: activated above
+			{
+				overlayOptions.leftOut.emplace_back(l.path, l.why);
+			}
 			std::vector<std::string> folders;
 			for (int64_t i = 0; i < m_installModArgs.size(); ++i)
 			{

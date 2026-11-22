@@ -526,7 +526,12 @@ bool loadWorld(const Args &a, World &w, std::string &error)
 	{
 		// lane MODS-2: an install-folder mod: the file system of the merged game folder replaces the retail one
 		auto merged = std::make_unique<Win32BIGFileSystem>();
-		const ModMountReport im = MountInstallOverlay(*merged, mr, a.installMods, ModMountOptions());
+		ModMountOptions overlayOptions;
+		for (const ModEngineFeatures::LeftOutArchive &l : ModEngineFeatures::leftOutArchives()) // lane MODS-3: as the rendering peer's mount
+		{
+			overlayOptions.leftOut.emplace_back(l.path, l.why);
+		}
+		const ModMountReport im = MountInstallOverlay(*merged, mr, a.installMods, overlayOptions);
 		if (!im.ok)
 		{
 			for (const std::string &e : im.errors)

@@ -150,6 +150,10 @@ original 2.02 there:
   text shortcuts, the camera zoom reset, and the new settings (resolutions, 30 / 60 FPS, the Delay Fix switch).
 - War of the Ring with 8 players, online, and without a host for land transfer.
 
+Its reworked settings menu (`apt/Options.big`) needs the game program's own settings code, so OpenBFME leaves that one archive of the mod
+out and keeps the original game's; the mount notes it. Without that, OpenBFME's settings menu drew broken and could not be left from the
+main menu.
+
 The active features are part of the game's identity: two players with different engine features do not join each other, and a replay
 names them.
 

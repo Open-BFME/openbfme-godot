@@ -67,6 +67,14 @@ TEST_CASE("MODS-3: Patch 2.02 9.8.6's game binary turns on Edain's commandset-li
 	const std::vector<std::string> stops = ModEngineFeatures::stopLines();
 	REQUIRE(stops.size() == 1);
 	CHECK(stops[0].rfind("S-5304: Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary): not yet re-implemented, game rules: Hold Ground", 0) == 0);
+	// its reworked settings menu needs the binary's .optui: the install mount leaves the mod's apt/Options.big out
+	const std::vector<ModEngineFeatures::LeftOutArchive> left = ModEngineFeatures::leftOutArchives();
+	REQUIRE(left.size() == 1);
+	CHECK(std::string(left[0].path) == "apt/options.big");
+	ModEngineFeatures::reset();
+	CHECK(ModEngineFeatures::leftOutArchives().empty());
+	REQUIRE(ModEngineFeatures::activate({ "5c31f5036cacb7690a6161b104a3efdb" }, &error)); // Edain Unchained leaves nothing out
+	CHECK(ModEngineFeatures::leftOutArchives().empty());
 }
 
 TEST_CASE("MODS-3: edain-unchained.herobar-kindof: HEROBAR is KindOf bit 222 and HEROBAR_GROUP bit 223 only with the feature")

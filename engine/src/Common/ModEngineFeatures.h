@@ -50,6 +50,13 @@ public:
 	// the feature's stable name (identity text, reports): "edain-unchained.herobar-kindof"
 	static const char *name(ModEngineFeature f);
 
+	// an archive the mod ships for the binary's own code that OpenBFME does not have: the install mount leaves the mod's archive of this path out, so
+	// the original game's stays (Common/ModMount.h ModMountOptions::leftOut). Not a silent fallback: the mount notes it with the reason.
+	struct LeftOutArchive
+	{
+		const char *path; // the archive's path in the game folder, lower case, '/' separators ("apt/options.big")
+		const char *why;  // the reason the note gives
+	};
 	// a known modified binary: its MD5 (lower-case hex), what it is, and the features that stand in for it (possibly none: e.g. a launcher, or
 	// only install / copy-protection checks a port does not have)
 	struct Profile
@@ -58,6 +65,7 @@ public:
 		const char *what;
 		std::vector<ModEngineFeature> features;
 		const char *notes; // what of the binary is NOT re-implemented ("" when nothing)
+		std::vector<LeftOutArchive> leftOut{}; // the mod's archives that need what is not re-implemented (none for most)
 	};
 	static const std::vector<Profile> &knownBinaries();
 
@@ -70,4 +78,6 @@ public:
 	static std::vector<std::string> activeProfiles();
 	// docs/STOPS.md S-5304: what the active profiles leave out or do differently, one line per active profile with notes ("" for none)
 	static std::vector<std::string> stopLines();
+	// the active profiles' left-out archives (Profile::leftOut), in profile order; empty with no mod
+	static std::vector<LeftOutArchive> leftOutArchives();
 };
