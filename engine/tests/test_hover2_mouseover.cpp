@@ -164,6 +164,31 @@ TEST_CASE("hover2 retail: the HUD hands the enemy's name to the window manager's
 	CHECK(h.hud->mouseoverTooltip() == name);
 	CHECK(h.hud->windows().worldTooltip() == name);
 
+	// a script's DISABLE_INPUT (a cutscene: InGameUI::applyScriptInput hides the pointer): no tool tip while the input is off; ENABLE_INPUT with the
+	// pointer still there brings it back (review of #404)
+	h.hud->scriptInput(false);
+	h.frames(1);
+	CHECK(h.hud->mouseoverTooltip().empty());
+	CHECK(h.hud->windows().worldTooltip().empty());
+	h.hud->scriptInput(true);
+	h.frames(1);
+	CHECK(h.hud->mouseoverTooltip() == name);
+
+	// the object leaves a pointer that does not move: no tool tip; back under the pointer: its name again (ZH's Mouse::createStreamMessages posts the
+	// pointer's position every frame, so the hover pick follows the object; review of #404)
+	const Coord3D home = *target->getPosition();
+	const Coord3D away = h.rig.freeSpot(home.x - 400.0f, home.y + 400.0f, 300.0f, false, {}, nullptr, 100.0f);
+	// the hover pick reads the presented drawables, which take a teleport with the next logic frame: at most 7 HUD frames of 0.033 s at the rig's 0.2 s
+	// logic step
+	target->teleportTo(&away, false);
+	h.frames(7);
+	CHECK(h.hud->mouseoverTooltip().empty());
+	CHECK(h.hud->windows().worldTooltip().empty());
+	target->teleportTo(&home, false);
+	h.frames(7);
+	CHECK(h.hud->mouseoverTooltip() == name);
+	CHECK(h.hud->windows().worldTooltip() == name);
+
 	// the pointer on open ground (a MSG_MOUSEOVER_LOCATION_HINT): no tool tip
 	const ICoord2D ground = h.rig.screenOf({ c.x - 250.0f, c.y - 250.0f, h.rig.logic().getGroundHeight(c.x - 250.0f, c.y - 250.0f) });
 	h.hud->mouseMove(ground.x + 3, ground.y, 0);

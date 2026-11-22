@@ -174,6 +174,11 @@ InGameHud::~InGameHud()
 		m_config.game.setScriptLocalView(nullptr); // lane BFME2CAMP1
 	}
 	m_config.game.drawables().destroyClientDrawable(m_rallyPointDrawable);
+	// lane HOVER-2 (review #404): the shell's window manager outlives a shell-hosted HUD; its world tool tip must not stay over the score screen and the menus
+	if (m_wm)
+	{
+		m_wm->setWorldTooltip(std::u16string());
+	}
 	// lane SPELL-2 (review r2): an open spell store is a screen of the window manager below: it goes first, without sending its pending purchases
 	m_store.reset();
 	if (m_palantirRef)
@@ -786,17 +791,27 @@ bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
 // lane RADAR-1: the radar's events (Radar.h): the local player's attacked objects (RW 0x67B4B7), the events' end (RW 0x6D8E2B), then
 // W3DRadar::drawEvents (RW 0x44DE58) for the picture the device drew last (the events end in the radar's update, Radar::advanceClock) and the Palantir's pings; the window pixels go to the movie's stage units
 // (RW 0x6D5AD9: the Apt player's scale)
-// lane HOVER-2: RW 0x69F637's tool tip (MouseoverTooltip.h). The hint's object is InGameUI's mouse-over object (SelectionXlat sets it on every
-// MSG_MOUSEOVER_DRAWABLE_HINT and clears it on a location hint); over the HUD, while scrolling or selecting, and with no object the request is empty
-// (INFERENCE S-7185: ZH's window manager clears it on every mouse event before createMouseoverHint runs)
+// lane HOVER-2: RW 0x69F637's tool tip (MouseoverTooltip.h) for the object under the pointer; over the HUD, while scrolling or selecting, while a script
+// has the input off (DISABLE_INPUT: no pointer, InGameUI::applyScriptInput) and with no object the request is empty (INFERENCE S-7185: ZH's window manager
+// clears it on every mouse event before createMouseoverHint runs).
+// The object: ZH's Mouse::createStreamMessages appends MSG_RAW_MOUSE_POSITION in every client frame ("basic position messages are always created"), so
+// the selection translator's hover pick (RW 0x83CC13) follows an object that moves under a still pointer. The port posts the position only when the
+// pointer moves (S-137), so the tool tip picks again here each frame with the translator's rule (HudObjects::pickForHover; a dead object only when
+// ALWAYS_SELECTABLE)
 void InGameHud::updateMouseoverTooltip()
 {
 	InGameUI &ui = m_input->ui();
 	UnicodeString text;
-	if (m_pointerSeen && !m_modal && !ui.isScrolling() && !ui.isSelecting() && ui.mouseoverObject() != INVALID_ID && !isOverGui(m_pointerX, m_pointerY))
+	if (m_pointerSeen && !m_modal && ui.getInputEnabled() && !ui.scriptMouseHidden() && !ui.isScrolling() && !ui.isSelecting() &&
+		!isOverGui(m_pointerX, m_pointerY))
 	{
 		GameLogic &logic = m_config.game.logic();
-		if (const Object *obj = logic.findObjectByID(ui.mouseoverObject()))
+		const Object *obj = HudObjects::pickForHover(m_input->context(), { m_pointerX, m_pointerY });
+		if (obj && HudObjects::isEffectivelyDead(*obj) && !obj->isKindOfName("ALWAYS_SELECTABLE"))
+		{
+			obj = nullptr;
+		}
+		if (obj)
 		{
 			MouseoverTooltip::Inputs in;
 			in.localPlayer = m_config.game.players().getLocalPlayer();
