@@ -58,7 +58,8 @@ public:
 	SpecialPowerTemplate *getFinalOverride() { return m_nextOverride ? m_nextOverride->getFinalOverride() : this; }
 	const SpecialPowerTemplate *getFinalOverride() const { return m_nextOverride ? m_nextOverride->getFinalOverride() : this; }
 
-	const std::string &getName() const { return m_name; }
+	// RW 0x00896AA7 (both BFME2 1.06 0x00493313 and RotWK 2.01): walks getFinalOverride() (RW 0x688D3C) before reading m_name (+0x5C).
+	const std::string &getName() const { return getFinalOverride()->m_name; }
 	unsigned getID() const { return m_id; }
 	int getSpecialPowerType() const { return m_type; }
 	unsigned getReloadTime() const { return m_reloadTime; }
