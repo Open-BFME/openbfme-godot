@@ -926,8 +926,8 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		if (p.kind != W3D_DRAWKIND_FLOOR)
 		{
 			const auto *module = p.module < d.draws.size() ? dynamic_cast<const W3DModelDrawModuleData *>(d.draws[p.module].data) : nullptr;
-			staticInst->set_instance_cast_shadow(instance, ObjectShadow::castsMap(d.info ? d.info->tmpl : nullptr, module,
-				p.draw ? p.draw->currentModelState() : nullptr));
+			staticInst->set_instance_shadow_caster(instance, ObjectShadow::casterKind(d.info ? d.info->tmpl : nullptr, module,
+				p.draw ? p.draw->currentModelState() : nullptr)); // lane MAPCAST-1
 		}
 		if (d.fate == MAPOBJ_CLIENT_SHRUB || d.fate == MAPOBJ_CLIENT_PROP)
 		{
@@ -2103,8 +2103,8 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				if (ev.shadowInstance != ev.instance || ev.shadowState != shadowState || ev.shadowData != e.data || ev.shadowOn != d->shadowsEnabled()) // S-3304: not every frame
 				{
 					// TOP20 #24: a drawable whose shadows were switched off (RW 0x672D28, ShadowWhenDead No) casts none
-					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() &&
-						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState));
+					dyn->set_instance_shadow_caster(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() ?
+						ObjectShadow::casterKind(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState) : ObjectShadow::CASTER_NONE);
 					ev.shadowOn = d->shadowsEnabled();
 					ev.shadowState = shadowState;
 					ev.shadowData = e.data;
@@ -2241,8 +2241,8 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 					ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
 					ev.model = model;
 					ev.opacity = 1.0f; // a new instance starts opaque
-					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() &&
-						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr));
+					dyn->set_instance_shadow_caster(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() ?
+						ObjectShadow::casterKind(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr) : ObjectShadow::CASTER_NONE);
 				}
 			}
 			else if (entryXfChanged && ev.instance >= 0)

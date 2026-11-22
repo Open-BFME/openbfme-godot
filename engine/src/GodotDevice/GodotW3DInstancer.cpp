@@ -388,6 +388,9 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_instance_cast_shadow", "instance", "enabled"), &W3DInstancer::set_instance_cast_shadow);
 	ClassDB::bind_method(D_METHOD("set_shadow_receiving", "enabled"), &W3DInstancer::set_shadow_receiving);
 	ClassDB::bind_static_method("W3DInstancer", D_METHOD("set_shadow_maps_enabled", "enabled"), &W3DInstancer::set_shadow_maps_enabled);
+	ClassDB::bind_static_method("W3DInstancer", D_METHOD("set_retail_shadow_mapping", "enabled"), &W3DInstancer::set_retail_shadow_mapping); // lane MAPCAST-1
+	ClassDB::bind_static_method("W3DInstancer", D_METHOD("get_retail_shadow_mapping"), &W3DInstancer::get_retail_shadow_mapping);
+	ClassDB::bind_method(D_METHOD("set_instance_shadow_caster", "instance", "kind"), &W3DInstancer::set_instance_shadow_caster);
 	ClassDB::bind_method(D_METHOD("set_instance_transform", "instance", "transform"), &W3DInstancer::set_instance_transform);
 	ClassDB::bind_method(D_METHOD("remove_instance", "instance"), &W3DInstancer::remove_instance);
 	ClassDB::bind_method(D_METHOD("set_instance_clip", "instance", "clip", "start_time", "speed"), &W3DInstancer::set_instance_clip, DEFVAL(0.0), DEFVAL(1.0));
@@ -554,6 +557,18 @@ void W3DInstancer::set_instance_cast_shadow(int64_t instance, bool enabled)
 	Instance &inst = Instances[(size_t)instance];
 	if (inst.Removed || inst.CastShadow == enabled) return;
 	inst.CastShadow = enabled;
+	note_pose_dirty();
+	mark_model(instance);
+}
+
+void W3DInstancer::set_instance_shadow_caster(int64_t instance, int kind)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
+	Instance &inst = Instances[(size_t)instance];
+	const bool always = kind == 1, mapped = kind == 2;
+	if (inst.Removed || (inst.CastShadow == always && inst.CastShadowMapped == mapped)) return;
+	inst.CastShadow = always;
+	inst.CastShadowMapped = mapped;
 	note_pose_dirty();
 	mark_model(instance);
 }
@@ -2359,7 +2374,7 @@ void W3DInstancer::pack_draw(Model &m, DrawItem &d)
 	for (int id : d.Order)
 	{
 		const Instance &inst = Instances[(size_t)id];
-		if (!inst.CastShadow)
+		if (!casts_shadow(inst))
 		{
 			continue;
 		}
@@ -2394,7 +2409,7 @@ void W3DInstancer::pack_draw(Model &m, DrawItem &d)
 		for (int id : d.Order)
 		{
 			const Instance &inst = Instances[(size_t)id];
-			if (!inst.CastShadow)
+			if (!casts_shadow(inst))
 			{
 				continue;
 			}
@@ -2527,6 +2542,18 @@ void W3DInstancer::update_now()
 {
 	if (!Assets) return;
 	if (LayoutDirty) rebuild_layout();
+	if (SeenMappingEpoch != ShadowMappingEpoch)
+	{
+		// lane MAPCAST-1: retail's shadow mapping changed: every model packs its shadow batch again (kind-2 casters join or leave it)
+		SeenMappingEpoch = ShadowMappingEpoch;
+		for (const std::unique_ptr<Model> &model : Models)
+		{
+			if (model)
+			{
+				model->BuffersDirty.store(true, std::memory_order_relaxed);
+			}
+		}
+	}
 
 	update_mappers();
 
@@ -2562,7 +2589,7 @@ void W3DInstancer::update_now()
 		Instance &inst = Instances[i];
 		if (!inst.Removed && (inst.PoseStale || (timeMoved && inst.Anim != nullptr && !inst.Explicit) || inst.ShareLeader >= 0))
 		{
-			if (cull && !(inst.CastShadow && ShadowMapsEnabled)) // an off-screen caster still throws an on-screen shadow
+			if (cull && !(casts_shadow(inst) && ShadowMapsEnabled)) // an off-screen caster still throws an on-screen shadow
 			{
 				// the bounding sphere of the model around the instance's origin, scaled by the larger of the node's and the instance's scale
 				const Vector3 centre = nodeXf.xform(inst.Xf.origin);
@@ -2787,6 +2814,10 @@ void W3DInstancer::_notification(int what)
 	if (what == NOTIFICATION_READY || what == NOTIFICATION_INTERNAL_PROCESS)
 	{
 		GammaComposite::ensure(this);
+	}
+	if (what == NOTIFICATION_INTERNAL_PROCESS && !(AutoUpdate && PresentationUpdates) && SeenMappingEpoch != ShadowMappingEpoch && Assets)
+	{
+		update_now(); // lane MAPCAST-1: a static instancer (no automatic update) repacks its shadow batches once after a ShadowLOD change
 	}
 }
 
