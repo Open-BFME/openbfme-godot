@@ -27,8 +27,6 @@
 
 namespace PalantirCommandUI
 {
-namespace
-{
 // lane HORDEPORTRAIT-1: RW 0x694F06's first step (BFME2 Object::getObjectSelectedPortraitImage 0x2946AB, tier B: RotWK's body calls RW 0x694BF8, then
 // vslot 0x54 of the interface it returns, then RW 0x73D0A3 with the returned object's template, in the decomp's order). RW 0x694BF8 (BFME2 0x29439D) is
 // the horde object (the object itself when it is a HORDE, else the HORDE that contains it: RW 0x693A1A(false), Object::getHordeObject) and its contain's
@@ -68,6 +66,8 @@ const Object *hordePortraitMember(const Object &obj)
 	return best;
 }
 
+namespace
+{
 // RW 0x73D0A3 -> 0x73CF31: the template's SelectPortrait (template +0x74)
 std::string templatePortrait(const ThingTemplate &t)
 {

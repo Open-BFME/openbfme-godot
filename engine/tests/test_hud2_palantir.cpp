@@ -491,6 +491,36 @@ TEST_CASE("hordeportrait1 retail: a horde shows its most experienced non-banner 
 	h.hud->input().ui().selectObject(orcs->getID());
 	h.frames(10);
 	CHECK(p->portraitShown() == "KUGundOrcPortrait");
+
+	// the choice itself (BFME2 0x469689, review of #406): the most experienced member that is not a BANNER, the first one on a tie; a member asks its horde
+	std::vector<Object *> members;
+	Object *banner = nullptr;
+	for (Object *m : *orcs->getContain()->getContainedItemsList())
+	{
+		if (m->isKindOfName("BANNER"))
+		{
+			banner = m;
+		}
+		else
+		{
+			members.push_back(m);
+		}
+	}
+	REQUIRE(members.size() > 2); // tolerance: the horde's member count is the data's (InitialPayload); the case needs three of them
+	CHECK(PalantirCommandUI::hordePortraitMember(*orcs) == members[0]); // every experience 0: the first
+	REQUIRE(members[2]->getExperienceTracker() != nullptr);
+	members[2]->getExperienceTracker()->setExperienceAndLevel(50.0f, false);
+	REQUIRE(members[2]->getExperienceTracker()->getExperience() == 50.0f);
+	CHECK(PalantirCommandUI::hordePortraitMember(*orcs) == members[2]);
+	CHECK(PalantirCommandUI::hordePortraitMember(*members[0]) == members[2]);
+	members[1]->getExperienceTracker()->setExperienceAndLevel(50.0f, false);
+	REQUIRE(members[1]->getExperienceTracker()->getExperience() == 50.0f);
+	CHECK(PalantirCommandUI::hordePortraitMember(*orcs) == members[1]); // a tie: the earlier member keeps it
+	if (banner && banner->getExperienceTracker())
+	{
+		banner->getExperienceTracker()->setExperienceAndLevel(500.0f, false);
+		CHECK(PalantirCommandUI::hordePortraitMember(*orcs) == members[1]); // the banner carrier never shows
+	}
 }
 
 TEST_CASE("hud2 palantir: passive contents are removed on context changes, deselection and selected-unit destruction")

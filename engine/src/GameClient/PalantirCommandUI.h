@@ -36,6 +36,9 @@ namespace PalantirCommandUI
 std::string portraitFor(const HudContext &ctx, ObjectID contextObject, const std::vector<ObjectID> &selected);
 // the portrait of one object (Create-a-Hero model-state PortraitImageName, otherwise SelectPortrait; "" none)
 std::string objectPortrait(const Object &obj);
+// lane HORDEPORTRAIT-1: the member whose portrait a horde (or a horde's member) shows: RW 0x694BF8's horde interface, vslot 0x54 (BFME2 HordeContain
+// 0x46CBCA): the contained member that is not a BANNER with the highest experience, the first on a tie; null without one
+const Object *hordePortraitMember(const Object &obj);
 
 // lane HUD-5: the rank interface of the selection (RW 0x92F778 per object, RW 0x9305CE over the selection): type 0 the rank (APT:HeroRank = APT:RankLabel with
 // `rank`, the bar = the progress into the next level, -1 at the last level), type 1 a time left (LifetimeUpdate: the bar = the part of the lifetime left), 2 none.
