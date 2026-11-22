@@ -760,10 +760,13 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	}
 	if (k.Blend == W3D_GODOT_BLEND_OPAQUE && !alphaOverride)
 	{
-		// retail fades opaque meshes through the pivot fade; stay in the opaque pass with a dither
+		// retail fades opaque meshes through the pivot fade; stay in the opaque pass with a dither (S-029). Lane FADEFLOOR-1: a fade below 1/64 draws
+		// nothing. Retail blends such a surface at that alpha, which moves no frame buffer channel by 4 / 255 or more; the dither instead drew that share
+		// of the pixels fully opaque, a fixed screen pattern of dark dots: the front-end background (Background.apt's View3D model SFE_MenuBkgrnd)
+		// stays in the render list during a game at the first frame of its fade (0.0127), so 1.3 % of the screen showed it
 		line("\tif (v_fade < 0.999) {");
 		line("\t\tfloat ign = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));");
-		line("\t\tif (v_fade <= ign) { discard; }");
+		line("\t\tif (v_fade < 0.015625 || v_fade <= ign) { discard; }");
 		line("\t}");
 	}
 	if (k.OcclusionPass)
