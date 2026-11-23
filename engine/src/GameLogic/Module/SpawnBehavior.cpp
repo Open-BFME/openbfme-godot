@@ -32,9 +32,10 @@ namespace
 {
 const char *const kStop =
 	"[S-1425] SpawnBehavior (lane MOD-4): the spawning (RW 0x8633A4 / 0x862456 / 0x862B07), the orphan reclaim (RW 0x862A88 / 0x86255C), the deaths "
-	"(RW 0x862DAB from Object::onDie RW 0x6938BD, RW 0x862865), onDelete, onDamage, ShareUpgrades and KillSpawnsBasedOnModelConditionState run; not ported: "
+	"(RW 0x862DAB from Object::onDie RW 0x6938BD, RW 0x862865), onDelete, onDamage, ShareUpgrades, KillSpawnsBasedOnModelConditionState and the spawn's "
+	"drawable fade (PORT-76, RW 0x862C18 .. 0x862C43: FadeInTime * 0.03 client frames, RW 0x670AA2) run; not ported: "
 	"AggregateHealth (RW 0x862F4A), ExitByBudding (exit slot 3), the spawn interface's attack / idle orders (slots 3 .. 8, 10, 12), Player::onUnitCreated "
-	"(RW 0x6AA688), the fade in (client); INFERENCE: the orphan search walks the logic's object list filtered to the player (RW 0x6ABABD walks its teams)";
+	"(RW 0x6AA688); INFERENCE: the orphan search walks the logic's object list filtered to the player (RW 0x6ABABD walks its teams)";
 
 const int kSpawnUpdateRate = LOGICFRAMES_PER_SECOND / 2; // RW 0xDE9008 (RW 0xBC5FF9: [0xD9F608] / 2)
 
@@ -359,7 +360,15 @@ bool SpawnBehavior::createSpawn()
 			ai->mover().ignoreObstacle(obj->getID()); // RW 0x66831A
 		}
 	}
-	// FadeInTime: the drawable's fade (RW 0x678F54 / 0x670AA2): client
+	// PORT-76 (issue fork issue 208): RW 0x862C18 .. 0x862C43, the spawn's drawable fade (client): eax = FadeInTime (the data's + 0x18C), fild it, fmul the 0.03f at
+	// RW 0xD9F624 (ms -> 30 Hz client frames), _ftol (RW 0xA3CFA4: truncation), then the drawable (RW 0x70E013) takes Drawable::fadeIn(frames) (RW 0x670AA2:
+	// 0 shows it at once, else the opacity rises from 0 over the frames). DONOR BFME2 SpawnBehavior_createSpawn.cpp:251 (`fadeIn(md->m_fadeInTime * 0.03f)`).
+	// Not ported here: RW 0x862BF0 .. 0x862C13, the shroud half of the same block (the local player's status for the spawner, RW 0x68D8F7, at least
+	// OBJECTSHROUD_FOGGED: Drawable::setFullyObscuredByShroud(1), RW 0x678F54) - the drawable's shroud look (GameClient/DrawableShroud.h) syncs it per frame.
+	if (ObjectClientHooks *client = logic.clientHooks())
+	{
+		client->fadeIn(*spawn, (UnsignedInt)SimMath::ftol2Low32(SimMath::pc24MulW((double)m_data->m_fadeInTime, 0.03))); // RW 0xD9F624 = 0.03f
+	}
 	if (++m_nextTemplateName >= m_data->m_spawnTemplateNames.size())
 	{
 		m_nextTemplateName = 0;
