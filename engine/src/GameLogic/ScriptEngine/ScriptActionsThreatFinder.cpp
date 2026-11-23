@@ -73,7 +73,7 @@ bool ScriptActions::executeThreatFinderAction(ScriptEngine &engine, const Script
 		engine.note("WARNING - Threat Finder not found during script execution: " + finderName + ".");
 		return true;
 	}
-	const AIThreatFinder::ThreatRecord answer = finder->threatForPlayer(logic, *player, mode); // RW 0x7EE1F4 / 0x7EE166
+	const AIThreatFinder::ThreatRecord answer = finder->threatForPlayer(logic, player, mode); // RW 0x7EE1F4 / 0x7EE166
 	engine.counter(counterName).value = SimMath::truncToInt32(answer.v[0]);
 	return true;
 }

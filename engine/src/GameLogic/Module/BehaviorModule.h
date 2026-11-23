@@ -117,10 +117,10 @@ public:
 	virtual void containReactToTransformChange() {}
 	// contain slot 0x64 onSelling: the contain hears of its container's sale (BuildAssistant::sellObject RW 0x796806: `mov ecx, [object + 0x258]`, `mov eax,
 	// [ecx]`, `call [eax + 0x64]`, no argument — the only `call [reg + 0x64]` of 2.01 whose receiver is the contain interface). Every contain table answers the
-	// same body, RW 0x86561F: the kill-on-death byte (module + 0xE1) is cleared, then vslot 0x80 orderAllPassengersToExit(CMD_FROM_AI). No class overrides it
-	// (all 16 contain tables of 2.01 hold RW 0x86561F at + 0x64: OpenContain 0xC59B54, TransportContain 0xC5A6F4, HordeTransportContain 0xC5C3D4,
+	// same body, RW 0x86561F: the kill-on-death byte (module + 0xE1) is cleared, then vslot 0x80 orderAllPassengersToExit(CMD_FROM_AI). Only TunnelContain overrides it
+	// (its table RW 0xC5DCE0 holds RW 0x8812A8, the network leave; the other contain tables of 2.01 hold RW 0x86561F at + 0x64: OpenContain 0xC59B54, TransportContain 0xC5A6F4, HordeTransportContain 0xC5C3D4,
 	// GarrisonContain 0xC5C6FC, HordeGarrisonContain 0xC5CA54, SiegeEngineContain 0xC5D6CC, HordeSiegeEngineContain 0xC5DA74 and the rest), so
-	// OpenContain answers for every contain the port sells. HordeContain, the one ported contain that is not an OpenContain, keeps this default: the sale
+	// OpenContain answers for every other contain the port sells. HordeContain, the one ported contain that is not an OpenContain, keeps this default: the sale
 	// reaches only KindOf STRUCTURE and no structure of 2.01 carries a HordeContain.
 	virtual void onSelling() {}
 	// RotWK ContainModuleInterface::getHordeContainInterface (B1 HordeContainCreatePayload.cpp)

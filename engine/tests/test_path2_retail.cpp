@@ -135,6 +135,9 @@ starttest::Shared *sharedWithConfig(PathfindConfig &config)
 	{
 		return nullptr;
 	}
+	// the checks of OPENBFME_REQUIRE_START: with the install variables set but no archive mounted, fs is null and the mount's error is the report (#213)
+	REQUIRE_MESSAGE(s->mount->fs != nullptr, s->mount->error);
+	REQUIRE_MESSAGE(s->world != nullptr, s->error);
 	std::string err;
 	REQUIRE_MESSAGE(PathfindConfigLoader::load(*s->mount->fs, config, &err), err);
 	return s;
@@ -624,6 +627,7 @@ TEST_CASE("path2 retail: a barracks placed on a legal site (its footprint regist
 	const int pi = p1->getPlayerIndex();
 	Coord3D site{ 0, 0, 0 };
 	bool found = false;
+	// lane BUILDCLEAR-1: no builder, so no exit strip test (RW 0x797026: bit 0x40; the strip test reads the builder's player)
 	const ThingTemplate *bt = s->world->things().findTemplate("GondorBarracks");
 	for (int r = 0; r <= 600 && !found; r += 50)
 	{
@@ -633,7 +637,7 @@ TEST_CASE("path2 retail: a barracks placed on a legal site (its footprint regist
 			c.z = game.logic().getGroundHeight(c.x, c.y);
 			Coord3D rpt{ c.x, c.y - 300.0f, 0.0f };
 			const PathfindCell *rc = game.ai().pathfinder().getCell(LAYER_GROUND, &rpt);
-			if (BuildPlacement::isLocationLegalToBuild(game.logic(), c, *bt->getFinalOverride(), 0.0f, LLF_TERRAIN_RESTRICTIONS | LLF_NO_OBJECT_OVERLAP, nullptr, nullptr) == LBC_OK &&
+			if (BuildPlacement::isLocationLegalToBuild(game.logic(), c, *bt->getFinalOverride(), 0.0f, LLF_TERRAIN_RESTRICTIONS | LLF_NO_OBJECT_OVERLAP | LLF_NO_EXIT_TEST, nullptr, nullptr) == LBC_OK &&
 				rc && rc->getType() == PathfindCell::CELL_CLEAR)
 			{
 				site = c;

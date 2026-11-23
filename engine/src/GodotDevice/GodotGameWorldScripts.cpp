@@ -207,7 +207,10 @@ Dictionary GameWorld::get_waypoint(const String &name) const
 
 Array GameWorld::take_script_requests()
 {
-	Array out;
+	// lane SAVEUIHELD-1: the requests update_script_view took from the game since the last call come first, in order (it takes them for the director
+	// on the render clock; dropping them lost a published batch, e.g. a mission intro's CAMERA_LETTERBOX_END / ENABLE_INPUT, for the script side)
+	Array out = m_untakenScriptRequests;
+	m_untakenScriptRequests = Array();
 	if (!m_game)
 	{
 		return out;
@@ -297,7 +300,9 @@ Dictionary GameWorld::update_script_view(double delta_ms, const Dictionary &came
 	}
 	if (m_game)
 	{
-		take_script_requests();
+		// lane SAVEUIHELD-1: a batch the logic published after the script side's take this frame reaches the director now and the script side at its
+		// next take_script_requests (kept, never dropped)
+		m_untakenScriptRequests = take_script_requests();
 	}
 	Coord3D cur;
 	cur.x = (float)(double)camera.get("x", 0.0);

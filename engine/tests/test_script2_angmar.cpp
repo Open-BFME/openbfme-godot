@@ -143,8 +143,10 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): wolf rider hits 401 -> 516, banner carrier hits 48 -> 46, the last sling hit takes 743 (1318)
 		// pin: merge queue q55 (measured once on the merged tree and at each merge point): #313's merge point (ThreatFinderUpdate replaces the unported shell on the map
 		// objects that carry it) moves banner carrier hits 46 -> 41, wolf rider hits 516 -> 580, the last sling hit takes 628 (743); the other items keep it
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 41 }, { "AngmarTrollSling dealt 1350 taken 628", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 580 } };
+		// pin: merge queue q56 (measured once on the merged tree and at each merge point): #323's merge point (stunned units halt their AI, RW 0x669652) moves
+		// banner carrier hits 41 -> 33, wolf rider hits 580 -> 423, the last sling hit takes 1259 (628); #321 keeps it
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 33 }, { "AngmarTrollSling dealt 1350 taken 1259", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 423 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)

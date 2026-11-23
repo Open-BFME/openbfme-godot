@@ -101,6 +101,17 @@ public:
 	bool hadMembers() const { return m_hadMembers; }
 	void setHadMembers() { m_hadMembers = true; }
 
+	// lane THREATLEVEL-1: the map scripts' cached enemy threat around the team (RW + 0x120, a float) and its deadline frame (RW + 0x124); the constructor
+	// (RW 0x7A6C91) clears both and Team::xfer (RW 0x7A5C06: xferReal + 0x120, xferUnsignedInt + 0x124; BFME2 TeamXfer.cpp:196-197) writes them.
+	// GameLogic/ScriptEngine/ScriptThreat.cpp reads and refreshes them (RW 0x7A6A20 / 0x7A5B03)
+	float scriptThreatCache() const { return m_scriptThreat; }
+	unsigned scriptThreatDeadline() const { return m_scriptThreatDeadline; }
+	void setScriptThreatCache(float value, unsigned deadline)
+	{
+		m_scriptThreat = value;
+		m_scriptThreatDeadline = deadline;
+	}
+
 	// lane CAMP-1H: the team's script state (TARGET FACTS, rotwk201_game.exe; the constructor RW 0x7A6C91 clears it, the INI-free parts of Team::updateState
 	// RW 0x7A208C and Team::updateGenericScripts RW 0x7A267D read and write it, ScriptEngine::updateTeamState runs both)
 	struct ScriptState
@@ -218,6 +229,8 @@ private:
 	std::uint32_t m_teamTarget = 0;         ///< lane SCRIPT-3: + 0x114
 	int m_currentWaypoint = -1;             ///< lane SCRIPT-3: + 0x6C
 	bool m_hadMembers = false;              ///< lane CAMP-1: + 0x128
+	float m_scriptThreat = 0.0f;            ///< lane THREATLEVEL-1: + 0x120
+	unsigned m_scriptThreatDeadline = 0;    ///< lane THREATLEVEL-1: + 0x124
 	ScriptState m_script;                   ///< lane CAMP-1H
 	bool m_aiRecruitableOverrideSet = false; ///< lane PORT-40: + 0x110
 	bool m_aiRecruitableOverride = false;    ///< lane PORT-40: + 0x111

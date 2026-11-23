@@ -41,8 +41,10 @@
 //   * xfer RW 0x7EDF70 (docs/SAVES-RETAIL.md; INFERENCE BFME2 0x003ECED5, 143 bytes): version (1, 1), UpdateModule::xfer, then the finder: on a
 //     LOAD the finder is made again (named Object + 0x88) and registered, and the finder's own xfer follows (INFERENCE BFME2 0x003ECBF8,
 //     version (1, 1), the twenty records, the name, the position (3 floats), the radius, the last-scan frame, the flag).
-// NOT PORTED (stop S-7184, reported by stopLines): the condition that reads the same finders (RW 0x608BCA, out of this issue's scope:
-// ScriptConditions.cpp belongs to PORT 16). Until it is ported a map script can set a counter from a named area but cannot test it in a condition.
+// The other script reader of the finders (lane THREATLEVEL-1): RW 0x608BCA is ScriptEngine::setCounterToThreat, the actions SET_COUNTER_TO_UNIT_THREAT
+// (439) / SET_COUNTER_TO_TEAM_THREAT (440), not a condition. Its THREAT_FINDER branch (a unit whose template has KindOf THREAT_FINDER) asks the finder
+// of the unit's name for its controlling player's enemies (RW 0x7EE166(.., player, 0, 0)); ScriptEngine.cpp ports it. Stop S-7184 (stopLines) keeps
+// the old-save remainder below.
 // INFERENCE (OpenBFME): the snapshot is OpenBFME native (S-4190) in RW's field order, and a record is written as its 18 floats in the order the class
 // holds them. The finder's own state rides in its module's block (an object's xfer, RW 0x697F28), so the manager is not a state-hash section: it holds
 // no state of its own beyond the name -> finder map, which is rebuilt from the objects' names on a load.

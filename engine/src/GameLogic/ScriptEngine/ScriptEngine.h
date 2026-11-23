@@ -31,8 +31,9 @@
 //     SET_COUNTER 2, NO_OP 5, SET_TIMER 6, ENABLE_SCRIPT 8, DISABLE_SCRIPT 9, CALL_SUBROUTINE 10, INCREMENT / DECREMENT_COUNTER 15 / 16,
 //     SET_MILLISECOND_TIMER 20, SET_RANDOM_TIMER 150, SET_RANDOM_MSEC_TIMER 151, STOP_TIMER 152, RESTART_TIMER 153, ADD_TO / SUB_FROM_MSEC_TIMER
 //     154 / 155, SET_RANDOM_COUNTER 373, SET_COUNTER_TO_COUNTER 374, SET_FLAG_TO_FLAG 375, SET_COUNTER_IN_SECONDS 415, SET_RANDOM_COUNTER_IN_SECONDS
-//     416, SET_COUNTER_TO_CLIENT_RANDOM_VALUE 508; the tree sway, fades, attack priorities and threat counters 103, 124 .. 127, 132 .. 134, 439, 440
-//     are engine-owned and not ported here), everything else TheScriptActions vslot 0x38 (RW 0x7CAFA5, which skips an action whose + 0x41 is 0).
+//     416, SET_COUNTER_TO_CLIENT_RANDOM_VALUE 508; the tree sway, fades and attack priorities 103, 124 .. 127, 132 .. 134 are engine-owned too;
+//     the threat counters SET_COUNTER_TO_UNIT_THREAT / SET_COUNTER_TO_TEAM_THREAT 439 / 440 are RW 0x608BCA setCounterToThreat, lane THREATLEVEL-1),
+//     everything else TheScriptActions vslot 0x38 (RW 0x7CAFA5, which skips an action whose + 0x41 is 0).
 //   * names are side-qualified (RW 0x72C43C): "Side/name" names the side's counter / flag / script, a plain name the current side's. Counters and
 //     flags live per (side, name) (RW 0x60817A get-or-create, RW 0x6080F4 find; flags RW 0x6082CF / 0x608249); scripts and groups are found in
 //     the named side's list (RW 0x604986, 0x604A5D, 0x6049DD).
@@ -485,6 +486,7 @@ private:
 	void setTimer(const ScriptActionRec &a, bool milliseconds, bool random);
 	void setCounter(const ScriptActionRec &a, int randomMode, bool fromCounter, bool seconds);
 	void adjustMsecTimer(const ScriptActionRec &a, bool milliseconds, bool add);
+	void setCounterToThreat(const ScriptActionRec &a, bool team); // lane THREATLEVEL-1: RW 0x608BCA (actions 439 / 440)
 	void enableScript(const ScriptActionRec &a, bool enable);
 	void callSubroutine(const ScriptActionRec &a);
 
