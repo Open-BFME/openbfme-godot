@@ -495,8 +495,12 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 		have = hoveredHelpButton(p, hovered, unit, context); // lane HOVER-1
 	}
 	// owner report 2026-11-12: hovering a soldier in the world shows the same help box the hero portraits use (name, rank, maximum health, damage,
-	// upgrades, description), next to its health bar. Only when no command button is under the pointer.
-	if (!have && m_input && m_input->ui().getInputEnabled())
+	// upgrades, description), next to its health bar. Only when no command button is under the pointer. The world pick is a battlefield ray at the
+	// same window pixel, so a pointer over the Palantir / radar / another GUI area must not use the object the ray happens to hit behind it.
+	const bool overGui = m_pointerSeen && isOverGui(m_pointerX, m_pointerY);
+	const bool worldHelpAllowed = m_pointerSeen && !overGui && !m_modal && m_input && m_input->ui().getInputEnabled();
+	ObjectID worldHelp = INVALID_ID;
+	if (!have && worldHelpAllowed)
 	{
 		ObjectID hover = m_input->ui().mouseoverObject();
 		if (Object *ho = hover != INVALID_ID ? logic.findObjectByID(hover) : nullptr; ho && ho->isKindOfName("HORDE") && ho->getContain())
@@ -517,13 +521,22 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 		Object *o = hover != INVALID_ID ? logic.findObjectByID(hover) : nullptr;
 		if (o && !o->isEffectivelyDead() && o->getBodyModule())
 		{
-			p.bar = 6; // lane HOVER-1: a world object's unit help (not the Palantir portrait's / hero bar's bar 4)
-			p.slot = -1;
-			p.button = nullptr;
-			p.object = (std::uint32_t)hover;
-			unit = hover;
-			have = true;
+			worldHelp = hover;
 		}
+	}
+	if (!have && worldHelp != INVALID_ID)
+	{
+		p.bar = 6; // lane HOVER-1: a world object's unit help (not the Palantir portrait's / hero bar's bar 4)
+		p.slot = -1;
+		p.button = nullptr;
+		p.object = (std::uint32_t)worldHelp;
+		unit = worldHelp;
+		have = true;
+	}
+	// a world provider kept from the last frame must not survive the pointer leaving the battlefield (or the object dying / the GUI opening)
+	if (!have && m_helpBox.hasProvider() && m_helpBox.provider().bar == 6)
+	{
+		m_helpBox.dropProvider();
 	}
 	const std::vector<ObjectID> &selected = m_input->ui().selected();
 	if (have && !inputOff)

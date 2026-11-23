@@ -2792,6 +2792,10 @@ void Object::xfer(Xfer &x)
 	x.xferVersion(version);
 	// a load never reads its destination: the save-side values are built from the members only when saving (SAVES.md, rules for xfer authors)
 	const bool saving = !x.isLoading();
+	if (x.isLoading())
+	{
+		m_helpFieldsRestored = false; // transient: set by the version 4 block below, read by TooltipUpgrade::xfer
+	}
 	ObjectID id = saving ? m_id : (ObjectID)INVALID_ID;
 	x.xferObjectID(&id);
 	std::string templateName = saving ? m_template->getName() : std::string();
@@ -2910,6 +2914,10 @@ void Object::xfer(Xfer &x)
 		x.xferAsciiString(&m_tooltipDescription);
 		x.xferAsciiString(&m_ownName);
 		x.xferInt(&m_battlesFought);
+		if (x.isLoading())
+		{
+			m_helpFieldsRestored = true;
+		}
 	}
 	else if (x.isLoading())
 	{

@@ -6892,6 +6892,11 @@ Ref<Font> AptMenuPlayer::font_for(const std::string &name, float size, float *dr
 	return m->fontFor(name, size, drawSize, bold);
 }
 
+const GlobalLanguage *AptMenuPlayer::language() const
+{
+	return m->shell ? &m->shell->language : nullptr;
+}
+
 Ref<Font> AptMenuPlayer::font_cell(const Ref<Font> &font, int px)
 {
 	return m->cellFont(font, px);

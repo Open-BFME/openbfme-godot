@@ -485,11 +485,13 @@ public:
 	const std::string &getName() const { return m_name; }
 	// lane HOVER-1: the TooltipUpgrade behavior's help labels. Retail stores them on the Drawable (+0x348 / +0x34C,
 	// RW 0x6796DA / 0x674FAE); the port keeps them on the logic object so the client help can read them without a
-	// Drawable (S-810). They are derived from the active upgrade and are not saved or hashed.
+	// Drawable (S-810). They are derived from the active upgrade and are saved by Object::xfer version 4, not hashed.
 	const std::string &tooltipDisplayName() const { return m_tooltipDisplayName; }
 	const std::string &tooltipDescription() const { return m_tooltipDescription; }
 	void setTooltipDisplayName(const std::string &label) { m_tooltipDisplayName = label; }
 	void setTooltipDescription(const std::string &label) { m_tooltipDescription = label; }
+	// transient (not saved): Object::xfer version 4 restored the help fields, so TooltipUpgrade::xfer must keep them as saved
+	bool helpFieldsRestored() const { return m_helpFieldsRestored; }
 	// lane HOVER-1: the object's own name / battle count from the campaign carry-over statistics block (Object +0x494 / +0x488;
 	// the help reads them, they are derived from the campaign record and not hashed: S-852)
 	const std::string &ownName() const { return m_ownName; }
@@ -631,6 +633,7 @@ private:
 	std::string m_tooltipDescription; ///< TooltipUpgrade's Description label (retail Drawable +0x34C; help only)
 	std::string m_ownName;            ///< campaign statistics +0x494 (the object's own name; help only)
 	int m_battlesFought = 0;          ///< campaign statistics +0x488 (TOOLTIP:BattlesFought; help only)
+	bool m_helpFieldsRestored = false; ///< transient: Object::xfer version 4 loaded the help fields (not saved or hashed)
 	std::uint8_t m_scriptStatus = 0; ///< lane SCRIPT-2: RW + 0x457 (hashed when not zero)
 	bool m_scriptSelectable = false; ///< RW +0x454: ctor initializes from SELECTABLE; hash only deviations from the template-derived default
 	bool m_masked = false;           ///< RW + 0x459 bit 1 (maskObject; hashed when set)

@@ -1017,11 +1017,12 @@ void TooltipUpgrade::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);
 	UpgradeModule::xfer(x);
-	// lane HOVER-1: Object::xfer version 4 carries the labels; an older snapshot has none, and wouldUpgrade() refuses to run an
-	// already-executed upgrade, so put the module's labels back after the load (RW 0x8BBBCC writes them once)
+	// lane HOVER-1: Object::xfer version 4 carries the exact labels; an older snapshot has none, and wouldUpgrade() refuses to
+	// run an already-executed upgrade. Rebuild only for the older snapshot: with two active TooltipUpgrades the live labels
+	// belong to the last upgrade applied, not to the last module in the file.
 	if (x.isLoading() && isAlreadyUpgraded())
 	{
-		if (Object *obj = getObject())
+		if (Object *obj = getObject(); obj && !obj->helpFieldsRestored())
 		{
 			obj->setTooltipDisplayName(m_data->m_displayName);
 			obj->setTooltipDescription(m_data->m_description);

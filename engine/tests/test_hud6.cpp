@@ -992,6 +992,35 @@ TEST_CASE("hud6 retail: the world hover refreshes without a mouse move; the unit
 	CHECK_FALSE(h.hud->helpBox().isShown());
 }
 
+TEST_CASE("hud6: the world help is gated off the GUI: a stale battlefield pick over the radar shows no unit help")
+{
+	if (!haveWorld("hud6 world help gui gate"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMen");
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *horde = h.rig.make("GondorFighter", at.x, at.y);
+	REQUIRE(horde);
+	h.rig.lookAt({ at.x, at.y, 0 });
+	h.frames(20);
+	const ICoord2D px = h.rig.screenOf({ horde->getPosition()->x, horde->getPosition()->y, 10.0f });
+	h.hud->mouseMove(px.x, px.y);
+	h.frames(40); // > Mouse.ini TooltipDelayTime
+	REQUIRE(h.hud->helpBox().hasProvider());
+	REQUIRE(h.hud->helpBox().provider().bar == 6);
+	REQUIRE(h.hud->helpBox().isShown());
+	float sq[4];
+	REQUIRE(h.hud->radarSquare(sq));
+	const int qx = (int)((sq[0] + sq[2]) * 0.5f), qy = (int)((sq[1] + sq[3]) * 0.5f);
+	h.hud->mouseMove(qx, qy);
+	h.hud->input().ui().setMouseover(horde->getID()); // the battlefield ray a GUI area leaves under the pointer
+	h.frames(20);
+	CHECK(h.hud->isOverGui(qx, qy));
+	CHECK_FALSE(h.hud->helpBox().hasProvider());
+	CHECK_FALSE(h.hud->helpBox().isShown());
+}
+
 TEST_CASE("hud6 retail: the command hint's cursor wins over the base Select / Arrow on a still pointer")
 {
 	if (!haveWorld("hud6 cursor precedence"))

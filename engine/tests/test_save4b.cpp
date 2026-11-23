@@ -170,6 +170,28 @@ const char kObjects[] =
 	"  Body = InactiveBody ModuleTag_Body\n"
 	"  End\n"
 	"End\n";
+
+// a unit with two TooltipUpgrades whose module order is the reverse of the upgrade order the test applies
+const char kTooltipObjects[] =
+	"Upgrade Upgrade_TipB\n"
+	"  Type = OBJECT\n"
+	"End\n"
+	"Object TipUnit\n"
+	"  KindOf = INFANTRY\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 100\n"
+	"  End\n"
+	"  Behavior = TooltipUpgrade ModuleTag_TipA\n"
+	"    TriggeredBy = Upgrade_Barracks2\n"
+	"    DisplayName = Label A\n"
+	"    Description = Description A\n"
+	"  End\n"
+	"  Behavior = TooltipUpgrade ModuleTag_TipB\n"
+	"    TriggeredBy = Upgrade_TipB\n"
+	"    DisplayName = Label B\n"
+	"    Description = Description B\n"
+	"  End\n"
+	"End\n";
 } // namespace
 
 TEST_CASE("save4b: the stops S-4190 .. S-4193 are reported with the snapshot's (CommandLogLoad::stopLines)")
@@ -410,6 +432,29 @@ TEST_CASE("save4b: Object::xfer version 4 keeps the help-only fields (the Toolti
 	std::vector<std::uint8_t> again;
 	loaded.logic->gameState().saveBlocks(coreAndSave4b(), again);
 	CHECK(again == stream);
+}
+
+TEST_CASE("save4b: Object::xfer version 4 keeps the TooltipUpgrade labels the last applied upgrade wrote when the modules are in the opposite order")
+{
+	S4World saved(kTooltipObjects);
+	saved.activateUpgrades();
+	Object *unit = saved.make("TipUnit", saved.teamOf("Alice"));
+	REQUIRE(unit);
+	unit->giveUpgrade("Upgrade_TipB");     // module B, applied first
+	unit->giveUpgrade("Upgrade_Barracks2"); // module A, applied last: its labels are the live pair
+	CHECK(unit->tooltipDisplayName() == "Label A");
+	CHECK(unit->tooltipDescription() == "Description A");
+	runFrames(*saved.logic, 1);
+	std::vector<std::uint8_t> stream;
+	saved.logic->gameState().saveBlocks(coreAndSave4b(), stream);
+	S4World loaded(kTooltipObjects);
+	loaded.activateUpgrades();
+	loaded.logic->gameState().loadBlocks(coreAndSave4b(), stream);
+	const Object *back = loaded.logic->findObjectByID(unit->getID());
+	REQUIRE(back);
+	// the live labels belong to the last applied upgrade, not to the last module in the file
+	CHECK(back->tooltipDisplayName() == "Label A");
+	CHECK(back->tooltipDescription() == "Description A");
 }
 
 TEST_CASE("save4b subsystem blocks round-trip with non-default values: combat, the sell list, the delayed experience grants, invisibility, damage over "

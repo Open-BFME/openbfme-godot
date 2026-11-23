@@ -1190,14 +1190,25 @@ void HudDevice::drawIconOps(RID parent)
 				const String text = String::utf8(op.text.c_str());
 				// a stage-sized text (the money texts) grows with the window as the HUD movies do: the window height over the 600 stage rows
 				const float stageScale = op.stageTextSize > 0.0f ? std::max(1.0f, (float)hud->windowHeight() / 600.0f) : 1.0f;
-				int size_px = op.stageTextSize > 0.0f ? (int)std::lround(op.stageTextSize * stageScale * k) : fontSize;
-				const float drop = op.stageTextSize > 0.0f ? std::max(1.0f, std::round(stageScale)) : 1.0f;
-				Ref<Font> textFont = font;
-				// lane HUD-FLOAT1: the money texts draw in InGameUI.ini's DrawableCaptionFont (Albertus MT 12, both editions), not the device fallback
+				// lane HUD-FLOAT1: the caption font, size and bold are language.ini's DrawableCaptionFont (GlobalLanguage), not a retail
+				// constant in the device; a missing language block keeps the operation's stage size and the device fallback font
+				const FontDesc *caption = nullptr;
 				if (op.stageTextSize > 0.0f && player)
 				{
+					const GlobalLanguage *language = player->language();
+					if (language && language->loaded && !language->drawableCaptionFont.name.empty())
+					{
+						caption = &language->drawableCaptionFont;
+					}
+				}
+				const float captionStageSize = caption && caption->size > 0 ? (float)caption->size : op.stageTextSize;
+				int size_px = op.stageTextSize > 0.0f ? (int)std::lround(captionStageSize * stageScale * k) : fontSize;
+				const float drop = op.stageTextSize > 0.0f ? std::max(1.0f, std::round(stageScale)) : 1.0f;
+				Ref<Font> textFont = font;
+				if (caption)
+				{
 					float drawSize = (float)size_px;
-					Ref<Font> retailFont = player->font_for("Albertus MT", (float)size_px, &drawSize);
+					Ref<Font> retailFont = player->font_for(caption->name, (float)size_px, &drawSize, caption->bold);
 					if (retailFont.is_valid())
 					{
 						textFont = player->font_cell(retailFont, std::max(1, (int)std::lround(drawSize)));
