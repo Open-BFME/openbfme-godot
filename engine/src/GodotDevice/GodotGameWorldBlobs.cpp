@@ -196,8 +196,14 @@ void GameWorld::update_blob_shadows()
 			// one blob per drawable: the first model draw that names one (the object template's shadow belongs to the drawable, not to each module)
 			if (BlobShadow::drawnAtLOD(spec, s_shadowDecals) && BlobShadow::belowMaxHeight(spec, p.z, logic.getGroundHeight(p.x, p.y)))
 			{
+				// lane BLOBSHADOW-2: a zero size takes the model's box (RW 0x50C01D; workers, animals, lairs: 124 retail rows have no size)
+				float extentX = 0.0f, extentY = 0.0f;
+				if (spec.sizeX == 0.0f || spec.sizeY == 0.0f)
+				{
+					BlobShadow::modelExtent(e.draw->currentModel(), extentX, extentY);
+				}
 				BlobShadow::Quad q;
-				if (BlobShadow::quad(spec, p.x, p.y, d->getOrientation(), 0.0f, 0.0f, q))
+				if (BlobShadow::quad(spec, p.x, p.y, d->getOrientation(), extentX, extentY, q))
 				{
 					m_blobs.add(spec.texture, q);
 				}

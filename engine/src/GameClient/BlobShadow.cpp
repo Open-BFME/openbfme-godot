@@ -2,6 +2,7 @@
 // See GameClient/BlobShadow.h.
 
 #include "GameClient/BlobShadow.h"
+#include "GameClient/DrawablePick.h"
 
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/SelectionDecals.h"
@@ -105,6 +106,19 @@ bool resolve(const ThingTemplate *object, const W3DModelDrawModuleData *module, 
 	out.sizeY = numberField(*object, "ShadowSizeY", 0.0f);
 	out.offsetX = numberField(*object, "ShadowOffsetX", 0.0f);
 	out.offsetY = numberField(*object, "ShadowOffsetY", 0.0f);
+	return true;
+}
+
+bool modelExtent(const RenderObjPrototype *model, float &extentX, float &extentY)
+{
+	extentX = extentY = 0.0f;
+	float lo[3], hi[3];
+	if (!model || !DrawablePick::bindPoseBounds(*model, lo, hi))
+	{
+		return false;
+	}
+	extentX = 0.5f * (hi[0] - lo[0]);
+	extentY = 0.5f * (hi[1] - lo[1]);
 	return true;
 }
 

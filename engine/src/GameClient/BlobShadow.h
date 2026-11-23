@@ -19,6 +19,7 @@
 #include <string>
 
 class ThingTemplate;
+struct RenderObjPrototype;
 struct ModelConditionInfo;
 class W3DModelDrawModuleData;
 
@@ -62,4 +63,10 @@ struct Quad
 	float vx = 0.0f, vy = 0.0f; ///< half of the v side (sizeY / 2 along the v axis; negative sizeY mirrors the texture, as retail's negated SizeY)
 };
 bool quad(const Spec &spec, float x, float y, float angle, float extentX, float extentY, Quad &out);
+
+// Lane BLOBSHADOW-2: the half extents (SAGE x / y) a zero ShadowSizeX / Y takes. RW 0x50C01D asks the render object for its object-space box
+// (vslot 0x110) and doubles Extent.X / Extent.Y (RW 0x50C034 / 0x50C054). INFERENCE (S-3304): the box is the bounds of the model's drawn meshes in
+// the hierarchy's bind pose (DrawablePick::bindPoseBounds; the HLOD's own box, its hidden meshes and collision boxes are not read) and the drawable's
+// instance scale is not applied. False (both 0: no blob) for a model without triangles
+bool modelExtent(const RenderObjPrototype *model, float &extentX, float &extentY);
 } // namespace BlobShadow
