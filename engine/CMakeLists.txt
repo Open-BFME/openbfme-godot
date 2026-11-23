@@ -342,6 +342,7 @@ include(cmake/Port426.cmake) # PORT-426: Shift on a production button queues fiv
 include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elven wood grid (appends to OPENBFME_SIM_SOURCES; OPENBFME_TAINTAREA1_TESTS)
 include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
 include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-objects test RW 0x796D37 (OPENBFME_BUILDCLEAR1_TESTS)
+include(cmake/Bldgdebris1.cmake) # BLDGDEBRIS-1: the DamageCreationList debris and the siege side damage of ActiveBody (OPENBFME_BLDGDEBRIS1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -922,6 +923,7 @@ add_executable(openbfme_tests
     ${OPENBFME_TAINTAREA1_TESTS}
     ${OPENBFME_THREATLEVEL1_TESTS}
     ${OPENBFME_BUILDCLEAR1_TESTS}
+    ${OPENBFME_BLDGDEBRIS1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
@@ -1041,7 +1043,9 @@ add_executable(openbfme_tests
     tests/test_econ_hash.cpp
     tests/test_econ_retail.cpp
     tests/test_falsedef_retail.cpp
-    tests/test_capcrash1.cpp)
+    tests/test_capcrash1.cpp
+    # lane VISIONDEF-1: the vision height bonus's ground reference (Object + 0x1C4)
+    tests/test_visiondef1_retail.cpp)
 target_sources(openbfme_tests PRIVATE
     tests/test_coverage_online_shell.cpp
     tests/test_coverage_simple_screens.cpp
@@ -1050,6 +1054,8 @@ target_sources(openbfme_tests PRIVATE
     tests/test_coverage_vp6.cpp
     tests/test_coverage_in_game_hud.cpp
     tests/test_coverage_mp3.cpp
+    tests/test_weapon_attribute_modifiers.cpp
+    tests/test_local_87.cpp
     tests/test_coverage_online_hub.cpp)
 target_link_libraries(openbfme_tests PRIVATE openbfme_core)
 openbfme_online3_targets() # ONLINE-3: the rejoin, hold and pause tests

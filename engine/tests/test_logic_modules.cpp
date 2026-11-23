@@ -152,7 +152,10 @@ TEST_CASE("ActiveBody: every field of the binary's table parses (RW 0xC71D68), t
 	CHECK(d->m_grabOffset.y == 2.0f);
 	CHECK_FALSE(d->m_useDefaultDamageSettings);
 	REQUIRE(d->m_damageCreationList.size() == 2);
-	CHECK(d->m_damageCreationList[0] == std::vector<std::string>{ "OCL_Chunk1", "CATAPULT_ROCK", "FRONT_DESTROYED" });
+	CHECK(d->m_damageCreationList[0].ocl == "OCL_Chunk1"); // lane BLDGDEBRIS-1: { ocl, rock, stage } (RW 0x8C3F1F)
+	CHECK(d->m_damageCreationList[0].rock == 1);          // CATAPULT_ROCK
+	CHECK(d->m_damageCreationList[0].stage == 1);         // FRONT_DESTROYED
+	CHECK(d->m_damageCreationList[1].stage == 0);
 	CHECK(d->m_cheerRadius == 80.0f);
 	CHECK(d->m_removeUpgradesOnDeath);
 	CHECK(d->m_burningDeathBehavior);

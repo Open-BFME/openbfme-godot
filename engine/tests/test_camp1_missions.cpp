@@ -661,7 +661,9 @@ TEST_CASE("camp1 bonus: MAP ANG Bonus (ANGMAR_BONUS_CAMPAIGN) plays from its int
 	expectVictory(m, 300);
 	// lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough. Lane TARGET-1: 84 (was 80): RotWK's target choice
 	// and mood-check timing make the fights, so the playthrough, last a few team updates longer
-	expectTeamScripts(m, 0, 0, 84);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: the units'
+	// sight moves the fights; measured on the lane's tree): 80 (84)
+	expectTeamScripts(m, 0, 0, 80);
 }
 
 TEST_CASE("camp1 determinism: MAP ANG Dark Eye twice with the same player's part agrees on every frame's state hash (AttachUpdate, the attacked-by flags, "
