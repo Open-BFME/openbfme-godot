@@ -128,6 +128,8 @@ public:
 	std::uint32_t weaponBonusConditionMask() override { return m_w.owner().weaponBonusConditionMask(); }
 	const WeaponBonusSet *globalWeaponBonusSet() override { return nullptr; } // GameData's WeaponBonus set is not loaded (S-320): the bonus of no condition is 1.0
 	// RW 0x6CEF6D (Weapon::privateFireWeapon) -> RW 0x6CF042: source->getAttributeModifierProduct(0x15, &factor, nullptr, true) (RW 0x68C82D).
+	// Both editions: BFME2 1.06 game.dat has the same call (push 0x15 at 0x6CE3DB -> 0x68C15E, the factor passed to getDelayBetweenShots 0x6C9322),
+	// and both name tables list RATE_OF_FIRE as type 21.
 	// Pure const read on the owner's pool (safe on the PERF-WS logic job pool).
 	float rateOfFireAttributeProduct() override
 	{
@@ -201,6 +203,7 @@ public:
 	explicit RangeHost(ObjectWeapons &w) : m_w(w) {}
 	ObjectWeapons &m_w;
 	// RW 0x6CA61F (WeaponRangeScale) -> RW 0x6CA641: source->getAttributeModifierSum(7, &sum, nullptr) (RW 0x68C818).
+	// Both editions: BFME2 1.06 game.dat 0x6C98E2 is the same body (push 7, call 0x68C149 at 0x6C9904, scale = sum + 1.0f); RANGE is type 7 in both.
 	// Pure const read on the owner's pool (safe on the PERF-WS logic job pool).
 	bool rangeAttributeSum(float &sum) override { return m_w.owner().attributeModifierSum(ATTRIBUTE_RANGE, nullptr, sum); }
 	// lane GARRISON-1: GameData GarrisonedRangeMultiplier (RW + 0x1224; RW 0x6CA61F applies it when >= 0 and the source is INSIDE_GARRISON)
@@ -1642,9 +1645,18 @@ bool ObjectWeapons::fireCurrentWeapon(Object *victim, const Coord3D *pos)
 	}
 	ObjectWeaponDelivery delivery(*m_owner, *this, t, *w);
 	const bool reloaded = w->privateFireWeapon(host(), delivery, args);
-	if (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu)
+	// RW 0x6920AD .. 0x69212B (disassembled): after 0x6CF34B -> 0x6CEF6D (privateFireWeapon) the release (0x68DF11(1) at RW 0x69212B) is gated
+	// only by that call's reloaded answer (`cmp [ebp-1], bl; je` at RW 0x692122). The ZH-era `|| IdleAfterFiringDelay == -1` clause is not in
+	// RW's function: it released the ordered FIRE_WEAPON lock at the strike's shot, the next chooseBestWeaponForTarget re-picked the SECONDARY
+	// (a ready weapon while the fired one reloads), and the attack left at RW 0x751482's weapon-changed gate before the run-through could run
+	// (fork issue 395 Q2: "the charge does not happen"). ClipSize 0 is unlimited (0x7FFFFFFF at reloadWithBonus), so a clipless weapon never
+	// answers reloaded and keeps its lock until the state releases it (RW 0x74D8D2 at the charge exit).
+	// The object-target overload RW 0x69200A differs: it ignores privateFireWeapon's answer and releases only when IdleAfterFiringDelay (template
+	// + 0x78) is -1 (`cmp [eax+0x78], -1; jnz` at RW 0x692090, release at RW 0x69209A). The port keeps its earlier rule there (reloaded or
+	// -1), so only position targets change here; dropping `reloaded` from the object path is a follow-up.
+	if (victim ? (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu) : reloaded)
 	{
-		releaseWeaponLock(LOCKED_TEMPORARILY); // ZH: unlock when loaded; RW: IdleAfterFiringDelay == -1 releases it after every shot
+		releaseWeaponLock(LOCKED_TEMPORARILY);
 	}
 	m_tracker.shotFired(*m_trackerHost, *w, victim ? victim->getID() : 0u, args.target.victimPosition, false);
 	// RW 0x8E3411 .. 0x8E34DD (inside FiringTracker::shotFired): the weapon's FireSound (template + 0xC8) attached to the shooter, looped while it keeps

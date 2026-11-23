@@ -1034,6 +1034,15 @@ void GameLogic::noteBeacon(BeaconNotice::Kind kind, int playerIndex, ObjectID ob
 	m_beaconNotices.push_back(n);
 }
 
+void GameLogic::noteUpgradeComplete(int playerIndex, ObjectID producerID, const UpgradeTemplate *upgrade, const Coord3D &position)
+{
+	if (m_upgradeCompleteNotices.size() >= kUpgradeCompleteNotices)
+	{
+		m_upgradeCompleteNotices.erase(m_upgradeCompleteNotices.begin());
+	}
+	m_upgradeCompleteNotices.push_back(UpgradeCompleteNotice{ ++m_upgradeCompleteSeq, playerIndex, producerID, upgrade, position });
+}
+
 void GameLogic::noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex)
 {
 	if (m_radarEventNotices.size() >= kRadarEventNotices)
@@ -1055,6 +1064,7 @@ void GameLogic::reset()
 {
 	m_missionObjectives.reset(); // lane CAMPUI-1: TheMissionObjectiveTracker's reset (RW 0x835E03): a new game has no list until its map.ini's
 	m_radarEventNotices.clear(); // lane BACKLOG3: a new game's radar starts empty (the sequence goes on: a client's cursor stays behind it)
+	m_upgradeCompleteNotices.clear();
 	// ZH GameLogic::reset: every object goes; the scheduler vectors are cleared with their modules' indices
 	m_current = nullptr;
 	while (m_objectHead)
