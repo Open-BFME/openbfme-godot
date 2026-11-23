@@ -1,4 +1,4 @@
-// PORT-332 (issue #887): the small containers' own RotWK functions that were uncited / partly ported.
+// PORT-332: the small containers' own RotWK functions that were uncited / partly ported.
 // Synthetic INI only; expectations from RotWK 2.01 disassembly:
 //   * RW 0x00866267 TransportContain contain slot 0x108: on defect, every contained rider defects too (Object::defect RW 0x00699368), in list order.
 //   * RW 0x0086629F contain slot 0x10C: on endDefection, every contained rider ends its defection (RW 0x0069ABA7).
