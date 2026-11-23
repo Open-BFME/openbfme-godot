@@ -316,4 +316,18 @@ TEST_CASE("PORT-226 idle stance countdown: the countdown survives a save and loa
 	XferLoad again(save.data());
 	ai->xferAIState(again);
 	CHECK(countdown(ai->stateMachine()) == 2);
+	// a version 1 idle state (before the countdown: the version, the sleep offset, the init flag) loads with the countdown at 5, as RW 0x7489B6 starts it
+	AIIdleState *idle = dynamic_cast<AIIdleState *>(ai->stateMachine().findState(AI_IDLE));
+	REQUIRE(idle);
+	XferSave idleSave;
+	idle->xfer(idleSave);
+	std::vector<std::uint8_t> v1 = idleSave.data();
+	REQUIRE(v1.size() == 6); // the version, the u16 offset, the u16 countdown, the bool
+	REQUIRE(v1[0] == 2);
+	v1[0] = 1;
+	v1.erase(v1.begin() + 3, v1.begin() + 5); // drop the countdown
+	XferLoad oldIdle(v1);
+	idle->xfer(oldIdle);
+	CHECK(oldIdle.atEnd());
+	CHECK(countdown(ai->stateMachine()) == 5);
 }

@@ -122,7 +122,14 @@ void AIIdleState::xfer(Xfer &x)
 	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
 	x.xferUnsignedShort(&m_initialSleepOffset);
-	x.xferUnsignedShort(&m_stancesCountdown);
+	if (v.current >= 2)
+	{
+		x.xferUnsignedShort(&m_stancesCountdown); // PORT-226: retail's + 0x22
+	}
+	else
+	{
+		m_stancesCountdown = 5; // a version 1 snapshot predates it: 5, as RW 0x7489B6 (AIIdleState::onEnter) starts it on every entry
+	}
 	x.xferBool(&m_inited);
 }
 
