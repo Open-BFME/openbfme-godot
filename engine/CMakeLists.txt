@@ -742,6 +742,7 @@ endif()
 # ---- unit tests --------------------------------------------------------------------------
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
+include(cmake/Local124.cmake)   # LOCAL-124: FakePathfindPortalBehaviour::xfer load re-registration (fork issue 808)
 add_executable(openbfme_tests
     ${OPENBFME_PORT426_TESTS}
     ${OPENBFME_WIN1_TESTS}
@@ -922,6 +923,7 @@ add_executable(openbfme_tests
     ${OPENBFME_TAINTAREA1_TESTS}
     ${OPENBFME_THREATLEVEL1_TESTS}
     ${OPENBFME_BUILDCLEAR1_TESTS}
+    ${OPENBFME_LOCAL124_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
