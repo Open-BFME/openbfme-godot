@@ -151,3 +151,93 @@ TEST_CASE("AIMAIM-1 follow-up: relAngle (RW 0x4B3D8D) measures against the orien
 	const Coord3D q{ 400.0f, 200.0f, a->getPosition()->z }; // 45 degrees to the right
 	CHECK(std::fabs(emotionRelAngle(*a, q) + 0.785398f) < 1e-4f); // tolerance: as above, mirrored
 }
+
+TEST_CASE("AIIdleState::onEnter zeroes FiringTracker shot count when ShouldClearShotsOnIdle is set (RW 0x007489B6)")
+{
+	// Source: RotWK 2.01 game.dat AIIdleState::onEnter RW 0x007489B6 (0x007489D9..0x007489EF:
+	// ThingTemplate + 0x645 ShouldClearShotsOnIdle row RW 0x00DA4888 -> zero FiringTracker + 0x20 m_count;
+	// DONOR BFME2 1.06 0x00346FD0 Rva0033FE65OnEnter.cpp). Retail 2.01 code path exercised by synthetic INI.
+	struct ClearShotsHost : FiringTrackerHost
+	{
+		std::uint32_t frame = 10;
+		Coord3D pos{ 0.0f, 0.0f, 0.0f };
+		std::uint32_t bonusMask = 0;
+		std::uint32_t currentFrame() override { return frame; }
+		Coord3D ownerPosition() override { return pos; }
+		std::uint32_t weaponBonusConditionMask() override { return bonusMask; }
+		void setWeaponBonusConditionMask(std::uint32_t mask) override { bonusMask = mask; }
+		void reloadAllWeapons() override {}
+	};
+
+	combattest::CombatWorld w;
+	const std::string err = w.w.load(
+		"Weapon UpClearShotsWeapon\n"
+		"  AttackRange = 40.0\n"
+		"  DelayBetweenShots = 200\n"
+		"  PreAttackDelay = 0\n"
+		"  FiringDuration = 0\n"
+		"  ContinuousFireOne = 2\n"
+		"  ContinuousFireCoast = 5000\n"
+		"  DamageNugget\n"
+		"    Damage = 10\n"
+		"    DamageType = SIEGE\n"
+		"  End\n"
+		"End\n"
+		"Object UpClearShotsYes\n"
+		"  KindOf = VEHICLE\n"
+		"  ShouldClearShotsOnIdle = Yes\n"
+		"  WeaponSet\n"
+		"    Conditions = None\n"
+		"    Weapon = PRIMARY UpClearShotsWeapon\n"
+		"  End\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 500.0\n"
+		"    InitialHealth = 500.0\n"
+		"  End\n"
+		"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+		"  End\n"
+		"End\n"
+		"Object UpClearShotsNo\n"
+		"  KindOf = VEHICLE\n"
+		"  WeaponSet\n"
+		"    Conditions = None\n"
+		"    Weapon = PRIMARY UpClearShotsWeapon\n"
+		"  End\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 500.0\n"
+		"    InitialHealth = 500.0\n"
+		"  End\n"
+		"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+		"  End\n"
+		"End\n",
+		INI_LOAD_OVERWRITE,
+		"up_clear_shots.ini");
+	REQUIRE_MESSAGE(err.empty(), err);
+
+	Object *clearObj = w.unit("UpClearShotsYes", 'A', 100.0f, 100.0f);
+	Object *keepObj = w.unit("UpClearShotsNo", 'A', 140.0f, 100.0f);
+	REQUIRE(clearObj != nullptr);
+	REQUIRE(keepObj != nullptr);
+	REQUIRE(clearObj->getWeapons() != nullptr);
+	REQUIRE(keepObj->getWeapons() != nullptr);
+	REQUIRE(clearObj->getAIUpdateInterface() != nullptr);
+	REQUIRE(keepObj->getAIUpdateInterface() != nullptr);
+
+	const WeaponTemplate *wt = TheWeaponStore->findWeaponTemplate("UpClearShotsWeapon");
+	REQUIRE(wt != nullptr);
+	Weapon weapon(wt, PRIMARY_WEAPON, 10u);
+	ClearShotsHost host;
+
+	clearObj->getWeapons()->firingTracker().shotFired(host, weapon, 99, Coord3D{ 120.0f, 100.0f, 0.0f }, false);
+	clearObj->getWeapons()->firingTracker().shotFired(host, weapon, 99, Coord3D{ 120.0f, 100.0f, 0.0f }, false);
+	keepObj->getWeapons()->firingTracker().shotFired(host, weapon, 99, Coord3D{ 160.0f, 100.0f, 0.0f }, false);
+	keepObj->getWeapons()->firingTracker().shotFired(host, weapon, 99, Coord3D{ 160.0f, 100.0f, 0.0f }, false);
+	REQUIRE(clearObj->getWeapons()->firingTracker().shotCount() == 2);
+	REQUIRE(keepObj->getWeapons()->firingTracker().shotCount() == 2);
+
+	clearObj->getAIUpdateInterface()->aiIdle(CMD_FROM_AI);
+	keepObj->getAIUpdateInterface()->aiIdle(CMD_FROM_AI);
+
+	CHECK(clearObj->getWeapons()->firingTracker().shotCount() == 0);
+	CHECK(keepObj->getWeapons()->firingTracker().shotCount() == 2);
+}

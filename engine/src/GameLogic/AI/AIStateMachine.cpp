@@ -5,6 +5,8 @@
 
 #include "Common/GameCommon.h"
 #include "Common/StateHash.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
@@ -558,6 +560,24 @@ StateReturnType AIIdleState::onEnter()
 	ai().resetNextMoodCheckTime();
 	// ZH: the idle countdown is randomised so the idle checks of many units do not spike on the same frame (S-221: the RW draw is not read)
 	m_initialSleepOffset = (unsigned short)ai().getObject()->logic().random().getValue(0, (int)kIdleCountdownDelay, "AIStates.cpp", 0x520);
+	// RW 0x007489B6 (0x007489D9..0x007489EF; DONOR BFME2 0x00346FD0 Rva0033FE65OnEnter.cpp):
+	// if ThingTemplate::ShouldClearShotsOnIdle (+0x645, row RW 0xDA4888) is set, zero FiringTracker::m_count (+0x20).
+	if (Object *obj = ai().getObject())
+	{
+		if (const ThingTemplate *tt = obj->getTemplate())
+		{
+			if (const FieldValue *v = tt->getFinalOverride()->findField("ShouldClearShotsOnIdle"))
+			{
+				if (const bool *b = std::get_if<bool>(v); b && *b)
+				{
+					if (ObjectWeapons *w = obj->getWeapons())
+					{
+						w->firingTracker().clearShotCount();
+					}
+				}
+			}
+		}
+	}
 	return STATE_CONTINUE; // never sleep at the start: the cell check runs the first time through
 }
 

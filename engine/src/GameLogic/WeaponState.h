@@ -335,6 +335,8 @@ public:
 	void xfer(Xfer &x); // lane SAVE-4b (OpenBFME native, S-4190)
 
 	int shotCount() const { return m_count; }               // +0x20
+	// RW 0x007489B6 (0x007489EF, AIIdleState::onEnter): ShouldClearShotsOnIdle zeroes m_count (+0x20) only.
+	void clearShotCount() { m_count = 0; }
 	std::uint32_t autoReloadDeadline() const { return m_autoReloadDeadline; } // +0x40
 	std::uint32_t coastEnd() const { return m_coastEnd; }   // +0x3C
 	const Coord3D &lastOwnerPosition() const { return m_lastOwnerPosition; } // +0x48
