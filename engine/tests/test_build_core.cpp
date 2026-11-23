@@ -7,6 +7,7 @@
 #include "doctest.h"
 
 #include "ProdTestUtil.h"
+#include "FlatTerrainTestUtil.h"
 
 #include "Common/StateHash.h"
 #include "GameLogic/BitFlags.h"
@@ -75,7 +76,9 @@ struct BuildFx : ProdWorld
 	Object *plot = nullptr;
 	GameLogicDispatch dispatch;
 	BuildCommands commands;
-	BuildFx() : dispatch(*logic)
+	flatterrain::Flat flat; // lane BUILDCLEAR-1: the castle unpack (0x105) and the wall span (0x55) test terrain restrictions (RW 0x796A9A)
+	~BuildFx() { logic->reset(); } // the objects leave the pathfinder before the AIWorld goes
+	BuildFx() : dispatch(*logic), flat(*this, 300)
 	{
 		load(kBuildObjects);
 		load(kBuildCommands);
@@ -635,15 +638,17 @@ TEST_CASE("build rate: RebuildWhenDead - a dead structure kept by KeepObjectDie 
 
 namespace
 {
+// lane BUILDCLEAR-1: the segment is a WALL_SEGMENT, as retail's segments are (campsandcastles.ini): RW 0x796EE9 then ignores the hub that builds it
 std::string wallObjects(const char *stagger)
 {
-	return std::string("Object WallSeg\n  KindOf = STRUCTURE SELECTABLE IMMOBILE\n  BuildCost = 10\n  BuildTime = 2.0\n  Geometry = BOX\n  GeometryMajorRadius = 20\n  GeometryMinorRadius = 20\n  GeometryHeight = 10\n"
+	return std::string("Object WallSeg\n  KindOf = STRUCTURE SELECTABLE IMMOBILE WALL_SEGMENT\n  BuildCost = 10\n  BuildTime = 2.0\n  Geometry = BOX\n  GeometryMajorRadius = 20\n  GeometryMinorRadius = 20\n  GeometryHeight = 10\n"
 		"  Behavior = GettingBuiltBehavior ModuleTag_GB\n  End\n  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 100\n    MaxHealthDamaged = 50\n    MaxHealthReallyDamaged = 10\n  End\nEnd\n"
 		"Object WallHubT\n  KindOf = STRUCTURE SELECTABLE IMMOBILE WALL_HUB\n  BuildCost = 20\n  BuildTime = 2.0\n  Geometry = BOX\n  GeometryMajorRadius = 20\n  GeometryMinorRadius = 20\n  GeometryHeight = 10\n"
 		"  Behavior = GettingBuiltBehavior ModuleTag_GB\n  End\n  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 100\n    MaxHealthDamaged = 50\n    MaxHealthReallyDamaged = 10\n  End\n"
 		"  Behavior = WallHubBehavior ModuleTag_WH\n    Options = OPTION_ONE\n    SegmentTemplateName = WallSeg\n    HubCapTemplateName = WallHubT\n    DefaultSegmentTemplateName = WallSeg\n"
 		"    BuilderRadius = 20\n    StaggeredBuildFactor = ") + stagger + "\n  End\nEnd\n"
-		"Object ImmDozer\n  KindOf = STRUCTURE IMMOBILE DOZER\nEnd\nObject Walker\n  KindOf = INFANTRY\nEnd\n";
+		"Object ImmDozer\n  KindOf = STRUCTURE IMMOBILE DOZER\nEnd\nObject Walker\n  KindOf = INFANTRY\nEnd\n"
+		"Object WallCC\n  KindOf = STRUCTURE IMMOBILE COMMANDCENTER\nEnd\n";
 }
 
 struct WallFx : BuildFx
@@ -652,6 +657,10 @@ struct WallFx : BuildFx
 	{
 		load(wallObjects(stagger));
 		logic->settings().maxLineBuildObjects = 50;
+		// lane BUILDCLEAR-1: a WALL_HUB build (the hub caps) is legal within its MaxBuildoutDistance of one of the player's COMMANDCENTERs (RW 0x796C66)
+		Object *cc = make("WallCC", teamOf("Alice"));
+		Coord3D c{ 200.0f, 200.0f, 0.0f };
+		cc->setPosition(&c);
 	}
 	Object *hubAt(float x, float y)
 	{

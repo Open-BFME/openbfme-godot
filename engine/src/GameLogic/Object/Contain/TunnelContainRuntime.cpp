@@ -335,7 +335,7 @@ void TunnelContain::leaveNetwork()
 				}
 			}
 		}
-		// RW 0x881105: a HORDE rider whose AI goal is this tunnel and whose members are all in comes out here
+		// RW 0x881105: a HORDE rider whose AI goal is this tunnel and whose members are not all in yet is let out here
 		static const int horde = CombatNames::kindOf("HORDE");
 		const std::vector<Object *> riders(t->riders().begin(), t->riders().end());
 		for (Object *r : riders)
@@ -365,6 +365,11 @@ void TunnelContain::onDie(const DieModuleInterface::Event &event)
 	{
 		leaveNetwork();
 	}
+}
+
+void TunnelContain::onSelling()
+{
+	leaveNetwork(); // RW 0x8812A8 -> RW 0x88121A
 }
 
 void TunnelContain::onDelete()

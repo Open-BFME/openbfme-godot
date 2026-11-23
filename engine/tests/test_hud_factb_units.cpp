@@ -29,6 +29,8 @@
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/Module/HordeDispatchSpecialPower.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/Module/SpellBookPowers.h"
 #include "GameLogic/Module/StealthAbilityModules.h"
 #include "GameLogic/Module/WeaponChangeSpecialPower.h"
@@ -378,6 +380,25 @@ struct EffectProbe
 	unsigned weaponModeActive = 0;
 	float bounty = 0.0f; ///< lane FACT-C: the caster's player's bounty percent
 
+	// lane TAINTAREA-1: Taint / Elven Wood paint TheTaintManager's grid under their area object, whose AttributeModifierAuraUpdate (RequiredConditions
+	// TAINT / ELVEN_WOOD) gives its BonusName to the caster's allies standing on the painted ground: that list is the power's effect
+	static void areaAura(Object &holder, const std::string &cls, const std::string &areaName, EffectProbe &p)
+	{
+		const ThingTemplate *area = holder.logic().things().findTemplate(areaName);
+		std::string bonus;
+		for (const ThingTemplate::Nugget &n : area ? area->behaviorModules().nuggets() : std::vector<ThingTemplate::Nugget>{})
+		{
+			const AttributeModifierAuraUpdateModuleData *ad = dynamic_cast<const AttributeModifierAuraUpdateModuleData *>(n.data.get());
+			bonus = ad && bonus.empty() ? ad->m_bonusName : bonus;
+		}
+		if (bonus.empty())
+		{
+			p.unasserted.push_back(cls);
+			return;
+		}
+		p.expects.push_back({ MODIFIER, cls + " area " + areaName + " aura " + bonus, bonus });
+	}
+
 	static void expectFrom(BehaviorModule *m, Object &holder, const SpecialPowerTemplate *t, EffectProbe &p, int depth)
 	{
 		const std::string cls = m->getModuleClassName();
@@ -544,6 +565,14 @@ struct EffectProbe
 		else if (dynamic_cast<const HordeDispatchSpecialPower *>(m))
 		{
 			// lane FACT-C: the horde passes the power on to its members (S-2001): their modules carry the results
+		}
+		else if (const TaintSpecialPower *tp = dynamic_cast<const TaintSpecialPower *>(m))
+		{
+			areaAura(holder, cls, tp->data()->m_taintObject, p); // lane TAINTAREA-1
+		}
+		else if (const ElvenWoodSpecialPower *ep = dynamic_cast<const ElvenWoodSpecialPower *>(m))
+		{
+			areaAura(holder, cls, ep->data()->m_elvenGroveObject, p); // lane TAINTAREA-1
 		}
 		else if (cls != "SpecialPowerModule" && !(spm && !spm->spData()->m_attributeModifier.empty()))
 		{
@@ -2992,8 +3021,11 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	// fight so the Devastation scene misses the 500 heuristic again (1600 lost with the cast, 1604 without): a KNOWN line once more (S-921)
 	// lane DECOMPFIX-1104B (AIMAIM-1's aim and RW 0x70B9E0's facing in relAngle, measured on the lane's tree): the Devastation scene meets the 500 heuristic
 	// again (664 more lost with the cast), so its line passes; S-921 keeps the explanation (no effect of its own is asserted). Dragon Strike stays KNOWN (S-1997)
-	r.check({ { "spell SpellBookIndustry", "S-1997" },
-		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" }, { "spell SpellBookIsengardTaint", "S-1997" } });
+	// lane TAINTAREA-1: Taint has an effect of its own now (TheTaintManager's ground and its area object's GenericBuff aura on the caster's units, asserted
+	// as the TaintLand aura's modifier): its line passes by that, not by the heuristic, and its pin goes. The Devastation scene misses the 500 heuristic
+	// again (1869 lost with the cast, 1935 without, measured on the lane's tree): a KNOWN line once more (S-921: no effect of its own is asserted)
+	r.check({ { "spell SpellBookIndustry", "S-1997" }, { "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" },
+		{ "spell SpellBookDevastation", "S-921|no effect of DevastateSpecialPower" } });
 }
 
 TEST_CASE("factb spell book: every Mordor spell book power cast through the HUD's spell bar shows its effect")
@@ -3005,7 +3037,8 @@ TEST_CASE("factb spell book: every Mordor spell book power cast through the HUD'
 	Results r;
 	spellBookOf("FactionMordor", r);
 	r.print("spell book FactionMordor");
-	r.check({ { "spell SpellBookIndustry", "S-1997" }, { "spell SpellBookTaint", "S-1997" }, { "spell SpellBookUntamedAllegiance", "S-1997" } });
+	// lane TAINTAREA-1: Taint's line passes by its own effect (the TaintLand aura's GenericBuff on the caster's units), its pin goes
+	r.check({ { "spell SpellBookIndustry", "S-1997" }, { "spell SpellBookUntamedAllegiance", "S-1997" } });
 }
 
 namespace
@@ -3965,7 +3998,7 @@ TEST_CASE("factc spell book: every Goblin and Angmar spell bought in the store a
 		return;
 	}
 	factcCase("spell book", "FactionWild", spellsViaStore,
-			  { { "spell SpellBookTaint", "S-1997|no effect of TaintSpecialPower" }, { "spell SpellBookUntamedAllegiance", "S-1997|the HUD refused the scene's spot" } });
+			  { { "spell SpellBookUntamedAllegiance", "S-1997|the HUD refused the scene's spot" } }); // lane TAINTAREA-1: Taint passes by its own effect
 	factcCase("spell book", "FactionAngmar", spellsViaStore, { { "spell SpellBookUntamedAllegiance", "S-1997|the HUD refused the scene's spot" } });
 }
 

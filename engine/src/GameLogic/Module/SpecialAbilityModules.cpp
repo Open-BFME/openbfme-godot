@@ -2916,9 +2916,9 @@ std::vector<std::string> SpecialAbilityModules::hero2StopLines()
 		"client's), the owner's EVA DisguiseStarted and the enemy-perspective portrait / name (DisguisedAsTemplate_EnemyPerspective, RW 0x8B4440 from RW 0x69194E: "
 		"client)",
 		"[S-1225] the capture (lane HERO-2): SPECIAL_INFANTRY_CAPTURE_BUILDING's preparation, unpack, trigger (RW 0x8544F2: the closest LINKED_TO_FLAG within 150, "
-		"RW 0x6996DC setCapturedTeam), end and the update's captured / ruined target tests run; not ported (noted): a garrisonable contain's passengers (vslots "
+		"RW 0x6996DC setCapturedTeam with RW 0x8A1666 production cancel/release, lane LOCAL-62), end and the update's captured / ruined target tests run; not ported (noted): a garrisonable contain's passengers (vslots "
 		"0xA8 / 0x54), an UNDER_CONSTRUCTION building's production cancel and score counts, the upgrades reset RW 0x68E083 (S-952), the skirmish AI's object "
-		"events RW 0x6A99CB / 0x6A9D9C, RW 0x6996DC's production cancel, score counts, RW 0x68B303 / 0x8E3ABB and a captured container's passengers; "
+		"events RW 0x6A99CB / 0x6A9D9C, RW 0x6996DC's score counts, RW 0x68B303 / 0x8E3ABB and a captured container's passengers; "
 		"SPECIAL_BLACKLOTUS_CAPTURE_BUILDING (0x1A)'s special objects; DoCaptureFX's flash (client); INFERENCE: a target that is gone ends any ability (HERO-1's "
 		"reading; retail only tests a live target)",
 	};

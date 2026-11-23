@@ -9,6 +9,7 @@
 #include "Common/Player.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/InGameHud.h"
+#include "GameLogic/BuildAssistantSell.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -211,6 +212,130 @@ TEST_CASE("tunnel retail: a Goblin horde enters one mine shaft and comes out of 
 	CHECK(alive > 0u);
 }
 
+// Destroying a shaft keeps the riders that entered by another one inside; only the last shaft's death lets the
+// whole network out (RW 0x8FA4E8 reads the entry shaft from the rider's containedBy). A sale is the same leave: see the next test.
+TEST_CASE("tunnel retail: destroying a shaft keeps the riders of another inside; the last shaft releases the network")
+{
+	if (!haveWorld("tunnel retail"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s);
+	Player *enemy = r.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	const Coord3D c0 = gridSpot(r, 0.3f, 0.5f, 350.0f);
+	const Coord3D c1 = gridSpot(r, 0.6f, 0.5f, 350.0f);
+	const Coord3D c2 = gridSpot(r, 0.45f, 0.75f, 350.0f);
+	Object *a = r.make("WildMineShaft", c0.x, c0.y, enemy);
+	Object *b = r.make("WildMineShaft", c1.x, c1.y, enemy);
+	Object *c = r.make("WildMineShaft", c2.x, c2.y, enemy);
+	Object *horde = r.make("GoblinFighterHorde", c0.x + 200.0f, c0.y, enemy);
+	r.frame(3);
+	REQUIRE(a != nullptr);
+	REQUIRE(b != nullptr);
+	REQUIRE(c != nullptr);
+	REQUIRE(horde != nullptr);
+	a->friend_onBuildComplete();
+	b->friend_onBuildComplete();
+	c->friend_onBuildComplete();
+	TunnelContain *ta = tunnelOf(*a), *tb = tunnelOf(*b), *tc = tunnelOf(*c);
+	REQUIRE(ta != nullptr);
+	REQUIRE(tb != nullptr);
+	REQUIRE(tc != nullptr);
+	REQUIRE(enter(r, *horde, *a, 400));
+	CHECK(horde->getContainedBy() == a);
+	const unsigned tunnels = enemy->tunnelTracker().tunnelCount();
+	REQUIRE(tunnels >= 3u); // tolerance: the map shaft count is data; at least three are needed for the test
+	// destroy C: it never held the horde
+	c->kill(DAMAGE_UNRESISTABLE, 0);
+	r.frame(10);
+	CHECK(horde->getContainedBy() == a);
+	CHECK(enemy->tunnelTracker().tunnelCount() == tunnels - 1u);
+	CHECK(ta->getContainCount() == 1u);
+	// destroy B: the horde still entered by A
+	b->kill(DAMAGE_UNRESISTABLE, 0);
+	r.frame(10);
+	CHECK(horde->getContainedBy() == a);
+	CHECK(enemy->tunnelTracker().tunnelCount() == 1u);
+	// A is the last shaft: its death lets the whole network out (retail's cave-in rule)
+	a->kill(DAMAGE_UNRESISTABLE, 0);
+	int out = -1;
+	for (int f = 0; f < 60 && out < 0; ++f)
+	{
+		r.frame(1);
+		if (!horde->getContainedBy())
+		{
+			out = f;
+		}
+	}
+	REQUIRE_MESSAGE(out >= 0, "the last shaft did not let the horde out"); // tolerance: the shaft index is non-negative; the exact shaft follows the map order
+}
+
+// The sale (MSG_SELL -> BuildAssistant::sellObject RW 0x7966BB -> contain slot 0x64): the tunnel table answers RW 0x8812A8 = the network leave RW 0x88121A, not
+// OpenContain's order-out RW 0x86561F. Selling a shaft that is not the last keeps its riders in the network (they now count as entered by the first shaft left,
+// RW 0x8FA4E8 / 0x6901AE); selling the last shaft lets everyone out
+TEST_CASE("tunnel retail: selling a shaft that is not the last keeps its riders inside; selling the last lets them out")
+{
+	if (!haveWorld("tunnel retail"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s);
+	Player *enemy = r.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	const Coord3D c0 = gridSpot(r, 0.3f, 0.5f, 350.0f);
+	const Coord3D c1 = gridSpot(r, 0.6f, 0.5f, 350.0f);
+	Object *a = r.make("WildMineShaft", c0.x, c0.y, enemy);
+	Object *b = r.make("WildMineShaft", c1.x, c1.y, enemy);
+	Object *horde = r.make("GoblinFighterHorde", c0.x + 200.0f, c0.y, enemy);
+	r.frame(3);
+	REQUIRE(a != nullptr);
+	REQUIRE(b != nullptr);
+	REQUIRE(horde != nullptr);
+	a->friend_onBuildComplete();
+	b->friend_onBuildComplete();
+	const ObjectID aId = a->getID(), bId = b->getID(), hordeId = horde->getID();
+	REQUIRE(enter(r, *horde, *a, 400));
+	REQUIRE(horde->getContainedBy() == a);
+	const unsigned tunnels = enemy->tunnelTracker().tunnelCount();
+	REQUIRE(tunnels >= 2u); // tolerance: the map's own shafts count too; two are needed
+	// sell A (it holds the horde, another shaft is left): nobody is ordered out
+	r.logic().sellList().sellObject(a);
+	for (int f = 0; f < 90 && r.logic().findObjectByID(aId); ++f)
+	{
+		r.frame(1);
+	}
+	REQUIRE(r.logic().findObjectByID(aId) == nullptr);
+	r.frame(60);
+	horde = r.logic().findObjectByID(hordeId);
+	REQUIRE(horde != nullptr);
+	CHECK(enemy->tunnelTracker().tunnelCount() == tunnels - 1u);
+	REQUIRE(horde->getContainedBy() != nullptr);
+	CHECK(horde->getContainedBy()->getID() == enemy->tunnelTracker().tunnelIds().front());
+	CHECK(enemy->tunnelTracker().isInContainer(horde));
+	if (tunnels != 2u)
+	{
+		return; // the map's own shafts are the player's too: B is not the last one
+	}
+	// sell B, the last shaft: the network comes out
+	CHECK(horde->getContainedBy()->getID() == bId);
+	r.logic().sellList().sellObject(b);
+	int out = -1;
+	for (int f = 0; f < 120 && out < 0; ++f)
+	{
+		r.frame(1);
+		horde = r.logic().findObjectByID(hordeId);
+		if (horde && !horde->getContainedBy())
+		{
+			out = f;
+		}
+	}
+	CHECK_MESSAGE(out >= 0, "selling the last shaft did not let the horde out"); // tolerance: the frame the last shaft dies follows the sale list
+	CHECK(enemy->tunnelTracker().tunnelCount() == 0u);
+}
+
 // TUNNEL-1: the player's flow on the HUD. A Goblin player right-clicks a mine shaft with a horde selected (MSG_ENTER), selects the OTHER shaft: its
 // WildMineShaftCommandSet's five Command_ExitGarrison (EXIT_CONTAINER) buttons show the network's rider (RW 0x94251F: the contain's list is the tracker's,
 // RW 0x8810AB), and the press (MSG_EXIT RW 0x940FEF -> RW 0x77AC92, the rider in the pressed tunnel's network: contain slot 0xE8 = RW 0x8811DD) lets the
@@ -286,6 +411,11 @@ TEST_CASE("tunnel retail: a Goblin player right-clicks a horde into one mine sha
 		++n;
 	}
 	REQUIRE_MESSAGE(horde->getContainedBy() == a, "the right-click did not put the horde into the first shaft");
+	// the next client update drops the horde from the selection: GarrisonContain::addToContain (RW 0x87CFEB; branch RW 0x990E5F)
+	// marks it UNSELECTABLE, the client's selection mirror follows, and the message clears the logic's selection too.
+	r.frame(1); // the rig input that selected the horde is the one that drops it and tells the logic
+	CHECK(!r.input->ui().isSelected(horde->getID()));
+	CHECK(r.local->selection().empty());
 
 	// the other shaft's control bar: the horde on its first exit button, enabled, with the horde's ButtonImage
 	r.lookAt(*b->getPosition());
@@ -317,4 +447,51 @@ TEST_CASE("tunnel retail: a Goblin player right-clicks a horde into one mine sha
 	CHECK(exits[0].rider == INVALID_ID);
 	CHECK(exits[0].state == ButtonState::Restricted);
 	hud.reset();
+}
+
+TEST_CASE("tunnel retail: a selected horde leaves the selection when it enters a shaft; a Ring holder is deselected too (the tunnel's ENCLOSED removal still takes it out of the world)")
+{
+	if (!haveWorld("tunnel retail deselect"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s, "map mp fall back 4p", "FactionWild");
+	const Coord3D c0 = gridSpot(r, 0.35f, 0.5f, 350.0f);
+	Object *tunnel = r.make("WildMineShaft", c0.x, c0.y);
+	r.frame(2);
+	tunnel->friend_onBuildComplete();
+	REQUIRE(tunnelOf(*tunnel) != nullptr);
+	REQUIRE(tunnel->getContain() != nullptr);
+	static const int unselectable = ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
+	static const int ring = ObjectTemplateInfoBuilder::objectStatusIndex("HOLDING_THE_RING");
+	REQUIRE(unselectable == 3);  // PlayerCommands::isSelectable's UNSELECTABLE status
+	REQUIRE(ring == 0x5E);       // ActionManager::getCanAttackObject's HOLDING_THE_RING status
+	auto addAndCheck = [&](Object *horde, bool holdingRing) {
+		REQUIRE(horde->getContain() != nullptr);
+		REQUIRE(horde->getContain()->getHordeContainInterface() != nullptr);
+		if (holdingRing)
+		{
+			horde->setStatus((unsigned)ring, true);
+			CHECK(horde->testStatus((unsigned)ring));
+		}
+		r.input->ui().selectObject(horde->getID());
+		REQUIRE(r.input->ui().isSelected(horde->getID()));
+		REQUIRE(tunnel->getContain()->addToContain(horde));
+		CHECK(horde->getContainedBy() == tunnel);
+		CHECK(horde->testStatus((unsigned)unselectable));
+		// The tunnel's OpenContain status mask is ENCLOSED: openContainAdd (RW 0x8674C2) removes the horde from the world before
+		// the GarrisonContain branch's Ring check; the Ring only skips the extra containLeaveWorld (RW 0x990E5F).
+		CHECK(!horde->isInWorld());
+		r.frame(1);
+		CHECK(!r.input->ui().isSelected(horde->getID()));
+	};
+	Object *plain = r.make("GoblinFighterHorde", c0.x + 220.0f, c0.y);
+	r.frame(2);
+	addAndCheck(plain, false);
+	Object *ringHolder = r.make("GoblinFighterHorde", c0.x + 260.0f, c0.y);
+	r.frame(2);
+	addAndCheck(ringHolder, true);
+	r.frame(1);
+	CHECK(!ringHolder->isInWorld()); // the ENCLOSED removal, not the Ring branch; it is still deselected
 }

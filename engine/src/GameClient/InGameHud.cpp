@@ -33,6 +33,7 @@
 #include "Common/Team.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Science.h"
+#include "Common/Upgrade.h"
 #include "GameLogic/WeaponSetToggle.h"
 #include "GameClient/PalantirCommandUI.h"
 #include "GameClient/MapClassification.h"
@@ -123,7 +124,10 @@ InGameHud::InGameHud(Config config)
 	m_radar = std::make_unique<Radar>(m_input->context());
 	m_input->commandTranslator().setRadar(m_radar.get()); // lane HUD-4: Space (VIEW_LAST_RADAR_EVENT)
 	// lane INPUT-1: a hotkey presses its command button as a click on it would (ControlBar::processCommandUI through pressButton)
-	m_input->hotKeyTranslator().setPress([this](int slot, bool inPalantir) { return m_bar->pressButton(slot, inPalantir); });
+	// PORT-426: the hotkey's Shift is the same Keyboard::isShift (RW 0x940BB3) the button's own press reads.
+	m_input->hotKeyTranslator().setPress([this](int slot, bool inPalantir) {
+		return m_bar->pressButton(slot, inPalantir, (m_keyState & KEY_STATE_SHIFT) != 0);
+	});
 	// AUDIO-2: ZH CommandXlat / SelectionXlat play the unit voice when a command or a selection leaves the translators (RotWK RW 0x8DEDBB)
 	m_voice = std::make_unique<UnitVoiceResponse>(m_config.game.logic(), m_voiceSink);
 	// the crowd responses of the voices (S-700): Data\INI\CrowdResponse.ini; a missing or malformed file is an error of the HUD, the voices still work.
@@ -250,9 +254,10 @@ bool InGameHud::boot(std::string *error)
 	// update) may come while the logic worker runs a frame: the press then waits, in order, for the next update the logic is held in (whenHeld)
 	m_palantirRef->setBfme1(isBfme1Data(m_config.fs));
 	m_palantirRef->setButtonHandler([this](int slot, bool inPalantir) {
-		whenHeld([this, slot, inPalantir]() {
+		const bool shift = (m_keyState & KEY_STATE_SHIFT) != 0; // PORT-426: RW 0x940BB3
+		whenHeld([this, slot, inPalantir, shift]() {
 			const auto worldContext = enterContext(); // the movie's own update and invoke_at reach this outside the scoped entry points (BuildAssistant reads TheCommandStore)
-			m_bar->pressButton(slot, inPalantir);
+			m_bar->pressButton(slot, inPalantir, shift);
 		});
 	});
 	// lane CAMPUI-1: a stance item of the stance toggle's radial (RW 0x96F53C: MSG_CHANGE_STANCE with the item's stance)
@@ -712,6 +717,7 @@ void InGameHud::update(double seconds)
 	m_iconSettings.snapshot = iconSnap.get();
 	m_iconSettings.shroudDrawn = iconSnap && iconSnap->shroud && iconSnap->shroud->displayed;
 	presentBeacons(); // lane CHAT-1
+	presentUpgradeComplete(); // RW 0x8A2080 .. 0x8A223B: the issuing player's feedback after upgrade completion
 	// owner report 2026-11-12: hovering a horde must show the soldier's bar and help, not the horde object's. The pick returns the horde; the
 	// first living member stands for it (the member's own name and health; its rank comes from the horde in UnitHelpSource).
 	ObjectID mouseover = m_input->ui().getInputEnabled() ? m_input->ui().mouseoverObject() : INVALID_ID;
@@ -1648,6 +1654,54 @@ void InGameHud::showMessageLabel(const std::string &label, const std::u16string 
 	}
 	m_messageLines.addMessageText(argument ? InGameChat::formatLine(text, *argument) : text, nullptr, m_messageFrame);
 	++m_guiMessagesShown;
+}
+
+void InGameHud::presentUpgradeComplete()
+{
+	// RW 0x8A2080 .. 0x8A223B: the issuing player's feedback after upgrade completion
+	const Player *local = m_config.game.players().getLocalPlayer();
+	for (const GameLogic::UpgradeCompleteNotice &n : m_config.game.logic().upgradeCompleteNotices())
+	{
+		if (n.seq <= m_upgradeCompleteNoticeSeen)
+		{
+			continue;
+		}
+		m_upgradeCompleteNoticeSeen = n.seq;
+		if (!local || local->getPlayerIndex() != n.playerIndex || !n.upgrade)
+		{
+			continue;
+		}
+
+		// RW 0x8A2094 .. 0x8A211C: format "UPGRADE:UpgradeComplete" with upgrade's DisplayName (+0x28)
+		// Missing label yields MISSING: '<label>' (RW 0x6E7AC0 / GameTextSource::fetchOrMissing)
+		const std::u16string formatStr = fetchOrMissing(m_config.gameText, "UPGRADE:UpgradeComplete");
+		const std::u16string nameStr = fetchOrMissing(m_config.gameText, n.upgrade->m_displayName);
+		const std::u16string messageText = InGameChat::formatLine(formatStr, nameStr);
+		m_messageLines.addMessageText(messageText, nullptr, m_messageFrame);
+		++m_guiMessagesShown;
+
+		// RW 0x8A213F .. 0x8A2212: audio / Eva feedback
+		bool feedbackPlayed = false;
+		if (n.upgrade->m_researchCompleteEvaEvent != -1)
+		{
+			AudioApi::reportEva(n.upgrade->m_researchCompleteEvaEvent, &n.position);
+			feedbackPlayed = true;
+		}
+		if (!n.upgrade->m_researchSound.empty())
+		{
+			AudioApi::playSoundForObject(n.upgrade->m_researchSound, n.producerID, n.playerIndex);
+			feedbackPlayed = true;
+		}
+		if (!feedbackPlayed)
+		{
+			// RW 0x8A21C9: default Eva event 4 (EVA_UPGRADE_COMPLETE, "UpgradeComplete")
+			AudioApi::reportEva(4, &n.position);
+		}
+		if (!n.upgrade->m_unitSpecificSound.empty())
+		{
+			AudioApi::playSoundForObject(n.upgrade->m_unitSpecificSound, n.producerID, n.playerIndex);
+		}
+	}
 }
 
 void InGameHud::presentBeacons()

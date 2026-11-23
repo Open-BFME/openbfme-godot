@@ -3,6 +3,8 @@
 
 #include "doctest.h"
 
+#include <cstring>
+
 #include "Common/StateHash.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -65,6 +67,7 @@ const char kBuildRules[] =
 	"  SupplyBuildBorder = 20.0\n"
 	"  MaxLineBuildObjects = 50\n"
 	"  MinDistFromEdgeOfMapForBuild = 30.0\n"
+	"  MaxCastleRadius = 130\n"
 	"End\n";
 
 struct Port12World : MoveWorld
@@ -144,6 +147,15 @@ TEST_CASE("PORT-12: parse MinDistFromEdgeOfMapForBuild and require it with the o
 		"End\n";
 	REQUIRE_MESSAGE(GameLogicSettingsLoader::scanGameData(withoutMargin, missing, &error), error);
 	CHECK_FALSE(missing.buildRulesLoaded); // do not silently assume a missing edge margin is zero
+	// lane BUILDCLEAR-1: GameData MaxCastleRadius (RW row 0xC011C0, GlobalData + 0x1220) is read on its own flag
+	CHECK(loaded.maxCastleRadiusLoaded);
+	CHECK(loaded.maxCastleRadius == 130.0f);
+	GameLogicSettings noCastleRadius;
+	std::string withoutCastleRadius(kBuildRules);
+	withoutCastleRadius.erase(withoutCastleRadius.find("  MaxCastleRadius"), std::strlen("  MaxCastleRadius = 130\n"));
+	REQUIRE_MESSAGE(GameLogicSettingsLoader::scanGameData(withoutCastleRadius, noCastleRadius, &error), error);
+	CHECK(noCastleRadius.buildRulesLoaded); // BFME1's GameData has no MaxCastleRadius row: not one of the build rules
+	CHECK_FALSE(noCastleRadius.maxCastleRadiusLoaded);
 
 	// review lane PRTRLW (Sol note): GameData rows are additive, so a later scan without the margin row keeps an earlier complete scan's readiness
 	GameLogicSettings twice;

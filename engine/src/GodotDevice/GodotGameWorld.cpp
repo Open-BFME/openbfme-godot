@@ -773,6 +773,7 @@ void GameWorld::clear_scene()
 	// presses with the HUD)
 	m_pendingScriptAudio.clear();
 	m_pendingScriptRequests.clear();
+	m_untakenScriptRequests = Array(); // lane SAVEUIHELD-1
 	m_fxPendingDt = 0.0;
 	m_netHash = 0;
 	m_netHashFrame = 0;

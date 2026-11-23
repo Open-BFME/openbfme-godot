@@ -333,5 +333,6 @@
  "GameLogic/System/ShroudManagerSnapshot.cpp::ShroudManager::xferState::m_unlookPersist#1": "open: frames",
  "GameLogic/System/ShroudManagerSnapshot.cpp::ShroudManager::xferState::x#1": "open: a cell coordinate of the look centre (the reveal clips to the grid, ShroudManager RW 0xB4EB70)",
  "GameLogic/System/ShroudManagerSnapshot.cpp::ShroudManager::xferState::y#1": "open: a cell coordinate of the look centre (clipped)",
- "GameLogic/System/ShroudManagerSnapshot.cpp::xferU64::w#1": "open: a statistic counter"
+ "GameLogic/System/ShroudManagerSnapshot.cpp::xferU64::w#1": "open: a statistic counter",
+ "GameLogic/System/TaintManager.cpp::TaintManager::xfer::checksum#1": "open: retail's grid checksum word (RW 0xAD50B0): written as 0, a load reads and ignores it as retail does"
 }

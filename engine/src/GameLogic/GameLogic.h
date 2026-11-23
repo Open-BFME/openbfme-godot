@@ -90,6 +90,7 @@ class UpdateModule;
 class ObjectWeapons; // lane PERF-WS
 class TerrainLogic;
 class UpgradeTypeTable;
+class UpgradeTemplate;
 class AIWorld;
 class Economy;
 class CombatState;
@@ -101,6 +102,8 @@ class BuildAssistantSell;
 class InvisibilityManager;
 class DOTManager;
 class TerrainTrees;
+class ThreatFinderManager; // PORT 17
+class TaintManager;
 class SkirmishAIManager;
 class ShroudManager;
 class PartitionManager;
@@ -267,6 +270,8 @@ struct GameLogicSettings
 	float supplyBuildBorder = 0.0f;
 	int maxLineBuildObjects = 0;
 	float minDistFromEdgeOfMapForBuild = 0.0f;
+	bool maxCastleRadiusLoaded = false; ///< lane BUILDCLEAR-1: GameData read MaxCastleRadius (BFME1's GameData has no such row)
+	float maxCastleRadius = 0.0f;       ///< GameData MaxCastleRadius (GlobalData + 0x1220): isLocationClearOfObjects' range
 	// lane BUILD-3 (GameData, RW GlobalData + 0x11E4): BuilderMoveFromNewStructureDistance, the walk of a porter out of the structure it built (RW 0x88D6AE); loaded when a block read it
 	bool builderMoveLoaded = false;
 	float builderMoveFromNewStructureDistance = 0.0f;
@@ -459,6 +464,21 @@ public:
 	// lane SPELL-3: TheTerrainLogic + 0x578, the map's optimized trees (GameLogic/Map/TerrainTrees.h); filled by MapObjectLoop, hashed once a tree changed
 	TerrainTrees &trees() { return *m_trees; }
 	const TerrainTrees &trees() const { return *m_trees; }
+	// PORT 17 (issue #73): TheThreatFinderManager (RW 0xDE8888), the named threat areas of a map (GameLogic/System/ThreatFinder.h). Not a subsystem
+	// with an update: retail only adds and removes finders and looks them up by name (RW 0x7EE260); a finder scans when it is asked. Its state is
+	// the finders' and it travels with them (each finder's module xfers it, RW 0x7EDF70), so it is not a state-hash section of its own
+	ThreatFinderManager &threatFinders() { return *m_threatFinders; }
+	const ThreatFinderManager &threatFinders() const { return *m_threatFinders; }
+	// lane TAINTAREA-1: TheTaintManager (RW 0xDE435C, GameLogic/System/TaintManager.h): the taint / elven wood grid; hashed (section "taint manager")
+	// while a cell is painted
+	TaintManager &taint() { return *m_taint; }
+	const TaintManager &taint() const { return *m_taint; }
+	// lane TAINTAREA-1: TheTerrainLogic's radius clear RW 0x683393 (BFME2 TerrainLogic::rva00282CFB): the grid's cells of `mode` (every painter's for -1)
+	// within `radius` turn neutral, the TAINTEFFECT objects within it are destroyed and the map's trees within it are retired (GameLogic/Map/TerrainTaint.cpp)
+	void clearTaintArea(const Coord3D &pos, float radius, int mode);
+	// lane TAINTAREA-1: RW 0x683955 (BFME2 TerrainLogic::rva00283262): every TAINT object within `radius` clears the radius around itself (every
+	// painter's) and is destroyed, then the radius clear at `pos` (the castle unpack, RW 0x79BF36)
+	void clearTaintObjects(const Coord3D &pos, float radius);
 	const CombatState &combat() const { return *m_combat; }
 	const GameLogicSettings &settings() const { return m_settings; }
 	void setClientHooks(ObjectClientHooks *hooks) { m_clientHooks = hooks; }
@@ -583,6 +603,19 @@ public:
 	static constexpr size_t kBeaconNotices = 64;
 	void noteBeacon(BeaconNotice::Kind kind, int playerIndex, ObjectID object, const Coord3D &position);
 	const std::vector<BeaconNotice> &beaconNotices() const { return m_beaconNotices; }
+	// Presentation only: an upgrade completed in ProductionUpdate (RW 0x8A2080 .. 0x8A223B).
+	// Consumed by the issuing player's HUD to display the completion message, play sounds, and emit radar event.
+	struct UpgradeCompleteNotice
+	{
+		std::uint32_t seq = 0;
+		int playerIndex = -1;
+		ObjectID producerID = INVALID_ID;
+		const UpgradeTemplate *upgrade = nullptr;
+		Coord3D position{ 0.0f, 0.0f, 0.0f };
+	};
+	static constexpr size_t kUpgradeCompleteNotices = 64;
+	void noteUpgradeComplete(int playerIndex, ObjectID producerID, const UpgradeTemplate *upgrade, const Coord3D &position);
+	const std::vector<UpgradeCompleteNotice> &upgradeCompleteNotices() const { return m_upgradeCompleteNotices; }
 	void noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex);
 	const std::vector<RadarEventNotice> &radarEventNotices() const { return m_radarEventNotices; }
 	// bumped when a logic-side radar input is written (an attack frame, a script or construction notice). The HUD reads those once per
@@ -601,6 +634,18 @@ public:
 	// and GameData UseBehindBuildingMarker are set (RW 0x47074D). Not hashed and not saved (no GameLogic xfer reads it): presentation only
 	void setShowBehindBuildingMarkers(bool on) { m_showBehindBuildingMarkers = on; }
 	bool getShowBehindBuildingMarkers() const { return m_showBehindBuildingMarkers; }
+	// PORT-43: TheGameLogic + 0x118, m_rankLevelLimit: constructor RW 0x6301DD and startNewGame's init helper RW 0x62A20D (RW 0x62A11A, called at
+	// RW 0x631555; GameLogic::reset RW 0x62D232 leaves +0x118 untouched) set 1000 (0x3E8); startNewGame's tail helper RW 0x6311ED (called at RW 0x6315A7)
+	// copies GlobalData + 0xE94 (GameData PowerLimit, row RW 0xC00C00, EconomySettings::powerLimit) into +0x118 at RW 0x631420 .. 0x631436 when RW 0x625456
+	// (isInSkirmishOrMultiplayerGame, Economy::isMultiplayerGame) is true; script action 279 PLAYER_SET_RANKLEVELLIMIT (RW 0x7CE020 -> RW 0x7BD1A8 ->
+	// RW 0x7BB04E) sets max(limit, 1); GameLogic::xfer transfers +0x118 at RW 0x630D6F .. 0x630D78 (skipped on XferCRC, RW 0x630ADF). Its sole non-xfer
+	// reader in game.dat (RW 0x6B350B inside TheLivingWorldLogic's RW 0x6B34EE) is unreachable dead code: RW 0x7827F6 only calls RW 0x6B34EE after
+	// RW 0x602E64(TheGameLogic) != 0, and RW 0x6B34FD .. 0x6B3504 re-tests pure RW 0x602E64(TheGameLogic) and takes RW 0x6B3512 (InitialMaxRingLevel)
+	static constexpr int kDefaultRankLevelLimit = 1000;
+	void initRankLevelLimit();
+	void setRankLevelLimit(int limit);
+	int getRankLevelLimit() const { return m_rankLevelLimit; }
+	bool isRankLevelLimitScripted() const { return m_rankLevelLimitScripted; }
 	// lane RULES-1: the game setup's rules (RotWK TheGameInfo RW 0xDE892C + 0x60; all -1 when the game has no rule block, Common/MpGameRules.h) and
 	// OpenBFME's Legendary Heroes factor (1 = off). Both are part of the state hash only when set, so a game without them keeps its hashes
 	void setGameRules(const GameRules &rules) { m_gameRules = rules; }
@@ -1017,6 +1062,8 @@ private:
 	std::unique_ptr<InvisibilityManager> m_invisibility; // lane STEALTH-1
 	std::unique_ptr<DOTManager> m_dot;                   // lane DECOMP-1
 	std::unique_ptr<TerrainTrees> m_trees;               // lane SPELL-3
+	std::unique_ptr<ThreatFinderManager> m_threatFinders; // PORT 17: RW 0xDE8888
+	std::unique_ptr<TaintManager> m_taint;               // lane TAINTAREA-1
 	std::unique_ptr<ScriptEngine> m_scriptEngine;        // lane SCRIPT-1
 	CastleTemplateStore m_castleTemplates;
 	std::set<std::string, std::less<>> m_notedStops;
@@ -1026,6 +1073,8 @@ private:
 	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
 	std::vector<BeaconNotice> m_beaconNotices; ///< lane CHAT-1: oldest first, at most kBeaconNotices
 	std::uint32_t m_beaconSeq = 0;
+	std::vector<UpgradeCompleteNotice> m_upgradeCompleteNotices;
+	std::uint32_t m_upgradeCompleteSeq = 0;
 	std::uint32_t m_radarEventSeq = 0;
 	std::uint32_t m_radarLogicWrites = 0; // see noteRadarLogicWrite
 	ObjectClientHooks *m_clientHooks = nullptr;
@@ -1092,11 +1141,14 @@ private:
 	int m_inertBit = -1, m_projectileBit = -1;     // the KindOf bits RW 0x68E31F tests (template + 0x110 bit 25, + 0x108 bit 25)
 	void partitionEnter(Object &obj);
 	void partitionLeave(Object &obj);
+	void resetRankLevelLimitFromEconomy();
 	unsigned long long m_creationsWithoutDispatch = 0;
 
 	UnsignedInt m_frame = 0;
 	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
 	bool m_showBehindBuildingMarkers = true; ///< lane OCCLUDE-1: RW GameLogic + 0x99
+	int m_rankLevelLimit = kDefaultRankLevelLimit; ///< PORT-43: RW GameLogic + 0x118 (m_rankLevelLimit)
+	bool m_rankLevelLimitScripted = false;         ///< PORT-43: set by PLAYER_SET_RANKLEVELLIMIT (RW 0x7BB04E)
 	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1
 	int m_legendaryHeroes = LegendaryHeroes::kOff; ///< lane RULES-1 (OpenBFME)
 	std::map<std::string, std::int32_t> m_buildableOverrides; ///< lane BFME2CAMP1: RW GameLogic + 0x10 (template name -> Buildable)

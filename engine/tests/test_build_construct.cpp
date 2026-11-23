@@ -468,7 +468,7 @@ struct SiteFx
 };
 } // namespace
 
-TEST_CASE("construction legality: the Dozer construct body refuses an overlapping and an off-map site without creating, paying or tasking (RW 0x88C2A5); a same-frame duplicate replaces the phantom")
+TEST_CASE("construction legality: the Dozer construct body refuses an overlapping and an off-map site without creating, paying or tasking (RW 0x88C2A5); a same-frame duplicate is refused at the first one's phantom")
 {
 	OPENBFME_REQUIRE_START(s);
 	std::string error;
@@ -495,16 +495,17 @@ TEST_CASE("construction legality: the Dozer construct body refuses an overlappin
 	CHECK(f.player->getMoney()->countMoney() == money);
 	CHECK(dozer->taskTarget() == INVALID_ID);
 	CHECK(commands.stats().refused == 2);
-	// the same legal site twice in one frame (lane FBSIM-1): the first order's structure is RotWK's phantom, out of the world (RW 0x88D0D8), so the second is legal
-	// too; the dozer's second construct cancels its pending build (RW 0x88C2C3), whose phantom goes with the refund (RW 0x88CFFE): one site, paid once
+	// the same legal site twice in one frame (lane FBSIM-1): the first order's structure is RotWK's phantom, out of the world (RW 0x88D0D8); lane BUILDCLEAR-1:
+	// the construct body's legality flags 0x49F carry 0x400 (RW 0x796F9E: the player's unplaced dozer structures, which createPhantomStructure RW 0x88D443 adds
+	// to), so the second order is refused (code 8) at the phantom: one site, paid once
 	f.g.live->commands().append(selectMsg(f.player->getPlayerIndex(), f.porter->getID()));
 	f.g.live->commands().append(dozerMsg(f.player->getPlayerIndex(), *f.barracks, f.site));
 	f.g.live->commands().append(dozerMsg(f.player->getPlayerIndex(), *f.barracks, f.site));
 	logic.runLogicFrame();
-	logic.runLogicFrame(); // the first phantom's destruction
+	logic.runLogicFrame();
 	CHECK(f.count("GondorBarracks") == 1);
-	CHECK(commands.stats().dozerBuilds == 2);
-	CHECK(commands.stats().refused == 2);
+	CHECK(commands.stats().dozerBuilds == 1);
+	CHECK(commands.stats().refused == 3);
 	CHECK(money - f.player->getMoney()->countMoney() == (std::uint32_t)BuildAssistant::calcCostToBuild(*f.barracks, f.player, f.porter, -1));
 	CHECK(dozer->taskTarget() != INVALID_ID);
 }

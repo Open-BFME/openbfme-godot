@@ -173,6 +173,18 @@ size_t HudInput::update()
 			gone.push_back(id);
 			continue;
 		}
+		// Retail GarrisonContain::addToContain (RW 0x87CFEB; branch RW 0x990E5F): a selected horde of the local player leaves the selection
+		// client-side when it enters a garrison/tunnel. The horde is marked UNSELECTABLE, and it leaves the world unless it holds the Ring.
+		// Match exactly that case (a horde, contained and UNSELECTABLE): a transport passenger or a horde member has its own selection rules,
+		// and a Ring holder is still deselected (the Ring only skips containLeaveWorld, not the selection change).
+		ContainModuleInterface *contain = o ? o->getContain() : nullptr;
+		if (o && o->getContainedBy() && contain && contain->getHordeContainInterface() && unselectable >= 0 &&
+			o->testStatus((unsigned)unselectable))
+		{
+			m_stream.prepend(MSG_REMOVE_FROM_SELECTED_GROUP).appendObjectID(id);
+			gone.push_back(id);
+			continue;
+		}
 		// An occupied plot hidden by Construction::constructOnPlot leaves the client selection, closing its command menu.
 		if (!o || o->isDestroyed() || (sold >= 0 && o->testStatus((unsigned)sold)) ||
 			(o->isDrawableHidden() &&
