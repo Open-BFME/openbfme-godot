@@ -739,7 +739,7 @@ and review counts describe those runs, not fixed counts for every build.
   ids for TeamFactory's post-process (S-4191).
 - **Object::xfer**: the object's fields (the crc's and what it leaves out), its ExperienceTracker, its ObjectWeapons (the weapon set
   the flags select, each Weapon, the FiringTracker), then retail's module loop (RW 0x697F28: a u16 count, per module its tag and a
-  block). The modules must be the object's own, in order (strict where retail skips). Version 4 adds the HUD help fields (the
+  block). The modules must be the object's own, in order (strict where retail skips). Version 5 adds the HUD help fields (the
   `TooltipUpgrade` labels and the campaign statistics own name / battles fought) when any is set; an ordinary object keeps version 2
   or 3, and an older snapshot loads them empty.
 - **Every module runtime class** outside the AI update family has an xfer of its own, declared with `OBFME_MODULE_XFER`; Object::xfer

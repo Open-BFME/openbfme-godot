@@ -45,6 +45,7 @@
 // value or hash order reaches any state; all logic floats go through SimMath / plain float arithmetic compiled without FMA contraction.
 
 #pragma once
+#include "Common/TextureSwap.h"
 
 #include "GameLogic/LivingWorld/LivingWorldBattleTags.h"
 #include "Common/ObserverEvent.h"
@@ -138,6 +139,7 @@ public:
 	// template, S-114, so the template answers exactly what the drawable would); the visibility change goes to the client
 	virtual bool showModule(Object &obj, const std::string &tag, bool visible, bool permanent) { (void)obj; (void)tag; (void)visible; (void)permanent; return false; }
 	// RW 0x672823 Drawable::showSubObject
+	virtual void upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled) { (void)obj;(void)swap;(void)enabled; }
 	virtual void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) { (void)obj; (void)name; (void)visible; (void)permanent; }
 	// lane STEALTH-2, RW 0x776F03 (StealthUpdate's disguise): the object's drawable is destroyed (TheGameClient vslot 0x74) and a new one of `tmpl` made
 	// (RW 0x6CFE8C) and bound (RW 0x625AA4) at the object's position and orientation with its model conditions, in `color` when `hasColor`

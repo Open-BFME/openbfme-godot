@@ -330,7 +330,15 @@ public:
 		bool inside = false;
 	};
 	static constexpr int MAX_TRIGGERS_IN = 7;
-	void updateTriggerAreaFlags();
+	// `pathCellChanged`: the AI's pathfinder updatePos of this transform change took a new position cell (RW 0x6926F6 -> 0x8E26B7 answered 1)
+	void updateTriggerAreaFlags(bool pathCellChanged);
+	// lane VISIONDEF-1: RW + 0x1C4 (BFME2 1.06 + 0x1C4, ObjectSetTriggerAreaFlagsForChangeInPosition.cpp m_averageGroundHeight), the ground reference of
+	// the vision height bonus (getVisionRange RW 0x68E43B / getShroudClearingRange RW 0x68E4E2: 1 + clamp((z - it) * VisionBonusPercentPerFoot)). The
+	// constructor clears it (RW 0x699A77); the first position change sets it to the object's own z while it is still 0 (reactToTransformChange RW
+	// 0x6935EC, BFME2 0x692D49); RW 0x69264D (BFME2 0x691EB1) samples the ring of VisionBonusTestSegments ground heights again only when the pathfinder
+	// gave the unit a new position cell. An object without an AI keeps the z of its first move
+	float visionGroundReference() const { return m_visionGroundRef; }
+	void updateVisionGroundReference();
 	// lane CASTLEAREA-1: RW 0x68B9E9 (from PolygonTrigger removal, RW 0x6263AF): every entry of `trigger` is cleared (no exit is reported), then RW 0x68B98E keeps
 	// the entries still inside with their entered / exited flags cleared
 	void removeTriggerEntries(int trigger);
@@ -485,12 +493,12 @@ public:
 	const std::string &getName() const { return m_name; }
 	// lane HOVER-1: the TooltipUpgrade behavior's help labels. Retail stores them on the Drawable (+0x348 / +0x34C,
 	// RW 0x6796DA / 0x674FAE); the port keeps them on the logic object so the client help can read them without a
-	// Drawable (S-810). They are derived from the active upgrade and are saved by Object::xfer version 4, not hashed.
+	// Drawable (S-810). They are derived from the active upgrade and are saved by Object::xfer version 5, not hashed.
 	const std::string &tooltipDisplayName() const { return m_tooltipDisplayName; }
 	const std::string &tooltipDescription() const { return m_tooltipDescription; }
 	void setTooltipDisplayName(const std::string &label) { m_tooltipDisplayName = label; }
 	void setTooltipDescription(const std::string &label) { m_tooltipDescription = label; }
-	// transient (not saved): Object::xfer version 4 restored the help fields, so TooltipUpgrade::xfer must keep them as saved
+	// transient (not saved): Object::xfer version 5 restored the help fields, so TooltipUpgrade::xfer must keep them as saved
 	bool helpFieldsRestored() const { return m_helpFieldsRestored; }
 	// lane HOVER-1: the object's own name / battle count from the campaign carry-over statistics block (Object +0x494 / +0x488;
 	// the help reads them, they are derived from the campaign record and not hashed: S-852)
@@ -633,7 +641,7 @@ private:
 	std::string m_tooltipDescription; ///< TooltipUpgrade's Description label (retail Drawable +0x34C; help only)
 	std::string m_ownName;            ///< campaign statistics +0x494 (the object's own name; help only)
 	int m_battlesFought = 0;          ///< campaign statistics +0x488 (TOOLTIP:BattlesFought; help only)
-	bool m_helpFieldsRestored = false; ///< transient: Object::xfer version 4 loaded the help fields (not saved or hashed)
+	bool m_helpFieldsRestored = false; ///< transient: Object::xfer version 5 loaded the help fields (not saved or hashed)
 	std::uint8_t m_scriptStatus = 0; ///< lane SCRIPT-2: RW + 0x457 (hashed when not zero)
 	bool m_scriptSelectable = false; ///< RW +0x454: ctor initializes from SELECTABLE; hash only deviations from the template-derived default
 	bool m_masked = false;           ///< RW + 0x459 bit 1 (maskObject; hashed when set)
@@ -648,6 +656,7 @@ private:
 	mutable std::unique_ptr<OwnGeometryCache> m_ownGeometry;
 	UnsignedInt m_enteredOrExitedFrame = 0;      ///< RW + 0x414
 	std::int32_t m_triggerCellX = 0, m_triggerCellY = 0; ///< RW + 0x418 / + 0x41C (the integer position of the last check)
+	float m_visionGroundRef = 0.0f;                      ///< RW + 0x1C4 (lane VISIONDEF-1, see visionGroundReference)
 
 	std::vector<std::unique_ptr<BehaviorModule>> m_modules; ///< helpers first, then the template's behaviors
 	std::vector<CollideModuleInterface *> m_collideModules; ///< lane UBER-2B: m_modules' collide interfaces, in order (rebuilt by buildModules / friend_replaceModule)

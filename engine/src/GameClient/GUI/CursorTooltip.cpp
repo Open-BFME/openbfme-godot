@@ -425,6 +425,10 @@ void ShellCursorTooltip::update(std::uint32_t nowMs, float windowW, float window
 		}
 	}
 	m_label = exists ? label : std::string();
+	if (label.empty())
+	{
+		text = m_windows.worldTooltip(); // lane HOVER-2: no window's label: the in-game mouse-over tool tip (RW 0x69F637, MouseoverTooltip.h)
+	}
 	m_tip.setTooltip(text, -1);
 	// the window's scale (the Apt window manager's dimensions, RW 0x782DF8 vslot 0x3C): window pixels per stage unit
 	AptStageMapping mapping;

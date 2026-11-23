@@ -3,6 +3,7 @@
 
 #include "Common/BfmeGame.h"
 #include "GameClient/InGameHud.h"
+#include "GameClient/MouseoverTooltip.h"
 #include "GameClient/BeaconClientUpdate.h"
 #include "Common/Audio/AudioEntryPoints.h"
 #include "GameLogic/BeaconCommands.h"
@@ -178,6 +179,11 @@ InGameHud::~InGameHud()
 		m_config.game.setScriptLocalView(nullptr); // lane BFME2CAMP1
 	}
 	m_config.game.drawables().destroyClientDrawable(m_rallyPointDrawable);
+	// lane HOVER-2 (review #404): the shell's window manager outlives a shell-hosted HUD; its world tool tip must not stay over the score screen and the menus
+	if (m_wm)
+	{
+		m_wm->setWorldTooltip(std::u16string());
+	}
 	// lane SPELL-2 (review r2): an open spell store is a screen of the window manager below: it goes first, without sending its pending purchases
 	m_store.reset();
 	if (m_palantirRef)
@@ -212,6 +218,9 @@ bool InGameHud::boot(std::string *error)
 	{
 		m_errors.push_back("rally marker: " + (settingsError.empty() ? std::string("GameData has no DownwindAngle") : settingsError));
 	}
+	// lane HOVER-2: GameData's DebugAI, which the mouse-over tool tip reads (absent: reported by the tool tip, S-7187)
+	m_debugAI = gameData.debugAI;
+	m_haveDebugAI = gameData.haveDebugAI;
 	// lane CHAT-1: the message lines' InGameUI rows (data\ini\ingameui.ini + language.ini's MessageFont)
 	{
 		InGameUIMessageSettings ms;
@@ -574,6 +583,7 @@ void InGameHud::update(double seconds)
 		}
 	}
 	part(m_updateParts.input);
+	updateMouseoverTooltip(); // lane HOVER-2: after the translators set this frame's mouse-over hint
 	// lane INPUT-1: the SPELL_STORE meta (the ` key): RW 0x71C6AF closes the open store, else opens it (the Palantir's powers button path)
 	while (m_spellToggleSeen < m_input->ui().spellStoreToggles())
 	{
@@ -805,6 +815,44 @@ bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
 // lane RADAR-1: the radar's events (Radar.h): the local player's attacked objects (RW 0x67B4B7), the events' end (RW 0x6D8E2B), then
 // W3DRadar::drawEvents (RW 0x44DE58) for the picture the device drew last (the events end in the radar's update, Radar::advanceClock) and the Palantir's pings; the window pixels go to the movie's stage units
 // (RW 0x6D5AD9: the Apt player's scale)
+// lane HOVER-2: RW 0x69F637's tool tip (MouseoverTooltip.h) for the object under the pointer; over the HUD, while scrolling or selecting, while a script
+// has the input off (DISABLE_INPUT: no pointer, InGameUI::applyScriptInput) and with no object the request is empty (INFERENCE S-7187: ZH's window manager
+// clears it on every mouse event before createMouseoverHint runs).
+// The object: ZH's Mouse::createStreamMessages appends MSG_RAW_MOUSE_POSITION in every client frame ("basic position messages are always created"), so
+// the selection translator's hover pick (RW 0x83CC13) follows an object that moves under a still pointer. The port posts the position only when the
+// pointer moves (S-137), so the tool tip picks again here each frame with the translator's rule (HudObjects::pickForHover; a dead object only when
+// ALWAYS_SELECTABLE)
+void InGameHud::updateMouseoverTooltip()
+{
+	InGameUI &ui = m_input->ui();
+	UnicodeString text;
+	if (m_pointerSeen && !m_modal && ui.getInputEnabled() && !ui.scriptMouseHidden() && !ui.isScrolling() && !ui.isSelecting() &&
+		!isOverGui(m_pointerX, m_pointerY))
+	{
+		GameLogic &logic = m_config.game.logic();
+		const Object *obj = HudObjects::pickForHover(m_input->context(), { m_pointerX, m_pointerY });
+		if (obj && HudObjects::isEffectivelyDead(*obj) && !obj->isKindOfName("ALWAYS_SELECTABLE"))
+		{
+			obj = nullptr;
+		}
+		if (obj)
+		{
+			MouseoverTooltip::Inputs in;
+			in.localPlayer = m_config.game.players().getLocalPlayer();
+			in.networkGame = ui.networkGame();
+			in.debugAI = m_debugAI;
+			in.haveDebugAI = m_haveDebugAI;
+			const ICoord2D pixel{ m_pointerX, m_pointerY };
+			in.groundUnderPointer = [this, &logic, pixel](Coord3D &out) { return m_config.view.screenToTerrain(pixel, logic, out); };
+			MouseoverTooltip::Result r = MouseoverTooltip::compose(*obj, logic, m_config.gameText, in);
+			text = r.text;
+			m_mouseoverUnported.insert(r.unported.begin(), r.unported.end());
+		}
+	}
+	m_mouseoverTooltip = text;
+	m_wm->setWorldTooltip(text);
+}
+
 void InGameHud::updateRadarEvents()
 {
 	// What a logic frame writes (an object's radar attack frame, the scripts' event notices) is read once per logic frame.
@@ -1581,6 +1629,14 @@ std::vector<std::string> InGameHud::stops() const
 	std::vector<std::string> out = m_input->stops();
 	out.push_back("[S-6101] player message log: BFME2 recovered six-entry message, positioning and fade routines ported; independent RotWK display-routine verification remains outstanding");
 	out.push_back(DrawablePick::stopLine()); // lane QA-1: the HUD's pick is the drawn-model ray test, not S-284's geometry volumes
+	for (const std::string &l : MouseoverTooltip::acceptanceStops()) // lane HOVER-2
+	{
+		out.push_back(l);
+	}
+	for (const std::string &u : m_mouseoverUnported)
+	{
+		out.push_back("[S-7187] met: " + u);
+	}
 	out.push_back("[S-1201] context commands (lane QA-1): a click with a builder on our rising structure is MSG_RESUME_CONSTRUCTION, on our damaged finished structure "
 				  "MSG_DO_REPAIR (CommandTranslator::evaluateContextCommand), by ZH ActionManager::canResumeConstructionOf / canRepairObject (a DOZER of the same player); "
 				  "RotWK's ActionManager checks and the order of its context checks are not read");
@@ -1590,7 +1646,7 @@ std::vector<std::string> InGameHud::stops() const
 				  "the look-at argument");
 	out.push_back("[S-4640] radius cursor (lane SPELL-4): InGameUI's RadiusCursorTemplate decal of a targeted spell-book or selected-unit ground power (RW 0x6A077A / 0x732DE7 / "
 				  "0x732926 / 0x73232B); handleRadiusCursor's radar pixel and shroud second pass are not ported (the view's terrain point), the spiral branch and "
-				  "the radius > 110 flag are not used, the cursor texture is composited by the terrain shader alongside selection decals (S-2522)");
+				  "the radius > 110 flag are not used; the cursor and resource overlays composite on terrain and upward opaque object faces (S-2522), a presentation extension with retail receiver parity unverified");
 	out.push_back(TerrainResourceFeedback::stopLine()); // lane OWNERFIX-2
 	out.push_back("[S-5032] placement ghost decal shadows (lane OWNERFIX-2): the ghost draws its model state's SHADOW_ALPHA_DECAL / SHADOW_ADDITIVE_DECAL "
 				  "(a well's / statue's area of effect) with the selection decals (lane PLACEDECAL-1) at ShadowOpacityPeak; an additive one is added (lane ECOCIRCLE-2); the "

@@ -183,13 +183,13 @@ const char kTooltipObjects[] =
 	"  End\n"
 	"  Behavior = TooltipUpgrade ModuleTag_TipA\n"
 	"    TriggeredBy = Upgrade_Barracks2\n"
-	"    DisplayName = Label A\n"
-	"    Description = Description A\n"
+	"    DisplayName = LabelA\n"
+	"    Description = DescriptionA\n"
 	"  End\n"
 	"  Behavior = TooltipUpgrade ModuleTag_TipB\n"
 	"    TriggeredBy = Upgrade_TipB\n"
-	"    DisplayName = Label B\n"
-	"    Description = Description B\n"
+	"    DisplayName = LabelB\n"
+	"    Description = DescriptionB\n"
 	"  End\n"
 	"End\n";
 } // namespace
@@ -407,7 +407,7 @@ TEST_CASE("save4b objects T1 / T2: a game's objects (made, changed, destroyed an
 	}
 }
 
-TEST_CASE("save4b: Object::xfer version 4 keeps the help-only fields (the TooltipUpgrade labels and the campaign statistics own name / battles) across a load")
+TEST_CASE("save4b: Object::xfer version 5 keeps the help-only fields (the TooltipUpgrade labels and the campaign statistics own name / battles) across a load")
 {
 	S4World saved(kObjects);
 	Object *soldier = saved.make("Soldier", saved.teamOf("Alice"));
@@ -434,7 +434,7 @@ TEST_CASE("save4b: Object::xfer version 4 keeps the help-only fields (the Toolti
 	CHECK(again == stream);
 }
 
-TEST_CASE("save4b: Object::xfer version 4 keeps the TooltipUpgrade labels the last applied upgrade wrote when the modules are in the opposite order")
+TEST_CASE("save4b: Object::xfer version 5 keeps the TooltipUpgrade labels the last applied upgrade wrote when the modules are in the opposite order")
 {
 	S4World saved(kTooltipObjects);
 	saved.activateUpgrades();
@@ -442,8 +442,8 @@ TEST_CASE("save4b: Object::xfer version 4 keeps the TooltipUpgrade labels the la
 	REQUIRE(unit);
 	unit->giveUpgrade("Upgrade_TipB");     // module B, applied first
 	unit->giveUpgrade("Upgrade_Barracks2"); // module A, applied last: its labels are the live pair
-	CHECK(unit->tooltipDisplayName() == "Label A");
-	CHECK(unit->tooltipDescription() == "Description A");
+	CHECK(unit->tooltipDisplayName() == "LabelA");
+	CHECK(unit->tooltipDescription() == "DescriptionA");
 	runFrames(*saved.logic, 1);
 	std::vector<std::uint8_t> stream;
 	saved.logic->gameState().saveBlocks(coreAndSave4b(), stream);
@@ -453,8 +453,8 @@ TEST_CASE("save4b: Object::xfer version 4 keeps the TooltipUpgrade labels the la
 	const Object *back = loaded.logic->findObjectByID(unit->getID());
 	REQUIRE(back);
 	// the live labels belong to the last applied upgrade, not to the last module in the file
-	CHECK(back->tooltipDisplayName() == "Label A");
-	CHECK(back->tooltipDescription() == "Description A");
+	CHECK(back->tooltipDisplayName() == "LabelA");
+	CHECK(back->tooltipDescription() == "DescriptionA");
 }
 
 TEST_CASE("save4b subsystem blocks round-trip with non-default values: combat, the sell list, the delayed experience grants, invisibility, damage over "
