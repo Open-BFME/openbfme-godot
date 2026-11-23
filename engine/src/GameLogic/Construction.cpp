@@ -405,7 +405,7 @@ bool Construction::placePhantomStructure(Object &dozer, Object &obj, bool isRebu
 		{
 			ConstructionSite::moveObjectsForConstruction(logic, what, *obj.getPosition(), obj.getOrientation(), *structureOwner);
 		}
-		// lane TREES1 (community #105): RW 0x684BCA is removeTreesForConstruction, with the structure's position, geometry and angle (RW 0x88D4F4 .. 0x88D533):
+		// lane TREES1 (community fork issue 105): RW 0x684BCA is removeTreesForConstruction, with the structure's position, geometry and angle (RW 0x88D4F4 .. 0x88D533):
 		// the trees, shrubs and props under it go
 		logic.trees().removeTreesForConstruction(*obj.getPosition(), ObjectGeometry::shapesOf(*what.getFinalOverride()), obj.getOrientation());
 	}
@@ -468,7 +468,24 @@ Object *Construction::buildObjectNow(GameLogic &logic, Object *builder, const Th
 		obj->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, false);
 		onStructureConstructionComplete(owner, builder, *obj, false);
 	}
-	obj->friend_onBuildComplete();
+	// lane PORT-117 (issue fork issue 301, P-57): RW 0x7979D4 .. 0x797A02. A KindOf HORDE object is completed WITHOUT its producer. RotWK reads the new object's
+	// template (Object + 4) KindOf word + 0x114 for bit 0x2000 (RW 0x7979DC: KindOf bit 109 = HORDE in the name table RW 0xDA0E68) and, when it is set, calls
+	// Object::setProducer(NULL) (RW 0x7979E8 -> RW 0x68B6A1), then Object::onBuildComplete (RW 0x7979EF -> RW 0x68D252), then tests the bit again
+	// (RW 0x7979F7) and gives the producer back with the same builder argument (RW 0x797A02). HordeContain's create slot 1 (RW 0x8718ED) makes the
+	// InitialPayload only for an object that has no producer (RW 0x871BAB .. 0x871BB3, else RW 0x871BBB -> RW 0x86A1FA), so a horde built here stands with
+	// all its members when this function returns. The port kept the producer set, the horde started empty and its banner carrier (RW 0x89ACE4, one member
+	// per IdleSpawnRate) filled it one soldier at a time: the Thrall Master's summon (RW 0x8B2302 calls this function, BuildAssistant slot 0x38).
+	// DONOR BFME2 0x003952D8 (Open-BFME-2 Code/GameEngine/Source/Common/System/BuildAssistant.cpp, buildObjectNow) has no such step: it is RotWK's own.
+	const bool horde = templateKindOf(logic, *obj->getTemplate(), "HORDE");
+	if (horde)
+	{
+		obj->setProducer(nullptr); // RW 0x7979E4 .. 0x7979E8
+	}
+	obj->friend_onBuildComplete(); // RW 0x7979EF
+	if (horde)
+	{
+		obj->setProducer(builder); // RW 0x7979FF .. 0x797A02: the builder argument as it came in (NULL leaves no producer)
+	}
 	return obj;
 }
 
@@ -494,5 +511,9 @@ std::vector<std::string> Construction::stopLines()
 		"filter row blocks nothing (RW's default filter at data + 0x40 was not read: inference); what keeps a dead structure in the world is its own die modules (KeepObjectDie)",
 		"[S-656] repair: MSG_DO_REPAIR sends the selected dozers to repair (DozerAIUpdate::repair, the heal of RW 0x88DC46, free); the dispatcher case of MSG_DO_REPAIR was not read, and the "
 		"caller that makes the owner pay a structure's own repair (GettingBuiltBehavior slot 4 without force: ceil(calcCostToBuild * PercentOfBuildCostToRebuild<state>), RW 0x856227) was not found",
+		// lane PORT-117 (issue fork issue 301): what buildObjectNow's HORDE step leaves open
+		"[S-7317] buildObjectNow (lane PORT-117): a KindOf HORDE object is completed without its producer (RW 0x7979D4 .. 0x797A02: ported, the horde's InitialPayload is made in the call, "
+		"RW 0x871BAB / 0x86A1FA); not ported: the banner carrier RotWK's HordeContain makes in that same call when the horde has no producer and its BannerCarrierMinLevel is 0 "
+		"(RW 0x8718F5 .. 0x87190E -> RW 0x870204): the port's carrier comes from HordeContain::bannerCheck on the horde's update (RW 0x8719E4, S-587), after the call",
 	};
 }
