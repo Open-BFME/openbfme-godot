@@ -273,13 +273,28 @@ void AptView3DViewers::draw(RID item, const Rect2 &rect, const AptCanvasOp &op, 
 		slot.black->set_size(size);
 		slot.white->set_size(size);
 	}
-	RenderingServer *rs = RenderingServer::get_singleton();
-	rs->canvas_item_set_copy_to_backbuffer(item, true, rect);
-	rs->canvas_item_set_material(item, slot.material->get_rid());
-	rs->canvas_item_add_texture_rect(item, rect, slot.black->get_texture()->get_rid());
-	slot.item = item; // a new item is visible: endBuild's syncVisibility hides it again while the model is faded out
-	slot.itemHidden = false;
+	RenderingServer::get_singleton()->canvas_item_set_material(item, slot.material->get_rid());
+	slot.item = item;
+	slot.rect = rect;
+	fillComposite(slot, true); // endBuild's syncVisibility empties it again while the model is faded out
 	pose(slot, now);
+}
+
+void AptView3DViewers::fillComposite(Slot &slot, bool drawn)
+{
+	// lane VIEW3DFADE-1 (review): a faded-out viewer's composite item is emptied (no draw command, no copy of the screen), not hidden: the player's
+	// item pool resets an item's commands, material and back-buffer copy when it hands it out again, so an emptied item carries nothing into its
+	// next use (a hidden one hid the clip it was reused for)
+	SubViewport *black = Object::cast_to<SubViewport>(ObjectDB::get_instance(slot.blackId)); // gone once the owner frees its children
+	drawn = drawn && black;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->canvas_item_clear(slot.item);
+	rs->canvas_item_set_copy_to_backbuffer(slot.item, drawn, drawn ? slot.rect : Rect2());
+	if (drawn)
+	{
+		rs->canvas_item_add_texture_rect(slot.item, slot.rect, black->get_texture()->get_rid());
+	}
+	slot.itemEmpty = !drawn;
 }
 
 void AptView3DViewers::endBuild()
@@ -299,13 +314,12 @@ void AptView3DViewers::syncVisibility(bool forceHidden)
 	for (auto &kv : m_slots)
 	{
 		Slot &slot = kv.second;
-		// lane VIEW3DFADE-1: a faded-out model renders neither scene, and its composite (a copy of the screen and a full-clip pass) is hidden: over a
+		// lane VIEW3DFADE-1: a faded-out model renders neither scene, and its composite (a copy of the screen and a full-clip pass) is emptied: over a
 		// model that draws nothing it would give back the screen behind it
 		const bool drawn = slot.used && !slot.failed && !slot.faded;
-		if (slot.used && slot.item.is_valid() && slot.itemHidden == drawn)
+		if (slot.used && !slot.failed && slot.item.is_valid() && slot.itemEmpty == drawn)
 		{
-			slot.itemHidden = !drawn;
-			RenderingServer::get_singleton()->canvas_item_set_visible(slot.item, drawn);
+			fillComposite(slot, drawn);
 		}
 		const SubViewport::UpdateMode mode = drawn && visible ? SubViewport::UPDATE_ALWAYS : SubViewport::UPDATE_DISABLED;
 		// Children can already be gone when the owner's destructor clears its retained canvas.

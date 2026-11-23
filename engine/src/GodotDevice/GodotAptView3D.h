@@ -87,10 +87,12 @@ private:
 		bool keepAspect = true;
 		bool used = false, failed = false;
 		Ref<ShaderMaterial> material;
-		RID item;                              // the canvas item the last draw composited into
-		bool faded = false, itemHidden = false; // lane VIEW3DFADE-1
+		RID item;                              // the canvas item the last draw composited into, over `rect`
+		Rect2 rect;
+		bool faded = false, itemEmpty = false; // lane VIEW3DFADE-1
 	};
 	bool create(Slot &slot, const AptCanvasOp &op);
+	void fillComposite(Slot &slot, bool drawn); // lane VIEW3DFADE-1: the composite's draw command and screen copy, or none
 	bool ownerVisible() const;
 	void pose(Slot &slot, double nowMs);
 	void release(Slot &slot);
