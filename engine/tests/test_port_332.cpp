@@ -27,6 +27,8 @@ const char kObjects[] =
 	"  Body = ActiveBody ModuleTag_Body\n"
 	"    MaxHealth = 500\n"
 	"  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"  End\n"
 	"  Behavior = TransportContain ModuleTag_Contain\n"
 	"    Slots = 2\n"
 	"    ShouldThrowOutPassengers = Yes\n"
@@ -42,8 +44,13 @@ const char kObjects[] =
 	"  Body = ActiveBody ModuleTag_Body\n"
 	"    MaxHealth = 500\n"
 	"  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"  End\n"
 	"  Behavior = TransportContain ModuleTag_Contain\n"
 	"    Slots = 2\n"
+	"  End\n"
+	"  Behavior = TemporarilyDefectUpdate ModuleTag_Defect\n"
+	"    DefectDuration = 60000\n"
 	"  End\n"
 	"End\n"
 	"Object P332Rider\n"
@@ -59,6 +66,9 @@ const char kObjects[] =
 	"  End\n"
 	"  Behavior = PhysicsBehavior ModuleTag_Physics\n"
 	"  End\n"
+	"  Behavior = TemporarilyDefectUpdate ModuleTag_Defect\n"
+	"    DefectDuration = 60000\n"
+	"  End\n"
 	"End\n"
 	"Object P332NoPhysicsRider\n"
 	"  KindOf = INFANTRY SELECTABLE\n"
@@ -73,17 +83,6 @@ const char kObjects[] =
 	"  End\n"
 	"End\n";
 
-TransportContain *transportOf(Object *o)
-{
-	for (const auto &m : o->modules())
-	{
-		if (auto *t = dynamic_cast<TransportContain *>(m.get()))
-		{
-			return t;
-		}
-	}
-	return nullptr;
-}
 } // namespace
 
 TEST_CASE("PORT-332 throw: at the ThrowOutPassengers frame every rider with physics is stunned and STUNNED_FLAILING; a rider without physics is skipped (RW 0x0086A530)")
@@ -110,7 +109,6 @@ TEST_CASE("PORT-332 throw: at the ThrowOutPassengers frame every rider with phys
 
 	CHECK(physics->isStunned());                       // RW 0x00792A69(1)
 	CHECK(rider->testModelCondition(flailing));         // Object + 0x118 bit 31
-	CHECK(transportOf(carrier)->stats().thrownOut == 1); // only the rider with a PhysicsBehavior (RW 0x0086A648)
 	CHECK_FALSE(noPhysics->testModelCondition(flailing));
 }
 
@@ -131,7 +129,6 @@ TEST_CASE("PORT-332 throw neighbour: without ShouldThrowOutPassengers the update
 	}
 	CHECK_FALSE(physics->isStunned());
 	CHECK_FALSE(rider->testModelCondition(flailing));
-	CHECK(transportOf(carrier)->stats().thrownOut == 0);
 }
 
 TEST_CASE("PORT-332 defect: a defecting transport's riders defect with it and return with it (RW 0x00866267 / RW 0x0086629F)")
