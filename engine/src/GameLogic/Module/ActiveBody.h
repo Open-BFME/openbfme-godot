@@ -20,9 +20,15 @@
 //     REALLYDAMAGED (2); damagedFraction * maxHealth >= health = DAMAGED (1); else PRISTINE (0).
 //   * which GlobalData fields +0xB4 / +0xB8 are is INFERENCE (the INI names UnitDamagedThreshold / UnitReallyDamagedThreshold; the offsets
 //     are not tied to the names): stop S-149.
-// Not ported: the transition times and RecoveryTime consumers, DodgePercent, the Grab* fields (rock throwing), the attribute modifiers, the
-// burning death behaviour, CheerRadius, the damage creation list: the fields are parsed and kept (the FX and OCL names unresolved: their
-// stores are not loaded, stop S-149); nothing acts on them yet.
+// RecoveryTime is read by attemptDamage exactly where RW 0x8C425D does and handed to the empty RW 0x9F3A3C (see scheduleRecovery below): retail keeps no
+// state from it, and neither does the port.
+// Not ported: the transition times' consumers, DodgePercent, the Grab* fields (rock throwing), the attribute modifiers, the
+// burning death behaviour, CheerRadius: the fields are parsed and kept (the FX names unresolved: the store is the client's, stop S-149);
+// nothing acts on them yet.
+// DamageCreationList (PORT-45): the parser RW 0x8C3F1F keeps the three tokens as a 12-byte record {OCL, FXTrigger index, death-side index};
+// doDamageFX creates the record whose FXTrigger matched the hit's and whose death side is 0 (RW 0x8C2F75 .. 0x8C2FB8). The other reader,
+// the structure's damage-side branch (RW 0x8C2EBD .. 0x8C2EEF, death sides 1-4 for FRONT / RIGHT / BACK / LEFT destroyed), has no ported
+// equivalent because the damage split over a structure's sides is not ported: stop S-149.
 
 #pragma once
 
@@ -55,7 +61,18 @@ public:
 	float m_grabDamage = 200.0f;
 	Coord2D m_grabOffset;
 	bool m_useDefaultDamageSettings = true;
-	std::vector<std::vector<std::string>> m_damageCreationList; ///< one entry per `DamageCreationList = OCL DamageType [...]` line
+	// PORT-45: RW parser 0x8C3F1F appends one 12-byte record to the vector at module data +0x58: the ObjectCreationList
+	// (RW 0x73A368 lookup, NULL for NONE / an unknown name), the damage index (scanIndexList over RW 0xDB2AF4: 0 NONE,
+	// 1 CATAPULT_ROCK, 2 TREBUCHET_ROCK) and the death-side index (scanIndexList over RW 0xDB2B04: 0 NONE, 1 FRONT_DESTROYED,
+	// 2 RIGHT_DESTROYED, 3 BACK_DESTROYED, 4 LEFT_DESTROYED). The second token is an FXTrigger (the Weapon field's list,
+	// RW 0xDA14FC), not a DamageType.
+	struct DamageCreation
+	{
+		std::string m_oclName;               ///< record +0x00 as the name; NULL (NONE / unknown) is an empty name
+		unsigned m_fxTrigger = 0;            ///< record +0x04, compared with DamageInfo input's FXTrigger
+		unsigned m_deathSide = 0;            ///< record +0x08, the damage stage the side branch (RW 0x8C2EC8) looks for
+	};
+	std::vector<DamageCreation> m_damageCreationList; ///< one entry per `DamageCreationList` line, in file order
 	std::string m_healingBuffFx;
 	bool m_healingBuffFxSet = false; ///< lane OWNERFIX-1: a HealingBuffFx row was read (else the GameData default, RW 0x8C373F)
 	std::string m_damagedAttributeModifier;
