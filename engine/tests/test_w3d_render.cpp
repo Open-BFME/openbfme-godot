@@ -372,7 +372,7 @@ TEST_CASE("render data: two-bone skin weights and the second-bone streams (hand-
 	CHECK_THROWS_AS(Deform_Position(r, 1, tiny), std::out_of_range);
 }
 
-TEST_CASE("render data: skin weights must sum to 100, a second bone needs its streams, rigid meshes carry no influences")
+TEST_CASE("render data: skin weights must sum to 100, a second bone needs its streams, rigid meshes ignore exporter influences")
 {
 	std::string error;
 	MeshRenderData r;
@@ -390,6 +390,11 @@ TEST_CASE("render data: skin weights must sum to 100, a second bone needs its st
 
 	SynthMesh rigid = quad();
 	rigid.Influences = { W3dVertInfStruct{ 1, 0, 100, 0 }, W3dVertInfStruct{ 1, 0, 100, 0 }, W3dVertInfStruct{ 1, 0, 100, 0 }, W3dVertInfStruct{ 1, 0, 100, 0 } };
+	REQUIRE_MESSAGE(buildFrom(rigid, r, error), error);
+	CHECK(r.IgnoredInfluences == 4);
+	CHECK_FALSE(r.Skin);
+	rigid.Vertices2 = rigid.Vertices;
+	rigid.Normals2 = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
 	CHECK_FALSE(buildFrom(rigid, r, error));
 	CHECK(error.find("not a skin") != std::string::npos);
 }

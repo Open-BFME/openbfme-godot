@@ -45,6 +45,7 @@
 // value or hash order reaches any state; all logic floats go through SimMath / plain float arithmetic compiled without FMA contraction.
 
 #pragma once
+#include "Common/TextureSwap.h"
 
 #include "GameLogic/LivingWorld/LivingWorldBattleTags.h"
 #include "Common/ObserverEvent.h"
@@ -90,6 +91,7 @@ class UpdateModule;
 class ObjectWeapons; // lane PERF-WS
 class TerrainLogic;
 class UpgradeTypeTable;
+class UpgradeTemplate;
 class AIWorld;
 class Economy;
 class CombatState;
@@ -137,6 +139,7 @@ public:
 	// template, S-114, so the template answers exactly what the drawable would); the visibility change goes to the client
 	virtual bool showModule(Object &obj, const std::string &tag, bool visible, bool permanent) { (void)obj; (void)tag; (void)visible; (void)permanent; return false; }
 	// RW 0x672823 Drawable::showSubObject
+	virtual void upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled) { (void)obj;(void)swap;(void)enabled; }
 	virtual void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) { (void)obj; (void)name; (void)visible; (void)permanent; }
 	// lane STEALTH-2, RW 0x776F03 (StealthUpdate's disguise): the object's drawable is destroyed (TheGameClient vslot 0x74) and a new one of `tmpl` made
 	// (RW 0x6CFE8C) and bound (RW 0x625AA4) at the object's position and orientation with its model conditions, in `color` when `hasColor`
@@ -602,6 +605,19 @@ public:
 	static constexpr size_t kBeaconNotices = 64;
 	void noteBeacon(BeaconNotice::Kind kind, int playerIndex, ObjectID object, const Coord3D &position);
 	const std::vector<BeaconNotice> &beaconNotices() const { return m_beaconNotices; }
+	// Presentation only: an upgrade completed in ProductionUpdate (RW 0x8A2080 .. 0x8A223B).
+	// Consumed by the issuing player's HUD to display the completion message, play sounds, and emit radar event.
+	struct UpgradeCompleteNotice
+	{
+		std::uint32_t seq = 0;
+		int playerIndex = -1;
+		ObjectID producerID = INVALID_ID;
+		const UpgradeTemplate *upgrade = nullptr;
+		Coord3D position{ 0.0f, 0.0f, 0.0f };
+	};
+	static constexpr size_t kUpgradeCompleteNotices = 64;
+	void noteUpgradeComplete(int playerIndex, ObjectID producerID, const UpgradeTemplate *upgrade, const Coord3D &position);
+	const std::vector<UpgradeCompleteNotice> &upgradeCompleteNotices() const { return m_upgradeCompleteNotices; }
 	void noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex);
 	const std::vector<RadarEventNotice> &radarEventNotices() const { return m_radarEventNotices; }
 	// bumped when a logic-side radar input is written (an attack frame, a script or construction notice). The HUD reads those once per
@@ -1059,6 +1075,8 @@ private:
 	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
 	std::vector<BeaconNotice> m_beaconNotices; ///< lane CHAT-1: oldest first, at most kBeaconNotices
 	std::uint32_t m_beaconSeq = 0;
+	std::vector<UpgradeCompleteNotice> m_upgradeCompleteNotices;
+	std::uint32_t m_upgradeCompleteSeq = 0;
 	std::uint32_t m_radarEventSeq = 0;
 	std::uint32_t m_radarLogicWrites = 0; // see noteRadarLogicWrite
 	ObjectClientHooks *m_clientHooks = nullptr;

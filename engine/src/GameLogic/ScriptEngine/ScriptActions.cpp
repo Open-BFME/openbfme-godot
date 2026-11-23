@@ -17,6 +17,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
@@ -34,6 +35,16 @@ const ScriptParameter &param(const ScriptActionRec &a, size_t i)
 {
 	static const ScriptParameter kEmpty;
 	return i < a.params.size() ? a.params[i] : kEmpty;
+}
+
+// RW adds 32-bit registers (add): two's complement wrap-around, as PlayerScience's wrapAdd. The sum is computed on uint32_t and its bits moved
+// to int32_t (memcpy), so an overflow is the retail result and never C++ signed overflow (#342 review).
+std::int32_t wrapAdd(std::int32_t a, std::int32_t b)
+{
+	const std::uint32_t u = (std::uint32_t)a + (std::uint32_t)b;
+	std::int32_t r;
+	std::memcpy(&r, &u, sizeof r);
+	return r;
 }
 
 int ordinal(const char *name)
@@ -254,12 +265,44 @@ void createOnTeamAtWaypoint(ScriptEngine &engine, const std::string &name, const
 		engine.note("***WARNING: Team not found:*** " + teamName);
 		return;
 	}
-	const Waypoint *wp = logic.terrain() ? logic.terrain()->findWaypointByName(waypointName) : nullptr;
-	if (!wp)
+	Coord3D spawnPos{ 0.0f, 0.0f, 0.0f };
+	if (const Waypoint *wp = logic.terrain() ? logic.terrain()->findWaypointByName(waypointName) : nullptr)
 	{
-		// RW 0x7C5C6C .. 0x7C5CD5: a waypoint name that is an object type places at the nearest such object (not ported)
-		engine.note("***WARNING: Waypoint not found (the object-type waypoint form is not ported):*** " + waypointName);
-		return;
+		spawnPos = wp->location;
+	}
+	else
+	{
+		// RW 0x7C5C36 .. 0x7C5CD5: when waypointName is not a waypoint, resolve it as a ThingTemplate (RW 0x6D1305) and find the closest
+		// equivalent object (filter RW 0xC3603C -> RW 0x66114D -> RW 0x73D5C2) to Team::getApproximatePosition (RW 0x7A0ECD) within 1e6 (FROM_CENTER_2D, RW 0xA39090).
+		Object *atObj = nullptr;
+		if (const ThingTemplate *atTmpl = logic.things().findTemplate(waypointName))
+		{
+			Coord3D centre{ 0.0f, 0.0f, 0.0f };
+			int n = 0;
+			for (Object *m : ScriptConditions::members(*team))
+			{
+				centre.x = SimMath::sseAdd(centre.x, m->getPosition()->x);
+				centre.y = SimMath::sseAdd(centre.y, m->getPosition()->y);
+				centre.z = SimMath::sseAdd(centre.z, m->getPosition()->z);
+				++n;
+			}
+			if (n > 0)
+			{
+				const float inv = SimMath::sseDiv(1.0f, SimMath::sseFromInt32(n));
+				centre.x = SimMath::sseMul(inv, centre.x);
+				centre.y = SimMath::sseMul(inv, centre.y);
+				centre.z = SimMath::sseMul(inv, centre.z);
+			}
+			auto typed = [atTmpl](Object &o) { return ScriptConditions::equivalentTemplates(o.getTemplate(), atTmpl); };
+			PartitionFilterFn<decltype(typed)> fTyped(typed);
+			atObj = logic.partition().getClosestObject(centre, 1000000.0f, FROM_CENTER_2D, { &fTyped });
+		}
+		if (!atObj)
+		{
+			engine.note("***WARNING: Waypoint/Object type not found:*** " + waypointName);
+			return;
+		}
+		spawnPos = *atObj->getPosition();
 	}
 	const ThingTemplate *tt = logic.things().findTemplate(templateName);
 	if (!tt)
@@ -274,7 +317,7 @@ void createOnTeamAtWaypoint(ScriptEngine &engine, const std::string &name, const
 	}
 	// the name goes on before the object enters the cache (RW 0x7C5D30: + 0x88, then RW 0x60A1D5); the host makes the full object (ZH
 	// ScriptActions::doCreateObject: newObject, position, pathfinder registration)
-	Object *obj = engine.host()->createObject(*tt, *team, wp->location, 0.0f);
+	Object *obj = engine.host()->createObject(*tt, *team, spawnPos, 0.0f);
 	if (obj)
 	{
 		obj->friend_onBuildComplete(); // RW 0x7C5B3B: onBuildComplete (RW 0x68D252) after the position
@@ -440,7 +483,7 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		const int delta = param(a, 1).intValue;
 		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
 		{
-			p->science().setRankLevel(p->science().getRankLevel() + delta);
+			p->science().setRankLevel(wrapAdd(p->science().getRankLevel(), delta)); // RW add: wraps
 			p->science().setScalarBaseRank(p->science().getRankLevel()); // RW 0x71C311 (+0x18 = +0x14)
 		}
 		return;
@@ -487,7 +530,7 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		engine.objectListAdd(param(a, 0).stringValue, param(a, 1).stringValue, name == "OBJECTLIST_ADDOBJECTTYPE");
 		return;
 	}
-	if (name == "CREATE_NAMED_ON_TEAM_AT_WAYPOINT")
+	if (name == "CREATE_NAMED_ON_TEAM_AT_WAYPOINT" || name == "CREATE_NAMED_ON_TEAM_AT_OBJECTTYPE") // RW 0x7CBD6F -> RW 0x7C5B3B
 	{
 		createOnTeamAtWaypoint(engine, param(a, 0).stringValue, param(a, 1).stringValue, param(a, 2).stringValue, param(a, 3).stringValue);
 		return;
