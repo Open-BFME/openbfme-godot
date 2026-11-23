@@ -385,6 +385,33 @@ TEST_CASE("save4b objects T1 / T2: a game's objects (made, changed, destroyed an
 	}
 }
 
+TEST_CASE("save4b: Object::xfer version 4 keeps the help-only fields (the TooltipUpgrade labels and the campaign statistics own name / battles) across a load")
+{
+	S4World saved(kObjects);
+	Object *soldier = saved.make("Soldier", saved.teamOf("Alice"));
+	REQUIRE(soldier);
+	soldier->setTooltipDisplayName("Display");
+	soldier->setTooltipDescription("Description");
+	soldier->setOwnName("Veteran");
+	soldier->setBattlesFought(10);
+	runFrames(*saved.logic, 1);
+	std::vector<std::uint8_t> stream;
+	saved.activateUpgrades();
+	saved.logic->gameState().saveBlocks(coreAndSave4b(), stream);
+	S4World loaded(kObjects);
+	loaded.activateUpgrades();
+	loaded.logic->gameState().loadBlocks(coreAndSave4b(), stream);
+	const Object *back = loaded.logic->findObjectByID(soldier->getID());
+	REQUIRE(back);
+	CHECK(back->tooltipDisplayName() == "Display");
+	CHECK(back->tooltipDescription() == "Description");
+	CHECK(back->ownName() == "Veteran");
+	CHECK(back->battlesFought() == 10);
+	std::vector<std::uint8_t> again;
+	loaded.logic->gameState().saveBlocks(coreAndSave4b(), again);
+	CHECK(again == stream);
+}
+
 TEST_CASE("save4b subsystem blocks round-trip with non-default values: combat, the sell list, the delayed experience grants, invisibility, damage over "
 		  "time each load into the same START's game with their section's hash and their state, and save the same bytes")
 {

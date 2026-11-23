@@ -243,14 +243,15 @@ TEST_CASE("bfme2camp1 CampaignCarryover: the statistics help fields survive the 
 {
 	CampaignCarryover::State st = CampaignCarryover::beginCampaign({ "ElvenGlorfindel" });
 	REQUIRE(st.records.size() == 1);
-	st.records[0].battlesFought = 4;
+	st.records[0].battlesFought = 10; // above 9: the count is decimal even though the rest of the record is hex
 	st.records[0].ownName = "Glorfindel";
 	const std::string text = st.serialize();
+	CHECK(text.find("|10|") != std::string::npos);
 	CampaignCarryover::State out;
 	std::string error;
 	REQUIRE_MESSAGE(CampaignCarryover::State::parse(text, out, &error), error);
 	REQUIRE(out.records.size() == 1);
-	CHECK(out.records[0].battlesFought == 4);
+	CHECK(out.records[0].battlesFought == 10);
 	CHECK(out.records[0].ownName == "Glorfindel");
 	CHECK(out == st);
 	// an older line without the optional suffix still parses (zero stats)

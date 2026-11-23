@@ -186,7 +186,7 @@ bool State::operator==(const State &o) const
 }
 
 // one line per field, names and floats exact (the float's bits in hex); a record "record <list> <name>|<experience>|<rank>|<mask words>|<quantity>
-// [|<battles>|<own name>]" (the bracketed part only when the statistics help fields are set)
+// [|<battles>|<own name>]" (the bracketed part only when the statistics help fields are set; the battles count is decimal, the other numbers hex)
 std::string State::serialize() const
 {
 	std::ostringstream s;
@@ -212,7 +212,9 @@ std::string State::serialize() const
 			s << " " << r.templateName;
 			if (r.battlesFought != 0 || !r.ownName.empty())
 			{
-				s << "|" << r.battlesFought << "|" << r.ownName;
+				// the stream is still std::hex: the battles count is written in base 10, as parse() reads it (a count of 10 used to
+				// go out as "a" and fail to load; keep the rest of the record in hex)
+				s << "|" << std::to_string(r.battlesFought) << "|" << r.ownName;
 			}
 			s << "\n";
 		}
