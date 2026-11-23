@@ -298,8 +298,7 @@ TEST_CASE("shroud objects: the status of an object for a player (RW 0xB4E890) an
 	CHECK(f.shroud.getCellStatus(alice, 2, 2) == CELLSHROUD_FOGGED);
 }
 
-TEST_CASE("shroud objects (PORTERFOG-1): a contain's world exit keeps the record and only stops the look (RW 0x68C18F -> 0xB4E2A0, RW 0x694A45); the "
-		  "entry keeps it (RW 0x68E31F); the destructor frees it out of the world (RW 0x69A8BC -> 0xB4F510); no record answers CLEAR (RW 0x68D8F7)")
+TEST_CASE("shroud objects (PORTERFOG-1): a contain's world exit keeps the record and only stops the look (RW 0x68C18F -> 0xB4E2A0, RW 0x694A45); the entry keeps it (RW 0x68E31F); the destructor frees it out of the world (RW 0x69A8BC -> 0xB4F510); no record answers CLEAR (RW 0x68D8F7)")
 {
 	Fx f;
 	const int alice = f.idx("Alice"), bob = f.idx("Bob");
@@ -799,7 +798,7 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 }
 
 // lane SPELLFIX-1: the rule is every edition's: the ThingTemplate ctor's ShroudClearingRange -1 (RW 0x73FB7A, the constant RW 0xBD19DC) and the Object ctor's
-// fallback to VisionRange (RW 0x69990F: RW 0x699DE2 .. 0x699DF9); BFME2 decomp ObjectConstructor.cpp:549-551; BFME1 Object::initObject (community PR #36)
+// fallback to VisionRange (RW 0x69990F: RW 0x699DE2 .. 0x699DF9); BFME2 decomp ObjectConstructor.cpp:549-551; BFME1 Object::initObject (community PR fork issue 36)
 TEST_CASE("shroud objects: an omitted clearing range defaults to VisionRange in every edition (RW 0x73FB7A / 0x69990F); an explicit 0 stays blind")
 {
 	const char *objects = "Object Keep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n"
@@ -815,6 +814,33 @@ TEST_CASE("shroud objects: an omitted clearing range defaults to VisionRange in 
 	CHECK(bfme1.get("Keep")->bfme1Data());
 	CHECK(ShroudManager::templateVision(*bfme1.get("Keep")).shroudClearingRange == 100.0f); // Open-BFME-1 Object::initObject
 	CHECK(ShroudManager::templateVision(*bfme1.get("BlindKeep")).shroudClearingRange == 0.0f);
+}
+
+// owner 2026-11-11 (P-69): retail writes VisionBonusPercentPerFoot on 529 objects and never VisionBonusTestSegments, so the rows it leaves out must be
+// the ThingTemplate ctor's (RW 0x73FF17 / 0x73FF57 / 0x740027 / 0x74002F), not zero: with 0 segments the ground reference was 0 and the bonus followed the
+// absolute height of the map
+TEST_CASE("shroud objects: the vision bonus rows a template leaves out are the ctor's: 8 segments, radius 100, max 50%, min -50% (RW 0x73FF17 .. 0x74002F)")
+{
+	const char *objects = "Object Wildman\n KindOf = INFANTRY\n ShroudClearingRange = 300\n VisionRange = 200\n MaxVisionBonusPercent = 300%\n"
+		" VisionBonusTestRadius = 200\n VisionBonusPercentPerFoot = 2.0%\n Geometry = CYLINDER\n GeometryMajorRadius = 5\nEnd\n"
+		"Object Bare\n KindOf = INFANTRY\n VisionRange = 200\n VisionBonusPercentPerFoot = 1%\n Geometry = CYLINDER\n GeometryMajorRadius = 5\nEnd\n"
+		"Object Written\n KindOf = INFANTRY\n VisionRange = 200\n VisionBonusPercentPerFoot = 1%\n VisionBonusTestSegments = 4\n MinVisionBonusPercent = -25%\n"
+		" Geometry = CYLINDER\n GeometryMajorRadius = 5\nEnd\n";
+	objtest::World w;
+	REQUIRE(w.load(objects).empty());
+	const ShroudManager::TemplateVision wild = ShroudManager::templateVision(*w.get("Wildman"));
+	CHECK(wild.bonusTestSegments == 8);
+	CHECK(wild.bonusTestRadius == 200.0f);
+	CHECK(wild.maxBonus == 3.0f);
+	CHECK(wild.minBonus == -0.5f);
+	const ShroudManager::TemplateVision bare = ShroudManager::templateVision(*w.get("Bare"));
+	CHECK(bare.bonusTestSegments == 8);
+	CHECK(bare.bonusTestRadius == 100.0f);
+	CHECK(bare.maxBonus == 0.5f);
+	CHECK(bare.minBonus == -0.5f);
+	const ShroudManager::TemplateVision written = ShroudManager::templateVision(*w.get("Written"));
+	CHECK(written.bonusTestSegments == 4);
+	CHECK(written.minBonus == -0.25f);
 }
 
 TEST_CASE("shroud objects: a GeometryOffset with a blank after the colon parses like retail's colon sub-tokens (RotWK mumakilpen.ini `X: -10.0`)")
