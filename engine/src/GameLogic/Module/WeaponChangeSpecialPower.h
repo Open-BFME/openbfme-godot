@@ -15,7 +15,8 @@
 //     not 0, then disabled type 4 until now + ToggleOnSleepFrames (RW 0x6907F1) when the frames are > 0, then the special model condition 0x149
 //     for ToggleOnSleepFrames frames (RW 0x68B581); a horde repeats each on its members. Turned off: the ToggleOff modifier and the disabled frames
 //     the same way with the Off fields, no special model condition. Then the SpecialPowerModule base (RW 0x8980A3).
-//   * the target / location forms are the base class's (the button has no target).
+//   * the target / location forms (doSpecialPowerAtObject RW 0x8C82E2, doSpecialPowerAtLocation RW 0x8C82EE) forward the options to
+//     doSpecialPower and ignore the target (overrides below).
 
 #pragma once
 

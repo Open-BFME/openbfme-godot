@@ -135,6 +135,9 @@ starttest::Shared *sharedWithConfig(PathfindConfig &config)
 	{
 		return nullptr;
 	}
+	// the checks of OPENBFME_REQUIRE_START: with the install variables set but no archive mounted, fs is null and the mount's error is the report (#213)
+	REQUIRE_MESSAGE(s->mount->fs != nullptr, s->mount->error);
+	REQUIRE_MESSAGE(s->world != nullptr, s->error);
 	std::string err;
 	REQUIRE_MESSAGE(PathfindConfigLoader::load(*s->mount->fs, config, &err), err);
 	return s;
