@@ -26,10 +26,9 @@
 //   * computeAerialPath (RW 0x778413, "computeAerialPath"): the control points (a point behind the flyer, the flyer, the goal, a terminal point beyond the
 //     goal, see the .cpp), then up to five corrective points where the sampled path hits something.
 //
-// NOT PORTED / INFERENCE (stop S-4041, AerialPathfinder::stopLines): the no-fly zones (the map INI block AerialPathfindNoFlyZone is a recording stub: the list is
-// empty, RW 0x777E54 then answers 0; no retail map defines one); the would-collide
-// filter of the separation tests the 2D footprints (BuildPlacement::footprintsCollide) because the shape overlap test RW 0xAD2CE0 is not ported (S-1020);
-// the x87 parts (the probe's products, the terminal radius) run through the NumericState PC24 operations (S-081).
+// NOT PORTED / INFERENCE (stops S-4041 and S-7326, AerialPathfinder::stopLines): the no-fly zones (S-7326: the map INI block AerialPathfindNoFlyZone is a
+// recording stub, the list is empty, RW 0x777E54 answers 0; no retail map defines one) and the x87 / CRT parity of the terminal search (S-081). The separation's
+// would-collide filter is RW 0x67C5F3 / 0x66139C: the two 3D shape lists through RW 0xAD2CE0 (NotifyCrushModules::geometriesOverlap), not the 2D footprints.
 //
 // Determinism: binary32 SSE operations through SimMath in the retail order, the PC24 sqrt where retail uses fsqrt, no allocation per evaluation.
 
