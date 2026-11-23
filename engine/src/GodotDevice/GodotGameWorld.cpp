@@ -794,6 +794,8 @@ void GameWorld::clear_scene()
 	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset(); // the objects (and through them the drawables) first
 	m_blobSpecs.clear(); // lane BLOBSHADOW-1 (review): keyed by template, module and state addresses, which the next map's data may reuse
+	m_decalSpecs.clear(); // lane DRAWDECAL-1: the same keys
+	m_decalShadows.clear();
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
 	for (uint32_t id = 0; id < m_views.size(); ++id) remove_view(id);
@@ -2448,6 +2450,7 @@ void GameWorld::refresh_views(double deltaMs)
 		W3D_Set_Occlusion(occlusionOn, m_occlusionColors);
 	}
 	update_blob_shadows(); // lane BLOBSHADOW-1: the drawables' SHADOW_DECAL blobs (client only)
+	update_decal_shadows(); // lane DRAWDECAL-1: their alpha / additive decal shadows, for the HUD
 	const double ts = nowMs();
 	refresh_streaks(true);
 	m_lastStreakMs = timing::elapsedMs(ts);

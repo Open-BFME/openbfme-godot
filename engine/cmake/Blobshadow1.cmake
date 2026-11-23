@@ -11,4 +11,5 @@ set(OPENBFME_BLOBSHADOW1_DEVICE_SOURCES
 set(OPENBFME_BLOBSHADOW1_TESTS
     tests/test_blobshadow1.cpp
     tests/test_blobshadow2.cpp
+    tests/test_drawdecal1.cpp
 )

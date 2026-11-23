@@ -22,6 +22,7 @@ class ThingTemplate;
 struct RenderObjPrototype;
 struct ModelConditionInfo;
 class W3DModelDrawModuleData;
+struct SelectionDecal;
 
 namespace BlobShadow
 {
@@ -69,4 +70,24 @@ bool quad(const Spec &spec, float x, float y, float angle, float extentX, float 
 // the hierarchy's bind pose (DrawablePick::bindPoseBounds; the HLOD's own box, its hidden meshes and collision boxes are not read) and the drawable's
 // instance scale is not applied. False (both 0: no blob) for a model without triangles
 bool modelExtent(const RenderObjPrototype *model, float &extentX, float &extentY);
+
+// Lane DRAWDECAL-1: a drawable's alpha or additive decal shadow (a catapult shot's glow, the Eye's and the crows' eye, a lamp's light, Sting's glow,
+// the in-game markers). The drawables' shadow list draws every decal type through the same projection as the blobs (BFME2 renderShadows mask
+// 0x2c61 -> rva0010C841): the LOD gate (drawnAtLOD), ShadowMaxHeight (belowMaxHeight; Shadow + 0x64, the terrain-only flag that skips it, is set
+// only for the addDecal list's claim decals, RW 0x50C792) and the offsets are the blobs'. The device draws them with the selection decals' shaders,
+// as the placement ghost's (PLACEDECAL-1, S-5032): SHADOW_ALPHA_DECAL 0x20, SHADOW_ADDITIVE_DECAL 0x40, their _DYNAMIC forms 0x400 / 0x800 and
+// RotWK's 0x10000 (refused by the grid with its error).
+constexpr int kDecalStyles = 0x10C60;
+struct DecalSpec : Spec
+{
+	int type = 0;                ///< the decal style bits (type & kDecalStyles)
+	unsigned opacityPeak = 0xFF; ///< ShadowOpacityPeak: the diffuse's alpha (DecalShadowColor)
+};
+// The drawable entry's alpha / additive decal shadow, from its model state's shadow when the state names one, else from the template's fields;
+// false when it has none (another type, ShadowForceDisable, no template)
+bool resolveDecal(const ThingTemplate *object, const W3DModelDrawModuleData *module, const ModelConditionInfo *state, DecalSpec &out);
+// The decal of `spec` for a drawable at (x, y, z) facing `angle` (the shadow turns with its drawable, + 0x30 = 1, RW 0x4C4F53), as the placement
+// ghost's: centre DecalShadowCentre, white at ShadowOpacityPeak (DecalShadowColor). False with a zero size (rva0010C841 draws nothing; no retail
+// row has an alpha or additive decal without its size, so the model's box is not taken here). INFERENCE (S-5032): the _DYNAMIC fade is not run
+bool decal(const DecalSpec &spec, float x, float y, float z, float angle, SelectionDecal &out);
 } // namespace BlobShadow

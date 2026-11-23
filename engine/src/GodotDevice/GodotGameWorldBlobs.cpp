@@ -30,6 +30,7 @@ Dictionary GameWorld::get_blob_report() const
 	d["count"] = m_blobs.lastCount();
 	d["rect"] = Array::make(m_blobRect[0], m_blobRect[1], m_blobRect[2], m_blobRect[3]);
 	d["decals"] = s_shadowDecals;
+	d["decal_shadows"] = (int64_t)m_decalShadows.size(); // lane DRAWDECAL-1
 	Array missing;
 	for (const std::string &m : m_blobs.missingTextures())
 	{
@@ -211,4 +212,74 @@ void GameWorld::update_blob_shadows()
 		}
 	}
 	m_blobs.end();
+}
+
+void GameWorld::update_decal_shadows()
+{
+	// lane DRAWDECAL-1: every presented drawable's alpha / additive decal shadow (GameClient/BlobShadow.h resolveDecal), whatever the camera sees (the
+	// HUD's grid places them); the same drawables as the blobs': none for a shrouded, fogged, hidden, faded-out or shadowless one (setFullyObscuredByShroud
+	// -> enableShadowInvisible). INFERENCE (S-3304): retail draws a _DYNAMIC one (0xC00) also while its render object is not really visible
+	// (BFME2 renderShadows); here it goes with the drawable's look
+	m_decalShadows.clear();
+	if (!m_game)
+	{
+		return;
+	}
+	DrawableManager &dm = m_game->drawables();
+	for (size_t id = 1; id < m_views.size(); ++id)
+	{
+		const DrawableView &v = m_views[id];
+		if (!v.valid || v.fogHidden || v.fogLook)
+		{
+			continue;
+		}
+		const Drawable *d = dm.find((DrawableID)id);
+		if (!d || d->drawOpacity() <= 0.0f || !d->shadowsEnabled())
+		{
+			continue;
+		}
+		const Coord3D p = *d->getPosition();
+		for (const DrawEntry &e : d->entries())
+		{
+			if (e.kind != W3D_DRAWKIND_MODEL || e.missingModel || e.moduleHidden || e.conditionHidden || !e.draw)
+			{
+				continue;
+			}
+			const auto *module = dynamic_cast<const W3DModelDrawModuleData *>(e.data);
+			if (!module)
+			{
+				continue;
+			}
+			const ModelConditionInfo *state = e.draw->currentModelState();
+			bool rendered = false; // as the blobs: a draw without a render object makes no shadow (BFME2 allocateShadows 0xB9B4A)
+			for (const std::string &name : state ? state->modelNames : std::vector<std::string>())
+			{
+				rendered = rendered || (!name.empty() && !isNoneModel(name));
+			}
+			if (!rendered)
+			{
+				continue;
+			}
+			DecalSpecCache &cached = m_decalSpecs[std::make_tuple((const void *)d->getTemplate(), (const void *)module, (const void *)state)];
+			if (!cached.resolved)
+			{
+				cached.has = BlobShadow::resolveDecal(d->getTemplate(), module, state, cached.spec);
+				cached.resolved = true;
+			}
+			if (!cached.has)
+			{
+				continue;
+			}
+			// one per drawable, as the blobs: the first model draw that names one
+			const BlobShadow::DecalSpec &spec = cached.spec;
+			SelectionDecal decal;
+			if (BlobShadow::drawnAtLOD(spec, s_shadowDecals) && BlobShadow::belowMaxHeight(spec, p.z, m_game->mapGroundHeight(p.x, p.y))
+				&& BlobShadow::decal(spec, p.x, p.y, p.z, d->getOrientation(), decal))
+			{
+				decal.drawable = (unsigned)id;
+				m_decalShadows.push_back(std::move(decal));
+			}
+			break;
+		}
+	}
 }

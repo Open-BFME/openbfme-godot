@@ -142,4 +142,79 @@ bool quad(const Spec &spec, float x, float y, float angle, float extentX, float 
 	out.vy = -0.5f * sizeY * co;
 	return true;
 }
+
+bool resolveDecal(const ThingTemplate *object, const W3DModelDrawModuleData *module, const ModelConditionInfo *state, DecalSpec &out)
+{
+	if (module && module->m_shadowForceDisable)
+	{
+		return false;
+	}
+	out = DecalSpec();
+	if (object)
+	{
+		// the template's fields, as resolve's (ThingTemplate table RW 0xDA44E8; the defaults of its constructor RW 0x740102 .. 0x740172)
+		out.maxHeight = numberField(*object, "ShadowMaxHeight", 20.0f);
+		out.rotating = boolField(*object, "ShadowIsRotatingWithObject", true);
+		out.overrideLOD = boolField(*object, "ShadowOverrideLODVisibility", false);
+	}
+	if (state && state->hasShadow)
+	{
+		const ModelShadowInfo &s = state->shadow;
+		if ((s.type & kDecalStyles) == 0)
+		{
+			return false;
+		}
+		out.type = s.type & kDecalStyles;
+		out.texture = textureFile(s.texture);
+		out.sizeX = s.sizeX;
+		out.sizeY = s.sizeY;
+		out.offsetX = s.offsetX;
+		out.offsetY = s.offsetY;
+		if (s.maxHeight > 0.0f)
+		{
+			out.maxHeight = s.maxHeight;
+		}
+		out.overrideLOD = out.overrideLOD || s.overrideLODVisibility;
+		out.opacityPeak = state->shadowOpacityPeak;
+		return true;
+	}
+	if (!object)
+	{
+		return false;
+	}
+	const FieldValue *field = object->findField("Shadow");
+	const long long *bits = field ? std::get_if<long long>(field) : nullptr;
+	if (!bits || ((int)*bits & kDecalStyles) == 0)
+	{
+		return false;
+	}
+	out.type = (int)*bits & kDecalStyles;
+	const FieldValue *tex = object->findField("ShadowTexture");
+	const std::string *texName = tex ? std::get_if<std::string>(tex) : nullptr;
+	out.texture = textureFile(texName ? *texName : std::string());
+	out.sizeX = numberField(*object, "ShadowSizeX", 0.0f);
+	out.sizeY = numberField(*object, "ShadowSizeY", 0.0f);
+	out.offsetX = numberField(*object, "ShadowOffsetX", 0.0f);
+	out.offsetY = numberField(*object, "ShadowOffsetY", 0.0f);
+	out.opacityPeak = (unsigned)numberField(*object, "ShadowOpacityPeak", 255.0f);
+	return true;
+}
+
+bool decal(const DecalSpec &spec, float x, float y, float z, float angle, SelectionDecal &out)
+{
+	if (spec.sizeX == 0.0f || spec.sizeY == 0.0f || spec.type == 0)
+	{
+		return false;
+	}
+	out = SelectionDecal();
+	out.texture = spec.texture;
+	out.style = (std::uint32_t)spec.type;
+	out.color = DecalShadowColor(spec.opacityPeak);
+	out.size = spec.sizeX;
+	out.sizeY = spec.sizeY;
+	out.angle = angle;
+	out.position = DecalShadowCentre(Coord3D{ x, y, z }, spec.offsetX, spec.offsetY, angle);
+	out.drawZ = z;
+	return true;
+}
 } // namespace BlobShadow

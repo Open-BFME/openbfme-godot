@@ -365,7 +365,7 @@ void PlacementGhostRenderer::updateShadowDecal(PlacementIcons::Icon &icon, IconV
 	// claims' decals; RW 0x50D92C), with flushDecals' shaders (RW 0x509A1F); it turns with the drawable and is not terrain only (+ 0x64 stays 0). The HUD
 	// draws it in the selection decals' grid (appendShadowDecals; lane ECOCIRCLE-2: an additive type is added to the surface, RotWK's 0x10000 is refused there with its error), white at ShadowOpacityPeak whatever
 	// the drawable's 0.45 opacity (DecalShadowColor). INFERENCE (stop S-5032): the _DYNAMIC types' fade is not run; addShadow's gate (RW 0x50BF7B:
-	// UseShadowDecals or ShadowOverrideLODVisibility) is not applied; only the placement ghost draws them (every other drawable's shadow is S-3304)
+	// UseShadowDecals or ShadowOverrideLODVisibility) is not applied; lane DRAWDECAL-1: the live drawables' own go through GameWorld::update_decal_shadows
 	const ModelShadowInfo *sh = nullptr;
 	unsigned peak = 0xFF;
 	for (DrawEntry &e : icon.drawable->entries())

@@ -40,6 +40,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/W3DVegetationSway.h"
 #include "GodotDevice/GodotW3DMaterial.h"
 #include "GodotDevice/GodotBlobShadows.h" // lane BLOBSHADOW-1: m_blobs
+#include "GameClient/SelectionDecals.h" // lane DRAWDECAL-1: m_decalShadows
 #include "GameEngineDevice/W3DDevice/GameClient/HouseColor.h" // lane HCKEY-1: EntryView::staticKeyPalette
 
 #include <godot_cpp/classes/immediate_mesh.hpp>
@@ -577,6 +578,8 @@ public:
 	static void set_shadow_decals(bool decals, bool volumes);
 	// lane BLOBSHADOW-1: the last frame's blobs { count, rect, missing_textures }
 	Dictionary get_blob_report() const;
+	// lane DRAWDECAL-1: this frame's drawable decal shadows (alpha / additive), for the HUD's selection decal grid
+	const std::vector<SelectionDecal> &decal_shadows() const { return m_decalShadows; }
 	// a select message and an attack-object message (MSG_DO_ATTACK_OBJECT) for the objects `ids` on `target`, through the lockstep command path. { ok, error, player, objects }
 	Dictionary order_attack(const Array &ids, int64_t target);
 
@@ -847,6 +850,17 @@ private:
 	};
 	std::map<std::tuple<const void *, const void *, const void *>, BlobSpecCache> m_blobSpecs;
 	bool m_blobSpecsVolumes = false;
+	// lane DRAWDECAL-1 (GodotGameWorldBlobs.cpp): the drawables' alpha / additive decal shadows of this frame, which the HUD draws with the selection
+	// decals (decal_shadows), and the resolved decal of a (template, module, model state)
+	void update_decal_shadows();
+	std::vector<SelectionDecal> m_decalShadows;
+	struct DecalSpecCache
+	{
+		bool resolved = false;
+		bool has = false;
+		BlobShadow::DecalSpec spec;
+	};
+	std::map<std::tuple<const void *, const void *, const void *>, DecalSpecCache> m_decalSpecs;
 	static inline bool s_shadowDecals = false;
 	static inline bool s_shadowVolumes = false;
 
