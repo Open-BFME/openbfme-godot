@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/UpgradeModules.h"
+// CostModifierUpgrade missing: RW 0x8B9B36 (name 0xC0AFE4), RW 0x8B9B3C (thunk add ecx 0x10 jmp [eax+0x20]), RW 0x8B9B44 (ModuleData factory), RW 0x8B9BD6 (scalar deleting dtor), RW 0x8B9F05 (thunk lea ecx-0xC)
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/Player.h"

@@ -313,10 +313,12 @@ private:
 	unsigned long long m_guiMessagesShown = 0;
 	std::vector<std::string> m_missingMessageLabels;
 	std::uint32_t m_beaconNoticeSeen = 0;
+	std::uint32_t m_upgradeCompleteNoticeSeen = 0;
 	std::set<ObjectID> m_beaconObjects;    ///< the beacons the notices made (live ones; pruned when gone)
 	std::uint32_t m_beaconPulseFrame = 0xFFFFFFFFu;
 	BeaconStats m_beaconStats;
 	void presentBeacons();              ///< lane CHAT-1: the notices and the pulses (logic held)
+	void presentUpgradeComplete();      ///< RW 0x8A2080 .. 0x8A223B: the local player's completed upgrade feedback
 	void showMessageLabel(const std::string &label, const std::u16string *argument);
 
 	InGameSpellBookModel m_spellBar;          // lane SPELL-2
@@ -364,7 +366,7 @@ private:
 	void updateMouseoverTooltip();
 	UnicodeString m_mouseoverTooltip;
 	bool m_debugAI = false, m_haveDebugAI = false; ///< GameData DebugAI (GlobalData + 0x9B8)
-	std::set<std::string> m_mouseoverUnported;    ///< what the tool tips met that is not ported (S-7185), once each
+	std::set<std::string> m_mouseoverUnported;    ///< what the tool tips met that is not ported (S-7187), once each
 	TerrainResourceFeedback m_resourceFeedback;
 	PlayerMessageLog m_playerMessages;
 	unsigned m_messageClientFrame = 0;

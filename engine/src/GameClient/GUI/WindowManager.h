@@ -386,7 +386,7 @@ public:
 	// lane HOVER-1: AptButtonTooltipMap.ini's ButtonMap rows (hover path -> tooltip name; RW 0x6235E2 looks a name up before it makes the label)
 	void setTooltipNameMap(const std::map<std::string, std::string> &names) { m_tooltipNames = names; }
 	// lane HOVER-2: the in-game mouse-over tool tip (InGameUI::createMouseoverHint RW 0x69F637 -> Mouse::setCursorTooltip RW 0x5EE1A6: a text, not a label),
-	// set by the HUD each frame; the cursor tool tip shows it while no window's label is set (a window under the pointer wins, as in retail: S-7185)
+	// set by the HUD each frame; the cursor tool tip shows it while no window's label is set (a window under the pointer wins, as in retail: S-7187)
 	void setWorldTooltip(const std::u16string &text) { m_worldTooltip = text; }
 	const std::u16string &worldTooltip() const { return m_worldTooltip; }
 

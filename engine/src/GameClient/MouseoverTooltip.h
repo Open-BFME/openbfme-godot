@@ -21,7 +21,7 @@
 // The request's colour (the indicator colour, a garrison's apparent owner, a disguise's player colour) is not kept: RotWK's Mouse.ini has
 // UseTooltipAltTextColor = No, so Mouse::setCursorTooltip (RW 0x5EE1A6, BFME2 decomp MouseRva001EEA6D.cpp) leaves the text colour at TooltipTextColor and
 // writes the player colour only to the alternative background colour, which the GuiFX path (RW 0x5EE7A8 -> RW 0x782DD9) does not pass.
-// INFERENCE (S-7185): ZH's window manager clears the request on every mouse event (GameWindowManager::winProcessMouseEvent) before a window or
+// INFERENCE (S-7187): ZH's window manager clears the request on every mouse event (GameWindowManager::winProcessMouseEvent) before a window or
 // createMouseoverHint sets it; the port clears it every frame the pointer is over the HUD, scrolling or selecting, or rests on no object. TheRecorder's
 // multiplayer test is read as the network game flag (InGameUI::networkGame, RW 0x441B7C) and the playable-side test (decomp rva002AA245) as the
 // player template's PlayableSide.
@@ -54,7 +54,7 @@ public:
 	struct Result
 	{
 		UnicodeString text;              ///< the request ("" none)
-		bool controlBarRecord = false;   ///< the TooltipRecord went to the control bar instead (not ported: S-7185)
+		bool controlBarRecord = false;   ///< the TooltipRecord went to the control bar instead (not ported: S-7187)
 		std::vector<std::string> unported;
 	};
 	// RW 0x69F637's MSG_MOUSEOVER_DRAWABLE_HINT branch for `obj` (the request after its clear)

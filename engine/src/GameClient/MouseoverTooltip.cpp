@@ -70,13 +70,13 @@ MouseoverTooltip::Result MouseoverTooltip::compose(const Object &obj, GameLogic 
 	// the player: the contain's apparent controlling player for the local player (decomp line 452 .. 453), else the object's controlling player
 	if (obj.getContain())
 	{
-		r.unported.push_back("the contain's apparent controlling player (decomp InGameUICreateMouseoverHint.cpp:453): the controlling player is used (S-7185)");
+		r.unported.push_back("the contain's apparent controlling player (decomp InGameUICreateMouseoverHint.cpp:453): the controlling player is used (S-7187)");
 	}
 	const Player *player = obj.getControllingPlayer();
 	// a DISGUISER's SpecialDisguiseUpdate (RW 0x69F7B9) and the neutral-relationship component (decomp rva0028F4BC) replace the template: not ported
 	if (kindOf(kind, "DISGUISER"))
 	{
-		r.unported.push_back("a disguised object's template (SpecialDisguiseUpdate, RW 0x69F7B9, S-7185)");
+		r.unported.push_back("a disguised object's template (SpecialDisguiseUpdate, RW 0x69F7B9, S-7187)");
 	}
 	// the name: the template's DisplayName text; the drawable's script caption and the object's own name override it (decomp lines 477 / 479: not
 	// ported, as in the unit help, S-4612)
@@ -90,7 +90,7 @@ MouseoverTooltip::Result MouseoverTooltip::compose(const Object &obj, GameLogic 
 	const bool warehouse = obj.findModule("SupplyWarehouseDockUpdate") != nullptr;
 	if (warehouse)
 	{
-		r.unported.push_back("a supply warehouse's value (TOOLTIP:SupplyWarehouse, RW 0x69FA09, S-7185)");
+		r.unported.push_back("a supply warehouse's value (TOOLTIP:SupplyWarehouse, RW 0x69FA09, S-7187)");
 	}
 	if (!player || !in.localPlayer)
 	{
@@ -141,7 +141,7 @@ MouseoverTooltip::Result MouseoverTooltip::compose(const Object &obj, GameLogic 
 
 std::vector<std::string> MouseoverTooltip::acceptanceStops()
 {
-	return { "[S-7185] mouse-over tool tip (HOVER-2): ported RW 0x69F637's tool tip (BFME2 decomp InGameUICreateMouseoverHint.cpp:443 .. 535): the "
+	return { "[S-7187] mouse-over tool tip (HOVER-2): ported RW 0x69F637's tool tip (BFME2 decomp InGameUICreateMouseoverHint.cpp:443 .. 535): the "
 	         "template's DisplayName or ThingTemplate:<name>, the player's name in a network game, the local player's shroud at the object (a TREE: at the "
 	         "ground under the pointer), never a prop, the local player's units and structures and LINKED_TO_FLAG objects only with GameData's DebugAI; "
 	         "not ported: the control bar's TooltipRecord (ControlBar rva00405C04), a contain's apparent controlling player, a disguise's template, the "

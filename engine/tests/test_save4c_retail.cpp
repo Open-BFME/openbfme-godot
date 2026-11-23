@@ -700,7 +700,7 @@ TEST_CASE("save4c retail hostile inputs (SAVES.md section 8, rules 3 to 5): for 
 			}
 			records.push_back(at + 1);
 			const size_t coveredAt = at + 71;
-			at = coveredAt + 4 + 4 * (size_t)u32At(one, coveredAt) + 60 + 13;
+			at = coveredAt + 4 + 4 * (size_t)u32At(one, coveredAt) + 60; // the status, previous and seen planes (lane VISIONDEF-1: version 2 dropped the 13 bytes of ground reference)
 		}
 		REQUIRE(records.size() == 2u);
 		const std::uint32_t id0 = u32At(one, records[0]);
@@ -1501,7 +1501,7 @@ TEST_CASE("save4c hostile inputs, nested containers and caps (review r2): an ove
 			{
 				break;
 			}
-			rec = rec + 71 + 4 + 4 * (size_t)u32At(one, rec + 71) + 60 + 13;
+			rec = rec + 71 + 4 + 4 * (size_t)u32At(one, rec + 71) + 60; // lane VISIONDEF-1: no ground reference bytes in version 2
 		}
 		REQUIRE(u32At(one, rec + 71) >= 2u); // tolerance: a precondition (some record covers two cells)
 		const std::uint32_t firstCell = u32At(one, rec + 71 + 4);

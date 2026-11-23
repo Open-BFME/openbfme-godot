@@ -1596,3 +1596,22 @@ TEST_CASE("draw runtime: additional movement repairs respect explicit skeletons 
 	r.draw->setModelConditionFlags(flagsOf({ "MOVING" }));
 	CHECK_FALSE(hasStop(*r.draw, "S-5920"));
 }
+
+TEST_CASE("draw runtime: heavy armor texture variants persist across poses and can be removed")
+{
+ Rig r({}, std::string(kDefaultState) + "End\n");
+ r.start();
+ TextureSwap armor{"EUlorienwarrior.tga", "EULorWarHA.tga", {"Forged_Blade"}};
+ r.draw->upgradeTexture(armor, true);
+ W3DDrawPoseView pose;
+ r.draw->poseView(pose);
+ REQUIRE(pose.textureSwaps->size() == 1);
+ CHECK(pose.textureSwaps->front().second == "EULorWarHA.tga");
+ CHECK(pose.textureSwaps->front().excludes("Unit.Forged_Blade"));
+ r.draw->upgradeTexture(armor, true);
+ r.draw->poseView(pose);
+ CHECK(pose.textureSwaps->size() == 1);
+ r.draw->upgradeTexture(armor, false);
+ r.draw->poseView(pose);
+ CHECK(pose.textureSwaps->empty());
+}

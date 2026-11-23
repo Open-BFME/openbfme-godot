@@ -199,5 +199,5 @@ TEST_CASE("hover2 retail: the HUD hands the enemy's name to the window manager's
 	CHECK(h.hud->windows().worldTooltip().empty());
 
 	const std::vector<std::string> stops = h.hud->stops();
-	CHECK(std::count_if(stops.begin(), stops.end(), [](const std::string &l) { return l.rfind("[S-7185] mouse-over tool tip (HOVER-2)", 0) == 0; }) == 1);
+	CHECK(std::count_if(stops.begin(), stops.end(), [](const std::string &l) { return l.rfind("[S-7187] mouse-over tool tip (HOVER-2)", 0) == 0; }) == 1);
 }
