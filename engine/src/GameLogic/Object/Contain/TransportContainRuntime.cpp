@@ -41,8 +41,7 @@ const char *const kStopTransport =
 	"HealthRegen%PerSec, UpgradeCreationTrigger RW 0x86B169, TRANSPORT_MOVING, the PASSENGER_TYPE weapon sets), 0x86A1FA / 0x86A104 (InitialPayload), the horde "
 	"transport's 0x87A677 / 0x87A6D3 / 0x87A7B4 (a horde rides: the horde object out of the world, its members on the bones), its death 0x87AE0A (the members thrown "
 	"off, GameLogicRandomValue(5, 10)), the exits RW 0x8682D9 / 0x87A89E and GoAggressiveOnExit's attitude (RW 0x86AD06, lane GATEPUSH-1). Inference: the payload is made when the object is created (RW's caller of main slot 0x70 "
-	"is not located). Not ported: the fades and the drawable bone attachment (client), CanGrabStructure (the trolls' GrabObject body path; the entry test RW 0x86A07D and the GrabWeapon fire RW 0x86AA4B .. 0x86AAA2 are ported, lane PORT-62), ShouldThrowOutPassengers' "
-	"throw (RW 0x86A530), the AI slot 0x1A8 of the exit test, the SHIP boarding AI (S-4160; lane SHIP-1 ported the shore spot RW 0x6EFBB8 of the entries and exits), an indestructible container's payload, "
+	"is not located). Not ported: the fades and the drawable bone attachment (client), CanGrabStructure (the trolls' GrabObject body path; the entry test RW 0x86A07D and the GrabWeapon fire RW 0x86AA4B .. 0x86AAA2 are ported, lane PORT-62), the AI slot 0x1A8 of the exit test, the SHIP boarding AI (S-4160; lane SHIP-1 ported the shore spot RW 0x6EFBB8 of the entries and exits), an indestructible container's payload, "
 	"PassengersInTurret, the arming of the falling riders (slot 0xF8: no caller located)";
 
 const char *const kHordeTransportCpp = "HordeTransportContain.cpp"; // RW 0xC5C568
@@ -689,6 +688,69 @@ void TransportContain::processUpgradeCreationTriggers()
 	}
 }
 
+// RW 0x00866267 (contain slot 0x108): every contained rider defects with the container, in list order
+void TransportContain::onDefect(Object *newOwner, bool permanent)
+{
+	const std::vector<Object *> riders(m_contained.begin(), m_contained.end());
+	for (Object *r : riders)
+	{
+		if (r)
+		{
+			r->defect(newOwner, permanent); // RW 0x0086628C: Object::defect RW 0x00699368
+		}
+	}
+}
+
+// RW 0x0086629F (contain slot 0x10C): every contained rider ends its defection, in list order
+void TransportContain::onDefectionEnded()
+{
+	const std::vector<Object *> riders(m_contained.begin(), m_contained.end());
+	for (Object *r : riders)
+	{
+		if (r)
+		{
+			r->endDefection(); // RW 0x008662BF: Object::endDefection RW 0x0069ABA7
+		}
+	}
+}
+
+// RW 0x0086A530 (main slot 0x74): ThrowOutPassengersVelocity (data + 0x158) taken into the container's frame
+// (the SSE at RW 0x0086A554..0x0086A622 multiplies it by the container's transform basis and drops the
+// translation), then every rider with a PhysicsBehavior (+ 0x264) is flung (RW 0x00792DBD), stunned
+// (RW 0x00792A69(1)) and, unless already set, given STUNNED_FLAILING (Object + 0x118 bit 31, RW 0x0068B53C).
+// The fling's extra words (the container and the ThrowOutPassengersLandingWarhead template) stay 0 here,
+// as in the port's other fling callers: PhysicsBehavior notes them unported at the landing (S-782).
+void TransportContain::throwOutPassengers()
+{
+	if (m_contained.empty())
+	{
+		return; // RW 0x0086A54C: getContainCount() == 0
+	}
+	Object *container = getObject();
+	const Coord3D &in = m_transport->m_throwOutPassengersVelocity; // data + 0x158
+	const float *b = container->getBasis();                        // the transform at Object + 0x08, row major
+	const Coord3D velocity{ SimMath::addf32(SimMath::addf32(SimMath::mulf32(b[0], in.x), SimMath::mulf32(b[1], in.y)), SimMath::mulf32(b[2], in.z)),
+		SimMath::addf32(SimMath::addf32(SimMath::mulf32(b[3], in.x), SimMath::mulf32(b[4], in.y)), SimMath::mulf32(b[5], in.z)),
+		SimMath::addf32(SimMath::addf32(SimMath::mulf32(b[6], in.x), SimMath::mulf32(b[7], in.y)), SimMath::mulf32(b[8], in.z)) };
+	static const int stunnedFlailing = CombatNames::modelCondition("STUNNED_FLAILING"); // Object + 0x118 bit 31
+	const std::vector<Object *> riders(m_contained.begin(), m_contained.end());
+	for (Object *r : riders)
+	{
+		PhysicsBehavior *physics = r ? PhysicsBehavior::find(*r) : nullptr; // rider + 0x264
+		if (!physics)
+		{
+			continue; // RW 0x0086A648
+		}
+		physics->fling(velocity, 0, 0);   // RW 0x0086A655: RW 0x00792DBD
+		physics->setStunned(true);        // RW 0x0086A65F: RW 0x00792A69(1)
+		if (!r->testModelCondition(stunnedFlailing))
+		{
+			r->setModelConditionState(stunnedFlailing, true); // RW 0x0086A671..0x0086A679
+		}
+		++m_stats.thrownOut;
+	}
+}
+
 // RW 0x86B86D
 UpdateSleepTime TransportContain::update()
 {
@@ -698,7 +760,7 @@ UpdateSleepTime TransportContain::update()
 	GameLogic &logic = container->logic();
 	if (m_transport->m_shouldThrowOutPassengers && m_throwOutFrame <= logic.getFrame())
 	{
-		++m_stats.unported; // RW 0x86B885: main slot 0x74 (RW 0x86A530, the physics throw: S-1103)
+		throwOutPassengers(); // RW 0x86B885: main slot 0x74 (RW 0x0086A530)
 	}
 	// RW 0x86B897 .. 0x86B91F: HealthRegen%PerSec (data + 0xA8) heals each rider below its maximum by max x % x 0.2 x 0.01 per frame (x87)
 	if (m_transport->m_healthRegenPercentPerSec != 0.0f)
