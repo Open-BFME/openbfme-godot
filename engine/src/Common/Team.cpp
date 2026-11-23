@@ -405,6 +405,12 @@ void Team::crc(StateHasher &h) const
 	{
 		h.addU32(0x128u); // lane CAMP-1: + 0x128, hashed when set
 	}
+	if (m_scriptThreatDeadline != 0)
+	{
+		h.addU32(0x120u); // lane THREATLEVEL-1: + 0x120 / + 0x124, hashed once a refresh armed the deadline (a game without threat scripts keeps its hash)
+		h.addU32(m_scriptThreatDeadline);
+		h.addFloat(m_scriptThreat);
+	}
 	if (m_script.active) // lane CAMP-1H: the script state, hashed once the team is active (an inactive team never changes it)
 	{
 		h.addBool(m_script.created);
@@ -671,10 +677,12 @@ void TeamFactory::crc(StateHasher &h) const
 void Team::xfer(Xfer &x)
 {
 	// version 2 (lane RAI-POW): the special-power registry (+ 0x140); version 3 (lane RAI-POW-4): the threat-order list (+ 0x13C); version 4
-	// (lane PORT-40): the AI-recruitable override (+ 0x110 / + 0x111). Each is written only once it has an entry, so a game whose teams never cast /
-	// fought / were flagged keeps version 1's (or 2's / 3's) block
-	XferVersion v{ 1, (std::uint8_t)(x.isLoading() ? 4
-		: (m_aiRecruitableOverrideSet ? 4 : (!m_orders.empty() ? 3 : (!m_specialPowers.empty() ? 2 : 1)))) };
+	// (lane PORT-40): the AI-recruitable override (+ 0x110 / + 0x111); version 5 (lane THREATLEVEL-1): the script threat cache (+ 0x120 / + 0x124, RW
+	// 0x7A5C06). Each is written only once it has an entry, so a game whose teams never cast / fought / were flagged / were asked for their threat keeps
+	// version 1's (or 2's / 3's / 4's) block
+	const bool threat = m_scriptThreatDeadline != 0 || m_scriptThreat != 0.0f;
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() ? 5
+		: (threat ? 5 : (m_aiRecruitableOverrideSet ? 4 : (!m_orders.empty() ? 3 : (!m_specialPowers.empty() ? 2 : 1))))) };
 	x.xferVersion(v);
 	xferRelationMaps(x, m_teamRelations, m_playerRelations);
 	x.xferAsciiString(&m_state);
@@ -766,6 +774,8 @@ void Team::xfer(Xfer &x)
 			m_orders.clear(); // a version 1 / 2 snapshot has no order list
 			m_aiRecruitableOverrideSet = false; // nor the override (version 4's block)
 			m_aiRecruitableOverride = false;
+			m_scriptThreat = 0.0f; // nor the threat cache (version 5's)
+			m_scriptThreatDeadline = 0;
 		}
 		return;
 	}
@@ -803,11 +813,24 @@ void Team::xfer(Xfer &x)
 		{
 			m_aiRecruitableOverrideSet = false; // a version 3 snapshot has no override
 			m_aiRecruitableOverride = false;
+			m_scriptThreat = 0.0f; // nor the threat cache (version 5's)
+			m_scriptThreatDeadline = 0;
 		}
 		return;
 	}
 	x.xferBool(&m_aiRecruitableOverrideSet); // lane PORT-40: + 0x110 / + 0x111
 	x.xferBool(&m_aiRecruitableOverride);
+	if (v.current < 5)
+	{
+		if (x.isLoading())
+		{
+			m_scriptThreat = 0.0f; // a version 4 snapshot has no threat cache: the constructor's pair (RW 0x7A6C91)
+			m_scriptThreatDeadline = 0;
+		}
+		return;
+	}
+	x.xferReal(&m_scriptThreat); // lane THREATLEVEL-1: RW 0x7A5C06 xferReal + 0x120, then xferUnsignedInt + 0x124
+	x.xferUnsignedInt(&m_scriptThreatDeadline);
 }
 
 void TeamFactory::xfer(Xfer &x)

@@ -57,12 +57,19 @@ double counterValue(ThreatRecord &a, int category, float v);
 double counterDifference(ThreatRecord &a, const ThreatRecord &b, float *aTotal, float *sumOut);
 // RW 0x7EE057 + 0x7EE166: the summed record of the players whose relationship from `owner` is ENEMIES (mode 0) or ALLIES (mode 1)
 ThreatRecord scanSum(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, const Player &owner, int mode);
+// RW 0x7EE166's sum half alone (the records are already scanned): out = 0, then element-wise + record i for every player i (0 .. 19) whose relationship from
+// `owner` is ENEMIES (mode 0) or ALLIES (mode 1), in index order. PORT 17 uses it for a map's stored finder (GameLogic/System/ThreatFinder.h), which keeps
+// its records between the script's questions
+ThreatRecord sumRecords(GameLogic &logic, const ThreatRecord (&records)[kRecords], const Player &owner, int mode);
 
 // template + 0x530: the ThreatBreakdown's AIKindOf (-1 without one)
 int threatCategory(const ThingTemplate &tt);
 // RW 0x68F0EC: the threat value of one object, as the x87 register returns it, and stored as a float (RW 0x7EDB83)
 double threatValueWide(const Object &obj);
 float threatValue(const Object &obj);
+// lane THREATLEVEL-1: the template's ThreatLevel as RW 0x68F0EC reads it (RotWK + 0x52C; BFME2 1.06 + 0x51C, the same INI field, ThingTemplateConstructor.cpp:354:
+// 1.0 unset in both); the BFME2 edition's script threat sums it per hit (GameLogic/ScriptEngine/ScriptThreat.cpp)
+float templateThreatLevel(const Object &obj);
 
 // RW 0x7EE057: the per-player records of the objects around `position` (`noStructures` is the finder's + 0x5B8)
 void scan(GameLogic &logic, const Coord3D &position, float radius, bool noStructures, ThreatRecord (&records)[kRecords]);

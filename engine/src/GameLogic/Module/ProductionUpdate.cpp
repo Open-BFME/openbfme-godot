@@ -590,15 +590,21 @@ void ProductionUpdate::cancelUpgrade(const UpgradeTemplate *upgrade)
 	}
 }
 
-// RW 0x8A2015 .. 0x8A22FD (the producer's experience RW 0x8A2015 .. 0x8A2057 is in update(), lane PRODUCTION1; the UI messages, the research sound and Eva event are not ported: S-486)
+// RW 0x8A2015 .. 0x8A22FD (the producer's experience RW 0x8A2015 .. 0x8A2057 is in update(), lane PRODUCTION1)
 void ProductionUpdate::completeUpgrade(ProductionEntry *entry, Player *player)
 {
 	const UpgradeTemplate *upgrade = entry->upgradeToResearch;
 	if (upgrade)
 	{
+		GameLogic &logic = getObject()->logic();
+		// RW 0x8A2080 .. 0x8A223B: locally controlled producer gives feedback: UI message (GameText UPGRADE:UpgradeComplete + upgrade DisplayName),
+		// radar event 2 (RW 0x8A213A), research sound / Eva events (RW 0x8A213F .. 0x8A2212)
+		const int playerIdx = player ? player->getPlayerIndex() : (getObject()->getControllingPlayer() ? getObject()->getControllingPlayer()->getPlayerIndex() : -1);
+		logic.noteUpgradeComplete(playerIdx, getObject()->getID(), upgrade, *getObject()->getPosition());
+		logic.noteRadarEvent(2, *getObject()->getPosition(), GameLogic::RadarEventNotice::CONSTRUCTION, playerIdx);
+
 		// lane FX-2: RW 0x8A223B .. 0x8A22B4: a non-empty UpgradeFX (+0x3C, RW 0x4DD1D9) is looked up in the FXList store (RW 0x5E20A2: an unknown name plays
 		// nothing) and played as doFXObj(fx, the producer, null) through RW 0x4B1B5A, before the upgrade is granted
-		GameLogic &logic = getObject()->logic();
 		logic.fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, "UpgradeFX", logic.getFrame(), upgrade->m_upgradeFX, *getObject()));
 		if (upgrade->getUpgradeType() == UPGRADE_TYPE_PLAYER)
 		{
@@ -610,6 +616,7 @@ void ProductionUpdate::completeUpgrade(ProductionEntry *entry, Player *player)
 		}
 	}
 	removeFromProductionQueue(entry); // RW 0x8A22D9
+	m_exitingObjectID = INVALID_ID;   // RW 0x8A2343 (DONOR BFME2 0x0049EB45)
 }
 
 // RW 0x8A0CF2
@@ -793,6 +800,27 @@ void ProductionUpdate::cancelAllProduction()
 		}
 	}
 	m_cancellingAll = false;
+}
+
+// RW 0x8A1666 .. 0x8A16FF (ProductionUpdateInterface vtable 0xC67DB0 slot 16 at +0x40; DONOR BFME2 0x0049DEC8 in ProductionUpdateQueue.cpp:1421):
+// cancels every queued entry (slot 15, RW 0x8A05B2), pushes out an already-spawned non-respawn doorway unit (m_exitingObjectID at +0x120) via
+// exitObjectViaDoor(exiting, DOOR_1) (ExitInterface slot 2 at +0x08, RW 0x8A16E4), and calls releaseLastExit() (ExitInterface slot 11 at +0x2C, RW 0x8A16EF)
+void ProductionUpdate::cancelAndReleaseAllProduction()
+{
+	cancelAllProduction(); // RW 0x8A1676 -> 0x8A05B2
+	ExitInterface *exit = getObject()->getObjectExitInterface(); // RW 0x8A167C -> 0x68BF9F
+	if (m_exitingObjectID != INVALID_ID) // RW 0x8A1681: module + 0x120 ([esi + 0x110] with esi = module + 0x10)
+	{
+		Object *exiting = getObject()->logic().findObjectByID(m_exitingObjectID); // RW 0x8A1694 -> 0x628EBF
+		if (exiting && !exiting->findModule("RespawnUpdate") && exit) // RW 0x8A169D .. 0x8A16D8
+		{
+			exit->exitObjectViaDoor(exiting, DOOR_1); // RW 0x8A16E4: ExitInterface vslot +0x08(exiting, 0)
+		}
+	}
+	if (exit) // RW 0x8A16E7
+	{
+		exit->releaseLastExit(); // RW 0x8A16EF: ExitInterface vslot +0x2C
+	}
 }
 
 // RW 0x8A072F

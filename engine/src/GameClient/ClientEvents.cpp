@@ -368,3 +368,10 @@ void ClientEventRecorder::createAHeroKill(Object &killer, Object &victim)
 	event.heroUniqueID = hero->uniqueID;
 	event.heroStatistics = std::move(names);
 }
+
+void ClientEventRecorder::upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled)
+{
+	auto &event = push(ClientEvent::UPGRADE_TEXTURE, obj);
+	event.textureSwap = swap;
+	event.on = enabled;
+}

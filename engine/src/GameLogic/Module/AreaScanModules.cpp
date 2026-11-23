@@ -467,7 +467,11 @@ UpdateSleepTime PassiveAreaEffectBehavior::update()
 	}
 	if (obj->isEffectivelyDead())
 	{
-		return UPDATE_SLEEP_FOREVER;
+		// Reported in play (P-23, both editions): the port briefly marks a placed structure effectively dead while it is a
+		// foundation (Construction::makeStructure), and the binary's UPDATE_SLEEP_FOREVER (RW 0x887DF7) then leaves the aura asleep
+		// for good: the Hearth never heals after the building is finished or rebuilt. This is a port guard, not a retail rule: the
+		// dead object does nothing in scan()/affect(), so waking at the aura's own ping delay is safe and lets it resume.
+		return sleep;
 	}
 	const UnsignedInt now = logic.getFrame();
 	if (now - m_lastScan >= m_data->m_pingDelay)

@@ -830,6 +830,10 @@ UpdateSleepTime AIUpdateInterface::update()
 	{
 		getObject()->logic().scriptModelConditionEvents(*getObject(), m_luaConditionSnapshot); // lane HERO-2: RW 0x66964D -> 0x663E32
 	}
+	// RW 0x669652 .. 0x669708 (DONOR BFME2 0x0026A05D, Rva0026A05DUpdate.cpp; both editions): a stunned non-member unit
+	// cannot run its AI state machine, attack-move scan, turret, or locomotor until PhysicsBehavior clears m_stunned (+0x5C).
+	const PhysicsBehavior *const phys = !memberUpdate ? getObject()->physicsModule() : nullptr;
+	const bool stunnedNormalUnit = phys != nullptr && phys->isStunned();
 	if (ObjectWeapons *w = getObject()->getWeapons())
 	{
 		// the weapon model conditions (RW 0x68E197) are the WeaponStatusHelper's (lane PROJ-2: a PHASE_FINAL module, after this update; RW 0x66DA50 is
@@ -837,7 +841,7 @@ UpdateSleepTime AIUpdateInterface::update()
 		w->updateFiringTracker(); // RW 0x8E30DD
 	}
 	updateBeforeBase();
-	if (m_attackMoveActive && !m_mover->isAiDead())
+	if (m_attackMoveActive && !m_mover->isAiDead() && !stunnedNormalUnit)
 	{
 		// ZH AIAttackMoveToState::update: look around while marching; a target interrupts the march (the idle state resumes it). Lane TARGET-1: the scan is
 		// RotWK's mood scan (RW 0x755798 -> RW 0x66844A(1, 0)); its cadence is the mood check's (AI + 0x21C)
@@ -850,69 +854,97 @@ UpdateSleepTime AIUpdateInterface::update()
 			}
 		}
 	}
+	unsigned finalSleep = 1;
 	if (memberUpdate)
 	{
-		const unsigned memberSleep = hordeMemberUpdate();
-		m_isInUpdate = false;
-		getObject()->setStatus((unsigned)CombatNames::statuses().updatingAI, false);
-		return (UpdateSleepTime)(memberSleep < 1u ? 1u : memberSleep);
+		// RW 0x66E6FF .. 0x66E707: horde member update returns sleep and jumps to 0x66E711
+		finalSleep = hordeMemberUpdate();
 	}
-	unsigned sleep = (unsigned)UPDATE_SLEEP_FOREVER;
-	// lane MODCOMPAT-MOD1: RW 0x669725 .. 0x66974E: AI + 0x3E0 = a machine is kept (AI + 0x34) around the machine's update (endTemporaryStateMachine reads it)
-	m_updatingWithTemporaryMachine = m_temporaryKeptMachine != nullptr;
-	const StateReturnType st = m_machine->updateStateMachine();
-	m_updatingWithTemporaryMachine = false;
-	if (m_retiredMachine)
+	else if (stunnedNormalUnit)
 	{
-		AIStateMachine::LoadGuard noExits; // the machine endTemporaryStateMachine dropped during its update: retail never deletes it, so no state exits
-		m_retiredMachine.reset();
-	}
-	if (IS_STATE_SLEEP(st))
-	{
-		const unsigned frames = GET_STATE_SLEEP_FRAMES(st);
-		if (frames < sleep)
+		// RW 0x66966A .. 0x669708 (DONOR BFME2 0x0026A05D): keep AI halted while knocked back / stunned / standing up.
+		if (getObject()->isEffectivelyDead())
 		{
-			sleep = frames;
+			if (currentStateId() != (unsigned)AI_DEAD && !m_machine->isLocked())
+			{
+				m_machine->setState(AI_DEAD); // RW 0x669673 .. 0x6696B2
+			}
 		}
+		else
+		{
+			if (currentStateId() != (unsigned)AI_IDLE)
+			{
+				m_mover->destroyPath(); // RW 0x66276B
+				setLocomotorGoalNone(); // AI vslot 0x220
+			}
+			m_world->pathfinder().removeGoal(*m_adapter); // RW 0x68B401 -> 0x8E2138
+		}
+		static const int cMoving = CombatNames::modelCondition("MOVING");
+		static const int cBackingUp = CombatNames::modelCondition("BACKING_UP");
+		getObject()->setModelConditionState(cMoving, false);     // RW 0x6696FA: bit 61
+		getObject()->setModelConditionState(cBackingUp, false);  // RW 0x6696FA: bit 156
+		finalSleep = (unsigned)UPDATE_SLEEP_NONE;
 	}
 	else
 	{
-		sleep = (unsigned)UPDATE_SLEEP_NONE; // CONTINUE / SUCCESS / FAILURE: the next frame
-	}
-	if (m_mover->movementComplete())
-	{
-		doMovementCompleteBookkeeping();
-	}
-	// lane GARRISON-2: RW 0x6658D3 after the machine (and RW's path timer, which the port runs inside AIMover::update below): the turret runs unless the object is
-	// dead or disabled by type 2 or 4 (mask 0x14); its sleep joins the AI's. The AI slot 0x1C4 test before it is taken as false (S-1106)
-	if (m_turret && !getObject()->isEffectivelyDead() && (getObject()->getDisabledMask() & 0x14u) == 0)
-	{
-		const unsigned ts = m_turret->updateTurretAI();
-		if (ts < sleep)
+		unsigned sleep = (unsigned)UPDATE_SLEEP_FOREVER;
+		// lane MODCOMPAT-MOD1: RW 0x669725 .. 0x66974E: AI + 0x3E0 = a machine is kept (AI + 0x34) around the machine's update (endTemporaryStateMachine reads it)
+		m_updatingWithTemporaryMachine = m_temporaryKeptMachine != nullptr;
+		const StateReturnType st = m_machine->updateStateMachine();
+		m_updatingWithTemporaryMachine = false;
+		if (m_retiredMachine)
 		{
-			sleep = ts;
+			AIStateMachine::LoadGuard noExits; // the machine endTemporaryStateMachine dropped during its update: retail never deletes it, so no state exits
+			m_retiredMachine.reset();
 		}
-	}
-	// the movement-complete block, the due path-request timer and doLocomotor (AIMover::update)
-	unsigned moverSleep = 0;
-	try
-	{
-		moverSleep = m_mover->update(sleep);
-	}
-	catch (const std::logic_error &e)
-	{
-		// a locomotor case the port reports as unported (S-081 / S-084): the unit stops, the failure is kept in the world's report
-		m_world->reportMovementFailure(*getObject(), e.what());
-		m_mover->destroyPath();
-		m_mover->endingMove();
-		m_machine->clear();
-		m_machine->setState(AI_IDLE);
-		moverSleep = (unsigned)UPDATE_SLEEP_FOREVER;
+		if (IS_STATE_SLEEP(st))
+		{
+			const unsigned frames = GET_STATE_SLEEP_FRAMES(st);
+			if (frames < sleep)
+			{
+				sleep = frames;
+			}
+		}
+		else
+		{
+			sleep = (unsigned)UPDATE_SLEEP_NONE; // CONTINUE / SUCCESS / FAILURE: the next frame
+		}
+		if (m_mover->movementComplete())
+		{
+			doMovementCompleteBookkeeping();
+		}
+		// lane GARRISON-2: RW 0x6658D3 after the machine (and RW's path timer, which the port runs inside AIMover::update below): the turret runs unless the object is
+		// dead or disabled by type 2 or 4 (mask 0x14); its sleep joins the AI's. The AI slot 0x1C4 test before it is taken as false (S-1106)
+		if (m_turret && !getObject()->isEffectivelyDead() && (getObject()->getDisabledMask() & 0x14u) == 0)
+		{
+			const unsigned ts = m_turret->updateTurretAI();
+			if (ts < sleep)
+			{
+				sleep = ts;
+			}
+		}
+		// the movement-complete block, the due path-request timer and doLocomotor (AIMover::update)
+		unsigned moverSleep = 0;
+		try
+		{
+			moverSleep = m_mover->update(sleep);
+		}
+		catch (const std::logic_error &e)
+		{
+			// a locomotor case the port reports as unported (S-081 / S-084): the unit stops, the failure is kept in the world's report
+			m_world->reportMovementFailure(*getObject(), e.what());
+			m_mover->destroyPath();
+			m_mover->endingMove();
+			m_machine->clear();
+			m_machine->setState(AI_IDLE);
+			moverSleep = (unsigned)UPDATE_SLEEP_FOREVER;
+		}
+		finalSleep = moverSleep;
+		m_world->noteStop(kStopUpdate);
 	}
 	m_isInUpdate = false;
 	getObject()->setStatus((unsigned)CombatNames::statuses().updatingAI, false);
-	m_world->noteStop(kStopUpdate);
-	return (UpdateSleepTime)(moverSleep < 1u ? 1u : moverSleep);
+	return (UpdateSleepTime)(finalSleep < 1u ? 1u : finalSleep);
 }
 
 // B1 AIUpdate.cpp:2574-2594: the model condition goes, and the pathfinder's goal for the unit is refreshed (a goal further than a cell from the unit is

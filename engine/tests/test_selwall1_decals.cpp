@@ -190,7 +190,9 @@ TEST_CASE("selwall1: a wall model's opaque surface draws the merge decals (W3DSh
 	CHECK(sel.Id() == base.Id() + "_sel");
 	const std::string plain = Generate_W3D_Shader_Code(base);
 	const std::string code = Generate_W3D_Shader_Code(sel);
-	CHECK(plain.find("selection_decals") == std::string::npos);
+	CHECK(plain.find("radius_cursor.gdshaderinc") != std::string::npos);
+	CHECK(plain.find("sel_alpha_projected_at(sel_at, false, true,") != std::string::npos);
+	CHECK(plain.find("sel_merge_at(sel_at, true)") == std::string::npos);
 	// an opaque surface hands its colour over once, converted (RENDER-3), with the bit or without
 	for (const std::string *c : { &plain, &code })
 	{

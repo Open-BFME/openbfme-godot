@@ -193,9 +193,16 @@ bool Build_Mesh_Render_Data(const MeshModelClass &mesh, MeshRenderData &out, std
 			}
 		}
 	}
-	else if (!mesh.Influences.empty() || !mesh.Vertices2.empty())
+	else if (!mesh.Vertices2.empty())
 	{
-		return fail(error, mesh, "a mesh that is not a skin carries influence or second-bone streams");
+		return fail(error, mesh, "a mesh that is not a skin carries second-bone streams");
+	}
+	else if (!mesh.Influences.empty())
+	{
+		// BFME1's exported rigid forged-blade meshes retain influences. Rigid geometry follows its HLOD pivot,
+		// not the skin stream (Open-BFME-1 MeshGeometryLoading.cpp::read_vertex_influences, VA 0x00925380).
+		// Presentation compatibility from fork main; count ignored data rather than silently discarding it.
+		out.IgnoredInfluences = mesh.Influences.size();
 	}
 	if (!mesh.Tangents.empty())
 	{

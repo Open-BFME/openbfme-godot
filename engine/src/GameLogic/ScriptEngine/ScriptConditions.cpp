@@ -3,6 +3,7 @@
 // See GameLogic/ScriptEngine/ScriptConditions.h.
 
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
+#include "GameLogic/ScriptEngine/ScriptThreat.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/GateModules.h"
 
@@ -75,6 +76,22 @@ bool compare(int op, std::int32_t lhs, std::int32_t rhs)
 	}
 }
 
+// lane THREATLEVEL-1: RW 0x7E5970 / 0x7E8A25's compare of the threat (lhs) with the parameter (rhs): comiss / ucomiss per op, 0 <, 1 <=, 2 ==, 3 >=, 4 >,
+// 5 !=, anything else false (the threat is read before the op is: an unknown op still refreshes the cache)
+bool compareReal(int op, float lhs, float rhs)
+{
+	switch (op)
+	{
+	case 0: return lhs < rhs;
+	case 1: return lhs <= rhs;
+	case 2: return lhs == rhs;
+	case 3: return lhs >= rhs;
+	case 4: return lhs > rhs;
+	case 5: return lhs != rhs;
+	default: return false;
+	}
+}
+
 // the condition ordinals ported here
 enum ConditionType
 {
@@ -104,6 +121,8 @@ enum ConditionType
 	PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_WITH_UPGRADE = 110,
 	UNIT_HAS_GAINED_LEVEL = 117, // lane BFME2CAMP1
 	UNIT_IS_AT_LEVEL = 118,
+	UNIT_THREAT_LEVEL = 115, // lane THREATLEVEL-1
+	TEAM_THREAT_LEVEL = 116,
 	PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_COMPLETELY_BUILT = 188,
 	PLAYER_HAS_CREDITS = 26,
 	NAMED_OWNED_BY_PLAYER = 30,
@@ -2038,6 +2057,40 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 			}
 		});
 		return count >= param(c, 1).intValue;
+	}
+	case UNIT_THREAT_LEVEL:
+	case TEAM_THREAT_LEVEL:
+	{
+		// lane THREATLEVEL-1: RW 0x7EB7CD -> RW 0x7E5970 (115, tier A = BFME2 0x7E4D93, ScriptConditions_evaluateTeamStateIs.cpp:293-310) /
+		// RW 0x7E8A25 (116, tier A = BFME2 0x7E7E54, ScriptConditions.cpp:3576): all four parameters present (else false); the unit (RW 0x75A3D8) /
+		// the team (getTeamNamed RW 0x759FDA, no create) by parameter 0, none: false; then the cached threat RW 0x697B41 / 0x7A6A20(parameter 3, the
+		// radius) against parameter 2 (real) by the op of parameter 1. Both editions (the BFME2 template table never fills 115, so only 116 can be
+		// authored there; the sum is per edition: ScriptThreat.h)
+		if (c.params.size() < 4)
+		{
+			return false;
+		}
+		const float radius = param(c, 3).realValue;
+		float threat = 0.0f;
+		if (c.resolved == UNIT_THREAT_LEVEL)
+		{
+			Object *unit = engine.getUnitNamed(param(c, 0).stringValue);
+			if (!unit)
+			{
+				return false;
+			}
+			threat = ScriptThreat::getThreatInRange(logic, *unit, radius);
+		}
+		else
+		{
+			Team *tm = team(engine, param(c, 0).stringValue);
+			if (!tm)
+			{
+				return false;
+			}
+			threat = ScriptThreat::getThreatInRange(logic, *tm, radius);
+		}
+		return compareReal(param(c, 1).intValue, threat, param(c, 2).realValue);
 	}
 	default:
 		engine.noteUnportedCondition(t->name);

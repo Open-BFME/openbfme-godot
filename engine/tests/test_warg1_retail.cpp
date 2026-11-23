@@ -102,13 +102,14 @@ Trained trainAndCharge(starttest::Shared *s, const char *faction, const char *bu
 	base.x += 500.0f;
 	Coord3D site{ 0, 0, 0 };
 	bool found = false;
+	// lane BUILDCLEAR-1: no builder, so no exit strip test (RW 0x797026: bit 0x40; the strip test reads the builder's player)
 	for (int r = 0; r <= 600 && !found; r += 50)
 	{
 		for (int k = 0; k < 16 && !found; ++k)
 		{
 			Coord3D c{ base.x + (float)r * (float)std::cos(k * 0.3927), base.y + (float)r * (float)std::sin(k * 0.3927), 0.0f };
 			c.z = game.logic().getGroundHeight(c.x, c.y);
-			if (BuildPlacement::isLocationLegalToBuild(game.logic(), c, *bt->getFinalOverride(), 0.0f, LLF_TERRAIN_RESTRICTIONS | LLF_NO_OBJECT_OVERLAP, nullptr, nullptr) ==
+			if (BuildPlacement::isLocationLegalToBuild(game.logic(), c, *bt->getFinalOverride(), 0.0f, LLF_TERRAIN_RESTRICTIONS | LLF_NO_OBJECT_OVERLAP | LLF_NO_EXIT_TEST, nullptr, nullptr) ==
 				LBC_OK)
 			{
 				site = c;

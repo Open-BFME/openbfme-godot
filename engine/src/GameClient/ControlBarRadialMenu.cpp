@@ -140,7 +140,7 @@ void ControlBarRadialMenu::centerOf(GameLogic &logic, DrawableManager *drawables
 	bool haveMenu = false;
 	try
 	{
-		haveMenu = ObjectGeometry::worldspaceBestContactPoint(*obj, Coord3D{ 0.0f, 0.0f, 0.0f }, "Menu", false, menu); // RW 0x945871 (string RW 0xC8049C)
+		haveMenu = ObjectGeometry::worldspaceBestContactPoint(*obj, Coord3D{ 0.0f, 0.0f, 0.0f }, "Menu", 0, false, menu); // RW 0x945871 (string RW 0xC8049C)
 	}
 	catch (const std::logic_error &)
 	{
@@ -290,7 +290,7 @@ bool ControlBarRadialMenu::mouseButton(bool left, bool down, int x, int y, Contr
 		{
 			m_pushed = slot;
 			++m_presses;
-			bar.pressButton(slot, false); // ON_MOUSE_DOWN: the press is the command (ControlBar::processCommandUI)
+			bar.pressButton(slot, false, shift); // ON_MOUSE_DOWN: the press is the command (ControlBar::processCommandUI); PORT-426: RW 0x940BB3
 		}
 	}
 	else
