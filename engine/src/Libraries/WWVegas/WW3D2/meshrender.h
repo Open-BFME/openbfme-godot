@@ -113,6 +113,7 @@ struct MeshRenderData
 	std::vector<std::uint16_t> Bone0, Bone1;
 	std::vector<float> Weight0, Weight1;
 	size_t ZeroWeightVertices = 0;
+	size_t IgnoredInfluences = 0; // rigid exporter residue, reported by W3D_Collect_Mesh_Stops
 
 	std::vector<MeshUVStream> PassUV;
 	std::vector<std::vector<std::uint8_t>> PassDCG; // per pass: 4 bytes (R, G, B, A) per vertex, empty when none

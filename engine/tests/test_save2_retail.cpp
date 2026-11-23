@@ -2057,7 +2057,17 @@ TEST_CASE("save4e retail: a refused snapshot is a named error and the started ga
 	};
 	{
 		SaveGameFile bad = rec.save;
-		bad.snapshot[bad.snapshot.size() / 2] ^= 0x5A; // inside a block's data
+		// inside a block's data: the middle of the random generator's block (hashed in "frame, object ids, RNG"). Lane VISIONDEF-1: the snapshot's own
+		// middle byte (the earlier choice) now falls on a path node's optimised-link direction, saved but never read nor hashed (PathNode::setNextOptimized
+		// derives it), so a change there loads as the same game
+		const std::string token = "obfme:Random";
+		const auto at = std::search(bad.snapshot.begin(), bad.snapshot.end(), token.begin(), token.end());
+		REQUIRE(at != bad.snapshot.end());
+		const size_t begin = (size_t)(at - bad.snapshot.begin()) + token.size() + 8; // the token, "KOLB", the block's end offset
+		const size_t end = (size_t)bad.snapshot[begin - 4] | ((size_t)bad.snapshot[begin - 3] << 8) | ((size_t)bad.snapshot[begin - 2] << 16) |
+			((size_t)bad.snapshot[begin - 1] << 24);
+		REQUIRE(end > begin + 8); // tolerance: a precondition (the block holds the generator's state words)
+		bad.snapshot[(begin + end) / 2] ^= 0x5A;
 		refused(bad, "", "a changed byte");
 	}
 	{
