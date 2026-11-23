@@ -1,19 +1,12 @@
 # In-game HUD widescreen scaling
 
-BFME2/RotWK's APT stage is still mapped to the viewport using the existing
+BFME2/RotWK's APT stage is mapped to the viewport using the existing
 independent X/Y scale factors (the donor-derived mapping tracked by S-130).
-Previously that mapping also widened the Palantir, minimap, portraits and
-right-hand construction buttons on widescreen displays.
-
-`AptPalantir::setViewportSize` applies a presentation-only horizontal
-correction to the HUD's top-level clips when the viewport is wider than the
-authored stage. Its factor is `min(1, scaleY / scaleX)`. Combined with the
-stage mapping, HUD artwork then uses the height-derived scale in both axes.
-The Palantir stays at the bottom left, the construction bar stays at the
-right edge, and the planning-mode indicator stays horizontally centred.
-The dynamically positioned help box and button-flash stage retain their
-existing mappings. BFME1, front-end menus, 4:3 and narrower viewports are
-unchanged.
+The retail 1920x1080 captures show the Palantir panel widened with the stage,
+so the battle HUD keeps that mapping; the earlier presentation-only horizontal
+correction was removed from `AptPalantir::setViewportSize` because it made the
+empty-globe animation narrower and shifted its centre. BFME1, front-end menus,
+4:3 and narrower viewports are unchanged.
 
 The separately loaded Powers purchase screen (`SpellStore.apt`) uses the
 same correction on its movie root, anchored at the stage's horizontal
@@ -64,3 +57,9 @@ retain their existing coordinate mapping.
 - `retail strategic HUD widescreen:*`: installed RotWK and BFME2 panels at
   4:3, 16:9, 21:9, 8K and a narrower viewport, repeated resizing, Fit mode,
   authored matrices and END PHASE mouse input.
+- `godot/tests/wotr_hud_viewport_test.gd`: installed RotWK and BFME2 through
+  the real Godot shell, viewport, canvas and window-input paths. GPU corner
+  artwork is compared with a 4:3 reference at the same height through repeated
+  widescreen resizing and Fit. END PHASE clicks use independent window pixels,
+  including input after a resize before the next tick/render. Run without
+  `--headless`; missing GPU/install prerequisites exit 77.

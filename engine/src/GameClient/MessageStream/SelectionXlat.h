@@ -43,6 +43,17 @@ class SelectionTranslator : public MessageTranslator
 public:
 	SelectionTranslator(HudContext &ctx, CommandTranslator &commands) : m_ctx(ctx), m_commands(commands) {}
 	MessageDisposition translate(const ClientMessage &message) override;
+	// lane HOVER-1: re-pick the pointer's object without a new mouse event. The world moves under a still pointer: the help box, the
+	// health bar and the cursor follow it each client frame. The mouseover hint is appended too, so the command translator re-applies
+	// its cursor after SelectionTranslator's base Arrow / Select on every frame: retail's order has the command hint win (RW 0x6A3B77
+	// runs after RW 0x69F637), and without it the two cursors alternate frame by frame.
+	void refreshHover(const ICoord2D &pixel)
+	{
+		if (!m_leftDown)
+		{
+			updateHover(pixel);
+		}
+	}
 
 	// ZH contextCommandForNewSelection (SelectionInfo.cpp): true when the click is a command, not a selection
 	bool contextCommandForNewSelection(const std::vector<Object *> &newlySelected, SelectionInfo &out, bool selectionIsPoint);
@@ -51,6 +62,7 @@ public:
 	bool isDragSelecting() const { return m_dragSelecting; }
 
 private:
+	void updateHover(const ICoord2D &pixel);
 	bool selectSingleWithoutSound(Object &obj);
 	void buildRegion(const ICoord2D &a, const ICoord2D &b, IRegion2D &out) const;
 	void viewSquad(int group);

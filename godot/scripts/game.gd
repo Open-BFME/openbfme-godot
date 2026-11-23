@@ -41,7 +41,7 @@
 ##                           help box over a Men barracks' unit bubble keeps its text), queue (lane OWNERFIX-3: three soldiers queued, the bubble's and the
 ##                           Palantir's count), enemy (lane OWNERFIX-3: an enemy barracks and hero show their disabled command set); hud6-<name>.png in --screens
 ##     --hover1=<a,b,...>    (lane HOVER-1, with --auto) scripts/hover1_player.gd: ability (a unit cost line), spellbook (a power's help box), herobar
-##                           (a portrait's unit help); hover1-*.png in --screens
+##                           (a portrait's unit help), cutscene (a spell book slot's help hides and does not re-compose while DISABLE_INPUT is on); hover1-*.png in --screens
 ##     --hover1-menus=DIR    (lane HOVER-1) the main menu's and Options' tool tips (GuiFX.apt's ToolTip): the pointer on a button of each navigation and on
 ##                           Options' sound quality box, the window saved as DIR/hover1-menu-*.png after the tool tip's delay; then quit
 ##     --hud7=<a,b,...>      (lane HUD-7, with --auto) scripts/hud7_player.gd: radar (the view box and a radar click), deselect (a left click on empty
@@ -7912,6 +7912,8 @@ func _run_quit() -> void:
 	var frame0: int = _world.get_stats().frame
 	await _press_escape()
 	await _wait_seconds(25.0)
+	var bg: Dictionary = _shell.get_backdrop_state()
+	print("GAME QUIT background paths: ", JSON.stringify(bg.get("background_paths", [])))
 	var st: Dictionary = _shell.quit_menu({"kind": "state"})
 	var paused: bool = _world.is_paused()
 	await _wait_seconds(0.5)

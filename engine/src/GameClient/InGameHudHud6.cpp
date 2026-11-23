@@ -429,12 +429,32 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	const bool allowed = ctx && (ctx->getControllingPlayer() == local || !ControlBar::localPlayerActive(local));
 	m_radial.setImageSize(imageSizeOf, (void *)m_hud6Images);
 	m_radial.setFontMetrics(m_hud6Metrics); // lane OWNERFIX-3: the count's measure (the device's fonts)
+	// RW 0x4A5112: the clock's rim is TheGlobalData +0x1160 (good) / +0x1164 (evil), 0xFF0B5EF2 / 0xFFD92102 (the
+	// constructor's stores, RW 0x64392E / 0x64393C). The fill is always 0x80FFFFFF: RW 0x72A247 pushes that constant and
+	// RW 0x729F0C stores it at the timer data's +8 (the percent at +4, type 2); RW 0x4A56D3 pushes +8 and tints
+	// RadialClockOverlay1 with it. Not ControlBarScheme's BuildUpClockColor and not per side.
+	if (const Player *clockPlayer = m_input ? m_input->context().localPlayer() : nullptr)
+	{
+		const bool evil = clockPlayer->getPlayerTemplate() && clockPlayer->getPlayerTemplate()->m_evil;
+		m_radial.setClockColors(0x80FFFFFFu, evil ? 0xFFD92102u : 0xFF0B5EF2u);
+	}
 	m_radial.update(logic, &m_config.game.drawables(), m_config.view, m_windowW, m_windowH, context, m_bar->sideButtons(), allowed);
 	// the help box: the control bar's test of the last frame, the hover of this one, the movie clip's update
 	m_helpBox.setEndGameTimer(m_config.endGameTimer ? m_config.endGameTimer() : -1);
 	// RW 0x91988F / 0x919158: the disconnect menu owns this registration for its whole lifetime, including before movie initialization.
 	m_helpBox.setDisconnectMenuPresent(m_wm && m_wm->hasScreenRef("DisconnectScreen::InitGadgets"));
 	m_helpBox.beginFrame();
+	// lane HOVER-1: the world branch below checked getInputEnabled(), but the button/Apt branches did not, so a
+	// cutscene that disabled the input re-composed the help on the next update. The retail showHelp handles vslot
+	// 0x1BC (tooltips) and vslot 0x17C (+0x810) itself: tooltips return before the frame is marked (the next
+	// ControlBar::update hides the box), and +0x810 is read only for a newly elapsed provider, so a box already
+	// shown stays until the hover ends. Only the input flag needs the per-frame gate here.
+	m_helpBox.setUiGuards([this]() { return m_input->ui().areTooltipsDisabled(); }, [this]() { return m_input->ui().modeGate810(); });
+	const bool inputOff = !m_input->ui().getInputEnabled();
+	if (inputOff)
+	{
+		m_helpBox.dropProvider();
+	}
 	InGameHelpBox::Provider p;
 	ControlBarButton hovered;
 	bool have = false;
@@ -474,18 +494,51 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	{
 		have = hoveredHelpButton(p, hovered, unit, context); // lane HOVER-1
 	}
+	// owner report 2026-11-12: hovering a soldier in the world shows the same help box the hero portraits use (name, rank, maximum health, damage,
+	// upgrades, description), next to its health bar. Only when no command button is under the pointer.
+	if (!have && m_input && m_input->ui().getInputEnabled())
+	{
+		ObjectID hover = m_input->ui().mouseoverObject();
+		if (Object *ho = hover != INVALID_ID ? logic.findObjectByID(hover) : nullptr; ho && ho->isKindOfName("HORDE") && ho->getContain())
+		{
+			// the pick returns the horde: the first living soldier answers (UnitHelpSource takes the rank from the horde)
+			if (const ContainModuleInterface::ContainedItemsList *members = ho->getContain()->getContainedItemsList())
+			{
+				for (Object *member : *members)
+				{
+					if (member && !member->isEffectivelyDead())
+					{
+						hover = member->getID();
+						break;
+					}
+				}
+			}
+		}
+		Object *o = hover != INVALID_ID ? logic.findObjectByID(hover) : nullptr;
+		if (o && !o->isEffectivelyDead() && o->getBodyModule())
+		{
+			p.bar = 6; // lane HOVER-1: a world object's unit help (not the Palantir portrait's / hero bar's bar 4)
+			p.slot = -1;
+			p.button = nullptr;
+			p.object = (std::uint32_t)hover;
+			unit = hover;
+			have = true;
+		}
+	}
 	const std::vector<ObjectID> &selected = m_input->ui().selected();
-	if (have)
+	if (have && !inputOff)
 	{
 		Object *selection = !selected.empty() ? logic.findObjectByID(selected.front()) : nullptr; // TheInGameUI vslot 0x12C: the first selected drawable's object
 		Player *player = selection ? selection->getControllingPlayer() : local;                  // RW 0x807AE9 / 0x807AF3
 		const MappedImageCollection *images = m_hud6Images;
 		const GameTextSource *text = m_config.gameText;
 		// the provider's delay (vslot 2): a command button's is its window's TOOLTIPDELAY (+ 0x1C8), 0 without a window (RW 0x8075E4, lane ROTWK-C), so the spell
-		// book's and the hero bar's command buttons (bar 3) show at once; a UnitHelpSource's (bar 4) is its + 0x08 (RW 0x9F9F16, its value not read: S-2703)
-		const int delay = p.bar == 3 ? 0 : m_tooltipDelayMs;
+		// book's and the hero bar's command buttons (bar 3) show at once; a portrait / hero bar UnitHelpSource's + 0x08 is zeroed by its stack provider
+		// (RW 0x9309DF / 0x92BFBB: `and [ebp-0x10],0`), so bar 4 shows at once. The port's world-object help (bar 6) is not one of those providers; it uses
+		// Mouse.ini's TooltipDelayTime (RW +0x127C, 800 in retail), the only data-backed object tooltip delay.
+		const int delay = (p.bar == 3 || p.bar == 4) ? 0 : (p.bar == 6 ? m_config.mouse.tooltipDelay : m_tooltipDelayMs);
 		m_helpBox.showHelp(p, m_hud6ClockMs, delay, [&]() -> std::shared_ptr<CommandButtonHelp> {
-			if (p.bar == 4)
+			if (p.bar == 4 || p.bar == 6)
 			{
 				// RW 0x8EBC61: a gone object makes no help
 				const Object *o = logic.findObjectByID(unit);

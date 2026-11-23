@@ -67,6 +67,7 @@
 {"GeometryMinorRadius", S_Raw},
 {"GeometryName", S_Raw},
 {"GeometryOffset", S_Raw},
+{"GeometryUsedForHealthBox", S_Raw},
 {"GeometryOther", S_Raw},
 {"GeometryRotationAnchorOffset", S_Raw},
 {"GroupVoiceThreshold", S_Int},

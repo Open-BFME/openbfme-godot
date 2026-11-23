@@ -94,7 +94,11 @@ AptSaveLoad::AptSaveLoad(WindowManager &windows, Shell &shell, ShellEnvironment 
 {
 	// lane FB7-1: the constructor shows the front-end background (RW 0x818BDC .. 0x818BDE); lane SAVE-UI1: only when none is up (RW 0x818BBD .. 0x818BCE:
 	// + 0x2A4 = the window manager's + 0x31C is 0; over the quit menu its in-game background stays), and the dtor hides what it showed
-	m_showedBackground = windows.backgroundMode() == 0;
+	// The main menu's return hides the background level's root but keeps the sub-screen's mode (AptMainMenu::runInit), so the
+	// mode alone is not enough: Load Game must also show the root when the main menu left it hidden.
+	const int background = windows.backgroundLevel();
+	const bool backgroundHidden = background >= 0 && (windows.aptWindow(background).flags & WindowManager::APTWIN_HIDDEN) != 0;
+	m_showedBackground = windows.backgroundMode() == 0 || backgroundHidden;
 	if (m_showedBackground)
 	{
 		windows.setBackground(1);

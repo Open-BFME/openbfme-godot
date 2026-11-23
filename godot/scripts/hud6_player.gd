@@ -231,16 +231,25 @@ func _scenario_sidebar() -> String:
 	return ""
 
 
-# lane BUGS-1: the devlog's case (Devlog #4 take 4: the help box over a GondorBarracks bubble drew its frame with no text): a Men barracks of the
-# player's (made with the world's create_object test hook), selected by a click, the pointer held on its first unit bubble for 120 frames
+# The test building and its first soldier: a faction's own barracks, so a Mordor run does not put a Men building under a Mordor
+# player (the initial lane used GondorBarracks for the Men owner shot).
+func queue_building() -> Dictionary:
+	if game._faction == "FactionMordor":
+		return {"building": "MordorOrcPit", "unit": "Command_ConstructMordorOrcFighterHorde"}
+	return {"building": "GondorBarracks", "unit": "Command_ConstructGondorFighterHorde"}
+
+
+# lane BUGS-1: the devlog's case (Devlog #4 take 4: the help box over a GondorBarracks bubble drew its frame with no text): the
+# faction's barracks (made with the world's create_object test hook), selected by a click, the pointer held on its first unit bubble for 120 frames
 func _scenario_barracks() -> String:
 	var f := fortress()
 	if f.is_empty():
 		return "no own fortress citadel"
+	var q := queue_building()
 	var at := beside_fortress(f)
-	var id: int = world.create_object("GondorBarracks", game._local_index, at.x, at.y, 0.0)
+	var id: int = world.create_object(str(q.building), game._local_index, at.x, at.y, 0.0)
 	if id < 0:
-		return "create_object GondorBarracks failed"
+		return "create_object %s failed" % str(q.building)
 	await game._step(10)
 	var unseen := check_seen(id, "the barracks")
 	if unseen != "":
@@ -298,10 +307,11 @@ func _scenario_queue() -> String:
 	var f := fortress()
 	if f.is_empty():
 		return "no own fortress citadel"
+	var q := queue_building()
 	var at := beside_fortress(f)
-	var id: int = world.create_object("GondorBarracks", game._local_index, at.x, at.y, 0.0)
+	var id: int = world.create_object(str(q.building), game._local_index, at.x, at.y, 0.0)
 	if id < 0:
-		return "create_object GondorBarracks failed"
+		return "create_object %s failed" % str(q.building)
 	await game._step(10)
 	var unseen := check_seen(id, "the barracks")
 	if unseen != "":
@@ -315,7 +325,7 @@ func _scenario_queue() -> String:
 	await game._step(30)
 	var target := {}
 	for b in radial().get("buttons", []):
-		if str(b.name) == "Command_ConstructGondorFighterHorde":
+		if str(b.name) == str(q.unit):
 			target = b
 	if target.is_empty():
 		return "no soldiers' bubble over the barracks: " + JSON.stringify(radial())
@@ -329,7 +339,7 @@ func _scenario_queue() -> String:
 	print("HUD6 queue: bubble texts %s, errors %s" % [JSON.stringify(texts), JSON.stringify(r.get("errors", []))])
 	var palantir := -1
 	for b in hud.get_command_buttons():
-		if str(b.name) == "Command_ConstructGondorFighterHorde" and bool(b.in_palantir):
+		if str(b.name) == str(q.unit) and bool(b.in_palantir):
 			palantir = int(b.production_count)
 	print("HUD6 queue: Palantir production_count %d" % palantir)
 	shot("queue")

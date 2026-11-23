@@ -73,6 +73,18 @@ bool MouseSettings::load(ArchiveFileSystem &fs, MouseSettings &out, std::string 
 			(key == "DragTolerance" ? s.dragTolerance : key == "DragTolerance3D" ? s.dragTolerance3D : s.dragToleranceMS) = (int)v;
 			(key == "DragTolerance" ? haveDrag : key == "DragTolerance3D" ? have3d : haveMs) = true;
 		}
+		else if (key == "TooltipDelayTime")
+		{
+			if (!ok)
+			{
+				if (error)
+				{
+					*error = "mouse.ini: TooltipDelayTime is not a number";
+				}
+				return false;
+			}
+			s.tooltipDelay = (int)v;
+		}
 	}
 	if (!haveDrag || !have3d || !haveMs)
 	{

@@ -1425,6 +1425,56 @@ func _selperf_measure_once(phase: String, n: int) -> Dictionary:
 	return w
 
 
+func _scenario_multiselect() -> String:
+	# the owner's 2026-11-21 crash: three Gondor fighter battalions and a tower shield guard battalion selected together. The real HUD, decoration
+	# layer and selection decals must survive the selection, a hover of each member and a move order.
+	var spot := Vector2()
+	for o in world.get_player_objects(game._local_name):
+		if not o.structure:
+			spot = Vector2(o.x, o.y)
+			break
+	var centre := spot + Vector2(0, 320)
+	var ours := [
+		world.create_object("GondorFighterHorde", game._local_index, centre.x - 180, centre.y, 0.0),
+		world.create_object("GondorFighterHorde", game._local_index, centre.x, centre.y, 0.0),
+		world.create_object("GondorFighterHorde", game._local_index, centre.x + 180, centre.y, 0.0),
+		world.create_object("GondorTowerShieldGuardHorde", game._local_index, centre.x, centre.y + 180, 0.0)]
+	for id in ours:
+		if int(id) <= 0:
+			return "a battalion could not be created: %s" % str(ours)
+	await game._step(40)
+	hud.camera_look_at(centre)
+	await game._step(30)
+	var count: int = hud.select_objects_with_message(PackedInt64Array(ours))
+	await game._step(45)
+	var sel: Array = hud.get_selection()
+	var icons: Dictionary = hud.get_icon_ui()
+	print("MULTISELECT: %d selected, %d bars, %d icon ops, templates %s" % [sel.size(), int(icons.get("health_bars", 0)), int(icons.get("ops", 0)),
+		str(sel.map(func(id): return world.get_object(int(id)).get("template", "?")))])
+	shot("multiselect-selected")
+	for id in ours:
+		var members: Array = world.get_object(int(id)).get("members", [])
+		if members.is_empty():
+			return "battalion %d has no members" % int(id)
+		var m: Dictionary = world.get_object(int(members[0]))
+		var p: Vector2 = hud.world_to_pixel(Vector2(float(m.get("x", 0.0)), float(m.get("y", 0.0))))
+		await move_to(p)
+		await game._step(20)
+		shot("multiselect-hover-%d" % int(id))
+	await move_to(centre)
+	await game._step(20)
+	var moves := log_count("MSG_DO_MOVETO")
+	await click(hud.world_to_pixel(centre + Vector2(0, 260)), MOUSE_BUTTON_RIGHT)
+	await game._step(30)
+	print("MULTISELECT move orders: %d" % (log_count("MSG_DO_MOVETO") - moves))
+	await game._step(60)
+	if count != 4 or sel.size() != 4:
+		return "the selection kept %d of 4 battalions" % sel.size()
+	if log_count("MSG_DO_MOVETO") - moves < 1:
+		return "the right click sent no move order"
+	return ""
+
+
 func _scenario_selperf() -> String:
 	await _headless_window()
 	if game._local_index < 0:

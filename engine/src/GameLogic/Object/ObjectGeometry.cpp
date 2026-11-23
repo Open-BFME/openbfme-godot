@@ -204,6 +204,14 @@ std::vector<ObjectGeometry::Shape> ObjectGeometry::shapesOf(const ThingTemplate 
 			}
 			shapes.back().active = sameNoCase(e.tokens[0], "Yes") || sameNoCase(e.tokens[0], "True") || sameNoCase(e.tokens[0], "1");
 		}
+		else if (e.row == "GeometryUsedForHealthBox")
+		{
+			if (e.tokens.empty())
+			{
+				throw std::logic_error(tt.getName() + ": GeometryUsedForHealthBox has no value");
+			}
+			shapes.back().usedForHealthBox = sameNoCase(e.tokens[0], "Yes") || sameNoCase(e.tokens[0], "True") || sameNoCase(e.tokens[0], "1");
+		}
 	}
 	return shapes;
 }
@@ -220,6 +228,25 @@ float ObjectGeometry::maxHeightAbovePosition(const std::vector<Shape> &shapes)
 		const float extent = s.type == SHAPE_SPHERE ? s.majorRadius : s.height;
 		const float v = SimMath::addf32(extent, s.offsetZ);
 		if (v > best) // fcomp: the larger one stays
+		{
+			best = v;
+		}
+	}
+	return best;
+}
+
+float ObjectGeometry::maxHeightForHealthBox(const std::vector<Shape> &shapes)
+{
+	float best = 0.0f;
+	for (const Shape &s : shapes)
+	{
+		if (!s.active || !s.usedForHealthBox)
+		{
+			continue;
+		}
+		const float extent = s.type == SHAPE_SPHERE ? s.majorRadius : s.height;
+		const float v = SimMath::addf32(extent, s.offsetZ);
+		if (v > best)
 		{
 			best = v;
 		}

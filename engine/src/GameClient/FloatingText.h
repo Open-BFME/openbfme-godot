@@ -13,8 +13,9 @@
 //   * drawFloatingText (InGameUI_drawFloatingText.cpp): a record whose position projects into the view and whose cell is CLEAR for the local player is drawn
 //     with its top-left at (x - width / 2, y - frameCount * FloatingTextMoveUpSpeed / 30), in its colour with a black drop shadow of the same alpha.
 // INFERENCE (stop S-283): the 30 of both divisions is the client frame rate (GameEngine + 0x38 / its frame field were not read); FloatingTextTimeOut is kept
-// in milliseconds and the two speeds as the INI writes them (BFME2's parseDurationUnsignedInt / parseVelocityReal conversions were not read). The text is
-// drawn in the HUD's caption font (as the construction text, S-1951).
+// in milliseconds and the two speeds as the INI writes them (BFME2's parseDurationUnsignedInt / parseVelocityReal conversions were not read). TARGET FACT
+// (both editions' data/ini/ingameui.ini): the HUD's caption font is Albertus MT, DrawableCaptionPointSize 12, DrawableCaptionBold No (white); the text is
+// drawn in that font at 12 stage pixels (800 x 600), as the construction text (S-1951).
 #pragma once
 
 #include "Common/INIDataTypes.h"
@@ -41,9 +42,9 @@ class FloatingTextList
 {
 public:
 	static constexpr float kClientFramesPerSecond = 30.0f;
-	// INFERENCE (S-283): the text's size in 800 x 600 stage pixels (retail's display string font was not read); the device scales it with the window as the
-	// HUD movies are, so it reads the same at 5K as at 800 x 600
-	static constexpr float kStageTextSize = 15.0f;
+	// TARGET FACT (InGameUI.ini, both editions): the caption text's size in 800 x 600 stage pixels (DrawableCaptionPointSize 12); the device scales it with
+	// the window as the HUD movies are, so it reads the same at 5K as at 800 x 600
+	static constexpr float kStageTextSize = 12.0f;
 	// a jump longer than this (a long stall) steps this many frames: every record has faded long before (the hold is 30, the fade under 100)
 	static constexpr unsigned kMaxStepFrames = 1800;
 

@@ -42,11 +42,11 @@
 //     object for the player (createSingleObject), which gets the carry-over flag; the record is copied to + 0xC4 either way and leaves + 0xB4 when its
 //     quantity is 1 or less (else - 1); the action places the object at the waypoint (setPosition) and names it; HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE
 //     (RW 0x7EB69A -> RW 0x5EA817) answers whether a record of + 0xB4 has one of the names (the player and the quantity are not read).
-// WHAT THIS PORT DOES NOT (stop S-4904, S-852): the record's statistics block (+ 0xA4, Object + 0x488: missions, kills) is not kept (Object + 0x488 is not
-// ported); a HORDE's LivingWorldOverloadTemplate name (RW 0x86D6FD) is not read (its own name is recorded, reported); the hero count + 0xC0 (no reader
-// found) is not kept. INFERENCE: the formation of more than one object placed at the start is its slot 0 for each (S-4460, reported). The keep-score
-// switch is not toggled: the score counts only from the game start's last step (ScoreKeeper::setCounting), after the spawn. TheAI's group of
-// PlaceObjects (RW 0x70042A / 0x6FFB68) has no state in the port.
+// WHAT THIS PORT DOES NOT (stop S-4904, S-852): the record's statistics block (+0xA4) is kept only for +0x488 (battles fought) and +0x494 (the
+// object's own name), the two fields the object help reads; the block's kills / second string / byte are not kept; a HORDE's LivingWorldOverloadTemplate name
+// (RW 0x86D6FD) is not read (its own name is recorded, reported); the hero count +0xC0 (no reader found) is not kept. INFERENCE: the formation of more than one
+// object placed at the start is its slot 0 for each (S-4460, reported). The keep-score switch is not toggled: the score counts only from the game start's
+// last step (ScoreKeeper::setCounting), after the spawn. TheAI's group of PlaceObjects (RW 0x70042A / 0x6FFB68) has no state in the port.
 #pragma once
 
 #include "Common/Upgrade.h"
@@ -65,7 +65,7 @@ struct Coord3D;
 
 namespace CampaignCarryover
 {
-// one record of the campaign (RW 0xBC bytes) without its statistics block (+ 0xA4, not kept: see above)
+// one record of the campaign (RW 0xBC bytes) with the two statistics-block fields the object help reads (+0x488 / +0x494); the rest of the block is not kept (see above)
 struct Record
 {
 	std::string templateName;  ///< + 4
@@ -73,6 +73,10 @@ struct Record
 	int rank = 0;              ///< + 0xC
 	UpgradeMaskType upgrades;  ///< + 0x10
 	int quantity = 0;          ///< + 0xA0
+	// lane HOVER-1: the part of retail's statistics block (+0xA4) the unit help reads: +0x488 (battles fought) and +0x494 (the
+	// object's own name). The block's other fields (kills, its second string and byte) remain unported (S-852 / S-4903).
+	int battlesFought = 0;     ///< +0xA4 -> Object +0x488
+	std::string ownName;       ///< +0xAC -> Object +0x494
 };
 
 // the campaign's carry-over state (the LinearCampaign's fields this port keeps)

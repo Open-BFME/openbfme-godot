@@ -269,7 +269,7 @@ TEST_CASE("hud2 palantir: nothing selected; the good side's PlayerMagic button s
 	CHECK(p->callErrors().empty());
 }
 
-TEST_CASE("hud2 palantir: widescreen panels preserve proportions and edge anchors through resizing")
+TEST_CASE("hud2 palantir: widescreen panels use the retail stage mapping and keep their edge anchors through resizing")
 {
 	if (!haveWorld("hud2 widescreen"))
 	{
@@ -291,10 +291,9 @@ TEST_CASE("hud2 palantir: widescreen panels preserve proportions and edge anchor
 	struct Viewport
 	{
 		int width, height;
-		float correction;
 	};
-	for (const Viewport &viewport : { Viewport{ 1024, 768, 1.0f }, Viewport{ 1280, 720, 0.75f }, Viewport{ 2560, 1080, 0.5625f },
-		Viewport{ 1280, 960, 1.0f }, Viewport{ 1280, 720, 0.75f } })
+	for (const Viewport &viewport : { Viewport{ 1024, 768 }, Viewport{ 1280, 720 }, Viewport{ 2560, 1080 },
+		Viewport{ 1280, 960 }, Viewport{ 1280, 720 } })
 	{
 		INFO(viewport.width, "x", viewport.height);
 		hud.hud->setWindowSize(viewport.width, viewport.height);
@@ -302,14 +301,14 @@ TEST_CASE("hud2 palantir: widescreen panels preserve proportions and edge anchor
 		CHECK(frame->matrix.tx == originalFrame.tx);
 		CHECK(side->matrix.a == originalSide.a);
 		CHECK(side->matrix.tx == originalSide.tx);
-		CHECK(frame->viewportTransform.a == viewport.correction);
+		// retail: the 1024x768 stage maps with its independent X/Y scale; no presentation-only correction
+		CHECK(frame->viewportTransform.a == 1.0f);
 		CHECK(frame->viewportTransform.tx == 0.0f);
-		CHECK(side->viewportTransform.a == viewport.correction);
-		CHECK(side->viewportTransform.tx == 1024.0f * (1.0f - viewport.correction));
+		CHECK(side->viewportTransform.a == 1.0f);
+		CHECK(side->viewportTransform.tx == 0.0f);
 		AptStageMapping mapping;
 		mapping.windowW = (float)viewport.width;
 		mapping.windowH = (float)viewport.height;
-		CHECK(frame->viewportTransform.a * mapping.scaleX() == mapping.scaleY());
 		float stageX, stageY, windowX, windowY;
 		frame->viewportTransform.apply(0, 768, stageX, stageY);
 		mapping.stageToWindow(stageX, stageY, windowX, windowY);

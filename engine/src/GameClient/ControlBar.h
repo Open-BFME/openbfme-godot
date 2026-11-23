@@ -47,7 +47,10 @@ enum class ButtonState
 	// updateContextCommand (RW 0x943C1F .. 0x943C46) disables the window and sets the status 0x80000000 and 0x01000000, which the command button clip shows as
 	// "_cantAfford" (RW 0x9D2C31: a disabled window with 0x01000000 -> state 3 of the table RW 0xC8CAF8). Unlike availability 0 it is never hidden by
 	// HIDE_WHILE_DISABLED (RW 0x943B39 tests 0 only), and a press reaches processCommandUI as for a _cantAfford clip
-	Purchased
+	Purchased,
+	// lane OWNERFIX: RotWK's availability 4 (RW_0x942733.md: prerequisite/build restriction, the ui+0x34 byte read by
+	// RW_0x9D2B49.md). The command clip's `_extraDisabled` frame carries the 50 % alpha transform; it is not _disabled.
+	ExtraDisabled
 };
 
 struct ControlBarButton

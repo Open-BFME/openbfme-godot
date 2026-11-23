@@ -603,7 +603,7 @@ void ThingFactory::parseField(INI *ini, void *instance, void *, const void *user
 		}
 		// COMBAT-2: the geometry rows are replayed in order into the template's shape list (the slot keeps only the last value of each row)
 		if (b->name == "Geometry" || b->name == "AdditionalGeometry" || b->name == "GeometryMajorRadius" || b->name == "GeometryMinorRadius" || b->name == "GeometryHeight" ||
-			b->name == "GeometryOffset" || b->name == "GeometryActive" || b->name == "GeometryIsSmall" || b->name == "GeometryName" ||
+			b->name == "GeometryOffset" || b->name == "GeometryActive" || b->name == "GeometryUsedForHealthBox" || b->name == "GeometryIsSmall" || b->name == "GeometryName" ||
 			b->name == "GeometryContactPoint") // lane BUILD-3: the contact points (RW 0xAD3D30)
 		{
 			std::vector<std::string> expanded;

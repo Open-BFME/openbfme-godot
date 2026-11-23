@@ -266,7 +266,13 @@ bool wantsHealthBar(const Object &obj, const IconUISettings &s, const std::set<O
 	}
 	if (kindOf(obj, WALL_UPGRADE))
 	{
-		return false; // INFERENCE (S-1950): the WallUpgradeUpdate's "upgrade active" test is not ported; a wall upgrade gets no bar
+		// RW 0x676346: a WALL_UPGRADE without its active WallUpgradeUpdate draws no bar. The module is not ported (S-1950);
+		// a complete, living wall upgrade is the port's proxy for "active". An under-construction wall upgrade stays without a bar.
+		// INFERENCE: verify against a retail wall upgrade once WallUpgradeUpdate is ported.
+		if (obj.isUnderConstruction() || obj.isEffectivelyDead())
+		{
+			return false;
+		}
 	}
 	if (kindOf(obj, DEFENSIVE_WALL) && !kindOf(obj, HAS_HEALTH_BAR))
 	{
@@ -276,9 +282,8 @@ bool wantsHealthBar(const Object &obj, const IconUISettings &s, const std::set<O
 }
 } // namespace
 
-// the template's health box values, computed once per template (Object + 0xB8 is the object's GeometryInfo bounding circle: the template's shapes; a gate's own
-// shape flags are not followed here)
-const DrawableIconUI::TemplateBox &DrawableIconUI::boxOf(const ThingTemplate &tt)
+// the template's health box values, computed once per template (used as they are for an object that never changed a geometry shape flag)
+const DrawableIconUI::TemplateBox &DrawableIconUI::templateBoxOf(const ThingTemplate &tt)
 {
 	auto it = m_boxes.find(&tt);
 	if (it != m_boxes.end())
@@ -291,7 +296,7 @@ const DrawableIconUI::TemplateBox &DrawableIconUI::boxOf(const ThingTemplate &tt
 		PathfindGeometry g;
 		ObjectGeometry::fillPathfindGeometry(tt, g);
 		b.radius = g.boundingCircleRadius();
-		b.maxHeight = ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(tt));
+		b.maxHeight = ObjectGeometry::maxHeightForHealthBox(ObjectGeometry::shapesOf(tt));
 	}
 	catch (const std::exception &e)
 	{
@@ -300,6 +305,32 @@ const DrawableIconUI::TemplateBox &DrawableIconUI::boxOf(const ThingTemplate &tt
 	b.scale = templateReal(tt, "HealthBoxScale", 1.5f);
 	b.heightOffset = templateReal(tt, "HealthBoxHeightOffset", 10.0f);
 	return m_boxes.emplace(&tt, b).first->second;
+}
+
+// RW 0x68DF5B reads the object's own GeometryInfo (+ 0xB8), not the template's: a GeometryUpgrade (a gate opening, a wall tower's upgrade, an archer range's
+// variants) changes the active shapes and with them the health box's width and the anchor's height. While no shape flag changed the template's cached values
+// are the object's; only an object that keeps its own geometry pays for the shape walk.
+DrawableIconUI::TemplateBox DrawableIconUI::boxOf(const Object &obj)
+{
+	const ThingTemplate &tt = *obj.getTemplate();
+	if (!obj.keepsOwnGeometry())
+	{
+		return templateBoxOf(tt);
+	}
+	TemplateBox b = templateBoxOf(tt);
+	try
+	{
+		const std::vector<ObjectGeometry::Shape> &shapes = obj.geometryShapes();
+		PathfindGeometry g;
+		ObjectGeometry::fillPathfindGeometry(shapes, g);
+		b.radius = g.boundingCircleRadius();
+		b.maxHeight = ObjectGeometry::maxHeightForHealthBox(shapes);
+	}
+	catch (const std::exception &e)
+	{
+		m_notes.insert("object " + std::to_string(obj.getID()) + ": " + e.what());
+	}
+	return b;
 }
 
 std::string DrawableIconUI::constructionText(const GameTextSource *text, double percent)
@@ -392,7 +423,7 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 		{
 			continue;
 		}
-		const TemplateBox &box = boxOf(*obj->getTemplate());
+		const TemplateBox box = boxOf(*obj);
 		float half = box.radius * box.scale;
 		half = std::min(std::max(half, 20.0f), 150.0f);
 		const float width = std::max(half * 2.0f, 20.0f);
@@ -471,7 +502,7 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 			{
 				text = constructionText(s.text, (double)obj.getConstructionPercent());
 			}
-			const TemplateBox &box = boxOf(*obj.getTemplate());
+			const TemplateBox box = boxOf(obj);
 			Coord3D pos = iconAnchor(logic, drawables, *q.d, obj, box.heightOffset, box.maxHeight);
 			pos.z -= (pos.z - q.d->getPosition()->z) * 0.333f;
 			ICoord2D sp;
@@ -562,7 +593,7 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 		const float scaleY = ((float)screen.y / 768.0f) * 0.5f * zoomScale;
 		const float spacingX = 2.0f * scaleX, spacingY = 2.0f * scaleY;
 		ICoord2D sp;
-		const TemplateBox &box = boxOf(*markObject->getTemplate());
+		const TemplateBox box = boxOf(*markObject);
 		if (!onScreen(view, iconAnchor(logic, drawables, *markDrawable, *markObject, box.heightOffset, box.maxHeight), sp))
 		{
 			continue;
@@ -607,8 +638,9 @@ std::vector<std::string> DrawableIconUI::acceptanceStops()
 	return {
 		"[S-1950] the drawable decorations (HUD-5): the health bar (unit, structure and construction looks RW 0x6723C3 / 0x6721CC / 0x671FD5), the construction text and "
 		"the veterancy marks (a horde's on its banner carrier or first member, RW 0x67939F) run as RW 0x679129 / 0x676346 / 0x677CF9 / 0x6780DF, with the stealth tests "
-		"(RW 0x4853EB, 0x6763DA); not ported: the wall upgrade's \"upgrade active\" test, the other decoration lists (the group number, the caption, lists 1, 3, 5)",
-		"[S-1951] the drawable decorations' inference: the in-game UI's drawable caption font of the construction text (InGameUI + 0x7A0 / + 0x7A4), the icon toggle "
+		"(RW 0x4853EB, 0x6763DA); not ported: the wall upgrade's WallUpgradeUpdate \"upgrade active\" test (a complete living wall upgrade is taken as active, "
+		"INFERENCE; an under-construction one gets no bar), the other decoration lists (the group number, the caption, lists 1, 3, 5)",
+		"[S-1951] the drawable decorations' inference: InGameUI.ini's drawable caption font of the construction text is read (DrawableCaptionFont = \"Albertus MT\", DrawableCaptionPointSize = 12, both editions) but the construction text still draws Godot's fallback at 13 pixels; the icon toggle "
 		"(TheGameLogic + 0x9A) and the script letterbox (TheScriptEngine + 0x1A238) of the queue, the queue's fog / shroud test (RW 0x68D8F7 <= 2) read from the presented snapshot (one client frame behind the live logic the icons read), the "
 		"horde anchor's H+0x170 set taken as HordeContainCore's registered members (the members on their way into a garrison are kept apart)",
 	};

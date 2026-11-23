@@ -21,6 +21,7 @@
 #include "GameLogic/SimMath.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 
@@ -68,6 +69,10 @@ Object *createSingleObject(GameLogic &logic, const Record &r, Player &player, st
 	}
 	obj->friend_orUpgradeMask(r.upgrades); // RW 0x68CC6C
 	obj->updateUpgradeModules();           // RW 0x6936FE
+	// lane HOVER-1: the statistics block's two fields the object help reads (RW 0x78022F -> RW 0x5EA74E copies +0xA4 to
+	// Object +0x488; the string +0xAC to Object +0x494)
+	obj->setBattlesFought(r.battlesFought);
+	obj->setOwnName(r.ownName);
 	if (obj->isKindOfName("HORDE"))
 	{
 		// RW 0x78024F .. 0x78027B: each member of a horde gets the mask and updateUpgradeModules (RW 0x780156); no campaign's record names a horde
@@ -103,6 +108,9 @@ Record recordOf(const Object &o, std::vector<std::string> &stops)
 	}
 	r.upgrades = o.getUpgradeMask(); // Object + 0x28C
 	r.quantity = 1;
+	// lane HOVER-1: the statistics block's fields the object help reads (RW 0x6917BB)
+	r.battlesFought = o.battlesFought();
+	r.ownName = o.ownName();
 	return r;
 }
 
@@ -116,12 +124,18 @@ void hashRecord(StateHasher &h, const Record &r)
 		h.addU32(r.upgrades.words[i]);
 	}
 	h.addI32(r.quantity);
+	// lane HOVER-1: the statistics fields the help reads; zero records keep the old hash
+	if (r.battlesFought != 0 || !r.ownName.empty())
+	{
+		h.addI32(r.battlesFought);
+		h.addString(r.ownName);
+	}
 }
 
 bool sameRecord(const Record &a, const Record &b)
 {
 	return a.templateName == b.templateName && std::memcmp(&a.experience, &b.experience, sizeof(float)) == 0 && a.rank == b.rank &&
-		   a.upgrades.words == b.upgrades.words && a.quantity == b.quantity;
+		   a.upgrades.words == b.upgrades.words && a.quantity == b.quantity && a.battlesFought == b.battlesFought && a.ownName == b.ownName;
 }
 
 bool named(const std::vector<std::string> &types, const Record &r)
@@ -171,7 +185,8 @@ bool State::operator==(const State &o) const
 		   upgrades == o.upgrades && floatBits(bountyShare) == floatBits(o.bountyShare);
 }
 
-// one line per field, names and floats exact (the float's bits in hex); a record "record <list> <name>|<experience>|<rank>|<mask words>|<quantity>"
+// one line per field, names and floats exact (the float's bits in hex); a record "record <list> <name>|<experience>|<rank>|<mask words>|<quantity>
+// [|<battles>|<own name>]" (the bracketed part only when the statistics help fields are set)
 std::string State::serialize() const
 {
 	std::ostringstream s;
@@ -194,7 +209,12 @@ std::string State::serialize() const
 			{
 				s << (i ? "," : "") << r.upgrades.words[i];
 			}
-			s << " " << r.templateName << "\n";
+			s << " " << r.templateName;
+			if (r.battlesFought != 0 || !r.ownName.empty())
+			{
+				s << "|" << r.battlesFought << "|" << r.ownName;
+			}
+			s << "\n";
 		}
 	};
 	list("left", records);
@@ -271,6 +291,26 @@ bool State::parse(const std::string &text, State &out, std::string *error)
 				return fail("a bad record: " + rest);
 			}
 			rec.templateName = name;
+			// lane HOVER-1: the optional statistics suffix "|<battles>|<own name>" (absent in older saves and zero records)
+			if (const size_t bar = name.find('|'); bar != std::string::npos)
+			{
+				const std::string tail = name.substr(bar + 1);
+				const size_t bar2 = tail.find('|');
+				if (bar2 == std::string::npos)
+				{
+					return fail("a bad record statistics suffix: " + name);
+				}
+				rec.templateName = name.substr(0, bar);
+				const std::string battles = tail.substr(0, bar2);
+				char *end = nullptr;
+				const long b = std::strtol(battles.c_str(), &end, 10);
+				if (battles.empty() || end == battles.c_str() || *end != '\0' || b < 0 || b > 0x7FFFFFFF)
+				{
+					return fail("a bad record battles count: " + battles);
+				}
+				rec.battlesFought = (int)b;
+				rec.ownName = tail.substr(bar2 + 1);
+			}
 			rec.experience = bitsFloat(bits);
 			rec.rank = (int)rk;
 			rec.quantity = (int)q;

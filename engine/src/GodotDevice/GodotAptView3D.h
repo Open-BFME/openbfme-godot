@@ -54,6 +54,9 @@ public:
 	// `stretchWithStage`: Sol r1 (ONLINE-5, S-4555): the clip is on a shell menu screen (AptView3DOnMenuLevel): it stretches with the stage
 	void draw(RID item, const Rect2 &rect, const AptCanvasOp &op, bool stretchWithStage);
 	void endBuild();
+	// Owner report 2026-11-10: release every viewer (the SubViewports, the instancer and its model/animations). The shell calls
+	// this when a screen/background is hidden, so the next show recreates the View3D from its first frame and nothing accumulates.
+	void releaseAll();
 	// Both editions' presentation: retained membership survives owner hiding, but hidden scenes do no GPU or pose work.
 	void syncVisibility(bool forceHidden = false);
 	// Per render frame: the animation clocks, the poses and the cameras.

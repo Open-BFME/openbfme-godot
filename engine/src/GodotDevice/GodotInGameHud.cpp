@@ -879,19 +879,60 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		rs->canvas_item_add_triangle_array(item, idx, pts, cols, uvs, PackedInt32Array(), PackedFloat32Array(), tex->get_rid());
 		return;
 	}
+	if (op.symbolName == "ResourceIcon" || op.symbolName == "RenderFactionIcon" || op.symbolName == "PlayerFactionIcon")
+	{
+		// owner report 2026-11-10: the resource bar's icon clips had no handler, so the money / faction icons were blank.
+		// ResourceIcon is the gold icon. The faction crest is a retail mapped image only for the five sides that have one
+		// (HandCreatedMappedImages.ini: ResourceBar_Fellowship / Gondor / Rohan / Mordor / Isengard); the other sides have
+		// no crest in retail, so the clip stays blank. No Fellowship / AptIcon / money-barrel fallback for a faction icon.
+		const bool resourceIcon = op.symbolName == "ResourceIcon";
+		std::string image = resourceIcon ? std::string("Resource_Icon") : std::string();
+		if (!resourceIcon && hud->palantir())
+		{
+			const std::string &side = hud->palantir()->localState().faction;
+			if (side == "Men")
+			{
+				image = "ResourceBar_Gondor";
+			}
+			else if (side == "Rohan" || side == "Mordor" || side == "Isengard" || side == "Fellowship")
+			{
+				image = "ResourceBar_" + side;
+			}
+		}
+		const ::Image *mapped = image.empty() ? nullptr : images.findImageByName(image);
+		if (mapped == nullptr)
+		{
+			return;
+		}
+		Ref<ImageTexture> tex = textureFor(mapped->filename);
+		if (tex.is_null())
+		{
+			return;
+		}
+		const float tw = (float)tex->get_width(), th = (float)tex->get_height();
+		const Rect2 src(mapped->uvLo[0] * tw, mapped->uvLo[1] * th, (mapped->uvHi[0] - mapped->uvLo[0]) * tw, (mapped->uvHi[1] - mapped->uvLo[1]) * th);
+		rs->canvas_item_add_texture_rect_region(item, r, tex->get_rid(), src, Color(1, 1, 1, 1));
+		++drawnImages;
+		return;
+	}
 	if (op.symbolName == "RenderImage" || op.symbolName == "RenderImageDisabled")
 	{
-		// lane HUD-2: a RenderImage clip without `_imageMap` (the Palantir portrait, CommandUI.Portrait) finds its image by its own path
-		const AptPalantir::NativeImage *img = hud->palantir() ? hud->palantir()->imageForClip(op.path, varOf(op, "_imageMap")) : nullptr;
-		// BFME2 AptPlayer::FindRenderImage (0x223AC4, called by the image draw 0x412B94 with the clip's path and parameters): after the dynamic image map,
-		// `_imageMap` names a MappedImageCollection image directly (static button / background layers are not entries of Palantir's dynamic map).
-		// INFERENCE (S-5016): 0x223AC4's body is not decompiled in Open-BFME-2; the order (dynamic map first) was not read
-		AptPalantir::NativeImage staticImage;
+		// BFME2 AptPlayer::FindRenderImage 0x623AC4 (RVA 0x223AC4, called by the image draw 0x812B94): key = `_imageMap` when the clip has one, else
+		// the clip's path; lookup order: dynamic image map (0x456F61), MappedImageCollection (0x6D92F6), then the path with `_levelN` stripped
+		// (0x812845) in the dynamic map, then its `~...` base (0x623B96). The dynamic-map and static lookups use the key, the path fallbacks the
+		// stripped path only.
 		const std::string imageMap = varOf(op, "_imageMap");
-		if ((!img || img->image.empty()) && !imageMap.empty() && images.findImageByName(imageMap))
+		const std::string key = imageMap.empty() ? op.path : imageMap;
+		const AptPalantir::NativeImage *img = hud->palantir() ? hud->palantir()->imageForClip(op.path, imageMap) : nullptr;
+		AptPalantir::NativeImage staticImage;
+		if ((!img || img->image.empty()) && images.findImageByName(key))
 		{
-			staticImage.image = imageMap;
+			staticImage.image = key;
 			img = &staticImage;
+		}
+		if ((!img || img->image.empty()) && hud->palantir())
+		{
+			img = hud->palantir()->imageForPath(op.path);
 		}
 		// lane CAMPUI-1: an image record of the window manager (setAptImage: InGameNotificationBox's "_level<n>_Icon", RW 0x8EB81E -> RW 0x92B1F9), as the
 		// player's own RenderImage path reads them outside a game (GodotAptPlayer: the score screen's icons)
@@ -913,7 +954,9 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 			img = storeImage.image.empty() ? img : &storeImage;
 		}
 		AptPalantir::NativeImage greyed;
-		if (img && op.symbolName == "RenderImageDisabled")
+		// The movie's _disabled frame places a RenderImage with `_mode = GRAYSCALE` (libInGameUI.apt, char 49 frame 8), not
+		// the RenderImageDisabled template: the disabled command cameo is greyscale like the radial bubbles' (RW 0x4A5112).
+		if (img && (op.symbolName == "RenderImageDisabled" || varOf(op, "_mode") == "GRAYSCALE"))
 		{
 			greyed = *img;
 			greyed.grayscale = true;
@@ -952,6 +995,9 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		// lane PLAY-1: the clip's cumulative colour multiplies the image (SpellStore.apt's _disabled frame places the image at alpha 0.396: a locked power is
 		// dimmed; drawn at full alpha every power looked buyable). INFERENCE: retail's RenderImage draw was not read; the add terms are not applied
 		mod = Color(mod.r * op.placeholderColor[0], mod.g * op.placeholderColor[1], mod.b * op.placeholderColor[2], mod.a * op.placeholderColor[3]);
+		// The command clip's _extraDisabled frame greys the existing cameo; the movie's frame has no new character, so apply its grey filter here.
+		mod = Color(mod.r * (float)((img->tint >> 16) & 0xFFu) / 255.0f, mod.g * (float)((img->tint >> 8) & 0xFFu) / 255.0f,
+			mod.b * (float)(img->tint & 0xFFu) / 255.0f, mod.a * (float)((img->tint >> 24) & 0xFFu) / 255.0f);
 		// BFME2 AptImageModeParser (0x412AF3; GameClient/GUI/AptScreens/AptImageMode.h): the clip's `_mode`. Recruitment art uses transparent foreground
 		// pixels whose RGB still holds the background, drawn SOLID. The per-mode render states are inferred (S-5016)
 		const AptImageMode mode = parseAptImageMode(varOf(op, "_mode"));
@@ -981,30 +1027,55 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		}
 		return;
 	}
-	if (op.symbolName == "TimerOverlay")
+	// The command buttons of the building's UI use `ButtonTimerOverlay` (libInGameUI.apt; one clip per button), while `TimerOverlay` is the
+	// template class; the same inverse clock draws either.
+	if (op.symbolName == "TimerOverlay" || op.symbolName == "ButtonTimerOverlay")
 	{
 		const float t = hud->palantir() ? hud->palantir()->timerFor(varOf(op, "_timerId")) : -1.0f;
 		if (t < 0.0f || t >= 1.0f)
 		{
 			return;
 		}
-		// the part of the button still to build is darkened as a pie from the top, clockwise (ZH GadgetButtonDrawInverseClock)
+		// The button is an ellipse when the Apt stage stretches (independent X/Y), so the fill and the ring follow the clip's
+		// own radii, not a circle of max(x, y): the retail capture's clock fits the stretched Palantir button.
+		// The Timer clip is placed after the cameo in the movie's _disabled frame (libInGameUI.apt: depth 4 RenderImage,
+		// depth 6 Timer); drawing in its own placeholder item keeps the clock inside the Palantir and below the menus.
+		RID target = item;
 		const Vector2 c = r.get_center();
-		const float rad = std::max(r.size.x, r.size.y) * 0.5f;
+		const float rx = r.size.x * 0.5f, ry = r.size.y * 0.5f;
+		const int steps = 32;
+		// The owner's visual match: the buildings' radial clock: the 50 % white fill is the remaining-sector pie
+		// (RW 0x4A5112's inverse clock), not a uniform filter over the cameo. It is wiped by the same percent as the
+		// ring below, so the white is clipped with the frame. The APT ButtonTimerOverlay geometry is a uniform alpha-26
+		// square; the pie is the readable clock the owner asked for.
 		PackedVector2Array poly;
 		PackedColorArray cols;
 		poly.push_back(c);
-		const int steps = 24;
+		cols.push_back(Color(1, 1, 1, 0.5f));
 		for (int i = 0; i <= steps; ++i)
 		{
 			const float a = -1.5707963f + 6.2831853f * (t + (1.0f - t) * (float)i / (float)steps);
-			poly.push_back(c + Vector2(std::cos(a), std::sin(a)) * rad);
+			poly.push_back(c + Vector2(std::cos(a) * rx, std::sin(a) * ry));
+			cols.push_back(Color(1, 1, 1, 0.5f));
 		}
-		for (int64_t i = 0; i < poly.size(); ++i)
+		rs->canvas_item_add_polygon(target, poly, cols);
+		// INFERENCE: the rim is the engine's inverse-clock frame (the movie's ButtonTimerOverlay is only the white square):
+		// the same side colour as the radial clock (TheGlobalData +0x1160 good 0xFF0B5EF2 / +0x1164 evil 0xFFD92102;
+		// RW 0x64392E / 0x64393C), wiped by the timer percent, inset so it sits inside the cameo's metal frame. The exact
+		// CircularBttn mesh is not drawn by the Apt renderer yet (S-2701).
+		const bool evil = hud->palantir() && hud->palantir()->localState().evil;
+		const Color rim = evil ? Color(0xD9 / 255.0f, 0x21 / 255.0f, 0x02 / 255.0f) : Color(0x0B / 255.0f, 0x5E / 255.0f, 0xF2 / 255.0f);
+		const float ringRx = rx * 0.94f, ringRy = ry * 0.94f;
+		PackedVector2Array arc;
+		PackedColorArray acols;
+		for (int i = 0; i <= steps * 2; ++i)
 		{
-			cols.push_back(Color(0, 0, 0, 0.55f));
+			const float p = t + (1.0f - t) * (float)i / (float)(steps * 2);
+			const float a = -1.5707963f + 6.2831853f * p;
+			arc.push_back(c + Vector2(std::cos(a) * ringRx, std::sin(a) * ringRy));
+			acols.push_back(rim);
 		}
-		rs->canvas_item_add_polygon(item, poly, cols);
+		rs->canvas_item_add_polyline(target, arc, acols, std::max(1.5f, std::min(rx, ry) * 0.085f), true);
 		return;
 	}
 }
@@ -1119,12 +1190,28 @@ void HudDevice::drawIconOps(RID parent)
 				const String text = String::utf8(op.text.c_str());
 				// a stage-sized text (the money texts) grows with the window as the HUD movies do: the window height over the 600 stage rows
 				const float stageScale = op.stageTextSize > 0.0f ? std::max(1.0f, (float)hud->windowHeight() / 600.0f) : 1.0f;
-				const int size_px = op.stageTextSize > 0.0f ? (int)std::lround(op.stageTextSize * stageScale * k) : fontSize;
+				int size_px = op.stageTextSize > 0.0f ? (int)std::lround(op.stageTextSize * stageScale * k) : fontSize;
 				const float drop = op.stageTextSize > 0.0f ? std::max(1.0f, std::round(stageScale)) : 1.0f;
-				const Vector2 size = font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px);
-				const Vector2 at(op.x - std::floor(size.x / 2.0f), op.y + font->get_ascent(size_px)); // RW 0x677F1B: x - width / 2, the string's top at y
-				font->draw_string(iconItem, at + Vector2(drop, drop), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, col(op.dropColor));
-				font->draw_string(iconItem, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, col(op.color));
+				Ref<Font> textFont = font;
+				// lane HUD-FLOAT1: the money texts draw in InGameUI.ini's DrawableCaptionFont (Albertus MT 12, both editions), not the device fallback
+				if (op.stageTextSize > 0.0f && player)
+				{
+					float drawSize = (float)size_px;
+					Ref<Font> retailFont = player->font_for("Albertus MT", (float)size_px, &drawSize);
+					if (retailFont.is_valid())
+					{
+						textFont = player->font_cell(retailFont, std::max(1, (int)std::lround(drawSize)));
+						size_px = std::max(1, (int)std::lround(drawSize));
+					}
+				}
+				if (textFont.is_null())
+				{
+					continue;
+				}
+				const Vector2 size = textFont->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px);
+				const Vector2 at(op.x - std::floor(size.x / 2.0f), op.y + textFont->get_ascent(size_px)); // RW 0x677F1B: x - width / 2, the string's top at y
+				textFont->draw_string(iconItem, at + Vector2(drop, drop), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, col(op.dropColor));
+				textFont->draw_string(iconItem, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, col(op.color));
 				break;
 			}
 		}

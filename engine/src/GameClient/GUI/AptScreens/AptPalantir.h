@@ -76,6 +76,7 @@ public:
 	{
 		std::string image;     ///< a MappedImage name ("" none)
 		bool grayscale = false; ///< `_mode` GRAYSCALE: a disabled button
+		std::uint32_t tint = 0xFFFFFFFFu; ///< cumulative tint (the _extraDisabled frame's grey filter)
 	};
 	const NativeImage *imageFor(const std::string &key) const;
 	float timerFor(const std::string &key) const; // 0..1, -1 for no timer
@@ -116,6 +117,7 @@ public:
 		std::string costLabelFormat;
 	};
 	void setLocalState(const LocalState &s) { m_local = s; }
+	const LocalState &localState() const { return m_local; }
 	static std::string rankText(const LocalState &state);
 	// lane HUD-5: the movie calls UpdatePlayerStats made ("SetPlayerMagicProgress(37)", ...), the last 64, for tests and reports
 	const std::vector<std::string> &playerStatsCalls() const { return m_statsCalls; }
@@ -128,6 +130,11 @@ public:
 	// the key under which the movie's RenderImage clip at `clipPath` finds its image: its `_imageMap` variable, else the clip's own path (retail keys the portrait
 	// by the clip path "CommandUI/Portrait", RW 0x9308F3)
 	const NativeImage *imageForClip(const std::string &clipPath, const std::string &imageMapVar) const;
+	// BFME2 AptPlayer::FindRenderImage 0x623AC4 (RVA 0x223AC4): strip the `_levelN` prefix (0x812845) and look the path up in the dynamic map, then the
+	// path before a `~...` suffix (0x623B96). The static MappedImageCollection lookup of the `_imageMap` key is the caller's (GodotInGameHud).
+	const NativeImage *imageForPath(const std::string &clipPath) const;
+	static std::string stripLevelPrefix(const std::string &path); // 0x812845
+	static std::string tildeBase(const std::string &path);        // 0x623B96: the `~` base (retail drops a preceding '/')
 	std::string portraitKey() const { return levelPrefix() + "CommandUI.Portrait"; }
 	static std::vector<std::string> acceptanceStops();
 	static constexpr int kArcPositions = 6, kSidePositions = 12;
@@ -287,6 +294,7 @@ private:
 	bool callValues(const std::string &path, const std::string &fn, const std::vector<AptValue> &args);
 	unsigned m_radarPingCalls = 0; ///< lane RADAR-1
 	void syncFrames(const std::vector<ControlBarButton> &buttons, bool arc);
+	void syncGlass(const std::vector<ControlBarButton> &buttons); // passive ability ButtonGlass
 	void clearFrame(int position, bool arc);
 	// lane HUD-6 (AptPalantirSideBar.cpp): the side command bar's update (AptInGameSideCommandBar::Impl, RW 0x92F27D / 0x92F082 / 0x92F015)
 	void syncSideBar(const ControlBar &bar);
@@ -363,6 +371,7 @@ private:
 	void stanceError(const std::string &e);
 	std::unique_ptr<InGameCommandButtonSubMenu> m_subMenu[kArcPositions];
 	std::string m_toggleFlashPath[kArcPositions];
+	bool m_glassPassive[kArcPositions] = {};
 	std::set<std::string> m_subMenuRegistered, m_itemRegistered;
 	std::function<void(int)> m_stancePress;
 	unsigned m_flashGoes = 0;

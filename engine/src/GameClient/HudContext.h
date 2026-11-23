@@ -30,6 +30,9 @@ struct MouseSettings
 	int dragTolerance = 0;
 	int dragTolerance3D = 0;
 	int dragToleranceMS = 0;
+	// lane HOVER-1: Mouse.ini's TooltipDelayTime (RW +0x127C; the shell cursor tooltip's delay). The unit help over a world object uses it;
+	// a portrait / hero bar UnitHelpSource provider's own +0x08 is 0.
+	int tooltipDelay = 800;
 	// reads the three keys from Data\INI\Mouse.ini; false + *error when the file or a key is missing or malformed (no default)
 	static bool load(ArchiveFileSystem &fs, MouseSettings &out, std::string *error);
 	// lane BUILD-5: RotWK's drag test (RW 0x5ED4B9; Mouse + 0x12E8 = DragTolerance): |dx| or |dy| above the tolerance, compared unsigned

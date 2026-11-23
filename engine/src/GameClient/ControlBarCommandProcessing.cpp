@@ -64,7 +64,7 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 		return false;
 	}
 	// ZH processCommandUI: only the owner's objects take commands (a foreign selection has no set here)
-	if (cb->state == ButtonState::Restricted || cb->state == ButtonState::NotReady)
+	if (cb->state == ButtonState::Restricted || cb->state == ButtonState::ExtraDisabled || cb->state == ButtonState::NotReady)
 	{
 		return false;
 	}
@@ -520,7 +520,7 @@ bool ControlBar::rightPressButton(int slot, bool inPalantir, bool shift)
 	// to RW 0x9D28D4): _disabled (1) and _cantAfford (3) reach the control bar only for a CANCELABLE button (CommandButton + 0x1F & 0x80); every other state
 	// (_notReady included) sends GWM_RIGHT_UP (0x4009) to the window's owner, ControlBar's system callback, i.e. processCommandUI(button, 0)
 	const bool cancelable = b.hasOption(COMMAND_OPTION_CANCELABLE);
-	if ((cb->state == ButtonState::Restricted || cb->state == ButtonState::CantAfford || cb->state == ButtonState::Purchased) && !cancelable) // lane HUD-7: Purchased is a _cantAfford clip
+	if ((cb->state == ButtonState::Restricted || cb->state == ButtonState::ExtraDisabled || cb->state == ButtonState::CantAfford || cb->state == ButtonState::Purchased) && !cancelable) // lane HUD-7: Purchased is a _cantAfford clip
 	{
 		return false;
 	}

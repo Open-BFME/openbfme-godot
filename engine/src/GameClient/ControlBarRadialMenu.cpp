@@ -32,8 +32,6 @@ const float kMinRadius = 0.6666667f;        // RW 0xBDAD60
 const float kRadiusBias = 0.1f;             // RW 0xBD83D4
 const float kClockScale = 46.0f / 48.0f;    // W3DPushButton.cpp RADIAL_CLOCK_SCALE
 const int kOffView = -999;                  // RW 0x9458FE (0xFFFFFC19)
-// INFERENCE (S-2701): the clock colours (the control bar's clock colour and GlobalData + 0x1160 / + 0x1164) are not identified
-const std::uint32_t kClockColor = 0x80000000u, kClockRimColor = 0xFFFFFFFFu;
 const std::uint32_t kOverlayColor = 0xFFFFFFFFu; // W3DPushButton.cpp overlayColor GameMakeColor(255, 255, 255, 255)
 const std::uint32_t kGrayOverlayColor = 0xFF909090u; // lane HUD-7: W3DPushButton.cpp grayOverlayColor GameMakeColor(144, 144, 144, 255)
 const std::uint32_t kAlwaysColorMultiplier = 0xFF909090u; // lane HUD-7: the colour multiplier of a disabled WIN_STATUS_ALWAYS_COLOR window's image
@@ -326,7 +324,7 @@ void ControlBarRadialMenu::buildOps()
 		// disabled window's image in grayscale only without NOT_READY and without ALWAYS_COLOR, an ALWAYS_COLOR one in colour times 0xFF909090, and tints
 		// the RadialBorder (144, 144, 144) with GRAY_OVERLAY: an upgrade being researched stays in dimmed colour with a grey rim
 		const bool alwaysColor = s.state == ButtonState::CantAfford || s.state == ButtonState::Purchased;
-		const bool grayOverlay = s.state == ButtonState::Restricted || s.state == ButtonState::Purchased;
+		const bool grayOverlay = s.state == ButtonState::Restricted || s.state == ButtonState::ExtraDisabled || s.state == ButtonState::Purchased;
 		RadialDrawOp icon;
 		icon.kind = RadialDrawOp::ICON;
 		icon.image = s.image;
@@ -336,14 +334,22 @@ void ControlBarRadialMenu::buildOps()
 		icon.h = h;
 		icon.grayscale = !enabled && !notReady && !alwaysColor; // DRAW_IMAGE_RADIAL_GRAYSCALE
 		icon.color = !enabled && !notReady && alwaysColor ? kAlwaysColorMultiplier : 0xFFFFFFFFu;
+		if (!enabled && !notReady && (s.state == ButtonState::Restricted || s.state == ButtonState::ExtraDisabled))
+		{
+			// Availability 0's GRAY_OVERLAY (0x80000000) is the same grey the Palantir now applies to a NeededUpgrade
+			// cameo; the bubble has no movie frame alpha, so the icon itself carries the 144 grey.
+			icon.color = kAlwaysColorMultiplier;
+		}
 		icon.slot = b.slot;
 		if (!s.image.empty())
 		{
 			m_ops.push_back(icon);
 		}
+		// RW 0x4A5112: the clock is an overlay inside RadialBorder, not a replacement for it. Both RadialClockOverlay1
+		// (fill) and Overlay2 (rim) are wiped by the same percent; the soft circles are deliberately uneven/off-centre in
+		// ClockOverlay.tga and are centred on the window. The gold RadialBorder is still drawn on top below.
 		if (s.timer >= 0.0f && s.timer < 1.0f)
 		{
-			// INVERSE_CLOCK with a percent below 100: RadialClockOverlay1 / 2 over 46/48 of the button, centred
 			const float rx = w * 0.5f * kClockScale, ry = h * 0.5f * kClockScale;
 			const float mx = x + w * 0.5f, my = y + h * 0.5f;
 			for (int k = 0; k < 2; ++k)
@@ -356,12 +362,12 @@ void ControlBarRadialMenu::buildOps()
 				c.w = rx * 2.0f;
 				c.h = ry * 2.0f;
 				c.percent = s.timer * 100.0f;
-				c.color = k == 0 ? kClockColor : kClockRimColor;
+				c.color = k == 0 ? m_clockColor : m_clockRimColor;
 				c.slot = b.slot;
 				m_ops.push_back(c);
 			}
 		}
-		// lane OWNERFIX-3: the count (RW 0x4A4CD3), after the clock and before the radial overlays (RW 0x4A5112's order)
+		// lane OWNERFIX-3: the count (RW 0x4A4CD3) is drawn after the clock and before the radial overlays (RW 0x4A5112's order)
 		if (s.productionCount >= 1)
 		{
 			countOp(b, enabled);
@@ -432,7 +438,8 @@ void ControlBarRadialMenu::countOp(const Button &b, bool enabled)
 		wide.push_back((char16_t)c);
 	}
 	const int width = m_metrics->textWidth(t.font, wide), height = m_metrics->fontHeight(t.font);
-	// Int textX = size.x * 0.5f - width * 0.5f + origin.x (a float sum truncated); Int textY = origin.y + size.y - height
+	// RW 0x4A4CD3: Int textX = size.x * 0.5f - width * 0.5f + origin.x; Int textY = origin.y + size.y - height.
+	// The window rectangle and the font are the only inputs; no nudge.
 	t.x = (float)(int)((float)b.rect.w * 0.5f - (float)width * 0.5f + (float)b.rect.x);
 	t.y = (float)(b.rect.y + b.rect.h - height);
 	t.w = (float)width;
@@ -577,7 +584,7 @@ std::vector<std::string> ControlBarRadialMenu::acceptanceStops()
 {
 	return {
 		"[S-2701] radial command bubbles (HUD-6): ported RW 0x9459D1 / 0x9D6521 / 0x9D6320 / 0x9D5CCE / 0x9457FE (count, size, radius, ring, centre) and the "
-		"look of W3DGadgetPushButtonImageDrawOne RW 0x4A5112; not identified: the clock colours (the control bar's clock colour, GlobalData + 0x1160 / + 0x1164), "
+		"look of W3DGadgetPushButtonImageDrawOne RW 0x4A5112 (the clock colours are read: the timer's 0x80FFFFFF, RW 0x72A247 / 0x729F0C / 0x4A56D3, and GlobalData + 0x1160 / + 0x1164), "
 		"the 0x808080 multiplier condition (RW 0x327E0E's flag; lane HUD-7: the grey-overlay and always-colour statuses are RotWK's availability 0 / 6 / 7 / 8); not ported: the ring's button flash animations (RW 0x9D5BDC / "
 		"0x9D6250); the right press cancels only a CANCELABLE button's queue (RW 0x940C70; an upgrade's RW 0x940E77 / 0x940FB3, lane FBSIM-1), the hit area is the window rectangle with inclusive edges (RW 0x715A84); INFERENCE: a point outside the view rectangle is off the frustum, the ring is drawn under the Palantir movie; radial icon fills ignore texture alpha inside the ellipse to retain their RGB backgrounds (target blend state unverified)"
 	};

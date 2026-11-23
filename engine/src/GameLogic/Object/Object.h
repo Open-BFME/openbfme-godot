@@ -307,6 +307,16 @@ public:
 	// (stop S-1427)
 	void maskObject(bool on) { m_masked = on; }
 	bool isMasked() const { return m_masked; }
+	// lane THREATLEVEL-1: the map scripts' cached enemy threat around the object (RW + 0x464, a float) and its deadline frame (RW + 0x468); the
+	// constructor (RW 0x69990F) clears both. Retail RotWK's Object::xfer (RW 0x697F28) does not write them; the OpenBFME snapshot does (version 3, as
+	// BFME2 1.06's xfer does: the state hash covers them). GameLogic/ScriptEngine/ScriptThreat.cpp reads and refreshes them (RW 0x697B41 / 0x69609F)
+	float scriptThreatCache() const { return m_scriptThreat; }
+	UnsignedInt scriptThreatDeadline() const { return m_scriptThreatDeadline; }
+	void setScriptThreatCache(float value, UnsignedInt deadline)
+	{
+		m_scriptThreat = value;
+		m_scriptThreatDeadline = deadline;
+	}
 
 	// lane SCRIPT-2: the trigger areas the object is in (RW 0x69264D, from reactToTransformChange when the position changed). Entries at + 0x3DC
 	// (trigger, + 4 entered, + 5 exited, + 6 inside; the count + 0x45A, at most 7: "***WARNING: Too many nested triggers"), the last change frame
@@ -473,6 +483,19 @@ public:
 
 	// ---- the map's name for the object (the dict key objectName) -----------------------------------------------------------
 	const std::string &getName() const { return m_name; }
+	// lane HOVER-1: the TooltipUpgrade behavior's help labels. Retail stores them on the Drawable (+0x348 / +0x34C,
+	// RW 0x6796DA / 0x674FAE); the port keeps them on the logic object so the client help can read them without a
+	// Drawable (S-810). They are derived from the active upgrade and are not saved or hashed.
+	const std::string &tooltipDisplayName() const { return m_tooltipDisplayName; }
+	const std::string &tooltipDescription() const { return m_tooltipDescription; }
+	void setTooltipDisplayName(const std::string &label) { m_tooltipDisplayName = label; }
+	void setTooltipDescription(const std::string &label) { m_tooltipDescription = label; }
+	// lane HOVER-1: the object's own name / battle count from the campaign carry-over statistics block (Object +0x494 / +0x488;
+	// the help reads them, they are derived from the campaign record and not hashed: S-852)
+	const std::string &ownName() const { return m_ownName; }
+	int battlesFought() const { return m_battlesFought; }
+	void setOwnName(const std::string &name) { m_ownName = name; }
+	void setBattlesFought(int n) { m_battlesFought = n; }
 	// lane BFME2CAMP1: the name without the script engine's cache (ScriptEngine::transferObjectName keeps the cache itself, RW 0x759467)
 	void friend_setNameUncached(const std::string &name) { m_name = name; }
 	// lane SCRIPT-1: the script engine's named object cache learns every name (ZH ScriptEngine::addObjectToCache; RotWK names objects through it, RW 0x759467)
@@ -604,9 +627,15 @@ private:
 	UnsignedInt m_safeOcclusionFrame = 0; ///< lane OCCLUDE-1: RW + 0x444
 	int m_creationSeed = 0;
 	std::string m_name;
+	std::string m_tooltipDisplayName; ///< TooltipUpgrade's DisplayName label (retail Drawable +0x348; help only)
+	std::string m_tooltipDescription; ///< TooltipUpgrade's Description label (retail Drawable +0x34C; help only)
+	std::string m_ownName;            ///< campaign statistics +0x494 (the object's own name; help only)
+	int m_battlesFought = 0;          ///< campaign statistics +0x488 (TOOLTIP:BattlesFought; help only)
 	std::uint8_t m_scriptStatus = 0; ///< lane SCRIPT-2: RW + 0x457 (hashed when not zero)
 	bool m_scriptSelectable = false; ///< RW +0x454: ctor initializes from SELECTABLE; hash only deviations from the template-derived default
 	bool m_masked = false;           ///< RW + 0x459 bit 1 (maskObject; hashed when set)
+	float m_scriptThreat = 0.0f;              ///< lane THREATLEVEL-1: RW + 0x464 (hashed and saved once a refresh armed the deadline)
+	UnsignedInt m_scriptThreatDeadline = 0;   ///< lane THREATLEVEL-1: RW + 0x468
 	TriggerEntry m_triggers[MAX_TRIGGERS_IN];  ///< lane SCRIPT-2: RW + 0x3DC
 	int m_triggerCount = 0;                      ///< RW + 0x45A
 	std::vector<std::uint8_t> m_geometryActive; ///< lane HUD-5: the shapes' active flags of the object's own GeometryInfo (+ 0xA8), empty: the template's

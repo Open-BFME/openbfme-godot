@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -502,6 +503,613 @@ TEST_CASE("hud6 recovered help provider replacement")
 	box.beginFrame(); box.showHelp(a, 104, 0, compose); box.update(measure, 1);
 	CHECK(box.helpsShown() == 2); // Returning to A must not reuse its old 'already shown' flag.
 	CHECK(box.isShown());
+}
+
+TEST_CASE("hud6 retail: the help provider's equality (RW 0x8075A3)")
+{
+	CommandButton a, b;
+	InGameHelpBox::Provider p{ 2, 3, &a, 11 };
+	CHECK(p == InGameHelpBox::Provider{ 2, 3, &a, 11 });
+	CHECK_FALSE(p == InGameHelpBox::Provider{ 1, 3, &a, 11 });  // the kind
+	CHECK_FALSE(p == InGameHelpBox::Provider{ 2, 4, &a, 11 });  // the window / slot
+	CHECK_FALSE(p == InGameHelpBox::Provider{ 2, 3, &b, 11 });  // the button
+	CHECK_FALSE(p == InGameHelpBox::Provider{ 2, 3, &a, 12 });  // the UnitHelpSource object
+}
+
+TEST_CASE("hud6 retail: the help box's tooltip and +0x810 guards (RW 0x807861 / 0x807978)")
+{
+	InGameHelpBox box;
+	box.loaded("_level0.helpBox", [](const std::string &, const std::string &, const std::vector<std::string> &) { return true; });
+	auto measure = [](CommandButtonHelp &, int) { return 50; };
+	std::vector<HelpDrawOp> ops;
+	box.update(measure, 1);
+	box.render(0, 0, 300, 100, ops);
+	box.update(measure, 1);
+	REQUIRE(box.state() == 2);
+
+	bool tooltipsDisabled = false, modeGate = false;
+	box.setUiGuards([&]() { return tooltipsDisabled; }, [&]() { return modeGate; });
+	int composed = 0;
+	auto compose = [&]() {
+		++composed;
+		return std::make_shared<CommandButtonHelp>();
+	};
+	const InGameHelpBox::Provider a{ 2, 0, nullptr }, b{ 2, 1, nullptr };
+
+	// RW 0x807861: the tooltip policy is read before the provider is kept or compared.
+	tooltipsDisabled = true;
+	box.beginFrame();
+	box.showHelp(a, 100, 0, compose);
+	CHECK_FALSE(box.hasProvider());
+	CHECK(composed == 0);
+	CHECK_FALSE(box.isShown());
+
+	// With tooltips enabled the same provider is kept, then shown after the delay.
+	tooltipsDisabled = false;
+	box.beginFrame();
+	box.showHelp(a, 200, 0, compose);
+	box.beginFrame();
+	box.showHelp(a, 201, 0, compose);
+	CHECK(composed == 1);
+	box.update(measure, 1);
+	REQUIRE(box.isShown());
+
+	// RW 0x807978: an equal provider is consumed BEFORE the +0x810 read, so clearing the gate does not retry it.
+	box.dropProvider(); // the shown box counts down (state 4), the provider is gone
+	REQUIRE_FALSE(box.hasProvider());
+	modeGate = true;
+	box.beginFrame();
+	box.showHelp(b, 300, 0, compose); // kept
+	box.beginFrame();
+	box.showHelp(b, 301, 0, compose); // elapsed: consumed, +0x810 suppresses composition
+	CHECK(box.hasProvider()); // retained while the hover is marked
+	CHECK(composed == 1);
+	modeGate = false;
+	box.beginFrame();
+	box.showHelp(b, 302, 0, compose); // already consumed for this hover
+	CHECK(composed == 1);
+	// leaving and returning makes a new hover: it shows again.
+	box.beginFrame();
+	box.beginFrame();
+	box.showHelp(b, 303, 0, compose);
+	box.beginFrame();
+	box.showHelp(b, 304, 0, compose);
+	CHECK(composed == 2);
+}
+
+TEST_CASE("hud6 retail: InGameUI tooltip policy and the +0x810 setter (RW 0x69BB14 / 0x69B6A8)")
+{
+	if (!haveWorld("hud6 tooltip policy"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMen");
+	InGameUI &ui = h.hud->input().ui();
+	CHECK_FALSE(ui.areTooltipsDisabled()); // the setting is on and the deadline is zero
+
+	ui.setTooltipsEnabled(false); // GlobalData +0xDD0 == 0
+	CHECK(ui.areTooltipsDisabled());
+	ui.setTooltipsEnabled(true);
+	CHECK_FALSE(ui.areTooltipsDisabled());
+
+	const unsigned frame = h.rig.logic().getFrame();
+	ui.disableTooltipsUntilFrame(frame); // never lowered; the current frame is not below it
+	CHECK_FALSE(ui.areTooltipsDisabled());
+	ui.disableTooltipsUntilFrame(frame + 3);
+	CHECK(ui.areTooltipsDisabled());
+	// the RotWK Living World query wins over the setting and the deadline (RW 0x69BB33 -> false)
+	ui.setLivingWorldTooltipQuery([]() { return true; });
+	CHECK_FALSE(ui.areTooltipsDisabled());
+	ui.setLivingWorldTooltipQuery({});
+	CHECK(ui.areTooltipsDisabled());
+	h.frames(30);
+	CHECK_FALSE(ui.areTooltipsDisabled()); // the logic frame passed +0x7EC
+
+	// RW 0x69B6A8: false-to-true clears selecting, the radius cursor, the four mapped mode flags; no stream message.
+	ui.setSelecting(true);
+	ui.setForceAttackMode(true);
+	ui.setForceMoveToMode(true);
+	ui.setWaypointMode(true);
+	ui.setPreferSelectionMode(true);
+	ui.setModeGate810(true);
+	CHECK(ui.modeGate810());
+	CHECK_FALSE(ui.isSelecting());
+	CHECK_FALSE(ui.isInForceAttackMode());
+	CHECK_FALSE(ui.isInForceMoveToMode());
+	CHECK(ui.isInWaypointMode()); // +0x8B0 is outside the setter's +0x8B8 .. +0x8C2 range
+	CHECK_FALSE(ui.isInPreferSelectionMode());
+	ui.setSelecting(true);
+	ui.setModeGate810(true); // already true: no false-to-true edge, no side effects
+	CHECK(ui.isSelecting());
+	ui.setModeGate810(false);
+	CHECK_FALSE(ui.modeGate810());
+}
+
+TEST_CASE("hud6 retail: input off drops the button help and does not compose it again (cutscene)")
+{
+	if (!haveWorld("hud6 cutscene help"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *pit = h.rig.make("GondorBarracks", at.x, at.y);
+	h.rig.lookAt({ at.x, at.y, 0 });
+	h.select(pit);
+	h.frames(40);
+	REQUIRE_FALSE(h.hud->radialMenu().buttons().empty());
+	const auto button = h.hud->radialMenu().buttons().front();
+	std::vector<HelpDrawOp> ops;
+	h.hud->helpBoxRender(0, 0, 360, 120, ops);
+	h.frames(2);
+	REQUIRE(h.hud->helpBox().state() == 2);
+
+	auto enter = [&]() {
+		h.hud->mouseMove(midX(button.rect), midY(button.rect));
+		h.frames(3);
+	};
+	auto leave = [&]() {
+		h.hud->mouseMove(5, 5);
+		h.frames(10);
+	};
+	InGameUI &ui = h.hud->input().ui();
+
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == 1);
+	CHECK(h.hud->helpBox().isShown());
+	// The input-disable edge drops the provider; the next frame must not re-compose from the button/Apt branch.
+	ui.setInputEnabled(false);
+	h.frames(8);
+	CHECK_FALSE(h.hud->helpBox().hasProvider());
+	CHECK_FALSE(h.hud->helpBox().isShown());
+	const unsigned shownWhileOff = h.hud->helpBox().helpsShown();
+	h.hud->mouseMove(midX(button.rect), midY(button.rect));
+	h.frames(6);
+	CHECK(h.hud->helpBox().helpsShown() == shownWhileOff);
+	CHECK_FALSE(h.hud->helpBox().isShown());
+
+	// Re-enabling the input allows a fresh hover to show again.
+	ui.setInputEnabled(true);
+	leave();
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shownWhileOff + 1);
+
+	// The actual cutscene path (DISABLE_INPUT) also drops the provider and leaves no help under the pointer.
+	h.hud->scriptInput(false);
+	h.frames(8);
+	CHECK_FALSE(h.hud->helpBox().hasProvider());
+	CHECK_FALSE(h.hud->helpBox().isShown());
+	const unsigned afterScript = h.hud->helpBox().helpsShown();
+	h.hud->mouseMove(midX(button.rect), midY(button.rect));
+	h.frames(8);
+	CHECK(h.hud->helpBox().helpsShown() == afterScript);
+	CHECK_FALSE(h.hud->helpBox().isShown());
+	h.hud->scriptInput(true);
+}
+
+TEST_CASE("hud6 retail: tooltips off / deadline / +0x810 suppress button help in the HUD")
+{
+	if (!haveWorld("hud6 tooltip gates"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *pit = h.rig.make("GondorBarracks", at.x, at.y);
+	h.rig.lookAt({ at.x, at.y, 0 });
+	h.select(pit);
+	h.frames(40);
+	REQUIRE_FALSE(h.hud->radialMenu().buttons().empty());
+	const auto button = h.hud->radialMenu().buttons().front();
+	std::vector<HelpDrawOp> ops;
+	h.hud->helpBoxRender(0, 0, 360, 120, ops);
+	h.frames(2);
+	InGameUI &ui = h.hud->input().ui();
+	auto enter = [&]() {
+		h.hud->mouseMove(midX(button.rect), midY(button.rect));
+		h.frames(3);
+	};
+	auto leave = [&]() {
+		h.hud->mouseMove(5, 5);
+		h.frames(10);
+	};
+	enter();
+	const unsigned shown = h.hud->helpBox().helpsShown();
+	REQUIRE(shown >= 1);
+	leave();
+
+	// RW 0x69BB14: the global setting off.
+	ui.setTooltipsEnabled(false);
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown);
+	CHECK_FALSE(h.hud->helpBox().hasProvider());
+	leave();
+	ui.setTooltipsEnabled(true);
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown + 1);
+	leave();
+
+	// RW 0x69BAF9: the deadline. The hover time advances 3 frames; the deadline is far ahead.
+	ui.disableTooltipsUntilFrame(h.rig.logic().getFrame() + 100);
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown + 1);
+	CHECK_FALSE(h.hud->helpBox().hasProvider());
+	leave();
+	ui.clearTooltipDisable();
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown + 2);
+	leave();
+
+	// RW 0x69B6A8 / 0x807978: the late mode gate.
+	ui.setModeGate810(true);
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown + 2);
+	CHECK(h.hud->helpBox().hasProvider()); // RW 0x807978: the provider is consumed and retained, not released
+	leave();
+	ui.setModeGate810(false);
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown + 3);
+}
+
+TEST_CASE("hud6 retail: tooltips off / the end-game timer while shown hide through the unmarked frame")
+{
+	InGameHelpBox box;
+	box.loaded("_level0.helpBox", [](const std::string &, const std::string &, const std::vector<std::string> &) { return true; });
+	auto measure = [](CommandButtonHelp &, int) { return 50; };
+	std::vector<HelpDrawOp> ops;
+	box.update(measure, 1);
+	box.render(0, 0, 300, 100, ops);
+	box.update(measure, 1);
+	REQUIRE(box.state() == 2);
+
+	bool tooltipsDisabled = false;
+	box.setUiGuards([&]() { return tooltipsDisabled; }, []() { return false; });
+	auto compose = []() { return std::make_shared<CommandButtonHelp>(); };
+	const InGameHelpBox::Provider a{ 2, 0, nullptr };
+	auto show = [&](std::uint32_t now) {
+		box.beginFrame();
+		box.showHelp(a, now, 0, compose);
+		box.beginFrame();
+		box.showHelp(a, now + 1, 0, compose);
+		box.update(measure, 1);
+	};
+
+	show(100);
+	REQUIRE(box.isShown());
+	// RW 0x807861: the tooltip guard returns BEFORE the frame is marked. The box stays for this frame; the next
+	// ControlBar::update sees no mark, calls hideSoon, and the 5-update countdown releases the help.
+	tooltipsDisabled = true;
+	box.beginFrame();
+	box.showHelp(a, 102, 0, compose);
+	CHECK(box.isShown());
+	box.beginFrame();
+	CHECK(box.state() == 4);
+	for (int i = 0; i < 5; ++i)
+	{
+		box.update(measure, 1);
+	}
+	CHECK(box.state() == 2);
+	CHECK(box.help() == nullptr);
+
+	// The end-game timer is the other early guard: it also returns without marking, so the same unmarked frame hides.
+	tooltipsDisabled = false;
+	show(200);
+	REQUIRE(box.isShown());
+	box.setEndGameTimer(0); // ScriptEngine + 0x1A204 >= 0
+	box.beginFrame();
+	box.showHelp(a, 202, 0, compose);
+	CHECK(box.isShown());
+	box.beginFrame();
+	CHECK(box.state() == 4);
+	for (int i = 0; i < 5; ++i)
+	{
+		box.update(measure, 1);
+	}
+	CHECK(box.state() == 2);
+	CHECK(box.help() == nullptr);
+}
+
+TEST_CASE("hud6 retail: tooltips off / the end-game timer while the box is shown hide it in the HUD")
+{
+	if (!haveWorld("hud6 shown early guards"))
+	{
+		return;
+	}
+	int timer = -1;
+	Hud6Rig h(shared(), "FactionMen", [&]() { return timer; });
+	auto ctx = h.hud->enterContext();
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *pit = h.rig.make("GondorBarracks", at.x, at.y);
+	h.rig.lookAt({ at.x, at.y, 0 });
+	h.select(pit);
+	h.frames(40);
+	REQUIRE_FALSE(h.hud->radialMenu().buttons().empty());
+	const auto button = h.hud->radialMenu().buttons().front();
+	std::vector<HelpDrawOp> ops;
+	h.hud->helpBoxRender(0, 0, 360, 120, ops);
+	h.frames(2);
+	InGameUI &ui = h.hud->input().ui();
+	auto enter = [&]() {
+		h.hud->mouseMove(midX(button.rect), midY(button.rect));
+		h.frames(3);
+	};
+	auto leave = [&]() {
+		h.hud->mouseMove(5, 5);
+		h.frames(10);
+	};
+	enter();
+	const unsigned shown = h.hud->helpBox().helpsShown();
+	REQUIRE(shown >= 1);
+	REQUIRE(h.hud->helpBox().isShown());
+
+	// RW 0x807861: tooltips off returns before the frame is marked; the next update's no-mark hide runs the 5-update countdown.
+	ui.setTooltipsEnabled(false);
+	h.frames(8);
+	CHECK_FALSE(h.hud->helpBox().isShown());
+	CHECK(h.hud->helpBox().helpsShown() == shown);
+	ui.setTooltipsEnabled(true);
+	leave();
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown + 1);
+	leave();
+
+	// The end-game timer is the other early guard and follows the same path.
+	timer = 0;
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown + 1);
+	h.frames(8);
+	CHECK_FALSE(h.hud->helpBox().isShown());
+	timer = -1;
+	leave();
+	enter();
+	CHECK(h.hud->helpBox().helpsShown() == shown + 2);
+}
+
+TEST_CASE("hud6 retail: a consumed provider that composes no help is not retried")
+{
+	InGameHelpBox box;
+	box.loaded("_level0.helpBox", [](const std::string &, const std::string &, const std::vector<std::string> &) { return true; });
+	auto measure = [](CommandButtonHelp &, int) { return 50; };
+	std::vector<HelpDrawOp> ops;
+	box.update(measure, 1);
+	box.render(0, 0, 300, 100, ops);
+	box.update(measure, 1);
+	REQUIRE(box.state() == 2);
+	const InGameHelpBox::Provider a{ 2, 0, nullptr };
+	int calls = 0;
+	auto empty = [&]() {
+		++calls;
+		return std::shared_ptr<CommandButtonHelp>();
+	};
+	box.beginFrame();
+	box.showHelp(a, 100, 0, empty); // kept
+	box.beginFrame();
+	box.showHelp(a, 101, 0, empty); // elapsed: consumed, composition empty
+	CHECK(calls == 1);
+	box.update(measure, 1);
+	CHECK(box.help() == nullptr);
+	CHECK_FALSE(box.isShown());
+	box.beginFrame();
+	box.showHelp(a, 102, 0, empty); // consumed for this hover: no retry
+	CHECK(calls == 1);
+	// leaving and returning is a new hover and composes again.
+	box.beginFrame();
+	box.beginFrame();
+	auto help = [&]() {
+		++calls;
+		return std::make_shared<CommandButtonHelp>();
+	};
+	box.showHelp(a, 200, 0, help);
+	box.beginFrame();
+	box.showHelp(a, 201, 0, help);
+	box.update(measure, 1);
+	CHECK(calls == 2);
+	CHECK(box.help() != nullptr);
+	CHECK(box.isShown());
+}
+
+TEST_CASE("hud6 retail: a shown help box stays through the +0x810 gate until the hover ends")
+{
+	if (!haveWorld("hud6 mode gate shown"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *pit = h.rig.make("GondorBarracks", at.x, at.y);
+	h.rig.lookAt({ at.x, at.y, 0 });
+	h.select(pit);
+	h.frames(40);
+	REQUIRE_FALSE(h.hud->radialMenu().buttons().empty());
+	const auto button = h.hud->radialMenu().buttons().front();
+	std::vector<HelpDrawOp> ops;
+	h.hud->helpBoxRender(0, 0, 360, 120, ops);
+	h.frames(2);
+	h.hud->mouseMove(midX(button.rect), midY(button.rect));
+	h.frames(4);
+	REQUIRE(h.hud->helpBox().isShown());
+
+	// RW 0x807848, equal provider: the frame is marked and the consumed flag is read BEFORE vslot 0x17C. A box
+	// already shown therefore stays; the gate only stops a new composition.
+	InGameUI &ui = h.hud->input().ui();
+	ui.setModeGate810(true);
+	h.frames(6);
+	CHECK(h.hud->helpBox().isShown());
+	// leaving ends the hover: the box hides and a new composition under the gate is refused.
+	h.hud->mouseMove(5, 5);
+	h.frames(10);
+	CHECK_FALSE(h.hud->helpBox().isShown());
+	const unsigned shown = h.hud->helpBox().helpsShown();
+	h.hud->mouseMove(midX(button.rect), midY(button.rect));
+	h.frames(6);
+	CHECK(h.hud->helpBox().helpsShown() == shown);
+	ui.setModeGate810(false);
+	// a fresh hover now shows.
+	h.hud->mouseMove(5, 5);
+	h.frames(10);
+	h.hud->mouseMove(midX(button.rect), midY(button.rect));
+	h.frames(6);
+	CHECK(h.hud->helpBox().helpsShown() == shown + 1);
+}
+
+TEST_CASE("hud6 retail: the world hover refreshes without a mouse move; the unit help waits Mouse.ini's TooltipDelayTime")
+{
+	if (!haveWorld("hud6 refresh hover"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *horde = h.rig.make("GondorFighter", at.x, at.y);
+	REQUIRE(horde);
+	h.rig.lookAt({ at.x, at.y, 0 });
+	h.frames(20);
+	const ICoord2D px = h.rig.screenOf({ horde->getPosition()->x, horde->getPosition()->y, 10.0f });
+	h.hud->mouseMove(px.x, px.y);
+	h.frames(2);
+	InGameUI &ui = h.hud->input().ui();
+	CHECK(ui.mouseoverObject() != INVALID_ID);
+	CHECK(ui.cursor() == MouseCursorName::Select);
+	std::vector<HelpDrawOp> ops;
+	h.hud->helpBoxRender(0, 0, 360, 120, ops);
+	h.frames(10); // ~330 ms: Mouse.ini TooltipDelayTime 800 ms not reached
+	CHECK(h.hud->helpBox().helpsShown() == 0);
+	h.frames(30); // > 800 ms
+	CHECK(h.hud->helpBox().helpsShown() >= 1);
+	CHECK(h.hud->helpBox().provider().bar == 6);
+	// the horde leaves the pointer: no mouse event, but the next frames re-pick and clear the help / cursor
+	Coord3D away = *horde->getPosition();
+	away.x += 2000.0f;
+	horde->setPosition(&away);
+	h.frames(12);
+	CHECK(ui.mouseoverObject() == INVALID_ID);
+	CHECK(ui.cursor() == MouseCursorName::Arrow);
+	h.frames(10);
+	CHECK_FALSE(h.hud->helpBox().isShown());
+}
+
+TEST_CASE("hud6 retail: the command hint's cursor wins over the base Select / Arrow on a still pointer")
+{
+	if (!haveWorld("hud6 cursor precedence"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f, false, { { 400.0f, 0.0f } });
+	Object *own = h.rig.make("GondorFighterHorde", at.x, at.y);
+	Player *enemyPlayer = h.rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemyPlayer);
+	Object *foe = h.rig.make("MordorFighterHorde", at.x + 400.0f, at.y, enemyPlayer);
+	REQUIRE(own);
+	REQUIRE(foe);
+	h.rig.lookAt({ at.x + 200.0f, at.y, 0.0f });
+	h.frames(20);
+	InGameUI &ui = h.hud->input().ui();
+	h.select(own);
+	// the selection a click makes, so the command translator knows the team exists (m_teamExists); its move hint is the green Move cursor
+	{
+		ClientMessage &m = h.hud->input().stream().append(MSG_CREATE_SELECTED_GROUP_NO_SOUND);
+		m.appendBoolean(true);
+		m.appendObjectID(own->getID());
+	}
+	h.frames(2);
+	// an enemy under a selected army: the red attack cursor, and it stays through frames without a mouse event (the refresh re-applies
+	// SelectionTranslator's base cursor first and the command hint after it, as retail's translator order does)
+	const ICoord2D pxFoe = h.rig.screenOf({ foe->getPosition()->x, foe->getPosition()->y, 10.0f });
+	h.hud->mouseMove(pxFoe.x, pxFoe.y);
+	h.frames(2);
+	CHECK(ui.cursor() == MouseCursorName::AttackObj);
+	h.frames(12);
+	CHECK(ui.cursor() == MouseCursorName::AttackObj);
+	// empty ground under the same selection: the green move cursor, not Arrow
+	const ICoord2D pxGround = h.rig.screenOf({ at.x + 200.0f, at.y + 40.0f, 0.0f });
+	h.hud->mouseMove(pxGround.x, pxGround.y);
+	h.frames(2);
+	CHECK(ui.cursor() == MouseCursorName::Move);
+	h.frames(12);
+	CHECK(ui.cursor() == MouseCursorName::Move);
+	// our own battalion under the same selection: still the green move cursor
+	const ICoord2D pxOwn = h.rig.screenOf({ own->getPosition()->x, own->getPosition()->y, 10.0f });
+	h.hud->mouseMove(pxOwn.x, pxOwn.y);
+	h.frames(2);
+	CHECK(ui.cursor() == MouseCursorName::Move);
+	h.frames(12);
+	CHECK(ui.cursor() == MouseCursorName::Move);
+	// a builder over our damaged structure: the repair cursor stays over the base Select
+	Object *worker = h.rig.make("GondorWorker", at.x - 400.0f, at.y + 200.0f);
+	Object *barracks = h.rig.make("GondorBarracks", at.x + 400.0f, at.y + 200.0f);
+	auto *body = dynamic_cast<ActiveBody *>(barracks->getBodyModule());
+	REQUIRE(body);
+	body->friend_setHealthRaw(body->getMaxHealth() * 0.5f);
+	h.select(worker);
+	{
+		ClientMessage &m = h.hud->input().stream().append(MSG_CREATE_SELECTED_GROUP_NO_SOUND);
+		m.appendBoolean(true);
+		m.appendObjectID(worker->getID());
+	}
+	h.frames(2);
+	const ICoord2D pxBarracks = h.rig.screenOf({ barracks->getPosition()->x, barracks->getPosition()->y, 10.0f });
+	h.hud->mouseMove(pxBarracks.x, pxBarracks.y);
+	h.frames(2);
+	CHECK(ui.cursor() == MouseCursorName::DoRepair);
+	h.frames(12);
+	CHECK(ui.cursor() == MouseCursorName::DoRepair);
+	// nothing selected: the base cursor is the square Select over a selectable object
+	ui.deselectAll(true);
+	h.frames(2);
+	CHECK(ui.cursor() == MouseCursorName::Select);
+	h.frames(12);
+	CHECK(ui.cursor() == MouseCursorName::Select);
+}
+
+TEST_CASE("hud6 retail: a mixed selection of three fighter hordes and a tower shield guard horde drives the HUD")
+{
+	if (!haveWorld("hud6 mixed selection"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	std::vector<Object *> hordes;
+	hordes.push_back(h.rig.make("GondorFighterHorde", at.x - 180.0f, at.y));
+	hordes.push_back(h.rig.make("GondorFighterHorde", at.x, at.y));
+	hordes.push_back(h.rig.make("GondorFighterHorde", at.x + 180.0f, at.y));
+	hordes.push_back(h.rig.make("GondorTowerShieldGuardHorde", at.x, at.y + 180.0f));
+	for (Object *o : hordes)
+	{
+		REQUIRE(o);
+	}
+	h.rig.lookAt({ at.x, at.y + 90.0f, 0.0f });
+	h.frames(30);
+	InGameUI &ui = h.hud->input().ui();
+	ui.deselectAll(true);
+	for (Object *o : hordes)
+	{
+		ui.selectObject(o->getID());
+	}
+	h.frames(30);
+	CHECK(ui.selected().size() == 4);
+	// the control bar and the decorations of the mixed selection, then the help of each member under the pointer
+	std::vector<HelpDrawOp> ops;
+	h.hud->helpBoxRender(0, 0, 360, 120, ops);
+	for (Object *o : hordes)
+	{
+		const Coord3D &p = *o->getPosition();
+		const ICoord2D px = h.rig.screenOf({ p.x, p.y, 10.0f });
+		h.hud->mouseMove(px.x, px.y);
+		h.frames(40);
+		CHECK(ui.mouseoverObject() != INVALID_ID);
+		CHECK(h.hud->helpBox().provider().bar == 6);
+		h.hud->helpBoxRender(0, 0, 360, 120, ops);
+		CHECK_FALSE(ops.empty());
+		ops.clear();
+	}
 }
 
 TEST_CASE("hud6 retail: a structure's Radial buttons ring over it, a builder's go to the side bar's frames (SetButtonState) and the help box shows")
@@ -1710,6 +2318,7 @@ TEST_CASE("ownerfix3 retail: another player's hero, barracks and fortress show t
 	}
 }
 
+
 TEST_CASE("ownerfix3 retail: the production count on the barracks' bubbles and the Palantir (RW 0x729D9A / 0x4A4CD3 / 0x9D7054)")
 {
 	if (!haveWorld("ownerfix3 production count"))
@@ -1757,7 +2366,7 @@ TEST_CASE("ownerfix3 retail: the production count on the barracks' bubbles and t
 			CHECK_MESSAGE(b.productionCount == 0, b.button->m_name);
 		}
 	}
-	// the bubble: "3" at the bottom centre in ControlBar.wnd:ButtonCommand's font and ENABLED / ENABLEDBORDER colours, before the button's RadialBorder
+	// the bubble: "3" above the clock/frame in ControlBar.wnd:ButtonCommand's font and ENABLED / ENABLEDBORDER colours
 	const ControlBarRadialMenu &radial = h.hud->radialMenu();
 	CHECK(radial.errors().empty());
 	const ControlBarRadialMenu::Button *bubble = nullptr;
@@ -1770,6 +2379,10 @@ TEST_CASE("ownerfix3 retail: the production count on the barracks' bubbles and t
 	for (size_t i = 0; i < radial.ops().size(); ++i)
 	{
 		const RadialDrawOp &op = radial.ops()[i];
+		if (op.slot == slot && op.kind == RadialDrawOp::OVERLAY)
+		{
+			borderAt = (int)i;
+		}
 		if (op.kind == RadialDrawOp::TEXT)
 		{
 			++texts;
@@ -1779,20 +2392,16 @@ TEST_CASE("ownerfix3 retail: the production count on the barracks' bubbles and t
 			CHECK(op.font.name == "Arial");
 			CHECK(op.font.pointSize == 8);
 			CHECK_FALSE(op.font.bold);
-			// x = (int)(48 * 0.5f - 6 * 0.5f + left), y = top + 48 - 13
+			// x = (int)(48 * 0.5f - 6 * 0.5f + left), y = top + 48 - 13 (the exact WND formula)
 			CHECK((int)op.x == (int)((float)bubble->rect.w * 0.5f - 3.0f + (float)bubble->rect.x));
 			CHECK((int)op.y == bubble->rect.y + bubble->rect.h - 13);
 			CHECK(op.color == 0xFFFEFEFEu);    // ENABLED: 254 254 254 255
 			CHECK(op.dropColor == 0xFF000000u); // ENABLEDBORDER: 0 0 0 255
 		}
-		if (op.kind == RadialDrawOp::OVERLAY && op.slot == slot)
-		{
-			borderAt = (int)i;
-		}
 	}
 	CHECK(texts == 1);
 	REQUIRE(textAt != -1);
-	CHECK(textAt < borderAt); // tolerance: an order, not a value (the count is drawn before the bubble's RadialBorder, RW 0x4A5112)
+	CHECK(textAt == borderAt - 1); // the count is drawn after the clock and before the RadialBorder (RW 0x4A5112)
 	// the pointer over the bubble: the HILITE pair
 	h.hud->mouseMove(bubble->rect.x + bubble->rect.w / 2, bubble->rect.y + bubble->rect.h / 2, 0);
 	h.frames(2);
@@ -1893,4 +2502,176 @@ TEST_CASE("ownerfix3 retail: ControlBar.wnd:ButtonCommand's font and text colour
 	std::string badSize = text;
 	badSize.replace(badSize.find("SIZE: 8", font), 7, "SIZE: x");
 	refused(badSize, "FONT is not");
+}
+
+TEST_CASE("hud6 retail: the resource barrel and faction crest mapped images and textures are loadable")
+{
+	if (!haveWorld("hud6 resource icon assets"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	MappedImageCollection images;
+	INIEnvironment env;
+	env.fileSystem = s.mount->fs.get();
+	images.registerBlocks(env.blocks);
+	INI ini(env);
+	ini.loadDirectory("Data\\INI\\MappedImages", true, INI_LOAD_OVERWRITE);
+	for (const char *name : { "Resource_Icon", "ResourceBar_Mordor", "ResourceBar_Gondor" })
+	{
+		INFO(name);
+		const ::Image *image = images.findImageByName(name);
+		REQUIRE(image != nullptr);
+		CHECK(image->imageSize.x > 0);
+		CHECK(image->imageSize.y > 0);
+		CHECK_FALSE(image->filename.empty());
+		// The texture name is resolved by HudDevice::textureFor/imageFor (the retail texture search), not by a raw
+		// readFile of the mapped-image texture name: ResourceBarIcons.tga is an atlas name, not a loose file path.
+	}
+}
+
+TEST_CASE("hud6 inventory: RenderImage clips without _imageMap in the loaded HUD movies")
+{
+	if (!haveWorld("hud6 render image inventory"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMordor");
+	h.frames(30);
+	AptRenderList rl;
+	h.hud->apt().buildRenderList(rl);
+	std::set<std::string> paths;
+	for (const AptRenderCommand &c : rl.commands)
+	{
+		if (c.symbolName != "RenderImage")
+		{
+			continue;
+		}
+		std::string imageMap;
+		for (const auto &v : c.nativeVars)
+		{
+			if (v.first == "_imageMap")
+			{
+				imageMap = v.second;
+			}
+		}
+		if (imageMap.empty())
+		{
+			paths.insert(c.path);
+		}
+	}
+	for (const std::string &p : paths)
+	{
+		std::printf("RenderImage without _imageMap: %s\n", p.c_str());
+	}
+	CHECK(paths.count("_level1.ResourceBar.ResourceIcon.~Enabled") == 1);
+	CHECK(paths.count("_level1.CommandUI.Portrait") == 1);
+}
+
+TEST_CASE("hud6 retail: a unit behind a NeededUpgrade is _disabled, not _extraDisabled")
+{
+	if (!haveWorld("hud6 needed upgrade extra disabled"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMordor");
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *palace = h.rig.make("MordorHaradrimPalace", at.x, at.y);
+	REQUIRE(palace != nullptr);
+	h.rig.lookAt({ at.x, at.y, 0.0f });
+	h.frames(15);
+	h.select(palace);
+	h.frames(10);
+	const ControlBarButton *button = nullptr;
+	for (const ControlBarButton &b : h.hud->controlBar().palantirButtons())
+	{
+		if (b.button && b.button->m_name == "Command_ConstructMordorHaradrimArcherHorde")
+		{
+			button = &b;
+		}
+	}
+	REQUIRE(button != nullptr);
+	// Command_ConstructMordorHaradrimArcherHorde has Options = NEED_UPGRADE and
+	// NeededUpgrade = Upgrade_MordorHaradrimPalaceLevel2; the level 1 palace does not have it.
+	// RW_0x942733.md: a missing NeededUpgrade restricts with availability 0 (the _disabled frame), not 4.
+	CHECK(button->state == ButtonState::Restricted);
+	CHECK(std::string(AptPalantir::commandStateName(button->state, button->button->m_options)) == "_disabled");
+}
+
+
+TEST_CASE("hud6 retail: a NONPRESSABLE passive ability uses the passive ButtonGlass")
+{
+	if (!haveWorld("hud6 passive button glass"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionIsengard");
+	const Coord3D at = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *lurtz = h.rig.make("IsengardLurtz", at.x, at.y);
+	REQUIRE(lurtz != nullptr);
+	h.rig.lookAt({ at.x, at.y, 0.0f });
+	h.frames(30);
+	h.select(lurtz);
+	h.frames(10);
+	const ControlBarButton *passive = nullptr;
+	for (const ControlBarButton &b : h.hud->controlBar().palantirButtons())
+	{
+		if (b.button && b.button->m_name == "Command_LurtzLeadership")
+		{
+			passive = &b;
+		}
+	}
+	REQUIRE(passive != nullptr);
+	REQUIRE(passive->button->hasOption(COMMAND_OPTION_NONPRESSABLE));
+	AptSpriteInst *root = h.hud->apt().level(h.hud->palantir()->level());
+	REQUIRE(root != nullptr);
+	AptCharacterInst *clip = h.hud->apt().resolvePath(root, "CommandButtons.glass" + std::to_string(passive->position));
+	REQUIRE(clip != nullptr);
+	AptSpriteInst *glass = clip->asSprite();
+	REQUIRE(glass != nullptr);
+	const int passiveStart = glass->labelFrame("_passive");
+	REQUIRE(passiveStart >= 0);
+	CHECK(glass->frame >= passiveStart); // the `_passive` segment, the yellow ability glass
+	// negative: a normal command set must put the same glass slot back on `_active`, not leave a passive glow behind
+	const Coord3D other = h.rig.freeSpot(2800, 1600, 250.0f);
+	Object *pit = h.rig.make("IsengardUrukPit", other.x, other.y);
+	REQUIRE(pit != nullptr);
+	h.select(pit);
+	h.frames(10);
+	clip = h.hud->apt().resolvePath(root, "CommandButtons.glass" + std::to_string(passive->position));
+	REQUIRE(clip != nullptr);
+	glass = clip->asSprite();
+	REQUIRE(glass != nullptr);
+	CHECK(glass->frame < passiveStart); // the `_active` segment
+}
+
+TEST_CASE("hud6 retail: a RenderImage without _imageMap finds its image by the stripped path and the tilde base (BFME2 0x623AC4)")
+{
+	if (!haveWorld("hud6 renderimage path"))
+	{
+		return;
+	}
+	Hud6Rig h(shared(), "FactionMordor");
+	h.frames(2);
+	AptPalantir *p = h.hud->palantir();
+	REQUIRE(p != nullptr);
+	// 0x812845: `_level<digits><separator>` is removed
+	CHECK(AptPalantir::stripLevelPrefix("_level1.CommandUI.Portrait") == "CommandUI.Portrait");
+	CHECK(AptPalantir::stripLevelPrefix("_level10/ResourceBar/ResourceIcon/~Enabled") == "ResourceBar/ResourceIcon/~Enabled");
+	CHECK(AptPalantir::stripLevelPrefix("CommandUI.Portrait") == "CommandUI.Portrait");
+	// 0x623B96: the part before `~`, dropping the separator (retail `/`, the port's dot paths too)
+	CHECK(AptPalantir::tildeBase("ResourceBar.ResourceIcon.~Enabled") == "ResourceBar.ResourceIcon");
+	CHECK(AptPalantir::tildeBase("ResourceBar/ResourceIcon/~Enabled") == "ResourceBar/ResourceIcon");
+	CHECK(AptPalantir::tildeBase("ResourceBar.ResourceIcon") == "ResourceBar.ResourceIcon");
+	// the barrel: no `_imageMap`, so the full path misses the dynamic map and the stripped `~` base resolves the image entry
+	CHECK(p->imageForClip("_level1.ResourceBar.ResourceIcon.~Enabled", "") == nullptr);
+	const AptPalantir::NativeImage *barrel = p->imageForPath("_level1.ResourceBar.ResourceIcon.~Enabled");
+	REQUIRE(barrel != nullptr);
+	CHECK(barrel->image == "Resource_Icon");
+	// an `_imageMap` that names the dynamic entry directly also resolves it
+	barrel = p->imageForClip("_level1.ResourceBar.ResourceIcon.~Enabled", "ResourceBar.ResourceIcon");
+	REQUIRE(barrel != nullptr);
+	CHECK(barrel->image == "Resource_Icon");
+	// a path with no entry and no `~` stays unresolved
+	CHECK(p->imageForPath("_level1.No.Such.Image") == nullptr);
 }

@@ -283,6 +283,29 @@ void AptView3DViewers::draw(RID item, const Rect2 &rect, const AptCanvasOp &op, 
 void AptView3DViewers::endBuild()
 {
 	syncVisibility();
+	// owner report 2026-11-10: a viewer this canvas did not draw is released, not just disabled. Keeping it alive left the
+	// hidden menu's SubViewports/instancer/model in memory and its SFE_MENUBKGRND clip at the last (dark) frame.
+	for (auto it = m_slots.begin(); it != m_slots.end();)
+	{
+		if (!it->second.used)
+		{
+			release(it->second);
+			it = m_slots.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+}
+
+void AptView3DViewers::releaseAll()
+{
+	for (auto &kv : m_slots)
+	{
+		release(kv.second);
+	}
+	m_slots.clear();
 }
 
 bool AptView3DViewers::ownerVisible() const

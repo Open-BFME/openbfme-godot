@@ -69,6 +69,13 @@ func _run() -> int:
 	_check(code2 == 0, "--quit: game.tscn exits 0 (got %d)" % code2)
 	_check(t2.contains("\"popup_type\":\"Restart\"") and t2.contains("\"disabled\":[]"), "--quit: a skirmish's quit menu offers Restart and disables nothing (RW 0x921D5B)")
 	_check(t2.contains("paused true"), "--quit: the skirmish pauses while the menu is open")
+	# lane INGAMEBG-2: the pause menu draws the in-game overlay only; the front-end background's hide model would cover the battlefield for 36 frames
+	var quit_bg := ""
+	for bgline in t2.split("\n"):
+		if bgline.begins_with("GAME QUIT background paths: "):
+			quit_bg = bgline
+	_check(quit_bg.contains("InGameBackground alpha") and not quit_bg.contains(".Background alpha"),
+		"--quit: the pause menu shows the in-game overlay, not the front-end background cover")
 	# lane CAMP-2 (review r1): leaving through the quit menu brings the shell's backdrop back, read from the canvas (and the game had none)
 	_check(t2.contains("GAME SHELL PICTURES in game (skirmish): backdrop '', background mode 0 ") and t2.contains("GAME SHELL PICTURES back in the shell: backdrop 'ShellMapLowLOD'"),
 		"--quit: the game had no shell backdrop and the way back through Exit draws it again")

@@ -80,7 +80,8 @@ TestMovie palantirMovie()
 	const std::uint32_t buttonsRecord = movie.addSprite({ buttonItems });
 	const std::uint32_t buttonsId = movie.addCharacter(buttonsRecord);
 	const std::uint32_t rootAction = program(movie, [](Asm &a) {
-		for (const char *name : { "SetPalantirFrameState", "SetPlayerButtonsState", "EnablePlayerMagicButton", "SetPlayerFaction", "ShowCommandInterface",
+		// The resource bar's own function (Palantir.apt's script): the engine asks for `_show` at start so the money icon is visible.
+		for (const char *name : { "SetPalantirFrameState", "SetResourceIconState", "SetPlayerButtonsState", "EnablePlayerMagicButton", "SetPlayerFaction", "ShowCommandInterface",
 				 "HideCommandInterface", "HideRankInterface", "ShowRankInterface", "ShowRankProgress", "HideRankProgress", "SetRankProgressBar", "SetPlayerMagicProgress" })
 		{
 			a.defineFunction(name, {}, [](Asm &) {});

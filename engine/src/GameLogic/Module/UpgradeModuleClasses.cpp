@@ -178,6 +178,12 @@ const FieldParse kCommandSet[] = { // RW 0xC6DF70
 	{ "CommandSet", INI::parseAsciiString, nullptr, (int)offsetof(CommandSetUpgradeModuleData, m_commandSet) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
+// lane HOVER-1: TooltipUpgrade's two labels (RW 0xC6F8A0: DisplayName +0x138, Description +0x13C)
+const FieldParse kTooltipUpgrade[] = {
+	{ "DisplayName", INI::parseAsciiString, nullptr, (int)offsetof(TooltipUpgradeModuleData, m_displayName) },
+	{ "Description", INI::parseAsciiString, nullptr, (int)offsetof(TooltipUpgradeModuleData, m_description) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
 // lane MODS-3: edain-unchained.commandset-button-upgrade's parser (its 0xEDB040): every remaining token of the line joined with ' ' (a second line
 // replaces the first)
 void parseCommandButtonList(INI *ini, void *, void *store, const void *)
@@ -274,6 +280,11 @@ void CommandSetUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
 	buildBaseFieldParse(p);
 	p.add(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedCommandSetButtons) ? kCommandSetButtons : kCommandSet);
+}
+void TooltipUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	buildBaseFieldParse(p); // TriggeredBy / ConflictsWith (RW 0x8D26E0), then the two labels
+	p.add(kTooltipUpgrade);
 }
 void ObjectImageUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
@@ -735,6 +746,31 @@ void SubObjectsUpgrade::crc(StateHasher &h) const
 }
 
 // ---- ObjectImageUpgrade (lane MODS-3) -----------------------------------------------------------------------------------------------------------
+// ---- TooltipUpgrade -----------------------------------------------------------------------------------------------------------------------
+void TooltipUpgrade::upgradeImplementation()
+{
+	Object *obj = getObject();
+	if (!obj)
+	{
+		return;
+	}
+	// RW 0x8BBBCC: write the labels onto the displayable help (retail Drawable +0x348 / +0x34C; the port's Object fields)
+	obj->setTooltipDisplayName(m_data->m_displayName);
+	obj->setTooltipDescription(m_data->m_description);
+}
+
+void TooltipUpgrade::processUpgradeRemoval()
+{
+	Object *obj = getObject();
+	if (!obj)
+	{
+		return;
+	}
+	// RW 0x8BBC0A: clear both labels
+	obj->setTooltipDisplayName(std::string());
+	obj->setTooltipDescription(std::string());
+}
+
 void ObjectImageUpgrade::upgradeImplementation()
 {
 	m_appliedFrame = getObject()->logic().getFrame() + 1; // its 0xEF320F: the entry is (re)written last, the newest
@@ -895,6 +931,8 @@ void UpgradeModuleClasses::registerAll(ModuleFactory &modules)
 	bindRuntime<WeaponSetUpgrade, WeaponSetUpgradeModuleData>(modules, "WeaponSetUpgrade");
 	modules.bindTypedData<CommandSetUpgradeModuleData>("CommandSetUpgrade", MODULETYPE_BEHAVIOR);
 	bindRuntime<CommandSetUpgrade, CommandSetUpgradeModuleData>(modules, "CommandSetUpgrade");
+	modules.bindTypedData<TooltipUpgradeModuleData>("TooltipUpgrade", MODULETYPE_BEHAVIOR); // lane HOVER-1: RW 0x65A7F3
+	bindRuntime<TooltipUpgrade, TooltipUpgradeModuleData>(modules, "TooltipUpgrade");
 	modules.bindTypedData<DoCommandUpgradeModuleData>("DoCommandUpgrade", MODULETYPE_BEHAVIOR); // lane SUMMON-1: RW 0x65A3DA
 	bindRuntime<DoCommandUpgrade, DoCommandUpgradeModuleData>(modules, "DoCommandUpgrade");
 	modules.bindTypedData<SubObjectsUpgradeModuleData>("SubObjectsUpgrade", MODULETYPE_BEHAVIOR);
@@ -974,6 +1012,12 @@ void ObjectImageUpgrade::xfer(Xfer &x)
 	SnapshotXfer::version(x, 1, 1);
 	UpgradeModule::xfer(x);
 	x.xferUnsignedInt(&m_appliedFrame);
+}
+
+void TooltipUpgrade::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	UpgradeModule::xfer(x);
 }
 
 void DoCommandUpgrade::xfer(Xfer &x)
