@@ -207,8 +207,9 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	}
 	if (shadowReceiver) line("#include \"res://shaders/object_shadow.gdshaderinc\"");
 	if (shadowReceiver) line("instance uniform bool w3d_receive_shadows : instance_index(1) = false;");
-	if (selectionDecals) line("#include \"res://shaders/selection_decals.gdshaderinc\""); // lane SELWALL-1
-	if (selectionDecals && shadowReceiver) line("varying vec3 v_shadow_over;"); // lane HERORING-1: the alpha decals over the shadowed surface (light())
+	if (shadowReceiver) line("#include \"res://shaders/selection_decals.gdshaderinc\""); // lane SELWALL-1
+	if (shadowReceiver) line("#include \"res://shaders/radius_cursor.gdshaderinc\"");
+	if (shadowReceiver) line("varying vec3 v_shadow_over;"); // lane HERORING-1: the alpha decals over the shadowed surface (light())
 
 	// ---- uniforms ----
 	line("uniform sampler2D w3d_palette : filter_nearest, repeat_disable;");
@@ -801,7 +802,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	{
 		line("\tALBEDO = clamp(cur.rgb, 0.0, 1.0);");
 	}
-	if (selectionDecals)
+	if (shadowReceiver)
 	{
 		// lane SELWALL-1 (an opaque surface only): the merge decals at the pixel's SAGE point (Godot (x, y, z) = SAGE (x, z, -y)), over the surface's
 		// colour as on the terrain (terrain.gdshader): the decal's colour decoded the same way, the surface's own colour kept for the shadow split below
@@ -809,8 +810,9 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		// only where the surface faces up (SEL_WALL_MIN_UP: the walkable top, a ramp, a stair's tread; not the wall's side faces)
 		line("\tbool sel_up = normalize(v_wnrm).y >= SEL_WALL_MIN_UP;");
 		line("\tvec3 sel_at = vec3(sel_world.x, -sel_world.z, sel_world.y);");
-		line("\tvec4 sela = sel_up ? sel_alpha_at(sel_at, true, clamp(cur.rgb, 0.0, 1.0)) : vec4(0.0);");
-		line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
+		line(std::string("\tvec4 sela = sel_up ? sel_alpha_projected_at(sel_at, ") + (selectionDecals ? "true" : "false") + ", true, clamp(cur.rgb, 0.0, 1.0)) : vec4(0.0);");
+		if (selectionDecals) line("\tvec4 sel = sel_up ? sel_merge_at(sel_at, true) : vec4(0.0);");
+		else line("\tvec4 sel = vec4(0.0);");
 		line("\tvec3 sel_ground = ALBEDO;");
 		// lane HERORING-1: the alpha decals (a hero's ring) first, blended over the surface's gamma colour, then the merge decals (as terrain.gdshader);
 		// the surface's shadowed share (sel_shadow, gamma) and the decals' colour over it (sel_over) go to light(), so the ring stays above the shadows.
@@ -820,6 +822,11 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\tif (sela.a > 0.0 || any(greaterThan(sela.rgb, vec3(0.0)))) { sel_shadow *= 1.0 - sela.a; sel_over = sela.rgb; ALBEDO = w3d_to_linear(sel_shadow + sel_over); sel_ground = ALBEDO; }");
 		line("\tALBEDO = mix(ALBEDO, w3d_to_linear(clamp(sel.rgb, 0.0, 1.0)), sel.a);");
 		line("\tfloat sel_keep = 1.0 - sel.a;");
+		// Presentation extension (S-4640): project targeting previews onto upward opaque object faces too.
+		// Same linear-space composition as terrain.gdshader; retail stencil/receiver parity is unverified.
+		line("\tvec4 cursor = sel_up ? radius_cursor_sample(sel_at.xy) : vec4(0.0);");
+		line("\tif (radius_cursor_params.y > 0.5) { ALBEDO = mix(ALBEDO, w3d_to_linear(cursor.rgb), cursor.a); sel_keep *= 1.0 - cursor.a; }");
+		line("\telse { ALBEDO += w3d_to_linear(cursor.rgb) * cursor.a; }");
 	}
 	switch ((W3DGodotBlend)k.Blend)
 	{
@@ -838,41 +845,18 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	}
 	if (shadowReceiver)
 	{
-		if (selectionDecals)
-		{
-			line("\tv_shadow_color = sel_shadow;");
-			line("\tv_shadow_over = sel_over;");
-		}
-		else
-		{
-			line("\tv_shadow_color = clamp(cur.rgb, 0.0, 1.0);");
-		}
+		line("\tv_shadow_color = sel_shadow;");
+		line("\tv_shadow_over = sel_over;");
 		line("\tfloat shadow_enabled = w3d_receive_shadows ? w3d_shadow.w : 0.0;");
-		if (selectionDecals)
-		{
-			// lane SELWALL-1: the decal stays above the object shadows, as terrain.gdshader keeps it (only the surface's own share is shadowed)
-			line("\tEMISSION = ALBEDO - sel_ground * sel_keep * shadow_enabled;");
-			line("\tALBEDO = vec3(sel_keep * shadow_enabled);");
-		}
-		else
-		{
-			line("\tEMISSION = ALBEDO * (1.0 - shadow_enabled);");
-			line("\tALBEDO = vec3(shadow_enabled);");
-		}
+		// The overlays remain above object shadows, as on terrain.gdshader.
+		line("\tEMISSION = ALBEDO - sel_ground * sel_keep * shadow_enabled;");
+		line("\tALBEDO = vec3(sel_keep * shadow_enabled);");
 	}
 	line("}");
 	if (shadowReceiver)
 	{
 		line("void light() {");
-		if (selectionDecals)
-		{
-			// lane HERORING-1: object_shadow_light with the alpha decals over the shadowed surface (as terrain.gdshader)
-			line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += shadow_to_linear(v_shadow_color * mix(w3d_shadow.rgb, vec3(1.0), ATTENUATION) + v_shadow_over);");
-		}
-		else
-		{
-			line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += object_shadow_light(ATTENUATION);");
-		}
+		line("\tif (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += shadow_to_linear(v_shadow_color * mix(w3d_shadow.rgb, vec3(1.0), ATTENUATION) + v_shadow_over);");
 		line("}");
 	}
 	return c;

@@ -291,6 +291,19 @@ CASES = {
 }
 
 
+def test_a_port_beside_a_later_change_is_contained(world):
+    """#336: the contributed line sits three lines above a line a later lane added; only the contributed lines must match exactly"""
+    lines = [f"{i}\n" for i in range(1, 8)]
+    base = world.change({"engine/m.txt": "".join(lines)}, "M-1: a list")
+    head = world.change({"engine/m.txt": "".join(lines[:3] + ["contrib\n"] + lines[3:])}, "the contribution")
+    later = world.change({"engine/m.txt": "".join(lines[:3] + ["contrib\n"] + lines[3:5] + ["later\n"] + lines[5:])}, "a later lane")
+    tree = git(world.repo, "rev-parse", f"{later}^{{tree}}")
+    assert community_prs.containment_problem(str(world.repo), base, head, tree) == ""
+    rewritten = world.change({"engine/m.txt": "".join(lines[:3] + ["contrib!\n"] + lines[3:5] + ["later\n"] + lines[5:])}, "rewritten")
+    tree = git(world.repo, "rev-parse", f"{rewritten}^{{tree}}")
+    assert "not all in the public tree" in community_prs.containment_problem(str(world.repo), base, head, tree)
+
+
 @pytest.mark.parametrize("case", sorted(CASES))
 def test_every_check_refuses_by_name(world, case):
     head, sha = ready(world)

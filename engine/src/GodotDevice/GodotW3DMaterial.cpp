@@ -880,9 +880,9 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 	// buildings): every texture this surface names A is loaded as B, before the house colour lookup reads it. INFERENCE: retail's swap routine was not read
 	for (std::string *name : { &tex[0], &tex[1], &normalMapName })
 	{
-		for (const std::pair<std::string, std::string> &swap : TextureSwaps)
+		for (const TextureSwap &swap : TextureSwaps)
 		{
-			if (!name->empty() && (swap.first == "*" || AsciiStringUtil::compareNoCase(*name, swap.first) == 0)) // "*": every texture (a floor's WeatherTexture)
+			if (!swap.excludes(mesh.Name) && !name->empty() && (swap.first == "*" || AsciiStringUtil::compareNoCase(*name, swap.first) == 0)) // "*": every texture (a floor's WeatherTexture)
 			{
 				out.Notes.push_back("texture " + *name + " drawn as " + swap.second + " (the model state's Texture swap, S-5015)");
 				*name = swap.second;
