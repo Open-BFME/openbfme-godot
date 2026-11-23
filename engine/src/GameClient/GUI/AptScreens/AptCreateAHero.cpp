@@ -507,7 +507,9 @@ const std::vector<std::string> &AptCreateAHero::stopLines()
 		"0x6727B0) and its model's house colour textures are recoloured texel by texel before filtering as RW 0x531C77 (mipmaps from the recoloured level); the recoloured texel is combined with the lit base as retail's DefaultW3D.fx / fixed-function rules do (S-022); "
 		"INFERENCE: the A4R4G4B4 path is not ported. The ColorPicker component (RW 0xB55146 ..) draws "
 		"AptColorChooserPallete, reads the texel under the cursor and places the cursor for a colour in the update rather than the draw. The rows' "
-		"StatVal fields are retail-exact: no movie places a StatVal, so no bling name is shown"
+		"StatVal fields are retail-exact: no movie places a StatVal, so no bling name is shown",
+		"[S-7186] Create-a-Hero powers page (lane CAHWHEEL-1, NOT RETAIL, the owner's request): the mouse wheel scrolls the power matrix one line per notch "
+		"(a press of its scroll bar's arrow); RotWK's matrix does not hear the wheel"
 	};
 	return lines;
 }
@@ -1814,6 +1816,62 @@ void AptCreateAHero::update()
 			windows().invokeASAt(level(), "Main.mcPowersScreen.Screen.mcPowersMenu", "OnScrollTo", { "0" }, nullptr, &error);
 		}
 	}
+}
+
+namespace
+{
+// the first clip named `name` at or below `c` (the matrix's scroll bar sits in an unnamed clip of mcPowersMenu)
+AptCharacterInst *findNamed(AptCharacterInst *c, const std::string &name)
+{
+	if (!c)
+	{
+		return nullptr;
+	}
+	if (c->instName() == name)
+	{
+		return c;
+	}
+	if (const AptSpriteInst *s = dynamic_cast<const AptSpriteInst *>(c))
+	{
+		for (AptCharacterInst *child : s->children())
+		{
+			if (AptCharacterInst *found = findNamed(child, name))
+			{
+				return found;
+			}
+		}
+	}
+	return nullptr;
+}
+} // namespace
+
+bool AptCreateAHero::inputWheel(int delta)
+{
+	// lane CAHWHEEL-1 (NOT RETAIL, S-7186, the owner's request): RotWK's power matrix scrolls only through its VerticalScrollBar (VerticalScrollBar.apt:
+	// arrows, thumb, bar); no RotWK or BFME2 movie has an onMouseWheel handler and RotWK's code does not drive this bar. A notch here is what a press of
+	// the bar's own arrow does: theBar.OnScrollButtonPress(upButton / downButton) moves one line size, keeps the position in [0, 1], moves the thumb and
+	// tells the movie (OnPosChanged -> mcPowersMenu.OnScrollTo), so the movie's own rules decide how far a line goes
+	if (m_page != 'P' || delta == 0 || level() < 0)
+	{
+		return false;
+	}
+	Apt &apt = windows().apt();
+	AptCharacterInst *menu = apt.resolvePath(apt.level(level()), "Main.mcPowersScreen.Screen.mcPowersMenu");
+	AptCharacterInst *bar = findNamed(menu, "theBar");
+	AptCharacterInst *arrow = bar ? findNamed(bar, delta > 0 ? "upButton" : "downButton") : nullptr;
+	if (!arrow)
+	{
+		return false;
+	}
+	std::string error;
+	for (int i = 0; i < (delta > 0 ? delta : -delta); ++i)
+	{
+		if (!apt.invokeValues(bar, "OnScrollButtonPress", { AptValue::object(arrow) }, nullptr, &error))
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 // RW 0x9C523F: the subclass's statistics, localized label and numeric value.

@@ -85,9 +85,57 @@ func _run() -> int:
 	if not ClassDB.class_exists("AptMenuPlayer"):
 		_check(false, "the openbfme extension is loaded")
 		return 1
+	_script_requests_case()
 	_game_run(["--auto", "--res=1024x768"], "a skirmish")
 	_game_run(["--campaign-menu=Expansion1Campaign", "--res=1280x720"], "the first campaign mission from the main menu")
 	return 0 if _failures == 0 else 1
+
+
+## lane SAVEUIHELD-1: the campaign run's intro (MAP ANG Angmar, "Intro Cine Part 5" at frame 181: RESET_CAMERA, CAMERA_LETTERBOX_END, ENABLE_INPUT) must
+## reach the script side (campaign_cine.gd: the control bar, the HUD's input) even when the logic publishes a batch between campaign_cine.gd's
+## take_script_requests and its update_script_view in a render frame. Before the fix update_script_view took that batch and dropped it: under load the game
+## stayed in the letterbox with the input off (the camera could not scroll: held-key-cancelled failed at frame ~2380). Here every logic frame is published
+## in that gap, on the main thread: deterministic.
+func _script_requests_case() -> void:
+	var fs: RefCounted = ClassDB.instantiate("RetailFileSystem")
+	if not fs.mount_retail().ok:
+		_check(false, "script requests: the retail files mount")
+		return
+	var world: Node3D = ClassDB.instantiate("GameWorld")
+	root.add_child(world)
+	var rep: Dictionary = world.setup(fs)
+	if rep.ok:
+		rep = world.load_map("map ang angmar", {"campaign": true, "seed": 4711, "logic_thread": false})
+	if not rep.ok:
+		_check(false, "script requests: map ang angmar loads (%s)" % str(rep.get("errors", [])).left(300))
+		world.queue_free()
+		return
+	world.set_auto_advance(false)
+	var seen: Array = [] # action@frame
+	var keyed: Array = [] # action@frame(params): a request taken twice
+	var take := func() -> void:
+		for r in world.take_script_requests():
+			seen.append("%s@%d" % [r.action, int(r.frame)])
+			keyed.append("%s@%d(%s) %s" % [r.action, int(r.frame), ",".join((r.params as Array).map(func(p): return "%s/%s/%s" % [p.int, p.real, p.string])), r.script])
+	var renders := 0
+	while world.get_frame() < 200 and renders < 3000:
+		take.call() # campaign_cine.gd _process: the script side's take first
+		world.advance(1.0 / 30.0) # the logic publishes its frame now, after that take (the worker publishes at any time)
+		world.update_script_view(1000.0 / 30.0, {"x": 0.0, "y": 0.0, "z": 0.0, "angle": 0.0}) # then the director's update in the same render frame
+		renders += 1
+	take.call()
+	var want := ["CAMERA_LETTERBOX_BEGIN@1", "DISABLE_INPUT@1", "MOVE_CAMERA_TO@136", "RESET_CAMERA@181", "CAMERA_LETTERBOX_END@181", "ENABLE_INPUT@181"]
+	var missing: Array = want.filter(func(w): return not seen.has(w))
+	var twice: Array = []
+	for i in keyed.size():
+		if keyed.find(keyed[i]) != i and not twice.has(keyed[i]):
+			twice.append(keyed[i])
+	# tolerance: none; the requests of a frame are compared by name and frame (frame 1 to 200, the map's own intro timers)
+	_check(world.get_frame() >= 200 and missing.is_empty() and twice.is_empty(), "script requests published between the script side's take and update_script_view reach it: frame %d, %d requests, missing %s, twice %s" % [
+		world.get_frame(), seen.size(), str(missing), str(twice)])
+	world.set_logic_thread(false)
+	root.remove_child(world)
+	world.free()
 
 
 func _game_run(args: Array, what: String) -> void:

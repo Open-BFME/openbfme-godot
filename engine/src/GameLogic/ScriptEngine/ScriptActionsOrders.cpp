@@ -30,7 +30,7 @@
 //     an object list takes per type the strictly nearest by the squared 3D distance (RW 0x7C2F85); 394 walks the players of the mask in index order and
 //     keeps the strictly nearest by the 3D length (a tie: the lower index); then the team's AI group moves to the object's position (RW 0x774897,
 //     CMD_FROM_SCRIPT).
-//   * TEAM_RECRUIT_UNITS_FROM_TEAM (398) RW 0x7C2C7A -> Team RW 0x7A449F (BFME2 ScriptGlueRva003C21E5.cpp / TeamGetControllingPlayer.cpp:974): the
+//   * TEAM_RECRUIT_UNITS_FROM_TEAM (398) RW 0x7C2C7A -> Team RW 0x7A449F (BFME2 ScriptActions.cpp / TeamGetControllingPlayer.cpp:974): the
 //     destination team (created when missing), the source team; the template and the object list of the type (neither required); the destination's
 //     centre over its live members (RW 0x7A02E1), once; up to the count: over the source prototype's teams, newest first (prototype + 0x334), their
 //     members in order: of the type (RW 0x73D5C2, or the list, RW 0x778EA0), not DISABLED_HELD (+ 0x1C8 bit 3), recruitable (AI + 0x3BE): the nearest by
@@ -72,7 +72,7 @@
 //     tier B: RotWK walks 33 slots, bound 0x21, BFME2 32): the unit (RW 0x75A3D8; the target by name RW 0x75A243, the waypoint TheTerrainLogic vslot 0x88:
 //     each required), its command set (RW 0x69156B -> 0x71EFA2); every slot (RW 0x80C837) whose button's name equals the parameter (exact) runs
 //     Object::doCommandButton[AtObject / AtPosition](button, [target / the waypoint], CMD_FROM_SCRIPT, 0): a button in two slots runs twice.
-//   * TEAM_USE_COMMANDBUTTON_ABILITY (245) RW 0x7C11EE / _ON_NAMED (242) RW 0x7C1254 / _AT_WAYPOINT (243) RW 0x7C12DC (BFME2 ScriptGlueRva003C075B.cpp,
+//   * TEAM_USE_COMMANDBUTTON_ABILITY (245) RW 0x7C11EE / _ON_NAMED (242) RW 0x7C1254 / _AT_WAYPOINT (243) RW 0x7C12DC (BFME2 ScriptActions.cpp,
 //     tier A): the team, [the target / the waypoint], the button by name (RW 0x71D6EA, its final override; no command set test), the team's AI group:
 //     AIGroup RW 0x76F9FF / 0x76FA59 / 0x76FA2A run it on every member in the group's order (auto 0).
 //   * PLAYER_FIRE_SPECIAL_POWER_AT_WAYPOINT (571) RW 0x7C4C50 (BFME2 ScriptActions_doFireSpecialPowerAtWaypoint.cpp, tier A): the waypoint, the power by name (RW 0x69C146);

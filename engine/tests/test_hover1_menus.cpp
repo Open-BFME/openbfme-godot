@@ -357,6 +357,32 @@ TEST_CASE("hover1 retail: the shell's window manager reports stop S-4610 exactly
 	CHECK(n == 1);
 }
 
+// lane HOVER-2: InGameUI::createMouseoverHint's text (RW 0x69F637) reaches the same Mouse::setCursorTooltip (RW 0x5EE1A6) as the menus' labels: with no
+// window's label the cursor tool tip shows the window manager's world tool tip after TooltipDelayTime and hides it 4 updates after it is cleared
+TEST_CASE("hover2 retail: with no window's label the cursor tool tip shows the world tool tip through GuiFX.apt, after TooltipDelayTime")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	MenuRig r(mount);
+	REQUIRE(r.wm->currentTooltipLabel().empty()); // no movie under the pointer
+	const UnicodeString name = u"Orc Warriors\nPlayer_2"; // a text, not a label: nothing is fetched
+	r.wm->setWorldTooltip(name);
+	r.tick(1);
+	CHECK(r.tip->tooltip().request() == name);
+	CHECK(r.tip->tooltip().shown().empty()); // Mouse.ini's TooltipDelayTime has not passed
+	CHECK(r.tip->label().empty());
+	r.tick(r.settings.delayMs / 33 + 1);
+	CHECK(r.tip->tooltip().shown() == name);
+	CHECK(r.tip->errors().empty());
+	const std::vector<std::string> &calls = r.tip->calls();
+	CHECK(std::count_if(calls.begin(), calls.end(), [](const std::string &c) { return c.rfind("ShowToolTip ", 0) == 0; }) == 1);
+	r.wm->setWorldTooltip(UnicodeString());
+	r.tick(3);
+	CHECK(r.tip->tooltip().shown() == name); // the hide count (+ 0x1304) is 4
+	r.tick(1);
+	CHECK(r.tip->tooltip().shown().empty());
+	CHECK(calls.back() == "HideToolTip");
+}
+
 TEST_CASE("hover1 retail: every visible button of the main menu (each navigation open) and of Options shows its TOOLTIP text through GuiFX.apt")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);

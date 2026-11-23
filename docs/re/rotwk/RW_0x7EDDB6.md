@@ -111,9 +111,11 @@ string compares.
 
 ## Not ported
 
-* The condition RW 0x608BCA (its player lookup RW 0x7EE260), which reads the same finders: `ScriptConditions.cpp` is
-  PORT 16's file and the committed template table has no condition entry for it. Stop **S-7184**,
-  `ThreatFinderUpdate::stopLines`, reported in the retail world's acceptance stops.
+* (Corrected by lane THREATLEVEL-1.) RW 0x608BCA is not a condition: it is `ScriptEngine::setCounterToThreat`, the
+  actions SET_COUNTER_TO_UNIT_THREAT (439) / SET_COUNTER_TO_TEAM_THREAT (440) (BFME2 0x609003, decomp
+  `ScriptEngine.cpp:3400`). Its THREAT_FINDER branch looks the unit's name up with RW 0x7EE260 and asks the finder for the
+  unit's controlling player's enemies (RW 0x7EE166(.., player, 0, 0)); it is ported in `ScriptEngine.cpp`. Stop
+  **S-7184** (`ThreatFinderUpdate::stopLines`) keeps only the old-save remainder.
 * The donor's BFME2-only bits: `ThreatFinderUpdate` there has no `DefaultRadius` default and the manager's add takes a
   `ThreatLevel`-like argument — neither exists in the 2.01 reading of RW 0x7EDECE.
 

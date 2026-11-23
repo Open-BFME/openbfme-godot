@@ -223,6 +223,8 @@ TEST_CASE("W3D emitter retail: E_Fire_SM tables and first particles (notes secti
 		retailtest::printSkip("W3D emitter retail");
 		return;
 	}
+	// with the install variables set but no archive mounted, fs is null and the mount's error is the report (as #213)
+	REQUIRE_MESSAGE(mount->fs != nullptr, mount->error);
 	ArchiveW3DFileSource src(*mount->fs);
 	std::vector<std::uint8_t> bytes;
 	std::string error;
@@ -284,6 +286,7 @@ bool loadRetailEmitter(const char *stem, W3DFileContents &contents)
 	{
 		return false;
 	}
+	REQUIRE_MESSAGE(mount->fs != nullptr, mount->error);
 	ArchiveW3DFileSource src(*mount->fs);
 	std::vector<std::uint8_t> bytes;
 	std::string error;

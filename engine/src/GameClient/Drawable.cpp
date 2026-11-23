@@ -691,6 +691,14 @@ Drawable::PresentedLook Drawable::presentedLook(const LogicSnapshot *presented, 
 	return look;
 }
 
+void Drawable::upgradeTexture(const TextureSwap &swap, bool enabled)
+{
+	for (auto &entry : m_entries)
+	{
+		if (entry.draw) entry.draw->upgradeTexture(swap, enabled);
+	}
+	++m_changeCount;
+}
 // lane LOCAL-28, RW 0x672B5B (Drawable::getBonePosition, DONOR BFME2 0x272835): the world position of a named bone of this drawable's current pose.
 // Retail asks every draw module for the bone (a module without a render object answers no) and, the first one that has it, builds the pose of
 // the animation state it shows (RW 0x4B2F19: Blend_Pose of the two tracks, else Anim_Pose of track 0, else Base_Pose), takes the bone's translation,

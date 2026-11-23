@@ -203,6 +203,7 @@ public:
 	// request waits until all exist
 	void scriptModuleVisible(const std::string &name, bool visible);
 	void showSubObject(const std::string &name, bool visible, bool permanent);
+ void upgradeTexture(const TextureSwap &swap, bool enabled);
 	// lane LOCAL-28: the world position of the bone `boneName` of the first model entry that has it (RW 0x672B5B Drawable::getBonePosition: the pose of the
 	// current animation state, scaled by the instance scale and rotated by the drawable's orientation); false when no model entry has the bone
 	bool boneWorldPosition(const std::string &boneName, Coord3D &outPos) const;

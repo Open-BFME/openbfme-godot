@@ -307,6 +307,16 @@ public:
 	// (stop S-1427)
 	void maskObject(bool on) { m_masked = on; }
 	bool isMasked() const { return m_masked; }
+	// lane THREATLEVEL-1: the map scripts' cached enemy threat around the object (RW + 0x464, a float) and its deadline frame (RW + 0x468); the
+	// constructor (RW 0x69990F) clears both. Retail RotWK's Object::xfer (RW 0x697F28) does not write them; the OpenBFME snapshot does (version 3, as
+	// BFME2 1.06's xfer does: the state hash covers them). GameLogic/ScriptEngine/ScriptThreat.cpp reads and refreshes them (RW 0x697B41 / 0x69609F)
+	float scriptThreatCache() const { return m_scriptThreat; }
+	UnsignedInt scriptThreatDeadline() const { return m_scriptThreatDeadline; }
+	void setScriptThreatCache(float value, UnsignedInt deadline)
+	{
+		m_scriptThreat = value;
+		m_scriptThreatDeadline = deadline;
+	}
 
 	// lane SCRIPT-2: the trigger areas the object is in (RW 0x69264D, from reactToTransformChange when the position changed). Entries at + 0x3DC
 	// (trigger, + 4 entered, + 5 exited, + 6 inside; the count + 0x45A, at most 7: "***WARNING: Too many nested triggers"), the last change frame
@@ -320,7 +330,15 @@ public:
 		bool inside = false;
 	};
 	static constexpr int MAX_TRIGGERS_IN = 7;
-	void updateTriggerAreaFlags();
+	// `pathCellChanged`: the AI's pathfinder updatePos of this transform change took a new position cell (RW 0x6926F6 -> 0x8E26B7 answered 1)
+	void updateTriggerAreaFlags(bool pathCellChanged);
+	// lane VISIONDEF-1: RW + 0x1C4 (BFME2 1.06 + 0x1C4, ObjectSetTriggerAreaFlagsForChangeInPosition.cpp m_averageGroundHeight), the ground reference of
+	// the vision height bonus (getVisionRange RW 0x68E43B / getShroudClearingRange RW 0x68E4E2: 1 + clamp((z - it) * VisionBonusPercentPerFoot)). The
+	// constructor clears it (RW 0x699A77); the first position change sets it to the object's own z while it is still 0 (reactToTransformChange RW
+	// 0x6935EC, BFME2 0x692D49); RW 0x69264D (BFME2 0x691EB1) samples the ring of VisionBonusTestSegments ground heights again only when the pathfinder
+	// gave the unit a new position cell. An object without an AI keeps the z of its first move
+	float visionGroundReference() const { return m_visionGroundRef; }
+	void updateVisionGroundReference();
 	// lane CASTLEAREA-1: RW 0x68B9E9 (from PolygonTrigger removal, RW 0x6263AF): every entry of `trigger` is cleared (no exit is reported), then RW 0x68B98E keeps
 	// the entries still inside with their entered / exited flags cleared
 	void removeTriggerEntries(int trigger);
@@ -607,6 +625,8 @@ private:
 	std::uint8_t m_scriptStatus = 0; ///< lane SCRIPT-2: RW + 0x457 (hashed when not zero)
 	bool m_scriptSelectable = false; ///< RW +0x454: ctor initializes from SELECTABLE; hash only deviations from the template-derived default
 	bool m_masked = false;           ///< RW + 0x459 bit 1 (maskObject; hashed when set)
+	float m_scriptThreat = 0.0f;              ///< lane THREATLEVEL-1: RW + 0x464 (hashed and saved once a refresh armed the deadline)
+	UnsignedInt m_scriptThreatDeadline = 0;   ///< lane THREATLEVEL-1: RW + 0x468
 	TriggerEntry m_triggers[MAX_TRIGGERS_IN];  ///< lane SCRIPT-2: RW + 0x3DC
 	int m_triggerCount = 0;                      ///< RW + 0x45A
 	std::vector<std::uint8_t> m_geometryActive; ///< lane HUD-5: the shapes' active flags of the object's own GeometryInfo (+ 0xA8), empty: the template's
@@ -616,6 +636,7 @@ private:
 	mutable std::unique_ptr<OwnGeometryCache> m_ownGeometry;
 	UnsignedInt m_enteredOrExitedFrame = 0;      ///< RW + 0x414
 	std::int32_t m_triggerCellX = 0, m_triggerCellY = 0; ///< RW + 0x418 / + 0x41C (the integer position of the last check)
+	float m_visionGroundRef = 0.0f;                      ///< RW + 0x1C4 (lane VISIONDEF-1, see visionGroundReference)
 
 	std::vector<std::unique_ptr<BehaviorModule>> m_modules; ///< helpers first, then the template's behaviors
 	std::vector<CollideModuleInterface *> m_collideModules; ///< lane UBER-2B: m_modules' collide interfaces, in order (rebuilt by buildModules / friend_replaceModule)
