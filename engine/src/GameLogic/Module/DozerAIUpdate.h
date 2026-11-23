@@ -119,8 +119,8 @@ public:
 	static void registerWorkerClass(ModuleFactory &modules); // lane LUMBER1: binds WorkerAIUpdate (GameLogic/Module/WorkerAIUpdate.h)
 	bool isWorker() const { return m_isWorker; }
 
-	// RW 0x88C217 -> 0x88C2A5: the legality gate of the construct body, flags 0x49F (ZH CLEAR_PATH | TERRAIN_RESTRICTIONS | NO_OBJECT_OVERLAP | USE_QUICK_PATHFIND | SHROUD_REVEALED = 0x1F
-	// plus the RotWK bits 0x80 and 0x400 whose meaning is not read, S-301): a nonzero result rejects the order. The dispatcher asks it before it changes the builder's state
+	// RW 0x88C217 -> 0x88C2A5: the legality gate of the construct body, flags 0x49F (RotWK numbering, lane BUILDCLEAR-1: terrain, clear path, object overlap,
+	// quick path, the unread 0x10, fogged objects ignored, the pending dozer structures): a nonzero result rejects the order. The dispatcher asks it before it changes the builder's state
 	static constexpr unsigned kConstructLegalFlags = 0x49F;
 	bool siteIsLegal(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
 	// RW vslot 0x1F8 (RW 0x88C217): makes the foundation of `what` at `pos` and starts the build task; null when refused (illegal site, no money). The 5th

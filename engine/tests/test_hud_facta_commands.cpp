@@ -936,6 +936,23 @@ TEST_CASE("FACT-A builders: every construction of the builders (DOZER_CONSTRUCT 
 				Coord3D site = r.spot(x, 1200.0f, clear);
 				x = x > 3600.0f ? 1200.0f : x + 350.0f;
 				Object *builder = r.make(bn, Coord3D{ site.x - 150.0f, site.y, 0.0f });
+				// lane BUILDCLEAR-1: a WALL_HUB build is legal only within its MaxBuildoutDistance (MEN_FORTRESS_WALL_EFFECTIVE_RADIUS = 1500) of one of the
+				// player's COMMANDCENTERs (RW 0x796C66 / 0x6B00F3); this bare map gives the player none, so a citadel stands nearby while a hub is built
+				Object *centre = MaskTest(r.logic().templateInfo(what->getFinalOverride()).kindOf, (unsigned)ObjectTemplateInfoBuilder::kindOfIndex("WALL_HUB"))
+					? r.make("MenFortressCitadel", r.spot(site.x, site.y - 700.0f, 300.0f)) : nullptr;
+				struct CentreGone
+				{
+					FactRig &r;
+					Object *o;
+					~CentreGone()
+					{
+						if (o && !o->isDestroyed())
+						{
+							r.logic().destroyObject(o);
+						}
+					}
+				} centreGone{ r, centre };
+				REQUIRE((!centre || kindOf(*centre, "COMMANDCENTER")));
 				r.frames(3);
 				if (!r.select(builder) && !(r.frames(20), r.select(builder)))
 				{

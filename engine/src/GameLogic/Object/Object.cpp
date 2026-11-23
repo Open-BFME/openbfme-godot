@@ -418,9 +418,10 @@ void Object::buildModules()
 
 void Object::reactToTransformChange(const Coord3D *oldPos, float)
 {
+	bool pathCellChanged = false;
 	if (m_ai)
 	{
-		m_ai->reactToTransformChange(); // ZH Object::reactToTransformChange: the pathfinder's position cell of the unit (MOVE-1)
+		pathCellChanged = m_ai->reactToTransformChange(); // ZH Object::reactToTransformChange: the pathfinder's position cell of the unit (MOVE-1)
 	}
 	if (m_contain)
 	{
@@ -433,7 +434,12 @@ void Object::reactToTransformChange(const Coord3D *oldPos, float)
 	m_logic.partition().markDirty(*this); // RW 0x68B862 / 0x68B244 -> 0xA39570 (lane MODULES-2): re-linked in the next partition update
 	if (oldPos && (oldPos->x != getPosition()->x || oldPos->y != getPosition()->y || oldPos->z != getPosition()->z))
 	{
-		updateTriggerAreaFlags(); // RW 0x69355D: only when the position changed (RW 0x68B777)
+		// lane VISIONDEF-1: RW 0x6935DC .. 0x6935F2 (BFME2 ObjectScriptStatus.cpp:274): the vision ground reference still 0 takes the object's z
+		if (m_visionGroundRef == 0.0f)
+		{
+			m_visionGroundRef = getPosition()->z;
+		}
+		updateTriggerAreaFlags(pathCellChanged); // RW 0x69355D: only when the position changed (RW 0x68B777)
 		updateOffMapStatus();     // lane CAMPUI-1: then the extent test (RW 0x69355D, ZH Object.cpp:1788-1798)
 	}
 }
@@ -460,7 +466,7 @@ void Object::updateOffMapStatus()
 // (RW 0x7379CB, LUA-1's stop) (lane HUD-5: the trigger's callback, RW 0x6E4B21 / 0x6E4B3E, runs), the team's entered flag (RW 0x79FE5A: team + 0x5C and the
 // script engine's + 0x1A260 frame). Lane TREES1: the call for IMMOBILE-less infantry / cavalry / monsters / machines is TerrainLogic's unit-moved hook (RW
 // 0x6858BE: a crusher topples the trees under it, TerrainTrees::unitMoved), not a terrain decal call
-void Object::updateTriggerAreaFlags()
+void Object::updateTriggerAreaFlags(bool pathCellChanged)
 {
 	static const int projectile = ObjectTemplateInfoBuilder::kindOfIndex("PROJECTILE");
 	static const int inert = ObjectTemplateInfoBuilder::kindOfIndex("INERT");
@@ -489,6 +495,16 @@ void Object::updateTriggerAreaFlags()
 		{
 			m_logic.trees().unitMoved(*this); // RW 0x6858BE
 		}
+	}
+	// lane VISIONDEF-1: RW 0x6926E8 .. 0x6927F9 (BFME2 ObjectSetTriggerAreaFlagsForChangeInPosition.cpp:179-196): when the pathfinder's updatePos gave the
+	// unit a new position cell, the vision ground reference is sampled again. The port calls updatePos from the AI's reactToTransformChange (every
+	// transform change) and passes its answer here; retail calls it here, once the integer position changed. One known difference follows: a
+	// LARGE_RECTANGLE_PATHFIND unit that only turns registers its new angle code at once in the port, so its next integer-position move inside the same
+	// cell does not sample the ring again (retail registers the angle with that move and samples; review note, a small temporary sight difference).
+	// Not ported: the pathfind cell-change notice queued from frame 4 on (RW 0x62ABC7, BFME2 QueueForNotifyPathfindCellChanged)
+	if (pathCellChanged)
+	{
+		updateVisionGroundReference();
 	}
 	const UnsignedInt frame = m_logic.getFrame();
 	if (m_enteredOrExitedFrame != 0 && m_enteredOrExitedFrame != frame)
@@ -553,6 +569,42 @@ void Object::updateTriggerAreaFlags()
 			engine.note("***WARNING: Too many nested triggers"); // RW 0x6929EA, once per game run (RW 0xDE478C)
 		}
 	}
+}
+
+// lane VISIONDEF-1: RW 0x692715 .. 0x6927F9 (BFME2 0x691EB1): the mean of VisionBonusTestSegments ground heights on the circle of VisionBonusTestRadius,
+// at angles 0, step, 2 step, ... with step = 6.282 / segments (RW DAT_00C12150 = 0x40C90625 = 6.282, BFME2 the same literal), each read on the object's
+// layer (TheTerrainLogic vslot 0x1C getLayerHeight(x, y, layer + 0x428, 0)). Only a template with VisionBonusPercentPerFoot > 0 samples. The x87 cos / sin
+// with double products and float stores as VIS-1's port had them
+void Object::updateVisionGroundReference()
+{
+	const ShroudManager::TemplateVision tv = ShroudManager::templateVision(*static_cast<const ThingTemplate *>(m_template)->getFinalOverride());
+	if (!(tv.bonusPerFoot > 0.0f) || !m_ai)
+	{
+		return;
+	}
+	// PORT GUARD: retail divides by the count with no test (a template with VisionBonusTestSegments = 0 would get 0 / 0); no shipped template sets it
+	if (tv.bonusTestSegments <= 0)
+	{
+		m_logic.reportError(std::string("VisionBonusTestSegments ") + std::to_string(tv.bonusTestSegments) + " on " + m_template->getName() +
+			": the vision ground reference is left at " + std::to_string(m_visionGroundRef));
+		return;
+	}
+	const Pathfinder &pf = m_logic.aiWorld()->pathfinder();
+	const PathfindLayerEnum layer = m_ai->adapter().getLayer();
+	const Coord3D &pos = *getPosition();
+	const float step = SimMath::sseDiv(6.282f, SimMath::sseFromInt32(tv.bonusTestSegments)); // RW 0x69272C .. 0x69274B: divss
+	float angle = 0.0f;
+	float sum = 0.0f; // RW 0x692734: + 0x1C4 = 0 first
+	for (int i = 0; i < tv.bonusTestSegments; ++i)
+	{
+		double s, c;
+		SimMath::sinCosDet((double)angle, s, c);
+		const float px = (float)SimMath::addD(SimMath::mulD(c, (double)tv.bonusTestRadius), (double)pos.x);
+		const float py = (float)SimMath::addD(SimMath::mulD(s, (double)tv.bonusTestRadius), (double)pos.y);
+		sum = SimMath::pc24Add(pf.getLayerHeight(px, py, layer), sum);
+		angle = SimMath::sseAdd(angle, step);
+	}
+	m_visionGroundRef = SimMath::sseDiv(sum, SimMath::sseFromInt32(tv.bonusTestSegments));
 }
 
 // lane CASTLEAREA-1: RW 0x68B9E9 then RW 0x68B98E (see Object.h)
@@ -2544,6 +2596,11 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 	{
 		h.addU32(0x5C100000u); // lane BFME2CAMP1: only when set (a game without a campaign's carry-over keeps its hash)
 	}
+	if (m_visionGroundRef != 0.0f)
+	{
+		h.addU32(0x1C40000u); // lane VISIONDEF-1: the vision ground reference (+ 0x1C4), only once set (a flat test map's objects keep their hash)
+		h.addFloat(m_visionGroundRef);
+	}
 	// lane PERF-HD: the bit's index once (isKindOfName searched the KindOf names for every object in every frame's hash)
 	static const int kSelectable = ObjectTemplateInfoBuilder::kindOfIndex("SELECTABLE");
 	if (m_scriptSelectable != (kSelectable >= 0 && isKindOf((unsigned)kSelectable)))
@@ -2553,6 +2610,12 @@ void Object::crcOmittingModules(StateHasher &h, const std::function<bool(const B
 	if (m_masked)
 	{
 		h.addU32(0x4A5Bu); // lane MODCOMPAT-MOD1: hashed only when set (a game without rebuild holes keeps its hash)
+	}
+	if (m_scriptThreatDeadline != 0)
+	{
+		h.addU32(0x7E4A0000u); // lane THREATLEVEL-1: the script threat cache, hashed once a refresh armed it (a game without threat scripts keeps its hash)
+		h.addU32(m_scriptThreatDeadline);
+		h.addFloat(m_scriptThreat);
 	}
 	if (m_geometrySource) // lane MODCOMPAT-MOD1: another template's GeometryInfo (setGeometryInfoFrom), hashed when set
 	{
@@ -2768,7 +2831,11 @@ void Object::setScriptStatus(std::uint8_t bits, bool set)
 // (the Objects block's order) and the team links (the TeamFactory's post-process).
 void Object::xfer(Xfer &x)
 {
-	XferVersion version{ 1, 2 }; // lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4)
+	// lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4). Lane THREATLEVEL-1: version 3 the script threat cache (+ 0x464 /
+	// + 0x468), written only once a refresh armed it (every other object keeps version 2's block)
+	// lane VISIONDEF-1: version 4 the vision ground reference (+ 0x1C4), written only once set (every other object keeps version 2's or 3's block)
+	const bool threatArmed = m_scriptThreatDeadline != 0 || m_scriptThreat != 0.0f;
+	XferVersion version{ 1, (std::uint8_t)(x.isLoading() || m_visionGroundRef != 0.0f ? 4 : threatArmed ? 3 : 2) };
 	x.xferVersion(version);
 	// a load never reads its destination: the save-side values are built from the members only when saving (SAVES.md, rules for xfer authors)
 	const bool saving = !x.isLoading();
@@ -2867,6 +2934,29 @@ void Object::xfer(Xfer &x)
 	else if (x.isLoading())
 	{
 		m_campaignCarryover = false;
+	}
+	// lane THREATLEVEL-1 (Sol review): the script threat cache. RotWK's Object::xfer (RW 0x697F28) does not write it (a retail load starts from the
+	// constructor's cleared pair); BFME2 1.06's does (+ 0x448 then + 0x444, ObjectDoXfer.cpp:715-716). The OpenBFME snapshot keeps it in both editions:
+	// the state hash covers it, and a load must give the saved hash back (CommandLogLoad::beginSnapshot refuses anything else)
+	if (version.current >= 3)
+	{
+		x.xferUnsignedInt(&m_scriptThreatDeadline);
+		x.xferReal(&m_scriptThreat);
+	}
+	else if (x.isLoading())
+	{
+		m_scriptThreat = 0.0f;
+		m_scriptThreatDeadline = 0;
+	}
+	// lane VISIONDEF-1: the vision ground reference. BFME2 1.06's Object::xfer writes + 0x1C4 from its version 13 (ObjectDoXfer.cpp:782); RotWK's (RW
+	// 0x697F28) does not touch + 0x1C4. The OpenBFME snapshot keeps it in both editions (hashed). A block before version 4 was written with it still 0
+	if (version.current >= 4)
+	{
+		x.xferReal(&m_visionGroundRef);
+	}
+	else if (x.isLoading())
+	{
+		m_visionGroundRef = 0.0f;
 	}
 	x.xferBool(&m_scriptSelectable);
 	x.xferBool(&m_masked); // lane MODCOMPAT-MOD1: RW + 0x459 bit 1

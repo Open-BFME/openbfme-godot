@@ -278,6 +278,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/pro_camera_bokeh_test.gd` | Manual only; no generic pytest runner | Denied here: generated bokeh scene requires a GPU, window and render readback. |
 | `godot/tests/pro_camera_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/radial_background_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
+| `godot/tests/raised_overlay_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/rejoin_watch_test.gd` | `tools/net/test_rejoin_watchdog.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/release_message_test.gd` | `tools/release/test_release_tools.py` | Existing argument-aware fixture runner; its prerequisites still apply. |
 | `godot/tests/render4_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
@@ -306,6 +307,7 @@ runner is claimed. All paths below are relative to the repository root.
 | `godot/tests/tangent_convention_test.gd` | Manual only; no generic pytest runner | Denied here: GPU/window/render readback required (some also need retail assets). |
 | `godot/tests/terrain_lighting_test.gd` | Manual only; no generic pytest runner | Denied here: needs private RotWK/BFME2 assets and game/frame setup. |
 | `godot/tests/timeline_markers_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: score timeline markers against a stub shell; headless, 20 s timeout. |
+| `godot/tests/unit_upgrade_visuals_test.gd` | Manual only; no generic pytest runner | Denied here: GPU readback of real unit upgrade materials and forged-blade visibility; needs the retail files. |
 | `godot/tests/wotr_preview_visibility_test.gd` | `tools/test_gdscript.py::test_game_script` | Allowlisted: hidden War of the Ring preview rendering and reveal; synthetic shell, no retail assets or readback; headless, 20 s timeout. |
 | `godot/tests/wotr_setup_dialog_test.gd` | Manual | Retail RotWK and BFME2 presentation: historical versus freeform selection, Start refusal, modal preview hiding/input blocking and restoration; synthetic preview, private installs and built extension required; no GPU readback. |
 | `godot/tests/wotr_hud_viewport_test.gd` | Manual | Retail RotWK and BFME2 strategic HUD through AptMenuPlayer: GPU artwork comparison against 4:3, repeated widescreen resizing, Fit, and fixed window-space END PHASE input including before tick/render. Requires both installs and a GPU; exits 77 without them. |
