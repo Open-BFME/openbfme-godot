@@ -411,6 +411,11 @@ TEST_CASE("tunnel retail: a Goblin player right-clicks a horde into one mine sha
 		++n;
 	}
 	REQUIRE_MESSAGE(horde->getContainedBy() == a, "the right-click did not put the horde into the first shaft");
+	// the next client update drops the horde from the selection: GarrisonContain::addToContain (RW 0x87CFEB; branch RW 0x990E5F)
+	// marks it UNSELECTABLE, the client's selection mirror follows, and the message clears the logic's selection too.
+	r.frame(1); // the rig input that selected the horde is the one that drops it and tells the logic
+	CHECK(!r.input->ui().isSelected(horde->getID()));
+	CHECK(r.local->selection().empty());
 
 	// the other shaft's control bar: the horde on its first exit button, enabled, with the horde's ButtonImage
 	r.lookAt(*b->getPosition());
@@ -442,4 +447,51 @@ TEST_CASE("tunnel retail: a Goblin player right-clicks a horde into one mine sha
 	CHECK(exits[0].rider == INVALID_ID);
 	CHECK(exits[0].state == ButtonState::Restricted);
 	hud.reset();
+}
+
+TEST_CASE("tunnel retail: a selected horde leaves the selection when it enters a shaft; a Ring holder is deselected too (the tunnel's ENCLOSED removal still takes it out of the world)")
+{
+	if (!haveWorld("tunnel retail deselect"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s, "map mp fall back 4p", "FactionWild");
+	const Coord3D c0 = gridSpot(r, 0.35f, 0.5f, 350.0f);
+	Object *tunnel = r.make("WildMineShaft", c0.x, c0.y);
+	r.frame(2);
+	tunnel->friend_onBuildComplete();
+	REQUIRE(tunnelOf(*tunnel) != nullptr);
+	REQUIRE(tunnel->getContain() != nullptr);
+	static const int unselectable = ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
+	static const int ring = ObjectTemplateInfoBuilder::objectStatusIndex("HOLDING_THE_RING");
+	REQUIRE(unselectable == 3);  // PlayerCommands::isSelectable's UNSELECTABLE status
+	REQUIRE(ring == 0x5E);       // ActionManager::getCanAttackObject's HOLDING_THE_RING status
+	auto addAndCheck = [&](Object *horde, bool holdingRing) {
+		REQUIRE(horde->getContain() != nullptr);
+		REQUIRE(horde->getContain()->getHordeContainInterface() != nullptr);
+		if (holdingRing)
+		{
+			horde->setStatus((unsigned)ring, true);
+			CHECK(horde->testStatus((unsigned)ring));
+		}
+		r.input->ui().selectObject(horde->getID());
+		REQUIRE(r.input->ui().isSelected(horde->getID()));
+		REQUIRE(tunnel->getContain()->addToContain(horde));
+		CHECK(horde->getContainedBy() == tunnel);
+		CHECK(horde->testStatus((unsigned)unselectable));
+		// The tunnel's OpenContain status mask is ENCLOSED: openContainAdd (RW 0x8674C2) removes the horde from the world before
+		// the GarrisonContain branch's Ring check; the Ring only skips the extra containLeaveWorld (RW 0x990E5F).
+		CHECK(!horde->isInWorld());
+		r.frame(1);
+		CHECK(!r.input->ui().isSelected(horde->getID()));
+	};
+	Object *plain = r.make("GoblinFighterHorde", c0.x + 220.0f, c0.y);
+	r.frame(2);
+	addAndCheck(plain, false);
+	Object *ringHolder = r.make("GoblinFighterHorde", c0.x + 260.0f, c0.y);
+	r.frame(2);
+	addAndCheck(ringHolder, true);
+	r.frame(1);
+	CHECK(!ringHolder->isInWorld()); // the ENCLOSED removal, not the Ring branch; it is still deselected
 }

@@ -259,6 +259,18 @@ TEST_CASE("coverage1: script input disable and enable hide the pointer and resto
  CHECK_FALSE(f.hud->scriptMouseHidden());
 }
 
+TEST_CASE("hover2: a shell-hosted HUD that goes leaves no world tool tip on the shell's window manager (review of #404)")
+{
+ HudFx f;
+ REQUIRE_MESSAGE(f.ready(), f.error);
+ REQUIRE_MESSAGE(f.boot(), f.error);
+ // what the HUD's last frame handed over while the pointer rested on an object (InGameHud::updateMouseoverTooltip)
+ f.windows.setWorldTooltip(u"Mordor Troll");
+ REQUIRE(f.windows.worldTooltip() == u"Mordor Troll");
+ f.hud.reset();
+ CHECK(f.windows.worldTooltip().empty());
+}
+
 TEST_CASE("coverage1: modal mouse routing prevents a world drag and releases the modal gate")
 {
  HudFx f;

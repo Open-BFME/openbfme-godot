@@ -642,10 +642,11 @@ TEST_CASE("aiexpand1 expansion in a game: the Medium Men computer kept above 300
 	// pin: merge queue q42 (CASTLEATK-1: nothing attacks an object with the status UNATTACKABLE, RW 0x6C9207, with ATKSTATE-1a's attack-state gates; measured once on the merged tree and at each merge point, #225 keeps it): request 1894 -> 2126, in progress 1895 -> 2127, complete and second base 2634 -> 2867
 	// pin: merge queue q47 (as above): request 2126 -> 3032, in progress 2127 -> 3105, complete and second base 2867 -> 3878
 	// pin: merge queue q53 (as above): request 3032 -> 1836, in progress 3105 -> 1837, complete and second base 3878 -> 2606
-	CHECK(requestFrame == 1836);
-	CHECK(inProgressFrame == 1837);
-	CHECK(doneFrame == 2606);
-	CHECK(baseFrame == 2606);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): request 1836 -> 1824, in progress 1837 -> 1825, complete and second base 2606 -> 2594
+	CHECK(requestFrame == 1824);
+	CHECK(inProgressFrame == 1825);
+	CHECK(doneFrame == 2594);
+	CHECK(baseFrame == 2594);
 	MESSAGE("EXPANSION target on frame " << chosenFrame << " at (" << chosenAt.x << ", " << chosenAt.y << "); SimpleExpansion on frame " << tacticFrame
 		<< ", its request on " << requestFrame << " (last state " << lastState << ", in progress on " << inProgressFrame << ", complete on " << doneFrame
 		<< "), the second base on " << baseFrame << "; bases " << aiPtr->build.bases.size() << ", tactics started " << aiPtr->brain.tacticsStarted
