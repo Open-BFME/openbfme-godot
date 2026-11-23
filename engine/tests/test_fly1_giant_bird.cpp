@@ -271,7 +271,8 @@ TEST_CASE("fly1 retail: a fell beast ordered to a point takes off, climbs to its
 	CHECK(bird.find("the attack-move's mood re-check clock (RW 0x662E01) is the MoodAttackCheckRate interval (INFERENCE)") != std::string::npos);
 	CHECK(bird.find("the collision push of onCollide") != std::string::npos);
 	CHECK(aerial.rfind("S-4041: ", 0) == 0);
-	CHECK(aerial.find("without the no-fly zones") != std::string::npos);
+	// PORT-318 closed the no-fly zone half of this stop: the line still names the x87 / CRT parity work (S-081) and the now-ported zone test (AerialPathfindNoFlyZone RW 0x60095C -> RW 0x777F76, RW 0x777E54)
+	CHECK(aerial.find("without the x87 / CRT parity") != std::string::npos);
 }
 
 // ---- combat ----------------------------------------------------------------------------------------------------------------------------------------------

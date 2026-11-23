@@ -229,7 +229,7 @@ Dictionary PathfindView::build(const Ref<RetailFileSystem> &fsRef, const String 
 		RetailObjectWorld::MapIniResult mi;
 		try
 		{
-			mi = I.world->applyMapIni(mapDir);
+			mi = I.world->applyMapIni(mapDir, &I.map->chunks.triggerAreas); // PORT-318: the map's triggers for the no-fly zone block (RW 0x6825F6)
 		}
 		catch (const std::logic_error &e) // lane MAPRESET-1: a game of this world is still live
 		{

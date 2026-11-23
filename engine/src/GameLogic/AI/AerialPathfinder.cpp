@@ -4,6 +4,7 @@
 
 #include "GameLogic/AI/AerialPathfinder.h"
 
+#include "Common/INI.h"
 #include "Common/NumericState.h"
 #include "Common/StateHash.h"
 #include "GameLogic/AI/AIPathfind.h"
@@ -11,12 +12,15 @@
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/GameLogic.h"
+#include "GameClient/MapChunks.h" // TriggerArea: the map's polygon triggers (the list RW 0x6825F6 searches)
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/ScriptEngine/ScriptConditions.h" // RW 0x70CF29, the polygon walk of the zone test
 #include "GameLogic/SimMath.h"
 
 #include <cfloat>
+#include <cstdint>
 #include "GameLogic/AI/AIXfer.h"
 
 namespace
@@ -343,6 +347,95 @@ void AerialSpline::xfer(Xfer &x)
 // ---- TheAerialPathfinder ----------------------------------------------------------------------------------------------------------------------------------
 namespace AerialPathfinder
 {
+namespace
+{
+// TheAerialPathfinder's no-fly zones (RW 0xDE7958, the list of pairs at + 0x10). File state, not a member of the spline: RW keeps it on the subsystem
+// singleton, which lives across map loads and is reset at each new game. Only the simulation thread touches it (the block parser runs at map load, on the
+// same thread as the path queries).
+std::vector<NoFlyZone> &noFlyList()
+{
+	static std::vector<NoFlyZone> list;
+	return list;
+}
+} // namespace
+
+void resetNoFlyZones()
+{
+	noFlyList().clear();
+}
+
+// RW 0x777F76: a null trigger adds nothing (RW 0x777F7E), else the {trigger, height} pair goes to the list's end (RW 0x777F8E add ecx, 0x10; the node
+// insert RW 0x777F5C, std::list::push_back). Retail does not merge or replace a zone that is already there: two blocks give two pairs.
+void addNoFlyZone(const TriggerArea *trigger, float height)
+{
+	if (!trigger)
+	{
+		return;
+	}
+	NoFlyZone zone;
+	zone.trigger = trigger;
+	zone.height = height;
+	noFlyList().push_back(zone);
+}
+
+// RW 0x777E54: an empty list answers 0 (RW 0x777E64 loads RW 0xC1B594 = 0.0f); otherwise the highest zone height whose polygon contains the sample point,
+// from -9999 (RW 0x777E6F loads RW 0xBDFFE0 = -9999.0f) when it contains none. The point is truncated to integers (cvttss2si RW 0x777E84 for x, hoisted
+// out of the loop, and RW 0x777E89 for y), converted back (cvtsi2ss RW 0x68628B) and tested with the polygon walk RW 0x70CF29 (RW 0x6E4DC7 ->
+// RW 0x68628B: PolygonTrigger::pointInTrigger(ICoord3D)); the comparison keeps a height that is not lower than the current maximum (RW 0x777EBC comiss +
+// RW 0x777EBF ja, then RW 0x777EC1).
+float noFlyZoneHeight(float x, float y)
+{
+	const std::vector<NoFlyZone> &zones = noFlyList();
+	if (zones.empty())
+	{
+		return 0.0f;
+	}
+	float highest = -9999.0f;
+	const std::int32_t px = NumericState::cvttss2si(x);
+	const std::int32_t py = NumericState::cvttss2si(y);
+	for (const NoFlyZone &zone : zones)
+	{
+		if (ScriptConditions::pointInTrigger(*zone.trigger, NumericState::sseFromInt32(px), NumericState::sseFromInt32(py)) && !(highest > zone.height))
+		{
+			highest = zone.height;
+		}
+	}
+	return highest;
+}
+
+const std::vector<NoFlyZone> &noFlyZones()
+{
+	return noFlyList();
+}
+
+// RW 0x60095C (the parser of the block table row RW 0xD9E60C): "TriggerArea" (RW 0x60096B getNextSubToken, RW 0x42DD73) names the trigger, which the
+// parser looks up in the map's polygon trigger list (RW 0x60098E TheTerrainLogic vslot 0x9C = RW 0x6825F6, a walk of the list RW 0xDA21FC comparing the
+// names); "Height" (RW 0x60099E) is read next whether or not the trigger was found (RW 0x6009C2 fstp st(0) drops it); the found pair goes to the list
+// (RW 0x6009BB -> RW 0x777F76). The function reads exactly those two tokens off the line the top-level dispatch (RW 0x42BDAD) hands it and reads no
+// line of its own (no call between RW 0x60095C and the ret at RW 0x6009DC), so the block is one line, `AerialPathfindNoFlyZone TriggerArea = X Height = Y`;
+// it has no End either (RW 0x42BDAD knows no End block), and a field on the next line is refused by the token reader (RW 0x42DD73 / RW 0x42DEED).
+void parseNoFlyZoneBlock(INI *ini, const std::vector<TriggerArea> *triggers)
+{
+	const std::string name = ini->getNextSubToken("TriggerArea");
+	const TriggerArea *trigger = nullptr;
+	if (triggers)
+	{
+		for (const TriggerArea &area : *triggers)
+		{
+			if (area.name == name) // RW 0x6825F6 compares the stored name with the block's
+			{
+				trigger = &area;
+				break;
+			}
+		}
+	}
+	const float height = ini->scanReal(ini->getNextSubToken("Height"));
+	if (trigger)
+	{
+		addNoFlyZone(trigger, height);
+	}
+}
+
 bool query(AerialSpline &spline, float distance, Coord3D &out)
 {
 	if (!(0.0f <= distance))
@@ -366,7 +459,7 @@ bool query(AerialSpline &spline, float distance, Coord3D &out)
 float flightGroundHeight(const GameLogic &logic, float x, float y)
 {
 	const float terrain = logic.getGroundHeight(x, y); // TheTerrainLogic vslot 0x18
-	const float noFly = 0.0f;                          // RW 0x777E54 with the empty no-fly list (S-4041)
+	const float noFly = noFlyZoneHeight(x, y);         // RW 0x777F0E -> RW 0x777E54
 	float h = terrain;
 	if (terrain < noFly)
 	{
@@ -714,8 +807,8 @@ bool computeAerialPath(const Flyer &flyer, const Coord3D &goalIn, AerialSpline &
 
 std::vector<std::string> stopLines()
 {
-	return { "S-4041: the aerial path (RW 0x778413) is ported without the no-fly zones (the map block AerialPathfindNoFlyZone is a recording stub: RW 0x777E54 "
-		     "answers 0), the 3D shape overlap of the separation's would-collide filter (2D footprints: "
-		     "RW 0xAD2CE0 is not ported, S-1020) and the x87 / CRT parity of its terminal search (S-081)" };
+	return { "S-4041: the aerial path (RW 0x778413) is ported without the 3D shape overlap of the separation's would-collide filter (2D footprints: "
+		     "RW 0xAD2CE0 is not ported, S-1020) and the x87 / CRT parity of its terminal search (S-081); the no-fly zones are in "
+		     "(AerialPathfindNoFlyZone RW 0x60095C -> RW 0x777F76, the zone test RW 0x777E54)" };
 }
 } // namespace AerialPathfinder

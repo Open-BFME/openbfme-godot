@@ -43,7 +43,9 @@ bool MapClassification::run(const std::vector<std::uint8_t> &bytes, const std::s
 	terrain.init(map.heightMap, map.chunks, nullptr);
 	try
 	{
-		result.mapIni = world.applyMapIni(mapDirectory(lowerName, mapsFolder));
+		// PORT-318: the map's trigger list is what the map.ini's AerialPathfindNoFlyZone blocks look their TriggerArea up in (RW 0x6825F6 over
+		// RW 0xDA21FC); it is the same list LiveGame hands the ScriptEngine at newGame
+		result.mapIni = world.applyMapIni(mapDirectory(lowerName, mapsFolder), &map.chunks.triggerAreas);
 	}
 	catch (const std::logic_error &e) // lane MAPRESET-1: a game of this world is still live (its map would be torn out from under it)
 	{
