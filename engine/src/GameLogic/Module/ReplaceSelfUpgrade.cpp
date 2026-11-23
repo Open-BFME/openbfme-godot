@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/ReplaceSelfUpgrade.h"
+// RW 0x8BB126 (field table helper), RW 0x8BB1B3 (name 0xC0AE04), RW 0x8BB1B9 (ModuleData factory), RW 0x8BB1FE (thunk via 0x8BB21A->0x86393B), RW 0x8BB21F (destroy check), RW 0x8BBA8D (scalar deleting dtor), RW 0x00464A09/0x004B612F/0x008B9F05 (shared thunks, ported elsewhere)
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/ModEngineFeatures.h"
