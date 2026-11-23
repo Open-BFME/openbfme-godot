@@ -462,7 +462,9 @@ TEST_CASE("BACKLOG2 S-951: a captured camp flag's unpack (MSG_CASTLE_UNPACK) cos
 		++wait;
 	}
 	CHECK(cb->state() == CastleBehavior::STATE_UNPACKING);
-	// Camp_Men: the camp's floor, keep, five walls, five defence nodes and six building foundations (the rock goes to the neutral player)
+	// Camp_Men: the camp's floor, keep, eleven walls, five defence nodes and six building foundations (the rock goes to the neutral player). Lane BUILDCLEAR-1:
+	// the layout's 11 GBCampWall entries are a ring of touching segments; RotWK's member test (RW 0x796E9A: bit 0x100, the CampFlag is BASE_SITE) ignores the
+	// castle's own members, so all 11 stand (ZH's overlap rule let neighbouring segments refuse each other and kept 5)
 	std::map<std::string, int> made;
 	Object *keep = nullptr;
 	for (ObjectID id : cb->ownedObjects())
@@ -473,7 +475,7 @@ TEST_CASE("BACKLOG2 S-951: a captured camp flag's unpack (MSG_CASTLE_UNPACK) cos
 		keep = o->getTemplate()->getName() == "GondorCampKeep" ? o : keep;
 	}
 	CHECK(made["GondorCampKeep"] == 1);
-	CHECK(made["GBCampWall"] == 5);
+	CHECK(made["GBCampWall"] == 11);
 	CHECK(made["GondorBuildingFoundation"] == 6);
 	REQUIRE(keep);
 	CHECK(keep->getControllingPlayer() == c.men);
@@ -749,7 +751,11 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// pin: merge queue q52 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x162264F8 -> 0x02B42AF9 at
 	// #294 / #295's merge point (#294: SlaughterHordeContain now runs under the citadels) -> 0xB240D889 with #298 (PORT-12's
 	// MinDistFromEdgeOfMapForBuild in GameLogicSettings::crc; the 0x97DB949B above was measured without #294); #297 is client only
-	CHECK(a.hashes.back() == 0xB240D889U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// pin: merge queue q55 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0xB240D889 -> 0x75092A38 at #313's merge
+	// point (ThreatFinderUpdate replaces the unported shell on the map objects that carry it: their module state and update schedule change); #311, #312, #314, #315, #319 and #324 keep it
+	// pin: lane VISIONDEF-1 (goals and positions unchanged; measured on the lane's tree): 0x75092A38 -> 0x5DD478DD: the state hash's own layout (the shroud records
+	// no longer carry the vision ground reference; the object's own + 0x1C4 is hashed once set)
+	CHECK(a.hashes.back() == 0x5DD478DDU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

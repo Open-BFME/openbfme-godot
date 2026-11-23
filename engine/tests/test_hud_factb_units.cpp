@@ -29,6 +29,8 @@
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/Module/HordeDispatchSpecialPower.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/Module/SpellBookPowers.h"
 #include "GameLogic/Module/StealthAbilityModules.h"
 #include "GameLogic/Module/WeaponChangeSpecialPower.h"
@@ -42,6 +44,7 @@
 #include "GameLogic/WeaponNugget.h"
 #include "GameLogic/WeaponState.h"
 #include "GameLogic/WeaponStores.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "Common/PlayerHeroList.h"
 
 #include <cmath>
@@ -378,6 +381,25 @@ struct EffectProbe
 	unsigned weaponModeActive = 0;
 	float bounty = 0.0f; ///< lane FACT-C: the caster's player's bounty percent
 
+	// lane TAINTAREA-1: Taint / Elven Wood paint TheTaintManager's grid under their area object, whose AttributeModifierAuraUpdate (RequiredConditions
+	// TAINT / ELVEN_WOOD) gives its BonusName to the caster's allies standing on the painted ground: that list is the power's effect
+	static void areaAura(Object &holder, const std::string &cls, const std::string &areaName, EffectProbe &p)
+	{
+		const ThingTemplate *area = holder.logic().things().findTemplate(areaName);
+		std::string bonus;
+		for (const ThingTemplate::Nugget &n : area ? area->behaviorModules().nuggets() : std::vector<ThingTemplate::Nugget>{})
+		{
+			const AttributeModifierAuraUpdateModuleData *ad = dynamic_cast<const AttributeModifierAuraUpdateModuleData *>(n.data.get());
+			bonus = ad && bonus.empty() ? ad->m_bonusName : bonus;
+		}
+		if (bonus.empty())
+		{
+			p.unasserted.push_back(cls);
+			return;
+		}
+		p.expects.push_back({ MODIFIER, cls + " area " + areaName + " aura " + bonus, bonus });
+	}
+
 	static void expectFrom(BehaviorModule *m, Object &holder, const SpecialPowerTemplate *t, EffectProbe &p, int depth)
 	{
 		const std::string cls = m->getModuleClassName();
@@ -544,6 +566,14 @@ struct EffectProbe
 		else if (dynamic_cast<const HordeDispatchSpecialPower *>(m))
 		{
 			// lane FACT-C: the horde passes the power on to its members (S-2001): their modules carry the results
+		}
+		else if (const TaintSpecialPower *tp = dynamic_cast<const TaintSpecialPower *>(m))
+		{
+			areaAura(holder, cls, tp->data()->m_taintObject, p); // lane TAINTAREA-1
+		}
+		else if (const ElvenWoodSpecialPower *ep = dynamic_cast<const ElvenWoodSpecialPower *>(m))
+		{
+			areaAura(holder, cls, ep->data()->m_elvenGroveObject, p); // lane TAINTAREA-1
 		}
 		else if (cls != "SpecialPowerModule" && !(spm && !spm->spData()->m_attributeModifier.empty()))
 		{
@@ -2868,11 +2898,14 @@ void spellBookOf(const std::string &faction, Results &res, bool viaStore = false
 						// lane SPELL-4: RotWK refuses a spot its location test fails (RW 0x6A4260 -> 0x82DFB7: e.g. Barricade's ForbiddenObjectFilter
 						// with the scene's barracks in range); the cursor is red and the click casts nothing (RW 0x81EBE9). The cast then goes to the
 						// nearest spot of a ring search the HUD accepts; none: the item fails by name
-						for (int ring = 1; ring <= 6 && g.hud->spellBar().targeting(); ++ring)
+						// lane VISIONDEF-1: the first ring is 100 out. The scene's own horde may stand on the spot (the Angmar scene's Goblin horde 13 from it once
+						// RotWK's sight left it guarding there), and a click on it picks the horde, not the ground: a player clicks beside it. The rings at 150 and
+						// beyond met fogged ground, the enemy's farms and barracks and cliffs there (each a RotWK refusal, RW 0x82E586 / 0x82E913)
+						for (int ring = 0; ring <= 6 && g.hud->spellBar().targeting(); ++ring)
 						{
 							for (int k = 0; k < 8 && g.hud->spellBar().targeting(); ++k)
 							{
-								const float a = 0.785398163f * (float)k, d = 150.0f * (float)ring;
+								const float a = 0.785398163f * (float)k, d = ring == 0 ? 100.0f : 150.0f * (float)ring;
 								Coord3D p{ c.x + d * std::cos(a), c.y + d * std::sin(a), 0.0f };
 								p.z = g.logic().getGroundHeight(p.x, p.y);
 								if (g.hud->spellBar().targetValid(g.logic(), p))
@@ -2884,6 +2917,19 @@ void spellBookOf(const std::string &faction, Results &res, bool viaStore = false
 						if (g.hud->spellBar().targeting())
 						{
 							out.fail = "the HUD refused the scene's spot and every spot of the ring search (RotWK's location test, RW 0x82DFB7)";
+							// lane VISIONDEF-1: what stands at the spot, and its shroud for the player (0 clear, 1 fogged, 2 shrouded)
+							if (g.logic().shroud())
+							{
+								out.fail += str(" (the spot's cell status %d)", (int)g.logic().shroud()->getStatusAt(g.rig.local->getPlayerIndex(), c.x, c.y));
+							}
+							for (Object *o = g.logic().getFirstObject(); o; o = o->getNextObject())
+							{
+								if (!o->isEffectivelyDead() && dist2d(*o->getPosition(), c) < 150.0f && !o->getContainedBy())
+								{
+									out.fail += str(" [%s of player %d at %.0f]", o->getTemplate()->getName().c_str(),
+										o->getControllingPlayer() ? o->getControllingPlayer()->getPlayerIndex() : -1, dist2d(*o->getPosition(), c));
+								}
+							}
 							g.clickAt(c, HudInput::Button::Right); // the targeting is cancelled
 						}
 					}
@@ -2992,8 +3038,11 @@ TEST_CASE("factb spell book: every Isengard spell book power cast through the HU
 	// fight so the Devastation scene misses the 500 heuristic again (1600 lost with the cast, 1604 without): a KNOWN line once more (S-921)
 	// lane DECOMPFIX-1104B (AIMAIM-1's aim and RW 0x70B9E0's facing in relAngle, measured on the lane's tree): the Devastation scene meets the 500 heuristic
 	// again (664 more lost with the cast), so its line passes; S-921 keeps the explanation (no effect of its own is asserted). Dragon Strike stays KNOWN (S-1997)
-	r.check({ { "spell SpellBookIndustry", "S-1997" },
-		{ "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" }, { "spell SpellBookIsengardTaint", "S-1997" } });
+	// lane TAINTAREA-1: Taint has an effect of its own now (TheTaintManager's ground and its area object's GenericBuff aura on the caster's units, asserted
+	// as the TaintLand aura's modifier): its line passes by that, not by the heuristic, and its pin goes. The Devastation scene misses the 500 heuristic
+	// again (1869 lost with the cast, 1935 without, measured on the lane's tree): a KNOWN line once more (S-921: no effect of its own is asserted)
+	r.check({ { "spell SpellBookIndustry", "S-1997" }, { "spell SpellBookFueltheFires", "S-1997" }, { "spell SpellBookDragonStrike", "S-1997" },
+		{ "spell SpellBookDevastation", "S-921|no effect of DevastateSpecialPower" } });
 }
 
 TEST_CASE("factb spell book: every Mordor spell book power cast through the HUD's spell bar shows its effect")
@@ -3005,7 +3054,8 @@ TEST_CASE("factb spell book: every Mordor spell book power cast through the HUD'
 	Results r;
 	spellBookOf("FactionMordor", r);
 	r.print("spell book FactionMordor");
-	r.check({ { "spell SpellBookIndustry", "S-1997" }, { "spell SpellBookTaint", "S-1997" }, { "spell SpellBookUntamedAllegiance", "S-1997" } });
+	// lane TAINTAREA-1: Taint's line passes by its own effect (the TaintLand aura's GenericBuff on the caster's units), its pin goes
+	r.check({ { "spell SpellBookIndustry", "S-1997" }, { "spell SpellBookUntamedAllegiance", "S-1997" } });
 }
 
 namespace
@@ -3965,7 +4015,7 @@ TEST_CASE("factc spell book: every Goblin and Angmar spell bought in the store a
 		return;
 	}
 	factcCase("spell book", "FactionWild", spellsViaStore,
-			  { { "spell SpellBookTaint", "S-1997|no effect of TaintSpecialPower" }, { "spell SpellBookUntamedAllegiance", "S-1997|the HUD refused the scene's spot" } });
+			  { { "spell SpellBookUntamedAllegiance", "S-1997|the HUD refused the scene's spot" } }); // lane TAINTAREA-1: Taint passes by its own effect
 	factcCase("spell book", "FactionAngmar", spellsViaStore, { { "spell SpellBookUntamedAllegiance", "S-1997|the HUD refused the scene's spot" } });
 }
 

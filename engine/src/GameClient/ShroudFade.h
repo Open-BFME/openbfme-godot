@@ -16,6 +16,7 @@
 // PRESENTATION CORRECTION (not retail): retail truncates the step of every render and drops the fraction, so its fade slows above 30 fps and stops
 // below 4 ms a frame; Godot renders at any rate, so the milliseconds below one step are carried to the next frame (the fade takes the same wall
 // time at every frame rate, retail's at 30 fps).
+#include <cstddef> // size_t (MSVC provides it transitively; libstdc++ does not)
 #include <cstdint>
 #include <vector>
 

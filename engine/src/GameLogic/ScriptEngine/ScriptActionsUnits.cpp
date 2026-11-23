@@ -1253,7 +1253,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	}
 	if (name == "TEAM_ATTACK_AREA")
 	{
-		// lane BFME2CAMP1: RW 0x7BF9B3 (BFME2 decomp ScriptActions_doTeamAttackArea.cpp, tier A): the team (RW 0x759FDA), its AI group (RW 0x70042A /
+		// lane BFME2CAMP1: RW 0x7BF9B3 (BFME2 decomp ScriptActions.cpp, tier A): the team (RW 0x759FDA), its AI group (RW 0x70042A /
 		// 0x7A3D3D), the area by name (RW 0x759194; none: nothing), then RW 0x77283D: every member with an AI (+ 0x260) -> aiAttackArea(area, CMD_FROM_SCRIPT)
 		// (RW 0x77145C: AI command 0x23, AIHunt.cpp)
 		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
@@ -1284,7 +1284,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	}
 	if (name == "TEAM_ATTACK_TEAM")
 	{
-		// lane BFME2CAMP1: RW 0x7BF7EC (BFME2 decomp ScriptActions_doTeamAttackTeam.cpp, tier A): both teams (RW 0x759FDA; either missing: nothing), the first
+		// lane BFME2CAMP1: RW 0x7BF7EC (BFME2 decomp ScriptActions.cpp, tier A): both teams (RW 0x759FDA; either missing: nothing), the first
 		// team's AI group (RW 0x70042A / 0x7A3D3D), then RW 0x772259: every member with an AI (+ 0x260) -> aiAttackTeam(the second team, 0x7FFFFFFF shots,
 		// CMD_FROM_SCRIPT) (RW 0x7713EE: AI command 0xD, AIHunt.cpp)
 		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
@@ -1333,7 +1333,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	}
 	if (name == "PLAYER_HUNT")
 	{
-		// RW 0x7BBCF9 (lane DECOMP-2, BFME2 decomp ScriptActionsRva003BB31D.cpp tier A): every player of the mask (RW 0x758F7C) -> Player::setUnitsShouldHunt(true,
+		// RW 0x7BBCF9 (lane DECOMP-2, BFME2 decomp ScriptActions.cpp tier A): every player of the mask (RW 0x758F7C) -> Player::setUnitsShouldHunt(true,
 		// CMD_FROM_SCRIPT) RW 0x6AF4B1: + 0x35D = true, then each member of each team of the player's prototypes that has none of DOZER, HARVESTER,
 		// IGNORES_SELECT_ALL (RW 0x6AF50E / 0x6AF515) and is no HORDE_MEMBER (status 0x26) leaves its AI group (RW 0x68C6EE: the port keeps no group) and its AI
 		// hunts (RW 0x6AF150). INFERENCE: the members are the player's objects in object list order (RW: prototype, team, member order)

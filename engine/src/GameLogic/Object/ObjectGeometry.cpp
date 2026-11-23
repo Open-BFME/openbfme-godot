@@ -310,7 +310,7 @@ std::vector<ObjectGeometry::ContactPoint> ObjectGeometry::contactPointsOf(const 
 }
 
 bool ObjectGeometry::getBestContactPoint(const std::vector<Shape> &shapes, const std::vector<ContactPoint> &points, const Coord3D &callerPos, const std::string &label,
-                                         bool preferred, Coord3D &out)
+                                         int preference, bool preferred, Coord3D &out)
 {
 	// lane AIMAIM-1: without `preferred` a point counts only when the geometry, at the origin unturned (the zeroed static RW 0xDF1E98), overlaps the static
 	// sphere RW 0xDF1EA8 (built at RW 0xBCBED0: GeometryInfo(SPHERE, small, height / major / minor 2.0), RW 0x450429) at the point, unturned: RW 0xAD3415 ..
@@ -324,6 +324,32 @@ bool ObjectGeometry::getBestContactPoint(const std::vector<Shape> &shapes, const
 		return std::vector<Shape>{ probe };
 	}();
 	const float height = maxHeightAbovePosition(shapes);
+
+	if (preference == 1) // RW 0xAD3340 (the mode switch RW 0xAD3187 jumps here for mode 1)
+	{
+		// the GeometryInfo member at +0x44: the highest GeometryContactPoint row in the object's own space, kept by the row parser (RW 0xAD3DD5 .. 0xAD3DEB copies
+		// any point whose z is above +0x4C, the stored highest), in row order so the first row wins a tie. A template without rows keeps the constructor's value,
+		// which was not isolated in the reading (0 is the expected initial value; INFERENCE). The port's only input to +0x44 is the row list.
+		out.x = 0.0f;
+		out.y = 0.0f;
+		out.z = 0.0f;
+		for (const ContactPoint &p : points)
+		{
+			if (out.z < p.z) // RW 0xAD3DC9 / 0xAD3DCC: fcomp, only a strictly higher z replaces the stored point
+			{
+				out.x = p.x;
+				out.y = p.y;
+				out.z = p.z;
+			}
+		}
+		// RW 0xAD3357 .. 0xAD336D: getMaxHeightAbovePosition (RW 0xAD1920) and, when the height is below z, z = the height (fcomp / test ah, 5 / fstp dword)
+		if (height < out.z)
+		{
+			out.z = height;
+		}
+		return true; // RW 0xAD3373 `mov al, 1`
+	}
+
 	float best = 3.4028235e38f; // RW 0x7F7FFFFF
 	size_t winner = points.size();
 	for (size_t i = 0; i < points.size(); ++i)
@@ -373,7 +399,7 @@ bool ObjectGeometry::getBestContactPoint(const std::vector<Shape> &shapes, const
 	return true;
 }
 
-bool ObjectGeometry::worldspaceBestContactPoint(const Object &obj, const Coord3D &callerPos, const std::string &label, bool preferred, Coord3D &out)
+bool ObjectGeometry::worldspaceBestContactPoint(const Object &obj, const Coord3D &callerPos, const std::string &label, int preference, bool preferred, Coord3D &out)
 {
 	using SimMath::addf32;
 	using SimMath::mulf32;
@@ -392,7 +418,7 @@ bool ObjectGeometry::worldspaceBestContactPoint(const Object &obj, const Coord3D
 	local.z = addf32(addf32(addf32(mulf32(m[8], callerPos.z), mulf32(m[5], callerPos.y)), mulf32(m[2], callerPos.x)), itz);
 	const std::vector<Shape> &shapes = obj.geometryShapes(); // the object's own GeometryInfo (lane MODCOMPAT-MOD1; the points are the template's)
 	Coord3D p;
-	if (!getBestContactPoint(shapes, contactPointsOf(*tt), local, label, preferred, p))
+	if (!getBestContactPoint(shapes, contactPointsOf(*tt), local, label, preference, preferred, p))
 	{
 		return false;
 	}

@@ -32,6 +32,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include <cmath>
@@ -49,6 +50,9 @@ struct Trained
 	size_t victimsStart = 0, victimsEnd = 0;
 	float closestPathEndX = 0.0f, startX = 0.0f, cliffGoalX = 0.0f;
 	bool closestPathFound = false;
+	float hordeZ = 0.0f, hordeRef = 0.0f, hordeRange = 0.0f; ///< at the order: the horde's z, vision ground reference (+ 0x1C4) and shroud clearing range
+	bool victimShrouded = true; ///< the victim is fogged or shrouded for the order (RW 0x82C167: the order would be refused)
+	float facing = 0.0f;
 };
 
 size_t aliveMembers(LiveGame &game, const std::vector<ObjectID> &ids)
@@ -72,7 +76,8 @@ void send(LiveGame &game, int player, ObjectID selected, GameMessage m)
 }
 
 // `horde` trained at a level 2 `building` of the human player near its start, settled at its rally point, then ordered onto a `victim` horde of the AI side
-// 300 east of it (inside its vision: a player's order cannot target a fogged object, RW 0x82C167); the counters over the next 15 s
+// 300 east of its rally point, after it walked 60 toward it (inside its vision then: a player's order cannot target a fogged object, RW 0x82C167); the
+// counters over the next 15 s
 Trained trainAndCharge(starttest::Shared *s, const char *faction, const char *building, const char *levelUpgrade, const char *horde, const char *enemyFaction,
 	const char *victim)
 {
@@ -102,13 +107,14 @@ Trained trainAndCharge(starttest::Shared *s, const char *faction, const char *bu
 	base.x += 500.0f;
 	Coord3D site{ 0, 0, 0 };
 	bool found = false;
+	// lane BUILDCLEAR-1: no builder, so no exit strip test (RW 0x797026: bit 0x40; the strip test reads the builder's player)
 	for (int r = 0; r <= 600 && !found; r += 50)
 	{
 		for (int k = 0; k < 16 && !found; ++k)
 		{
 			Coord3D c{ base.x + (float)r * (float)std::cos(k * 0.3927), base.y + (float)r * (float)std::sin(k * 0.3927), 0.0f };
 			c.z = game.logic().getGroundHeight(c.x, c.y);
-			if (BuildPlacement::isLocationLegalToBuild(game.logic(), c, *bt->getFinalOverride(), 0.0f, LLF_TERRAIN_RESTRICTIONS | LLF_NO_OBJECT_OVERLAP, nullptr, nullptr) ==
+			if (BuildPlacement::isLocationLegalToBuild(game.logic(), c, *bt->getFinalOverride(), 0.0f, LLF_TERRAIN_RESTRICTIONS | LLF_NO_OBJECT_OVERLAP | LLF_NO_EXIT_TEST, nullptr, nullptr) ==
 				LBC_OK)
 			{
 				site = c;
@@ -164,6 +170,22 @@ Trained trainAndCharge(starttest::Shared *s, const char *faction, const char *bu
 	Coord3D vp = *riders->getPosition();
 	vp.x += 300.0f;
 	vp.z = game.logic().getGroundHeight(vp.x, vp.y);
+	// lane VISIONDEF-1: the horde faces south after its walk to the rally point, and RotWK's sight there is the horde's ShroudClearingRange 400 times
+	// 1 + clamp((z - its ground ring) * 1%, -50%, +300%) = about 370, times VisionSide 50% across: the spot 300 east is fogged and the player's attack order
+	// on it is refused (RW 0x82C167). (The port saw it only because it had no ground reference: z 100 * 1% doubled the range.) As a player would, the
+	// horde first walks 60 toward it, so it faces it and sees it
+	{
+		GameMessage mv(MSG_DO_MOVETO, pi);
+		Coord3D step = *riders->getPosition();
+		step.x += 60.0f;
+		step.z = game.logic().getGroundHeight(step.x, step.y);
+		mv.appendLocationArgument(step);
+		send(game, pi, riders->getID(), mv);
+		for (int k = 0; k < 16; ++k)
+		{
+			game.advance(0.5);
+		}
+	}
 	// the pathfinder's own answer to the crush attack's goal (the victim + 100 east, on the cliff): FindClosestPath reaches past the victims to the cliff's edge
 	{
 		Pathfinder &pf = game.ai().pathfinder();
@@ -190,6 +212,14 @@ Trained trainAndCharge(starttest::Shared *s, const char *faction, const char *bu
 	}
 	out.victimsStart = aliveMembers(game, members);
 	const CombatState::Counters before = game.logic().combat().counters();
+	if (ShroudManager *sm = game.logic().shroud())
+	{
+		out.hordeZ = riders->getPosition()->z;
+		out.hordeRef = riders->visionGroundReference();
+		out.hordeRange = sm->visionRange(*riders);
+		out.victimShrouded = sm->clientObjectStatus(*v, pi) >= OBJECTSHROUD_FOGGED; // read-only (RW 0x82C167's test: FOGGED or worse)
+		out.facing = riders->getOrientation();
+	}
 	GameMessage atk(MSG_DO_ATTACK_OBJECT, pi);
 	atk.appendObjectIDArgument(v->getID());
 	send(game, pi, riders->getID(), atk);
@@ -203,6 +233,8 @@ Trained trainAndCharge(starttest::Shared *s, const char *faction, const char *bu
 	out.knockbacks = c.crushKnockbacks - before.crushKnockbacks;
 	out.ramHits = c.ramHits - before.ramHits;
 	out.victimsEnd = aliveMembers(game, members);
+	std::printf("  info: at the order the horde stands at z %.2f, vision ground reference %.2f, shroud clearing range %.2f, facing %.3f; the victim shrouded for the order %d\n",
+		out.hordeZ, out.hordeRef, out.hordeRange, out.facing, out.victimShrouded ? 1 : 0);
 	std::printf("  info: trained %s -> %s: %llu crushes, %llu crush weapon shots, %llu knockbacks, %llu ram hits, victims %zu -> %zu; closest path from x %.0f toward "
 				"x %.0f ends at x %.0f\n",
 		horde, victim, out.crushes, out.shots, out.knockbacks, out.ramHits, out.victimsStart, out.victimsEnd, out.startX, out.cliffGoalX, out.closestPathEndX);
@@ -215,6 +247,7 @@ TEST_CASE("warg1 retail: Isengard warg riders trained at a level 2 warg pit and 
 	OPENBFME_REQUIRE_START(s);
 	const Trained t = trainAndCharge(s, "FactionIsengard", "IsengardWargPit", "Upgrade_IsengardWargPitLevel2", "IsengardWargRiderHorde", "FactionMen", "GondorFighterHorde");
 	REQUIRE(t.produced);
+	CHECK_FALSE(t.victimShrouded); // the player's order is not refused (RW 0x82C167)
 	// engine pins (measured on the lane's tree; before lane WARG-1: 0 crushes, the soldiers killed in melee)
 	CHECK(t.victimsStart == 15);
 	CHECK(t.crushes == 11);
@@ -233,11 +266,14 @@ TEST_CASE("warg1 retail: Rohirrim trained at a level 2 stable and sent with a pl
 	OPENBFME_REQUIRE_START(s);
 	const Trained t = trainAndCharge(s, "FactionMen", "GondorStable", "Upgrade_GondorStableLevel2", "RohanRohirrimHorde", "FactionMordor", "MordorFighterHorde");
 	REQUIRE(t.produced);
+	CHECK_FALSE(t.victimShrouded); // the player's order is not refused (RW 0x82C167)
 	// engine pins (measured on the lane's tree; 0 crushes before lane WARG-1); merge queue q37 (#187's rebuilt paths, measured once on the merged tree):
 	// crushes 14 -> 17, shots 28 -> 34, knockbacks 14 -> 17
+	// pin: lane VISIONDEF-1 (measured on the lane's tree): the horde walks 60 toward the victims first (it must see them for the order), so it charges from
+	// x 1015 (955): crushes 17 -> 16, shots 34 -> 32, knockbacks 17 -> 16. The warg riders' numbers hold
 	CHECK(t.victimsStart == 20);
-	CHECK(t.crushes == 17);
-	CHECK(t.shots == 34);
-	CHECK(t.knockbacks == 17);
+	CHECK(t.crushes == 16);
+	CHECK(t.shots == 32);
+	CHECK(t.knockbacks == 16);
 	CHECK(t.victimsEnd == 0);
 }

@@ -434,10 +434,12 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// merge queue q53 (measured at each merge point, from #287's on): the fell beasts' TransportContain fires its GrabWeapon (FellbeastGrabWeapon)
 				// at the horde member it picks up (RW 0x86AA4B .. 0x86AAA2): Khamul and Morgomir 5 strikes, 1425 health, 19 of 20 killed; the Witch-king 6
 				// strikes, 1350 health, 17 killed (before: no strike, 450 health, 5 killed); Drogoth has no GrabWeapon and is unchanged
+				// merge queue q55 (measured at each merge point, from #319's on): the giant bird's swoop takes its victim's contact point through getBestContactPoint
+				// mode 1 (RW 0x76B6FF .. 0x76B721): the Witch-king's 6 strikes take 1500 health and kill 19 of 20 (1350, 17 before); the others are unchanged
 				const bool witchKing = hero == "MordorWitchKingOnFellBeast";
 				CHECK(ord.shots == (drogoth ? 3u : witchKing ? 6u : 5u));
-				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1350.0f : 1425.0f));
-				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 17u : 19u));
+				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1500.0f : 1425.0f));
+				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 19u : 19u));
 				continue;
 			}
 			CHECK(own.walked > 600.0f);
@@ -467,7 +469,9 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// Merge queue q41 (DECOMPFIX-1104B's aim and give-way rules move the scene's creeps and computer opponent; measured once on the merged tree and at
 				// its merge point, NECRODIE-1 keeps it): Haldir's 3 strikes on his own take 50 from the horde, none killed
 				// pin: merge queue q49 (DECOMPFIX-1109's FLEECHASE-1: a horde's melee wait state and a lone unit's melee approach give up on a fleeing target, RW 0x7469FD / 0x746F51, so the chase goes on; measured once on the merged tree, the only item): Haldir's strikes on his own take 525 (50) from the horde
-				CHECK(own.lost == 525.0f);
+				// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: the
+				// scene's creeps and computer opponent move otherwise; measured on the lane's tree): Haldir's 17 strikes on his own take 1500 (525) and kill 20 of 20
+				CHECK(own.lost == 1500.0f);
 			}
 			else
 			{

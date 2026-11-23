@@ -22,6 +22,8 @@
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptTemplates.h"
+#include "GameLogic/ScriptEngine/ScriptThreat.h"
+#include "GameLogic/System/ThreatFinder.h"
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
@@ -1451,7 +1453,7 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 	}
 	case ACT_SET_COUNTER_TO_UNIT_THREAT:
 	case ACT_SET_COUNTER_TO_TEAM_THREAT:
-		noteUnportedAction(ScriptTemplates::action(a.resolved)->name); // engine-owned, not ported (S-1180)
+		setCounterToThreat(a, a.resolved == ACT_SET_COUNTER_TO_TEAM_THREAT); // lane THREATLEVEL-1: RW 0x60C1C9 -> RW 0x608BCA(action, 440)
 		return true;
 	default:
 		if (a.resolved >= ACT_CAMERA_FADE_FIRST && a.resolved <= ACT_CAMERA_FADE_LAST)
@@ -1461,6 +1463,47 @@ bool ScriptEngine::executeEngineAction(const ScriptActionRec &a)
 		}
 		return false;
 	}
+}
+
+// lane THREATLEVEL-1: RW 0x608BCA ScriptEngine::setCounterToThreat (tier B, BFME2 0x609003, decomp ScriptEngine.cpp:3400; executeActions RW 0x60C1C9 sends
+// 439 with false and 440 with true, BFME2 0x60C5C7 ScriptEngineExecuteActions.cpp:69-70). Both editions; the threat sum itself is edition-specific
+// (ScriptThreat.h).
+//   * the counter of parameter 0 (RW 0x60817A; retail returns when there is none, ours is get-or-create), the radius parameter 2 (real), the value 0.0f;
+//   * team (440): getTeamNamed(parameter 1) (RW 0x759FDA), then RW 0x7A6A20(radius); no team: the value stays 0;
+//   * unit (439): the unit by the name of parameter 1 (RW 0x75A243; none: 0). A unit whose template has KindOf THREAT_FINDER (bit 195: template + 0x120
+//     bit 3) asks the finder of the same name in TheThreatFinderManager (RW 0xDE8888 -> RW 0x7EE260; none: 0) for its controlling player's (RW 0x68B678)
+//     enemies, RW 0x7EE166(out, player, 0, 0), and takes the record's first float; any other unit answers RW 0x697B41(radius);
+//   * counter = cvttss2si(value) (RW 0x608CFD: truncation).
+void ScriptEngine::setCounterToThreat(const ScriptActionRec &a, bool team)
+{
+	Counter &c = counter(param(a.params, 0).stringValue);
+	const float radius = param(a.params, 2).realValue;
+	const std::string &name = param(a.params, 1).stringValue;
+	float value = 0.0f;
+	if (team)
+	{
+		if (Team *t = ScriptConditions::team(*this, name))
+		{
+			value = ScriptThreat::getThreatInRange(m_logic, *t, radius);
+		}
+	}
+	else if (Object *unit = getUnitNamed(name))
+	{
+		static const int kThreatFinder = ObjectTemplateInfoBuilder::kindOfIndex("THREAT_FINDER"); // 195
+		const ThingTemplate *tt = unit->getTemplate();
+		if (tt && kThreatFinder >= 0 && MaskTest(m_logic.templateInfo(tt).kindOf, (unsigned)kThreatFinder))
+		{
+			if (ThreatFinder *finder = m_logic.threatFinders().find(m_logic, name))
+			{
+				value = finder->threatForPlayer(m_logic, unit->getControllingPlayer(), 0).v[0]; // RW 0x7EE166(.., player, 0, 0)
+			}
+		}
+		else
+		{
+			value = ScriptThreat::getThreatInRange(m_logic, *unit, radius);
+		}
+	}
+	c.value = SimMath::truncToInt32(value);
 }
 
 // RW 0x608B28

@@ -33,9 +33,9 @@ ScriptActions_Rva003C57A9Do.cpp 0x3C58C9. The non-dozer buildObjectNow
 branches remain S-5305, not silent substitutes.
 
 Regional reveal donor: BFME2 ScriptEngineNamedMapReveal.cpp
-0x3577DA/0x35789D, ScriptEngineRva00358853.cpp, Rva003BC9E0Do.cpp,
-Rva003BCA12Do.cpp, Rva003BCA43Do.cpp, Rva00739BE0.cpp and
-Rva00739AF0Siblings.cpp. Upstream identifies the RotWK trigger action at
+0x3577DA/0x35789D, ScriptEngine_createNamedMapReveal.cpp 0x358853,
+ScriptActions.cpp 0x3BC9E0/0x3BCA12/0x3BCA43 and PartitionManager.cpp
+0x739BE0/0x739AF0. Upstream identifies the RotWK trigger action at
 RW 0x7C0BCF and reveal/unlook at RW 0xB4DCA0 / 0xB4DE50. Exact
 cross-edition wrapper and polygon-edge equivalence remains explicitly
 unverified (S-6102); this is not a retail-parity claim.
