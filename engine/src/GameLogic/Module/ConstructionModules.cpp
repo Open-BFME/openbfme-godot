@@ -30,6 +30,7 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Construction.h"
+#include "GameLogic/Module/SMCHelper.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
@@ -694,8 +695,22 @@ void GettingBuiltBehavior::checkCompletion()
 				setCondition(*obj, "REALLYDAMAGED", false);
 			}
 			setCondition(*obj, "AWAITING_CONSTRUCTION", false);
-			setCondition(*obj, "ACTIVELY_BEING_CONSTRUCTED", false);
-			setCondition(*obj, "PARTIALLY_CONSTRUCTED", false);
+			// When DozerAIUpdate completes a CastleBehavior structure (both editions: RW 0x88DEFD..0x88DF51;
+			// DONOR BFME2 1.06 0x88AC08..0x88AC5C), SMCHelper holds PARTIALLY_CONSTRUCTED and
+			// ACTIVELY_BEING_CONSTRUCTED for 5 frames so DefaultModelConditionState { Model = None }
+			// does not appear before unpack. Do not let GettingBuiltBehavior's 5-frame poll wipe those
+			// active SMCHelper leases early when Dozer completion already finished construction.
+			const SMCHelper *smc = !m_constructing ? dynamic_cast<const SMCHelper *>(obj->findModule("SMCHelper")) : nullptr;
+			const int activeBit = Construction::modelConditionIndex("ACTIVELY_BEING_CONSTRUCTED");
+			const int partialBit = Construction::modelConditionIndex("PARTIALLY_CONSTRUCTED");
+			if (!smc || !smc->hasSpecialModelConditionState(activeBit))
+			{
+				obj->setModelConditionState(activeBit, false);
+			}
+			if (!smc || !smc->hasSpecialModelConditionState(partialBit))
+			{
+				obj->setModelConditionState(partialBit, false);
+			}
 			obj->setStatus(20, false);
 			obj->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, false);
 			if (m_constructing)
