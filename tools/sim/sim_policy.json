@@ -907,6 +907,18 @@
   {
    "glob": "src/GameNetwork/ViewChecks.cpp",
    "reason": "ANTICHEAT-1's D2 view focus check: runs beside replay playback and only READS the replay's client-reported VIEW records (camera / pointer, never simulation input) and the simulation's object positions and shroud to report a pointer resting on hidden enemies; it never writes simulation state, sends no command and feeds nothing back (test_orders_into_fog_retail: playback through FogCheckDriver with it reproduces every recorded hash). Its floats are report data, not game state"
+  },
+  {
+   "glob": "src/GameClient/BlobShadow.cpp",
+   "reason": "lane BLOBSHADOW-1: the SHADOW_DECAL blobs as data (texture, size, offset, the ShadowLOD gate, the ground quad): presentation, reads templates and model states, never changes simulation state"
+  },
+  {
+   "glob": "src/GodotDevice/GodotBlobShadows.cpp",
+   "reason": "lane BLOBSHADOW-1: the blob shadows' top-down accumulation viewport and its quads: rendering"
+  },
+  {
+   "glob": "src/GodotDevice/GodotGameWorldBlobs.cpp",
+   "reason": "lane BLOBSHADOW-1: the GameWorld pass that puts the drawables' blobs into the accumulation viewport after the views are refreshed: rendering, reads the drawables and the map's height map, never the live logic"
   }
  ]
 }
