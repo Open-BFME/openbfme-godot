@@ -15,6 +15,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/DeployStyleAIUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
@@ -166,5 +167,144 @@ End
 	CHECK(((civ->getModelConditionBits()[(size_t)wanderBit / 32u] & (1u << (wanderBit % 32))) == 0));
 	CHECK(civ->getPosition()->x > 550.0f); // tolerance: WanderWidthFactor 1.5 adds +/-20 cell offset around WP3 (x=600)
 
+	w.logic->setTerrain(nullptr);
+}
+
+namespace
+{
+// the three-waypoint "WanderPath" on a flat 101 x 101 map, as the test above builds it
+struct WanderTerrain
+{
+	WorldHeightMap hmap = flatWanderMap(101, 101);
+	MapChunks chunks;
+	TerrainLogic terrain;
+	explicit WanderTerrain(combattest::CombatWorld &w)
+	{
+		chunks.objects = {
+			makeWaypoint(1, "WP1", 200.0f, 200.0f, "WanderPath"),
+			makeWaypoint(2, "WP2", 400.0f, 200.0f, "WanderPath"),
+			makeWaypoint(3, "WP3", 600.0f, 200.0f, "WanderPath"),
+		};
+		chunks.waypointLinks = { { 1, 2 }, { 2, 3 } };
+		std::vector<std::string> problems;
+		terrain.init(hmap, chunks, &problems);
+		REQUIRE(problems.empty());
+		w.logic->setTerrain(&terrain);
+	}
+};
+
+bool stopNoted(GameLogic &logic, const char *id)
+{
+	for (const std::string &l : logic.report().stops)
+	{
+		if (l.rfind(id, 0) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+} // namespace
+
+TEST_CASE("LOCAL-57 synthetic: a wander kept while a DeployStyleAIUpdate unit unpacks runs once it is deployed instead of aborting the match (RW 0x891F9B replays through aiDoCommand)")
+{
+	const char *extraIni = R"(
+Object WanderDeployer
+  KindOf = VEHICLE SELECTABLE
+  Body = ActiveBody ModuleTag_Body
+    MaxHealth = 100
+  End
+  Behavior = DeployStyleAIUpdate ModuleTag_AI
+    UnpackTime = 1000
+    PackTime = 1000
+    MustDeployToAttack = No
+  End
+  LocomotorSet
+    Locomotor = WalkerLoco
+    Condition = SET_NORMAL
+    Speed = 10
+  End
+End
+)";
+	combattest::CombatWorld w(extraIni, 101);
+	WanderTerrain terrain(w);
+	Object *unit = w.unit("WanderDeployer", 'A', 380.0f, 200.0f);
+	DeployStyleAIUpdate *ai = DeployStyleAIUpdate::of(*unit);
+	REQUIRE(ai != nullptr);
+	ai->requestDeploy(); // RW 0x891D3B
+	int f = 0;
+	for (; f < 10 && ai->state() != DeployStyleAIUpdate::DEPLOY; ++f)
+	{
+		w.logic->runLogicFrame();
+	}
+	REQUIRE(ai->state() == DeployStyleAIUpdate::DEPLOY); // unpacking: a command now waits (RW 0x892120)
+	CHECK(ai->aiWander(1, CMD_FROM_SCRIPT));
+	CHECK(ai->hasPendingCommand());
+	bool wandered = false;
+	CHECK_NOTHROW([&] {
+		for (int i = 0; i < 40; ++i)
+		{
+			w.logic->runLogicFrame();
+			wandered = wandered || ai->currentStateId() == (unsigned)AI_WANDER;
+		}
+	}());
+	CHECK_FALSE(ai->hasPendingCommand());
+	CHECK(ai->replays() == 2u); // once deployed (state 2), once packed again for the wander's path (state 0), as the kept move of siege1 demolisher
+	CHECK(wandered); // the kept wander ran (AICMD_WANDER 0x2B through the replay)
+	w.logic->setTerrain(nullptr);
+}
+
+TEST_CASE("LOCAL-57 synthetic: a CAN_BE_REPULSED wanderer reaching the unported repulsor scan reports S-7581 (RW 0x74BBCA)")
+{
+	const char *extraIni = R"(
+Object RepulsedWanderer
+  KindOf = INFANTRY SELECTABLE CAN_BE_REPULSED
+  Body = ActiveBody ModuleTag_Body
+    MaxHealth = 100
+  End
+  Behavior = AIUpdateInterface ModuleTag_AI
+  End
+  LocomotorSet
+    Locomotor = WalkerLoco
+    Condition = SET_NORMAL
+    Speed = 10
+  End
+End
+Object PlainWanderer
+  KindOf = INFANTRY SELECTABLE
+  Body = ActiveBody ModuleTag_Body
+    MaxHealth = 100
+  End
+  Behavior = AIUpdateInterface ModuleTag_AI
+  End
+  LocomotorSet
+    Locomotor = WalkerLoco
+    Condition = SET_NORMAL
+    Speed = 10
+  End
+End
+)";
+	{
+		combattest::CombatWorld w(extraIni, 101);
+		WanderTerrain terrain(w);
+		Object *plain = w.unit("PlainWanderer", 'A', 380.0f, 200.0f);
+		REQUIRE(plain->getAIUpdateInterface()->aiWander(1, CMD_FROM_SCRIPT));
+		for (int i = 0; i < 20; ++i)
+		{
+			w.logic->runLogicFrame();
+		}
+		CHECK_FALSE(stopNoted(*w.logic, "[S-7581]")); // a unit that cannot be repulsed never reaches the scan
+		w.logic->setTerrain(nullptr);
+	}
+	combattest::CombatWorld w(extraIni, 101);
+	WanderTerrain terrain(w);
+	Object *civ = w.unit("RepulsedWanderer", 'A', 380.0f, 200.0f);
+	REQUIRE(civ->getAIUpdateInterface()->aiWander(1, CMD_FROM_SCRIPT));
+	for (int i = 0; i < 20; ++i)
+	{
+		w.logic->runLogicFrame();
+	}
+	CHECK(civ->getAIUpdateInterface()->currentStateId() == (unsigned)AI_WANDER);
+	CHECK(stopNoted(*w.logic, "[S-7581]"));
 	w.logic->setTerrain(nullptr);
 }

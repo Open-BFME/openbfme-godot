@@ -25,6 +25,12 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include <cmath>
 
+namespace
+{
+// S-7581: noted when AIWanderState reaches the repulsor scan it does not port (RW 0x74BBCA .. 0x74BC06)
+const char *const kStopWanderRepulsor = "[S-7581] AIWanderState: the repulsor scan (AI::findClosestRepulsor RW 0x6FF3A2) and the flee to AIRunAwayPanicState (state 0x28) are not ported; a CAN_BE_REPULSED wanderer keeps wandering";
+} // namespace
+
 const char *waypointPathStopLine()
 {
 	return "[S-1189] AI waypoint paths (RW 0xC28F90 states 2 .. 5): a team's formation offsets are ported (lane BACKLOG-8: RW 0x94FCBA through RW 0x771E7D "
@@ -341,7 +347,8 @@ void AIWanderState::applyWanderOffset(int lineX, int lineY)
 	const float wf = ai().wanderFactor(); // locomotor template + 0xF0
 	if (wf > 0.0f)                         // RW 0x750BD0 / 0x74BC56 (> 0.0f)
 	{
-		int delta = (int)std::floor((double)wf + 0.5); // RW 0x750BD5 / 0x74BC5F
+		// RW 0x750BD5 .. 0x750BF0 (and 0x74BC5F): fld wf; fadd 0.5 (exact in double); CRT floor; fstp float; fistp
+		int delta = SimMath::fistp32((double)(float)SimMath::floorD(SimMath::addD((double)wf, 0.5)));
 		if (delta < 1)
 		{
 			delta = 1; // RW 0x750BF6 / 0x74BC80
@@ -365,9 +372,10 @@ float AIFollowWaypointPathState::calcExtraPathDistance() const
 		{
 			break;
 		}
-		const float dx = next->location.x - cur->location.x;
-		const float dy = next->location.y - cur->location.y;
-		extra += std::sqrt(dx * dx + dy * dy);
+		// RW 0x7429D5: the link's 2D length (RW 0x4032DD), then fadd onto the float total (RW 0x7429DA)
+		const float dx = SimMath::subf32(next->location.x, cur->location.x);
+		const float dy = SimMath::subf32(next->location.y, cur->location.y);
+		extra = SimMath::addf32(extra, SimMath::length2d(dx, dy));
 		cur = next;
 	}
 	return extra;
@@ -409,7 +417,9 @@ StateReturnType AIWanderState::update()
 		if (--m_timer < 0)
 		{
 			m_timer = m_waitFrames;
-			// S-7581: AI::findClosestRepulsor (RW 0x6FF3A2) and AIRunAwayPanicState (state 0x28) not ported
+			// RW 0x74BBCA .. 0x74BC06: AI::findClosestRepulsor (RW 0x6FF3A2) and the flee to AIRunAwayPanicState (state 0x28) are not ported:
+			// the scan is skipped and reported when it is reached (S-7581)
+			owner().logic().noteStop(kStopWanderRepulsor);
 		}
 	}
 	if (moved != STATE_CONTINUE)
