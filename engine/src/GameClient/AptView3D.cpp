@@ -66,6 +66,11 @@ void AptView3DPixelBudget(int &width, int &height, int budget)
 	height = std::max(1, (int)std::floor(height * k));
 }
 
+bool AptView3DFadedOut(float maxFade)
+{
+	return !(maxFade >= 1.0f / 64.0f); // a NaN fade draws nothing either
+}
+
 bool AptView3DOnMenuLevel(const std::string &path, const std::vector<int> &menuLevels)
 {
 	static const char kPrefix[] = "_level";

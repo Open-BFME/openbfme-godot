@@ -35,7 +35,11 @@ func modes(expected: int, selected: Array[SubViewport], message: String) -> void
 func current_membership(candidates: Array[SubViewport]) -> Array[SubViewport]:
 	# APT retained-slot membership is independent of each viewport's actual update mode.
 	# The black viewport owns the instancer; its white partner shares the same World3D.
-	var frames: Dictionary = player.get_backdrop_state().model_animation_frames
+	# lane VIEW3DFADE-1: a faded-out model's slot stays current but renders neither viewport (checked on its own in run)
+	var state: Dictionary = player.get_backdrop_state()
+	var frames: Dictionary = state.model_animation_frames.duplicate()
+	for path in state.model_faded:
+		frames.erase(path)
 	var names := frames.keys().map(func(path): return str(path).get_slice("|", 1).to_lower())
 	var worlds := []
 	for view in candidates:
@@ -67,6 +71,66 @@ func matches_apt_pose(inst: Node) -> bool:
 func settle() -> void:
 	for _frame in range(6):
 		await process_frame
+
+# lane VIEW3DFADE-1: the View3D clocks run on real time (RW 0xB5430E) and the retail models fade in from a pivot fade near 0, which renders
+# nothing (AptView3DFadedOut); the player processes until no model shown is faded out, as briefly as that takes (the clips keep animating)
+func fade_in() -> void:
+	player.auto_process = true
+	var deadline := Time.get_ticks_msec() + 3000
+	while not player.get_backdrop_state().model_faded.is_empty() and Time.get_ticks_msec() < deadline:
+		await process_frame
+	player.auto_process = false
+	player.render(true)
+
+func views_of_model(model: String) -> Array[SubViewport]:
+	# the black viewport holds the instancer, its white partner shares the World3D
+	var worlds := []
+	for child in player.get_children():
+		if child is SubViewport:
+			for inst in child.get_children():
+				if inst.is_class("W3DInstancer") and str(inst.get_model_report(0).get("name", "")).to_lower() == model:
+					worlds.append(child.find_world_3d())
+	var selected: Array[SubViewport] = []
+	for child in player.get_children():
+		if child is SubViewport and worlds.has(child.find_world_3d()):
+			selected.append(child)
+	return selected
+
+# lane VIEW3DFADE-1: the front-end background hidden (HideFrontEndBackground "0", a game's start). Background.apt's hide sets its View3D SFE_MenuBkgrnd
+# back to its first frame (a pivot at fade 0.0127) before the clip leaves the stage: while it is there the viewer keeps its slot and clock but renders
+# neither scene nor its composite. A player of its own: the earlier scenarios' slots of the same models would blur the membership by model name
+func faded_front_end_background(fs, config: Dictionary) -> void:
+	parent.free()
+	parent = Node2D.new()
+	root.add_child(parent)
+	player = ClassDB.instantiate("AptMenuPlayer")
+	player.auto_process = false
+	parent.add_child(player)
+	if not check(player.boot_shell(fs, world, config).ok, "third shell boots"):
+		return
+	for frame in range(6):
+		player.tick(0.033)
+	var background: int = player.get_backdrop_state().background_level
+	check(player.shell_invoke(background, "ShowFrontEndBackground", PackedStringArray()).get("ok", false), "front-end background shown")
+	for frame in range(30):
+		player.tick(0.033)
+		player.render(true)
+	check(player.shell_invoke(background, "HideFrontEndBackground", PackedStringArray(["0"])).get("ok", false), "front-end background hidden")
+	var seen := false
+	for frame in range(300):
+		player.tick(0.033)
+		player.render(true)
+		var state: Dictionary = player.get_backdrop_state()
+		var current: Array = state.model_animation_frames.keys().filter(func(path): return str(path).to_lower().ends_with("|sfe_menubkgrnd"))
+		if not current.is_empty() and current.all(func(path): return state.model_faded.has(path)):
+			seen = true
+			# every slot of the model is faded out: each viewport pair holding it (the shown background's slot is kept, unused) renders nothing
+			var pairs := views_of_model("sfe_menubkgrnd")
+			# tolerance: the retail movie may place the model in more than one clip (one pair each)
+			check(pairs.size() >= 2 and pairs.size() % 2 == 0, "the faded-out model has its viewport pairs: " + str(pairs.size()))
+			modes(SubViewport.UPDATE_DISABLED, pairs, "a faded-out View3D renders neither scene (tick %d)" % frame)
+			break
+	check(seen, "the hidden front-end background's model is on stage faded out: " + str(player.get_backdrop_state()))
 
 func finish() -> void:
 	Engine.time_scale = 1.0
@@ -125,6 +189,7 @@ func run() -> void:
 	for frame in range(30):
 		player.tick(0.033)
 		player.render(true)
+	await fade_in()
 	for child in player.get_children():
 		if child is SubViewport:
 			views.append(child)
@@ -313,6 +378,10 @@ func run() -> void:
 	for frame in range(30):
 		player.tick(0.033)
 		player.render(true)
+	# lane VIEW3DFADE-1: the hidden scenes' real-time clocks run on (pose() before its visibility test), so on reveal the models have faded in
+	player.auto_process = true
+	await create_timer(1.5).timeout
+	player.auto_process = false
 	var hidden_views: Array[SubViewport] = []
 	for child in player.get_children():
 		if child is SubViewport:
@@ -325,5 +394,6 @@ func run() -> void:
 			visible_views.append(view)
 	# tolerance: mounted presentation data chooses the number of currently used paired clips.
 	check(visible_views.size() >= 2 and visible_views.size() % 2 == 0, "new hidden scenes reveal as active pairs")
+	await faded_front_end_background(fs, config)
 	# Parent deletion frees active viewports before the retained-canvas destructor runs.
 	finish()

@@ -216,6 +216,9 @@ public:
 	// lane UI-2 (C++ only): the posed transform of a pivot in W3D model space as of the last update (call update_now() after posing); the camera bone
 	// of an Apt View3D viewer. False for an unknown instance or pivot.
 	bool get_bone_transform_native(int64_t instance, int bone, ::Matrix3D &out) const;
+	// lane VIEW3DFADE-1 (C++ only): the largest fade (pivot fade times the drawable's opacity) of the instance's visible draw items in the current pose:
+	// 0 when no sub object is drawn. An Apt View3D viewer whose model is below 1/64 everywhere skips its two renders (AptView3DViewers::pose)
+	float get_instance_max_fade_native(int64_t instance) const;
 	// lane UI-2 (C++ only): a pivot of a model's hierarchy by name (case-insensitive); -1 when absent
 	int get_bone_index_native(int64_t model, const std::string &name) const;
 	// { instances, models, draw_items, multimeshes, palette_texels, shaders, textures, pose_ms, upload_ms, mapper_ms, visible_instances }

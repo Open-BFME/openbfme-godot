@@ -22,6 +22,7 @@
 #include <godot_cpp/classes/shader.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/sub_viewport.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/rect2.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/rid.hpp>
@@ -64,6 +65,9 @@ public:
 	String sourceStyle() const;
 	// Active viewers only; read the animation clock without advancing it.
 	Dictionary animationFrames() const;
+	// lane VIEW3DFADE-1: the active viewers whose model is faded out (AptView3DFadedOut): they keep their clocks and poses but skip both renders and
+	// their composite until a pivot fades in again. Keys as animationFrames'
+	Array fadedViewers() const;
 
 private:
 	struct Slot
@@ -83,6 +87,8 @@ private:
 		bool keepAspect = true;
 		bool used = false, failed = false;
 		Ref<ShaderMaterial> material;
+		RID item;                              // the canvas item the last draw composited into
+		bool faded = false, itemHidden = false; // lane VIEW3DFADE-1
 	};
 	bool create(Slot &slot, const AptCanvasOp &op);
 	bool ownerVisible() const;
