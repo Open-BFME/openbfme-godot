@@ -25,6 +25,8 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "GameClient/LiveGame.h"
+#include "GameClient/ClientEvents.h"
+#include "GameClient/DrawableManager.h"
 #include "GameClient/MapCreationHooks.h"
 #include "GameClient/MapObjectDrawables.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
@@ -625,4 +627,40 @@ TEST_CASE("upgrade retail: the structure upgrades of every side (fortress improv
 		const SideResult &r = sides[kv.first];
 		CHECK(std::array<int, 3>{ { r.structures, r.grants, r.ran } } == kv.second);
 	}
+}
+
+TEST_CASE("upgrade retail: Lorien Warrior heavy armor reaches the rendered pose")
+{
+ REQUIRE_RETAIL_WORLD(sh);
+ Game g(*sh.world, *sh.mount, "FactionElves");
+ ArchiveW3DFileSource source(*sh.mount->fs);
+ WW3DAssetManager assets(source);
+ DrawableManager drawables(assets, *g.logic);
+ ClientEventRecorder recorder(*g.logic);
+ g.logic->setClientHooks(&recorder);
+ Object *unit = g.make(*sh.world, "ElvenLorienWarrior");
+ drawables.applyEvents(recorder.take());
+ const auto *armor = sh.world->upgrades().findUpgrade("Upgrade_ElvenHeavyArmor");
+ REQUIRE(armor);
+ unit->giveUpgrade(armor);
+ drawables.applyEvents(recorder.take());
+ auto *drawable = drawables.findByObject(unit->getID());
+ REQUIRE(drawable);
+ bool foundArmorReplacement = false;
+ for (const auto &entry : drawable->entries())
+ {
+  if (!entry.draw) continue;
+  W3DDrawPoseView pose;
+  entry.draw->poseView(pose);
+  for (const auto &swap : *pose.textureSwaps)
+  {
+   if (AsciiStringUtil::compareNoCase(swap.first, "EUlorienwarrior.tga") != 0) continue;
+   foundArmorReplacement = true;
+   CHECK(AsciiStringUtil::compareNoCase(swap.second, "EULorWarHA.tga") == 0);
+   CHECK(swap.excludes("Unit.Forged_Blade"));
+   CHECK_FALSE(swap.excludes("Unit.Body"));
+  }
+ }
+ CHECK(foundArmorReplacement);
+ g.logic->setClientHooks(nullptr);
 }

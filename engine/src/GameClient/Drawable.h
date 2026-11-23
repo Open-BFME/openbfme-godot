@@ -199,6 +199,7 @@ public:
 	// request waits until all exist
 	void scriptModuleVisible(const std::string &name, bool visible);
 	void showSubObject(const std::string &name, bool visible, bool permanent);
+ void upgradeTexture(const TextureSwap &swap, bool enabled);
 
 	// The render transform from the object's record in a completed logic frame's snapshot (SMOOTH-1: RenderInterpolation::retailPose, RW 0x6765B9;
 	// `interpolate` false: the record's current transform, the stepped look). Then the construction look (updateConstruction).
