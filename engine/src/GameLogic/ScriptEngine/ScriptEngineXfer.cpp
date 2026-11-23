@@ -153,8 +153,9 @@ void ScriptEngine::xfer(Xfer &x)
 	// (RW + 0x1A458); an older game's engine kept none, so it loads with empty lists (the lane wrote it as 4 on its branch; renumbered by merge order).
 	// Lane BFME2CAMP1: version 6 adds the attack priority table, written only once a script edited it (every other snapshot is version 5's); 6's
 	// fields follow 5's
-	// Version 7 appends named regional reveals; unchanged games retain their old layout.
-	XferVersion v{ 2, (std::uint8_t)(loading || !m_namedMapReveals.empty() ? 7 : m_attackPriorities.edited() ? 6 : 5) };
+	// Version 7 appends named regional reveals; version 8 (LOCAL-94) appends the 20 per-player object count maps (RW + 0x1A264).
+	const bool hasObjectCounts = std::any_of(m_objectCounts.begin(), m_objectCounts.end(), [](const auto &m) { return !m.empty(); });
+	XferVersion v{ 2, (std::uint8_t)(loading || hasObjectCounts ? 8 : !m_namedMapReveals.empty() ? 7 : m_attackPriorities.edited() ? 6 : 5) };
 	x.xferVersion(v);
 	bool loaded = loading ? false : m_loaded;
 	x.xferBool(&loaded);
@@ -543,6 +544,41 @@ void ScriptEngine::xfer(Xfer &x)
 			}
 		}
 	}
+	std::array<std::map<std::uint32_t, std::int32_t>, kSpecialPowerListPlayers> loadedObjectCounts;
+	auto &objectCounts = loading ? loadedObjectCounts : m_objectCounts;
+	if (v.current >= 8)
+	{
+		for (size_t i = 0; i < objectCounts.size(); ++i)
+		{
+			auto &m = objectCounts[i];
+			std::uint32_t count = loading ? 0 : (std::uint32_t)m.size();
+			x.xferCount(&count, 8, sizeof(std::pair<const std::uint32_t, std::int32_t>) + Xfer::kNodeBytes);
+			if (!loading)
+			{
+				for (auto &kv : m)
+				{
+					std::uint32_t k = kv.first;
+					std::int32_t val = kv.second;
+					x.xferUnsignedInt(&k);
+					x.xferInt(&val);
+				}
+			}
+			else
+			{
+				for (std::uint32_t j = 0; j < count; ++j)
+				{
+					std::uint32_t k = 0;
+					std::int32_t val = 0;
+					x.xferUnsignedInt(&k);
+					x.xferInt(&val);
+					if (!m.emplace(k, val).second)
+					{
+						throw XferException("script engine: duplicate object count key");
+					}
+				}
+			}
+		}
+	}
 	if (!loading)
 	{
 		return;
@@ -583,9 +619,10 @@ void ScriptEngine::xfer(Xfer &x)
 		std::vector<std::pair<std::string, std::vector<std::string>>>, std::vector<std::pair<std::string, ObjectID>>,
 		std::vector<std::vector<SequentialScript>>, std::array<AcquiredScienceQueue, 20>, std::vector<AudioTimer>,
 		std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers>, std::map<std::pair<std::string, std::string>, ObjectID>,
-		std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers>, std::vector<NamedMapReveal>>>(std::move(tree), std::move(loadedGeneric), std::move(loadedCounters),
+		std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers>, std::vector<NamedMapReveal>,
+		std::array<std::map<std::uint32_t, std::int32_t>, kSpecialPowerListPlayers>>>(std::move(tree), std::move(loadedGeneric), std::move(loadedCounters),
 		std::move(loadedFlags), std::move(loadedLists), std::move(loadedNamed), std::move(loadedSequential), loadedQueues, std::move(loadedTimers),
-		std::move(loadedTriggered), std::move(loadedReferences), std::move(loadedUpgrades), std::move(loadedReveals));
+		std::move(loadedTriggered), std::move(loadedReferences), std::move(loadedUpgrades), std::move(loadedReveals), std::move(loadedObjectCounts));
 	m_pendingTeams.clear();
 	for (const auto &chain : std::get<6>(*staged))
 	{
@@ -624,6 +661,7 @@ void ScriptEngine::xfer(Xfer &x)
 		m_references = std::move(std::get<10>(*staged));             // lane CASTLE-UNPACK
 		m_namedMapReveals = std::move(std::get<12>(*staged));
 		m_completedUpgrades = std::move(std::get<11>(*staged));      // lane MODCOMPAT-AI
+		m_objectCounts = std::move(std::get<13>(*staged));           // LOCAL-94
 		if (priorities) // lane BFME2CAMP1: the table checked above (every name a template of this game)
 		{
 			m_attackPriorities.restore(*loadedPriorities, nullptr);

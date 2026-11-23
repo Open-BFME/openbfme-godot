@@ -40,6 +40,7 @@ class Team;
 class Object;
 class ThingTemplate;
 class GameLogic;
+class SpecialPowerTemplate;
 class PlayerEconomyHost;
 class TunnelTracker;
 struct ObjectFilter;
@@ -329,11 +330,22 @@ public:
 	ResourceGatheringManager &resourceGatheringManager() { return m_resourceGathering; }
 	const ResourceGatheringManager &resourceGatheringManager() const { return m_resourceGathering; }
 
+	// LOCAL-94: RW 0x6AA671 (Player::repairStructure -> AIPlayer::repairStructure RW 0x8F78EB, DONOR BFME2 0x004F2F66),
+	// RW 0x8F9705 -> RW 0x8F8F68 (AIPlayer::updateBridgeRepair, DONOR BFME2 0x004F418A; findDozer RW 0x8F55FD), and
+	// RW 0x6AA5CA (Player::computeSuperweaponTarget -> AISkirmishPlayer::computeSuperweaponTarget RW 0x8F481C /
+	// AIPlayer::computeSuperweaponTarget RW 0x8F66BD, DONOR BFME2 0x004F1D38).
+	void repairStructure(GameLogic &logic, ObjectID structureID);
+	void updateAIPlayerRepair(GameLogic &logic);
+	void computeSuperweaponTarget(GameLogic &logic, const SpecialPowerTemplate *power, Coord3D &retPos, int enemyPlayerIndex, float weaponRadius) const;
+
 	void setEconomyHost(PlayerEconomyHost *host) { m_host = host; }
 	PlayerEconomyHost *economyHost() const { return m_host; }
 
 private:
 	PlayerEconomyHost &host() const;
+	void resetAIPlayerRepair();
+	bool isAIPlayerRepairUntouched() const;
+	Object *findDozerForRepair(GameLogic &logic, const Coord3D &pos) const; // RW 0x8F55FD
 
 	int m_index;
 	std::string m_name;
@@ -385,4 +397,12 @@ private:
 	int m_orderMode = 0; // lane INPUT-1 r2
 	std::shared_ptr<TunnelTracker> m_tunnelTracker; ///< lane GARRISON-2 (RW + 0x308)
 	ResourceGatheringManager m_resourceGathering; ///< lane LUMBER1 (RW + 0x304)
+	static constexpr int kMaxStructuresToRepair = 2;              ///< LOCAL-94: RW AIPlayer::MAX_STRUCTURES_TO_REPAIR = 2
+	std::array<ObjectID, kMaxStructuresToRepair> m_structuresToRepair{ INVALID_ID, INVALID_ID }; ///< LOCAL-94: RW AIPlayer + 0x4C
+	ObjectID m_repairDozer = INVALID_ID;                          ///< LOCAL-94: RW AIPlayer + 0x54
+	Coord3D m_repairDozerOrigin{ 0.0f, 0.0f, 0.0f };              ///< LOCAL-94: RW AIPlayer + 0x58
+	int m_structuresInQueue = 0;                                  ///< LOCAL-94: RW AIPlayer + 0x64
+	bool m_dozerQueuedForRepair = false;                          ///< LOCAL-94: RW AIPlayer + 0x68
+	bool m_dozerIsRepairing = false;                              ///< LOCAL-94: RW AIPlayer + 0x69
+	int m_bridgeTimer = 0;                                        ///< LOCAL-94: RW AIPlayer + 0x6C
 };

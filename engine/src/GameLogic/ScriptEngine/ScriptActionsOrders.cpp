@@ -1321,6 +1321,35 @@ bool ScriptActions::executeOrderAction(ScriptEngine &engine, const ScriptActionR
 		}
 		return true;
 	}
+	if (name == "SKIRMISH_FIRE_SPECIAL_POWER_AT_MOST_COST")
+	{
+		// LOCAL-94: case 255 (RW 0x7CD240) -> RW 0x7C4B06 (DONOR BFME2 0x003C4070, ScriptActions::doSkirmishFireSpecialPowerAtMostCost).
+		// Asks TheScriptEngine->getSkirmishEnemyPlayer() (RW 0x758AB1) and TheSpecialPowerStore->findSpecialPowerTemplate (RW 0x69C146); either missing: returns.
+		// weaponRadius = max(50.0f, sp->m_radiusCursorRadius) (RW 0x7C4B4A .. 0x7C4B78, RW 0xBD88C4 = 50.0f). Then walks each player of param(0)
+		// (RW 0x758F7C / 0x6A85EE), computes targetPos via Player::computeSuperweaponTarget (RW 0x6AA5CA -> RW 0x8F481C / RW 0x8F66BD), and fires
+		// via doFireSpecialPowerAtLocation (RW 0x7C112E), stopping on the first true return.
+		Player *enemy = engine.getSkirmishEnemyPlayer();
+		const SpecialPowerTemplate *sp = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(param(a, 1).stringValue) : nullptr;
+		if (!enemy || !sp)
+		{
+			return true;
+		}
+		float weaponRadius = 50.0f;
+		if (sp->m_radiusCursorRadius > 50.0f)
+		{
+			weaponRadius = sp->m_radiusCursorRadius;
+		}
+		Coord3D targetPos{ 0.0f, 0.0f, 0.0f };
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			p->computeSuperweaponTarget(logic, sp, targetPos, enemy->getPlayerIndex(), weaponRadius);
+			if (fireSpecialPowerAtPosition(engine, param(a, 0).stringValue, *sp, targetPos))
+			{
+				return true;
+			}
+		}
+		return true;
+	}
 	if (name == "PLAYER_FIRE_SPECIAL_POWER_AT_WAYPOINT")
 	{
 		const Waypoint *w = terrain ? terrain->findWaypointByName(param(a, 2).stringValue) : nullptr; // RW 0x7C4C50

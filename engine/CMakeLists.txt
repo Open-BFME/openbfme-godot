@@ -342,6 +342,7 @@ include(cmake/Port5.cmake)      # PORT-5: the bird's deferred ability target (OP
 include(cmake/Port256.cmake)   # PORT-256: the weapon-switching powers (OPENBFME_PORT256_TESTS)
 include(cmake/Port426.cmake) # PORT-426: Shift on a production button queues five units (fork issue 426; OPENBFME_PORT426_TESTS)
 include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elven wood grid (appends to OPENBFME_SIM_SOURCES; OPENBFME_TAINTAREA1_TESTS)
+include(cmake/Local94.cmake)    # LOCAL-94: the last 8 condition / action types of the script map (OPENBFME_LOCAL94_TESTS)
 include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
 include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-objects test RW 0x796D37 (OPENBFME_BUILDCLEAR1_TESTS)
 include(cmake/Bldgdebris1.cmake) # BLDGDEBRIS-1: the DamageCreationList debris and the siege side damage of ActiveBody (OPENBFME_BLDGDEBRIS1_TESTS)
@@ -924,6 +925,7 @@ add_executable(openbfme_tests
     ${OPENBFME_DECOMPFIX1109_TESTS}
     ${OPENBFME_PORT5_TESTS}
     ${OPENBFME_TAINTAREA1_TESTS}
+    ${OPENBFME_LOCAL94_TESTS}
     ${OPENBFME_THREATLEVEL1_TESTS}
     ${OPENBFME_BUILDCLEAR1_TESTS}
     ${OPENBFME_BLDGDEBRIS1_TESTS}

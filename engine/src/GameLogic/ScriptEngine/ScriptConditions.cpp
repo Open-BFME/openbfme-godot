@@ -8,6 +8,8 @@
 #include "GameLogic/Module/GateModules.h"
 
 #include "Common/AsciiString.h"
+#include "Common/Audio/AudioEntryPoints.h"
+#include "GameClient/Eva.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "Common/Player.h"
@@ -136,6 +138,8 @@ enum ConditionType
 	SKIRMISH_PLAYER_HAS_UNITS_IN_AREA = 96,
 	PLAYER_ACQUIRED_SCIENCE = 100,
 	PLAYER_CAN_PURCHASE_SCIENCE = 102,
+	PLAYER_LOST_OBJECT_TYPE = 104,
+	IS_NUM_OF_UNITS_BELONGING_TO_PLAYER_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION_COMPARISON_INT = 187,
 	START_POSITION_IS = 107,
 	COUNTER_COUNTER = 111,
 	COUNTER_SECONDS = 112,
@@ -2067,6 +2071,87 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 			}
 		});
 		return count >= param(c, 1).intValue;
+	}
+	case PLAYER_LOST_OBJECT_TYPE:
+	{
+		// LOCAL-94: RW 0x7ECBDF -> RW 0x7EACCE (DONOR BFME2 0x003E9EB0, ScriptConditions::evaluatePlayerLostObjectType).
+		// Resolves the object type / list (RW 0x96E85F -> RW 0x77907A; empty: false), then walks each player of the mask (RW 0x75968D / 0x6A85EE):
+		// counts living, built objects of those templates (RW 0x7BDF78 -> RW 0x6ABAF7(ignoreDead = 1, ignoreUnderConstruction = 1)), reads
+		// ScriptEngine::getObjectCount (RW 0x605DB0), updates ScriptEngine::setObjectCount when the count changed (RW 0x607822), and returns true
+		// immediately when sumOfObjs < currentCount (RW 0x7EADF3).
+		const std::string &typeSpec = param(c, 1).stringValue;
+		std::vector<const ThingTemplate *> types;
+		for (const std::string &n : typeNames(engine, typeSpec))
+		{
+			if (const ThingTemplate *t = logic.things().findTemplate(n))
+			{
+				types.push_back(t);
+			}
+		}
+		if (types.empty())
+		{
+			return false;
+		}
+		for (Player *p : players(engine, param(c, 0).stringValue))
+		{
+			const int sumOfObjs = countPlayerObjects(logic, *p, types, true);
+			const int currentCount = engine.getObjectCount(p->getPlayerIndex(), typeSpec);
+			if (sumOfObjs != currentCount)
+			{
+				engine.setObjectCount(p->getPlayerIndex(), typeSpec, sumOfObjs);
+			}
+			if (sumOfObjs < currentCount)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	case IS_NUM_OF_UNITS_BELONGING_TO_PLAYER_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION_COMPARISON_INT:
+	{
+		// LOCAL-94: RW 0x7ED34F -> RW 0x7EB582 (DONOR BFME2 0x003EA764,
+		// ScriptConditions::evaluateIsNumOfUnitsBelongingToPlayerNearEvaEventLastPlayedLocationComparisonInt).
+		// Resolves the Eva event name in TheEva (RW 0xDE3670 -> RW 0x5DDEA2; unknown: count 0), asks Eva::lastPlayedPosition (RW 0x5DCDBB;
+		// never played: count 0), builds the player mask (RW 0x75968D; 0: count 0), and counts objects within param(1).realValue of that
+		// position (FROM_BOUNDINGSPHERE_2D, RW 0xA39340) passing PartitionFilterIsKindOfUnit (vtable RW 0xC4BE68, allow RW 0x6619D5 ->
+		// ThingTemplate::isKindOfUnit RW 0x6618E6: any of {INFANTRY, CAVALRY, MONSTER, MACHINE, AIRCRAFT} RW 0x6615E5 and none of
+		// {STRUCTURE, INERT, HORDE} RW 0x66158D) and PartitionFilterPlayerAffiliation (vtable RW 0xC36030, allow RW 0x6610B0: controlling
+		// player in mask); compares the count with param(4).intValue by param(3).intValue.
+		int count = 0;
+		Eva *eva = AudioApi::currentEva();
+		const int evIndex = eva ? eva->findEvent(param(c, 2).stringValue) : -1;
+		Coord3D pos{};
+		if (evIndex != -1 && eva->lastPlayedPosition(evIndex, &pos))
+		{
+			const std::uint32_t mask = playerMaskOf(engine, param(c, 0).stringValue);
+			if (mask != 0)
+			{
+				static const int kInfantry = kindOfBit("INFANTRY"), kCavalry = kindOfBit("CAVALRY"), kMonster = kindOfBit("MONSTER"),
+								 kMachine = kindOfBit("MACHINE"), kAircraft = kindOfBit("AIRCRAFT"), kStructure = kindOfBit("STRUCTURE"),
+								 kInert = kindOfBit("INERT"), kHorde = kindOfBit("HORDE");
+				PartitionFilterFn filter([&](Object &o) {
+					const bool anyUnitKind = (kInfantry >= 0 && o.isKindOf((unsigned)kInfantry)) ||
+						(kCavalry >= 0 && o.isKindOf((unsigned)kCavalry)) ||
+						(kMonster >= 0 && o.isKindOf((unsigned)kMonster)) ||
+						(kMachine >= 0 && o.isKindOf((unsigned)kMachine)) ||
+						(kAircraft >= 0 && o.isKindOf((unsigned)kAircraft));
+					if (!anyUnitKind)
+					{
+						return false;
+					}
+					if ((kStructure >= 0 && o.isKindOf((unsigned)kStructure)) ||
+						(kInert >= 0 && o.isKindOf((unsigned)kInert)) ||
+						(kHorde >= 0 && o.isKindOf((unsigned)kHorde)))
+					{
+						return false;
+					}
+					const Player *owner = o.getControllingPlayer();
+					return owner && (mask & (1u << owner->getPlayerIndex())) != 0;
+				});
+				count = (int)logic.partition().iterateObjectsInRange(pos, param(c, 1).realValue, FROM_BOUNDINGSPHERE_2D, { &filter }, ITER_FASTEST).size();
+			}
+		}
+		return compare(param(c, 3).intValue, count, param(c, 4).intValue);
 	}
 	case UNIT_THREAT_LEVEL:
 	case TEAM_THREAT_LEVEL:
