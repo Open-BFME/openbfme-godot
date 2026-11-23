@@ -941,8 +941,8 @@ TEST_CASE("hover1 unit help: an invisible enemy shows DisplayNameInvisibleForEne
 	REQUIRE_FALSE(label.empty());
 	const int invisible = CombatNames::modelCondition("INVISIBLE_STEALTH");
 	const int camouflage = CombatNames::modelCondition("INVISIBLE_CAMOUFLAGE");
-	REQUIRE(invisible >= 0);
-	REQUIRE(camouflage >= 0);
+	REQUIRE(invisible >= 0); // tolerance: a model-condition table index, not a value: any registered index proves the retail name exists
+	REQUIRE(camouflage >= 0); // tolerance: a model-condition table index, not a value: any registered index proves the retail name exists
 	gate->setModelConditionState(invisible, true);
 	gate->setModelConditionState(camouflage, true);
 	const UnitHelpSource::Text hidden = UnitHelpSource::compose(*gate, &h.text, h.rig.logic(), h.rig.local);

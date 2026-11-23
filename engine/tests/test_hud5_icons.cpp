@@ -301,16 +301,16 @@ TEST_CASE("hud5 icons retail: a geometry upgrade's active shapes size the object
 		return std::max(half * 2.0f, 20.0f);
 	};
 	const float orig = widthOf();
-	CHECK(orig == doctest::Approx(expected()).epsilon(0.02));
+	CHECK(orig == doctest::Approx(expected()).epsilon(0.02)); // tolerance: the bar is rounded to whole window pixels from float geometry; 2% absorbs the pixel rounding
 	// Geom_V1 / Geom_V2 add the wider walls and the tower; the structure starts on Geom_Orig alone
 	b->setGeometryActive("Geom_V1", true);
 	b->setGeometryActive("Geom_V2", true);
 	const float wide = widthOf();
-	CHECK(wide == doctest::Approx(expected()).epsilon(0.02));
-	CHECK(wide > orig);
+	CHECK(wide == doctest::Approx(expected()).epsilon(0.02)); // tolerance: the bar is rounded to whole window pixels from float geometry; 2% absorbs the pixel rounding
+	CHECK(wide > orig); // tolerance: the wider geometry must add a wall or tower; any positive increase is the property under test
 	b->setGeometryActive("Geom_V1", false);
 	b->setGeometryActive("Geom_V2", false);
-	CHECK(widthOf() == doctest::Approx(orig).epsilon(0.02));
+	CHECK(widthOf() == doctest::Approx(orig).epsilon(0.02)); // tolerance: restoring the original geometry rounds the bar to the same pixel width; 2% absorbs the pixel rounding
 }
 
 // RW 0xAD1920's second walk: a shape with GeometryUsedForHealthBox = No (the fortresses' HighTowerGeom) is left out of the health box's anchor height
@@ -333,9 +333,9 @@ TEST_CASE("hud5 icons retail: GeometryUsedForHealthBox = No leaves the high towe
 	const float withTower = top();
 	b->setGeometryActive("HighTowerGeom", false);
 	const float withoutTower = top();
-	CHECK(withTower == doctest::Approx(withoutTower).epsilon(0.01));
+	CHECK(withTower == doctest::Approx(withoutTower).epsilon(0.01)); // tolerance: both tops are rounded to the same pixel grid; 1% absorbs the rounded top
 	b->setGeometryActive("HighTowerGeom", true);
-	CHECK(top() == doctest::Approx(withTower).epsilon(0.01));
+	CHECK(top() == doctest::Approx(withTower).epsilon(0.01)); // tolerance: both tops are rounded to the same pixel grid; 1% absorbs the rounded top
 }
 
 // RW 0x671FD5: a building under construction has the building frames and four rows blended from RW 0xC10EA8 (blue) to RW 0xC10EE8 (cyan) by its health ratio

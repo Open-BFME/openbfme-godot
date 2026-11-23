@@ -365,9 +365,9 @@ TEST_CASE("hud3 retail: libInGameUI CommandButton's disabled frames carry the re
 	const int disabled = labelFrame(c->frames, "_disabled");
 	const int extra = labelFrame(c->frames, "_extraDisabled");
 	const int cant = labelFrame(c->frames, "_cantAfford");
-	REQUIRE(disabled >= 0);
-	REQUIRE(extra >= 0);
-	REQUIRE(cant >= 0);
+	REQUIRE(disabled >= 0); // tolerance: a frame-label index in the retail movie, not a value: any found label proves the state exists
+	REQUIRE(extra >= 0); // tolerance: a frame-label index in the retail movie, not a value: any found label proves the state exists
+	REQUIRE(cant >= 0); // tolerance: a frame-label index in the retail movie, not a value: any found label proves the state exists
 	const AptPlaceObject *disabledCameo = placement(f, c->frames, "", 4, disabled);
 	const AptPlaceObject *extraTint = placement(f, c->frames, "", 4, extra);
 	const AptPlaceObject *cantCameo = placement(f, c->frames, "", 4, cant);

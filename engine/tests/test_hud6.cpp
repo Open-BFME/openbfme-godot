@@ -717,7 +717,7 @@ TEST_CASE("hud6 retail: tooltips off / deadline / +0x810 suppress button help in
 	};
 	enter();
 	const unsigned shown = h.hud->helpBox().helpsShown();
-	REQUIRE(shown >= 1);
+	REQUIRE(shown >= 1); // tolerance: the box is shown once per hover; the exact count depends on the number of HUD updates, the test needs at least one show
 	leave();
 
 	// RW 0x69BB14: the global setting off.
@@ -841,7 +841,7 @@ TEST_CASE("hud6 retail: tooltips off / the end-game timer while the box is shown
 	};
 	enter();
 	const unsigned shown = h.hud->helpBox().helpsShown();
-	REQUIRE(shown >= 1);
+	REQUIRE(shown >= 1); // tolerance: the box is shown once per hover; the exact count depends on the number of HUD updates, the test needs at least one show
 	REQUIRE(h.hud->helpBox().isShown());
 
 	// RW 0x807861: tooltips off returns before the frame is marked; the next update's no-mark hide runs the 5-update countdown.
@@ -979,7 +979,7 @@ TEST_CASE("hud6 retail: the world hover refreshes without a mouse move; the unit
 	h.frames(10); // ~330 ms: Mouse.ini TooltipDelayTime 800 ms not reached
 	CHECK(h.hud->helpBox().helpsShown() == 0);
 	h.frames(30); // > 800 ms
-	CHECK(h.hud->helpBox().helpsShown() >= 1);
+	CHECK(h.hud->helpBox().helpsShown() >= 1); // tolerance: the box is shown once per hover; the exact count depends on the number of HUD updates, the test needs at least one show
 	CHECK(h.hud->helpBox().provider().bar == 6);
 	// the horde leaves the pointer: no mouse event, but the next frames re-pick and clear the help / cursor
 	Coord3D away = *horde->getPosition();
@@ -2522,8 +2522,8 @@ TEST_CASE("hud6 retail: the resource barrel and faction crest mapped images and 
 		INFO(name);
 		const ::Image *image = images.findImageByName(name);
 		REQUIRE(image != nullptr);
-		CHECK(image->imageSize.x > 0);
-		CHECK(image->imageSize.y > 0);
+		CHECK(image->imageSize.x > 0); // tolerance: the retail TGA dimensions are not pinned; any positive size proves it loaded
+		CHECK(image->imageSize.y > 0); // tolerance: the retail TGA dimensions are not pinned; any positive size proves it loaded
 		CHECK_FALSE(image->filename.empty());
 		// The texture name is resolved by HudDevice::textureFor/imageFor (the retail texture search), not by a raw
 		// readFile of the mapped-image texture name: ResourceBarIcons.tga is an atlas name, not a loose file path.
@@ -2630,8 +2630,8 @@ TEST_CASE("hud6 retail: a NONPRESSABLE passive ability uses the passive ButtonGl
 	AptSpriteInst *glass = clip->asSprite();
 	REQUIRE(glass != nullptr);
 	const int passiveStart = glass->labelFrame("_passive");
-	REQUIRE(passiveStart >= 0);
-	CHECK(glass->frame >= passiveStart); // the `_passive` segment, the yellow ability glass
+	REQUIRE(passiveStart >= 0); // tolerance: a frame-label index in the retail movie, not a value: any found label proves the segment exists
+	CHECK(glass->frame >= passiveStart); // tolerance: the movie frames are not pinned, the segment start is the property; the `_passive` segment, the yellow ability glass
 	// negative: a normal command set must put the same glass slot back on `_active`, not leave a passive glow behind
 	const Coord3D other = h.rig.freeSpot(2800, 1600, 250.0f);
 	Object *pit = h.rig.make("IsengardUrukPit", other.x, other.y);
@@ -2642,7 +2642,7 @@ TEST_CASE("hud6 retail: a NONPRESSABLE passive ability uses the passive ButtonGl
 	REQUIRE(clip != nullptr);
 	glass = clip->asSprite();
 	REQUIRE(glass != nullptr);
-	CHECK(glass->frame < passiveStart); // the `_active` segment
+	CHECK(glass->frame < passiveStart); // tolerance: the movie frames are not pinned, the segment start is the property; the `_active` segment
 }
 
 TEST_CASE("hud6 retail: a RenderImage without _imageMap finds its image by the stripped path and the tilde base (BFME2 0x623AC4)")
