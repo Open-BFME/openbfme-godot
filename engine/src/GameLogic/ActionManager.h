@@ -108,5 +108,7 @@ struct Stats
 	std::array<unsigned long long, 0xA0> unportedObjectTypeTests{};  ///< by power type
 };
 Stats &stats();
+// a FIRE_WEAPON button's unported readiness (CommandButton::isReady RW 0x75CC3E, NAMED_USE_COMMANDBUTTON_ON_NEAREST_KINDOF): counted and S-1871 noted
+void noteFireWeaponButton(Object &obj);
 std::vector<std::string> stopLines();
 } // namespace ActionManager

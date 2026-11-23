@@ -114,6 +114,9 @@ public:
 	void attemptDamage(DamageInfo &info) override;
 	void attemptHealing(DamageInfo &info) override;
 	float estimateDamage(const DamageInfoInput &input) const override;
+	// RW 0x8C1AC3: slot 0x3C returns four zero bytes (ArmorSetFlags); slots 0x34/0x38 are
+	// the `ret 4` stub RW 0x9F3A3C, so an armor upgrade has no effect on this body.
+	bool ignoresArmorSetFlagChanges() const override { return true; }
 	bool dieCalled() const { return m_dieCalled; }
 	void crc(StateHasher &hasher) const override;
 

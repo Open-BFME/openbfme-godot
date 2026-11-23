@@ -1069,6 +1069,7 @@ bool ScriptActions::executeOrderAction(ScriptEngine &engine, const ScriptActionR
 		if (btn->m_command == GUI_COMMAND_FIRE_WEAPON)
 		{
 			ready = false; // S-1871: FIRE_WEAPON deadline not ported
+			ActionManager::noteFireWeaponButton(*o); // the stop reaches the report (#343 review)
 		}
 		else
 		{

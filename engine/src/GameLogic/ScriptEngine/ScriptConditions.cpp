@@ -171,6 +171,7 @@ enum ConditionType
 	NAMED_BUILDING_IS_EMPTY = 78,
 	PLAYER_HAS_SCIENCEPURCHASEPOINTS = 101,
 	PLAYER_HAS_KILLED_TYPE_UNITS = 129,
+	PLAYER_COMPARE_RANK = 145,
 	PLAYER_HAS_OBJECT_OF_VETERANCY = 146,
 	PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION = 160,
 	COMPARE_NUM_PLAYERS_IN_GAME = 168,
@@ -1811,6 +1812,11 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		const ContainModuleInterface *ct = o ? o->getContain() : nullptr;
 		return ct && ct->getContainCount() == 0;
 	}
+	case PLAYER_COMPARE_RANK: // RW 0x7ECFF6 -> RW 0x7E5EC8(player, op, rank): exact single-player mask (RW 0x6A85B6), compare m_rankLevel (+0x1C)
+	{
+		const Player *p = playerOfMask(engine, param(c, 0).stringValue);
+		return p && compare(param(c, 1).intValue, p->science().getRankLevel(), param(c, 2).intValue);
+	}
 	case PLAYER_HAS_SCIENCEPURCHASEPOINTS: // RW 0x7E50AE (BFME2 ScriptConditions.cpp, tier A): any player with at least the points
 		for (Player *p : players(engine, param(c, 0).stringValue))
 		{
@@ -2098,6 +2104,10 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 	}
 	case SKIRMISH_SPECIAL_POWER_READY: // RW 0x7EC79F -> RW 0x7E9C33 (player, specialPower; Parameter + 0x20 retry cache not ported: evaluated every time)
 	{
+		logic.noteStop("[S-7188] SKIRMISH_SPECIAL_POWER_READY (RW 0x7E9C33, #343): retail's retry cache (the power parameter's int, Parameter + 0x20: -1 for an "
+			"unknown power, else the frame before which the condition answers no without a scan, set after a scan that finds no ready power to "
+			"min(now + 10 * LOGICFRAMES_PER_SECOND, the earliest module ready frame, vslot 0x10)) is not ported: the condition scans every evaluation, so it can "
+			"answer yes earlier than retail"); // S-7188 (#343 review)
 		const SpecialPowerTemplate *sp = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(param(c, 1).stringValue) : nullptr; // RW 0x69C146
 		if (!sp)
 		{

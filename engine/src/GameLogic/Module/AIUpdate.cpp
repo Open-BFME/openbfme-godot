@@ -969,12 +969,9 @@ void AIUpdateInterface::doMovementCompleteBookkeeping()
 	pf.updatePos(*m_adapter);
 }
 
-void AIUpdateInterface::reactToTransformChange()
+bool AIUpdateInterface::reactToTransformChange()
 {
-	if (m_world->mapReady())
-	{
-		m_world->pathfinder().updatePos(*m_adapter);
-	}
+	return m_world->mapReady() && m_world->pathfinder().updatePos(*m_adapter);
 }
 
 void AIUpdateInterface::wakeUpNow()

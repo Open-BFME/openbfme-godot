@@ -989,6 +989,12 @@ bool canDoSpecialPowerAtObject(Object &obj, Object *target, CommandSourceType so
 	}
 }
 
+void noteFireWeaponButton(Object &obj)
+{
+	++stats().fireWeaponButtons;
+	obj.logic().noteStop(kStopUpgrade);
+}
+
 std::vector<std::string> stopLines()
 {
 	return { kStopUpgrade, kStopLayer, kStopRequirements, kStopTypeTest, kStopObjectTypeTest };
