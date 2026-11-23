@@ -478,6 +478,7 @@ private:
 	std::vector<int> PackScratch;
 	int PoseCulled = 0;                          // instances whose pose the last update left pending (outside the frustum)
 	bool PoseSharing = true;                     // lane PERF-HD: set_pose_sharing
+	bool FadeWarmupActive = false;               // S-029: the last write's warm-up state, to repack when it ends
 	int PoseShared = 0;                          // lane PERF-HD: instances drawn with another's pose in the last update
 	std::vector<size_t> ShareScratch;            // lane PERF-HD: per-frame scratch of the sharing candidates
 	std::vector<size_t> MemberScratch;           // lane PERF-HD: the instances drawn with another's pose this frame
@@ -486,7 +487,8 @@ private:
 };
 
 // S-029 (1) warm-up: the first milliseconds of a game keep opaque pivot fades at 1 instead of the W3D screen-door
-// dither (the dither's black pixels are conspicuous on snowy maps until the first frame settles).
-void W3D_Set_Fade_Warmup(uint64_t untilMs);
+// dither (the dither's black pixels are conspicuous on snowy maps until the first frame settles). The duration is
+// counted on Godot's engine clock, the same clock `fade_warmup_active()` reads.
+void W3D_Set_Fade_Warmup(uint64_t durationMs);
 
 } // namespace godot

@@ -96,9 +96,12 @@ const char *kindName(RenderSubObject::Kind k)
 
 } // namespace
 
-void W3D_Set_Fade_Warmup(uint64_t untilMs)
+void W3D_Set_Fade_Warmup(uint64_t durationMs)
 {
-	g_fadeWarmupUntilMs.store(untilMs, std::memory_order_relaxed);
+	// `fade_warmup_active()` compares against Godot's ticks, so the deadline must be built from the same clock (not
+	// timing::nowMs(), whose steady_clock epoch is the machine's boot time on most platforms).
+	const Time *time = Time::get_singleton();
+	g_fadeWarmupUntilMs.store(time ? (uint64_t)time->get_ticks_msec() + durationMs : 0, std::memory_order_relaxed);
 }
 
 // RenderingDevice texture calls are only valid on the render thread. The node thread copies texel bytes into a
@@ -2020,6 +2023,17 @@ void W3DInstancer::write_palette(const Instance &inst)
 
 void W3DInstancer::write_buffers()
 {
+	// S-029: the warm-up override is written into the packed fade (1.0) without changing the pose's real PivotFade. When it
+	// starts or ends, every buffer must be packed again or a frozen pose keeps the old forced value for the rest of the game.
+	const bool fadeWarm = fade_warmup_active();
+	if (fadeWarm != FadeWarmupActive)
+	{
+		FadeWarmupActive = fadeWarm;
+		for (std::unique_ptr<Model> &m : Models)
+		{
+			m->BuffersDirty = true;
+		}
+	}
 	// Camera for depth sorting: the explicit one, else the viewport's current camera.
 	bool haveCamera = false;
 	::Vector3 camPos, camForward;
@@ -2163,7 +2177,12 @@ void W3DInstancer::write_buffers()
 			for (int id : ids)
 			{
 				const Instance &inst = Instances[(size_t)id];
-				if (d.Mesh->HasOpaque && !AlphaOverride && !fade_warmup_active() && pose_source(inst).Pose.PivotFade[(size_t)bone] * inst.Opacity < 0.999f) ++d.Dithered; // S-029 counts the members, drawn or culled
+				const Instance &src = pose_source(inst);
+				// S-029 counts the members, drawn or culled. The warm-up forces an opaque fade to 1 only for an opaque mesh without
+				// the placement ghost's AlphaOverride and with full instance opacity; every other partial fade is still dithered
+				// during the warm-up and must stay in the count.
+				const bool forcedOpaque = d.Mesh->HasOpaque && fade_warmup_active() && !AlphaOverride && inst.Opacity >= 0.999f;
+				if (d.Mesh->HasOpaque && !forcedOpaque && src.Pose.PivotFade[(size_t)bone] * inst.Opacity < 0.999f) ++d.Dithered;
 			}
 			pack_draw(m, d); // lane GPUPERF-2: the buffer, the MultiMeshes' boxes and the shadow batch
 			visible += (int)d.Packed.size();

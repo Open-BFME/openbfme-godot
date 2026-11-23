@@ -8,6 +8,7 @@
 // timing for load reports and wave pacing, which is presentation-only.
 
 #include "GodotDevice/GodotGameWorld.h"
+#include "GodotDevice/GodotPrewarmPolicy.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotTiming.h"
 #include "GodotDevice/GodotW3DInstancer.h"
@@ -75,7 +76,7 @@ W3DInstancer *instancerOf(uint64_t id)
 // S-029 (1): no pivot-fade dither for the first two seconds of a game (the black dither pixels are conspicuous on snowy maps).
 void GameWorld::begin_fade_warmup()
 {
-	W3D_Set_Fade_Warmup((uint64_t)nowMs() + 2000);
+	W3D_Set_Fade_Warmup(2000); // the instancer reads Godot's engine clock for both ends of the warm-up
 }
 
 void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
@@ -315,15 +316,8 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 	m_prewarmQueue.clear();
 	m_prewarmCursor = 0;
 	m_prewarmBuilt = m_prewarmFailed = 0;
-	size_t waveLimit = 120; // a few minutes of waves; OPENBFME_PREWARM_WAVES_MAX tunes it (0: every remaining model)
-	if (const char *limit = std::getenv("OPENBFME_PREWARM_WAVES_MAX"))
-	{
-		const int parsed = std::atoi(limit);
-		if (parsed > 0)
-		{
-			waveLimit = (size_t)parsed;
-		}
-	}
+	// a few minutes of waves; OPENBFME_PREWARM_WAVES_MAX tunes it (0: every remaining model)
+	const size_t waveLimit = prewarm::waveLimit(std::getenv("OPENBFME_PREWARM_WAVES_MAX"), remaining.size());
 	for (const PrewarmJob &job : remaining)
 	{
 		if (m_prewarmQueue.size() >= waveLimit)
