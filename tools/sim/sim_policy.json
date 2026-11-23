@@ -81,6 +81,10 @@
    "reason": "lane HOVER-1: the help box's text over a hero portrait (name, level, health, damages, upgrades): user interface, reads the logic, never changes it"
   },
   {
+   "glob": "src/GameClient/MouseoverTooltip.cpp",
+   "reason": "lane HOVER-2: the mouse-over tool tip's text over an object in the world (InGameUI::createMouseoverHint): user interface, reads the logic, never changes it"
+  },
+  {
    "glob": "src/GameClient/InGameHelpBox.cpp",
    "reason": "lane HUD-6: the help box movie's state machine and the hover provider: user interface on the render clock"
   },
