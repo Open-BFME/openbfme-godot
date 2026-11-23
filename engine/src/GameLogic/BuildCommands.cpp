@@ -110,6 +110,14 @@ bool BuildCommands::foundationConstruct(GameLogic &logic, const GameMessage &m)
 		refuse(m, "Player::canBuild (RW 0x6AAA2E) refuses the template");
 		return true;
 	}
+	// Named guard (review of upstream PR 333; no retail site for it was read): the plot's CommandSet must offer the template, the same
+	// test as the production path's (BuildAssistant::isInProducersCommandSet, RW 0x794F38) and independent of the template's maximum. Without it
+	// a crafted MSG_FOUNDATION_CONSTRUCT could raise any buildable template on any plot (free when it has no CastleMemberBehavior).
+	if (!BuildAssistant::isInProducersCommandSet(*plot, a.tmpl, -1))
+	{
+		refuse(m, "the plot's command set does not offer the template (named guard, BuildAssistant::isInProducersCommandSet RW 0x794F38)");
+		return true;
+	}
 	FoundationAIUpdate *foundation = nullptr;
 	for (const std::unique_ptr<BehaviorModule> &mod : plot->modules())
 	{
@@ -345,6 +353,6 @@ std::vector<std::string> BuildCommands::acceptanceStops()
 {
 	return {
 		"[S-305] build commands: MSG_FOUNDATION_CONSTRUCT / MSG_DOZER_CONSTRUCT / MSG_DOZER_CANCEL_CONSTRUCT / MSG_RESUME_CONSTRUCTION follow the dispatcher cases read at RW 0x77A91B / 0x77B011 / 0x77B1A0 / "
-		"0x77AE9F; Player::canBuild (RW 0x6AAA2E) is stood for by BuildAssistant::playerCanBuild (allowedToBuild RW 0x6AC856, Buildable, the prerequisites), and in the MSG_DOZER_CONSTRUCT case by BuildAssistant::canMakeUnit (S-305) the Dozer construct body's legality gate (RW 0x88C2A5, flags 0x49F) is ported (DozerAIUpdate::siteIsLegal); MSG_DO_REPAIR sends the selected dozers to repair (DozerAIUpdate::repair; the dispatcher case of MSG_DO_REPAIR was not read: S-656)",
+		"0x77AE9F; Player::canBuild (RW 0x6AAA2E) is stood for by BuildAssistant::playerCanBuild (allowedToBuild RW 0x6AC856, Buildable, the prerequisites; the helper cites RW 0x6AC927, its equivalence with RW 0x6AAA2E is an inference) after a named guard that the plot's CommandSet offers the template (isInProducersCommandSet RW 0x794F38), and in the MSG_DOZER_CONSTRUCT case by BuildAssistant::canMakeUnit (S-305) the Dozer construct body's legality gate (RW 0x88C2A5, flags 0x49F) is ported (DozerAIUpdate::siteIsLegal); MSG_DO_REPAIR sends the selected dozers to repair (DozerAIUpdate::repair; the dispatcher case of MSG_DO_REPAIR was not read: S-656)",
 	};
 }

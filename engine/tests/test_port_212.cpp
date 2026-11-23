@@ -50,6 +50,14 @@ const char kPort212Objects[] =
 	"    MaxHealthReallyDamaged = 100\n"
 	"  End\n"
 	"End\n"
+	"Object Other\n"
+	"  BuildCost = 100\n"
+	"  BuildTime = 20.0\n"
+	"  KindOf = STRUCTURE SELECTABLE\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 1000\n"
+	"  End\n"
+	"End\n"
 	"Object Plot\n"
 	"  KindOf = STRUCTURE SELECTABLE IMMOBILE BASE_FOUNDATION\n"
 	"  CommandSet = PlotSet\n"
@@ -162,4 +170,23 @@ TEST_CASE("PORT-212 plot builds: the plot's construction case still refuses a pl
 	CHECK(f.countOf("Moot") == 0);
 	REQUIRE(f.commands.refusals().size() == 1);
 	CHECK(f.commands.refusals().front().find("Player::canBuild") != std::string::npos);
+}
+
+TEST_CASE("PORT-212 plot builds: the plot builds only a template its CommandSet offers (named guard, upstream review of PR 333)")
+{
+	Port212World f;
+	const ThingTemplate *other = f.w.get("Other");
+	REQUIRE(other != nullptr);
+	// the player may build it (no NEED_BASE_FOUNDATION, Buildable by default): only the plot's command set stands in the way
+	REQUIRE(BuildAssistant::playerCanBuild(*f.alice(), other, *f.logic));
+	const std::uint32_t money0 = f.alice()->getMoney()->countMoney();
+	f.construct(f.plot1, "Other");
+	CHECK(f.commands.stats().foundations == 0);
+	CHECK(f.countOf("Other") == 0);
+	CHECK(f.alice()->getMoney()->countMoney() == money0);
+	REQUIRE(f.commands.refusals().size() == 1);
+	CHECK(f.commands.refusals().front().find("command set does not offer") != std::string::npos);
+	// the offered template is still built
+	f.construct(f.plot1, "Moot");
+	CHECK(f.commands.stats().foundations == 1);
 }
