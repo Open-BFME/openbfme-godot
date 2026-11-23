@@ -186,6 +186,7 @@ include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Port166.cmake) # PORT-166: the ordered slot lock survives the shot that starts the reload (fork issue 395; OPENBFME_PORT166_TESTS)
 include(cmake/Port302.cmake) # retail 2.01 InactiveBody armor flags and damage
 include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
+include(cmake/Port100.cmake) # PORT-100: LargeGroupAudio HandOffModeDuration (issue fork issue 260; OPENBFME_PORT100_TESTS)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
 include(cmake/Port12.cmake) # PORT-12: BuildAssistant edge margin / SupplyBuildBorder (issue #67; OPENBFME_PORT12_TESTS)
@@ -759,6 +760,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_PORT166_TESTS}
     ${OPENBFME_PORT54_TESTS}
+    ${OPENBFME_PORT100_TESTS}
     ${OPENBFME_PORT4_TESTS}
     ${OPENBFME_PORT8_TESTS}
     ${OPENBFME_PORT11_TESTS}

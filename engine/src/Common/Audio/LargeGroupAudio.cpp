@@ -6,6 +6,7 @@
 #include "Common/INIException.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -121,7 +122,19 @@ void parseSize(INI *ini, void *instance, void *, const void *) { INI::parseReal(
 void parseSpeed(INI *ini, void *instance, void *, const void *) { INI::parseVelocityReal(ini, nullptr, &static_cast<MapCtx *>(instance)->map->maximumAudioSpeed, nullptr); }
 void parseStart(INI *ini, void *instance, void *, const void *) { INI::parseUnsignedShort(ini, nullptr, &static_cast<MapCtx *>(instance)->map->startThreshold, nullptr); }
 void parseStop(INI *ini, void *instance, void *, const void *) { INI::parseUnsignedShort(ini, nullptr, &static_cast<MapCtx *>(instance)->map->stopThreshold, nullptr); }
-void parseHandOff(INI *ini, void *instance, void *, const void *) { INI::parseDurationUnsignedInt(ini, nullptr, &static_cast<MapCtx *>(instance)->map->handOffModeDurationFrames, nullptr); }
+// RW 0x73B071 (the field's own parser, table RW 0xC4C610): milliseconds * float32 0.005 (RW 0xD9F610), ceil (the call through
+// RW 0xBD0588, as the generic duration parser RW 0x73A429), stored as ONE byte at map + 0xE4; more than 255 frames formats
+// "Duration %u must be less than %d frames" (RW 0xC25100) and throws.
+void parseHandOff(INI *ini, void *instance, void *, const void *)
+{
+	const unsigned ms = ini->scanUnsignedInt(ini->getNextToken());
+	const unsigned frames = (unsigned)std::ceil((double)ms * (double)0.005f);
+	if (frames > 255)
+	{
+		throw INIException(3, "Duration %u must be less than %d frames", ms, 255);
+	}
+	static_cast<MapCtx *>(instance)->map->handOffModeDurationFrames = frames;
+}
 void parseStealth(INI *ini, void *instance, void *, const void *) { INI::parseBool(ini, nullptr, &static_cast<MapCtx *>(instance)->map->ignoreStealthedUnits, nullptr); }
 } // namespace
 
@@ -225,4 +238,26 @@ void LargeGroupAudioStore::resetMapOverrides()
 		}
 	}
 	m_savedOriginals.clear();
+}
+
+Coord3D LargeGroupAudioHandOff::advance(const Coord3D &current, const Coord3D &preferred, float maxSpeedPerFrame)
+{
+	// RW 0x9D8063..0x9D80C7: the hand-off glide (1.0f / steps of the remaining way, every axis, then the counter is decremented)
+	if (steps > 0)
+	{
+		const float factor = 1.0f / (float)steps;
+		Coord3D next{ current.x + (preferred.x - current.x) * factor, current.y + (preferred.y - current.y) * factor,
+			current.z + (preferred.z - current.z) * factor };
+		--steps;
+		return next;
+	}
+	// RW 0x9D80CF..: no hand-off counted: move toward the preferred position, clamped to MaximumAudioSpeed per logic frame
+	const float dx = preferred.x - current.x, dy = preferred.y - current.y, dz = preferred.z - current.z;
+	const float lengthSq = dz * dz + dy * dy + dx * dx;
+	if (lengthSq <= maxSpeedPerFrame * maxSpeedPerFrame)
+	{
+		return preferred;
+	}
+	const float factor = maxSpeedPerFrame / std::sqrt(lengthSq);
+	return Coord3D{ current.x + dx * factor, current.y + dy * factor, current.z + dz * factor };
 }
