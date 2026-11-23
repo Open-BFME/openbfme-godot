@@ -148,6 +148,7 @@ public:
 
 private:
 	std::vector<Button> m_buttons;
+	const CommandStore *m_commands = nullptr;
 	ObjectID m_book = INVALID_ID;
 	int m_targeting = -1;
 };
