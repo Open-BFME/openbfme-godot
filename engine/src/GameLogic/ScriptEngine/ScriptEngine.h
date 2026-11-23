@@ -219,6 +219,8 @@ public:
 	// is removed (RW 0x604067)
 	void objectListAdd(const std::string &list, const std::string &type, bool add);
 	const std::vector<std::string> *findObjectList(const std::string &list) const;
+	// Both editions: RW 0x00603B6A (DONOR BFME2 0x00204224 ObjectTypes::getNthInList): returns the Nth type name in the named object list, or "" if out of range.
+	std::string objectListGetNth(const std::string &list, int index) const;
 
 	// ---- scripts by name -------------------------------------------------------------------------------------------------------------------
 	struct RScript;

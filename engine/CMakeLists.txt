@@ -742,6 +742,7 @@ endif()
 # ---- unit tests --------------------------------------------------------------------------
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
+include(cmake/Local135.cmake)   # LOCAL-135: shared RotWK helpers (OPENBFME_LOCAL135_TESTS)
 add_executable(openbfme_tests
     ${OPENBFME_PORT426_TESTS}
     ${OPENBFME_WIN1_TESTS}
@@ -922,6 +923,7 @@ add_executable(openbfme_tests
     ${OPENBFME_TAINTAREA1_TESTS}
     ${OPENBFME_THREATLEVEL1_TESTS}
     ${OPENBFME_BUILDCLEAR1_TESTS}
+    ${OPENBFME_LOCAL135_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
