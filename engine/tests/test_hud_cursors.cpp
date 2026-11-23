@@ -57,6 +57,9 @@ TEST_CASE("hud cursors: the cursor names the translators choose are Mouse.ini cu
 	{
 		CHECK_MESSAGE(cursors.count(n) == 1, n);
 	}
+	// the owner's 2026-11-21 pointer report: Arrow is retail's own SCCPointer.cur (32x32, hotspot 2,2), not a stand-in. Its pixel art is the
+	// retail asset; a high-DPI screen shows it at retail's size.
+	CHECK(cursors.at(MouseCursorName::Arrow).image == "SCCPointer.cur");
 	size_t decoded = 0, animated = 0, missing = 0;
 	std::string dir = std::string(install) + "/data/cursors";
 	for (const auto &kv : cursors)
@@ -105,4 +108,15 @@ TEST_CASE("hud cursors: the cursor names the translators choose are Mouse.ini cu
 		CHECK_MESSAGE(readLoose(dir, cursors.at(n).image, bytes, used), n << " -> " << cursors.at(n).image);
 	}
 	CHECK(missing == 1); // the table names cursors the install does not ship (the engine's own pointer shows instead): pinned, stop S-295
+	{
+		std::vector<std::uint8_t> bytes;
+		std::string used;
+		REQUIRE(readLoose(dir, cursors.at(MouseCursorName::Arrow).image, bytes, used));
+		CursorImage arrow;
+		REQUIRE_MESSAGE(DecodeCursorFile(bytes, arrow, &error), error);
+		CHECK(arrow.width == 32);
+		CHECK(arrow.height == 32);
+		CHECK(arrow.hotX == 2);
+		CHECK(arrow.hotY == 2);
+	}
 }

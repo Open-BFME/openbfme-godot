@@ -933,6 +933,112 @@ TEST_CASE("synthetic HUD: attack-move click roles in the standard mouse setup (l
 	}
 }
 
+TEST_CASE("synthetic HUD: a right click cancels a waiting non-attack GUI command without an order")
+{
+	synthetichud::Rig r;
+	Object *a = r.place("TestFighter", 100, 100);
+	r.click(100, 100);
+	r.selected({ a->getID() });
+	CommandButton guard;
+	guard.m_command = GUI_COMMAND_GUARD;
+	guard.m_options = COMMAND_OPTION_NEED_TARGET_POS;
+	guard.m_cursorName = "Guard";
+	auto arm = [&]() { r.input->ui().setGUICommand(&guard); };
+	SUBCASE("alternate setup: the click ends the command, sends nothing, and the next right click moves")
+	{
+		arm();
+		r.click(300, 300, HudInput::Button::Right);
+		CHECK(r.input->ui().getGUICommand() == nullptr);
+		CHECK(r.commands.messages().empty());
+		r.click(320, 320, HudInput::Button::Right);
+		r.locationCommand(MSG_DO_MOVETO, 320, 320);
+	}
+	SUBCASE("a right drag leaves the command waiting: the camera's pan is no cancel")
+	{
+		arm();
+		r.drag(300, 300, 400, 300, HudInput::Button::Right);
+		CHECK(r.input->ui().getGUICommand() == &guard);
+		CHECK(r.commands.messages().empty());
+	}
+	SUBCASE("input off: the click leaves the command waiting and sends nothing")
+	{
+		arm();
+		r.input->ui().setInputEnabled(false);
+		r.drain(); // the input edge's MSG_CHANGE_ORDERMODE
+		r.click(300, 300, HudInput::Button::Right);
+		CHECK(r.input->ui().getGUICommand() == &guard);
+		CHECK(r.commands.messages().empty());
+		r.input->ui().setInputEnabled(true);
+	}
+	SUBCASE("standard setup: the right click ends the command and keeps the selection")
+	{
+		r.input->commandTranslator().setUseAlternateMouse(false);
+		arm();
+		r.click(300, 300, HudInput::Button::Right);
+		CHECK(r.input->ui().getGUICommand() == nullptr);
+		// the cancel click is not the standard setup's deselection click: retail keeps the selection (the hero-power tests pin it too)
+		CHECK(r.commands.messages().empty());
+		CHECK(r.input->ui().isSelected(a->getID()));
+	}
+}
+
+TEST_CASE("synthetic HUD: a left click with no valid target cancels Bloodthirsty but not a waiting special power")
+{
+	synthetichud::Rig r;
+	Object *a = r.place("TestFighter", 100, 100);
+	r.click(100, 100);
+	r.selected({ a->getID() });
+	CommandButton bloodthirsty;
+	bloodthirsty.m_command = GUI_COMMAND_BLOODTHIRSTY;
+	bloodthirsty.m_options = COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_CONTEXTMODE_COMMAND;
+	CommandButton power;
+	power.m_command = GUI_COMMAND_SPECIAL_POWER;
+	power.m_options = COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT;
+	auto checkNoOrder = [&]() {
+		for (const GameMessage &m : r.commands.messages())
+		{
+			CHECK(m.getType() != MSG_DO_MOVETO);
+			CHECK(m.getType() != MSG_SACRIFICE);
+		}
+		CHECK(r.input->ui().getGUICommand() == nullptr);
+	};
+	SUBCASE("a context ability on empty ground")
+	{
+		r.input->ui().setGUICommand(&bloodthirsty);
+		r.click(300, 300);
+		checkNoOrder();
+	}
+	SUBCASE("a context ability on an invalid object (an enemy)")
+	{
+		Object *enemy = r.place("TestFighter", 400, 100, "Bob");
+		r.input->ui().setGUICommand(&bloodthirsty);
+		r.click(400, 100);
+		CHECK(r.input->ui().getGUICommand() == nullptr);
+		CHECK(r.input->ui().isSelected(a->getID())); // the pending command's click is not a selection click
+		for (const GameMessage &m : r.commands.messages())
+		{
+			CHECK(m.getType() != MSG_DO_MOVETO);
+			CHECK(m.getType() != MSG_SACRIFICE);
+			CHECK(m.getType() != MSG_DO_ATTACK_OBJECT);
+		}
+	}
+	SUBCASE("a special power's invalid ground click keeps it waiting (the hero powers' rule)")
+	{
+		r.input->ui().setGUICommand(&power);
+		r.click(300, 300);
+		CHECK(r.input->ui().getGUICommand() == &power);
+		CHECK(r.commands.messages().empty());
+	}
+	SUBCASE("a context ability in the void")
+	{
+		r.input->ui().setGUICommand(&bloodthirsty);
+		// PixelView maps every pixel to terrain; the null terrain case is the same branch the device takes over the letterbox's black.
+		// Keep the command armed through a drag (not a point click): a drag is not a target click.
+		r.drag(300, 300, 360, 300);
+		CHECK(r.input->ui().getGUICommand() == &bloodthirsty);
+	}
+}
+
 TEST_CASE("synthetic HUD: the waiting attack move shows its CursorName (createCommandHint 0x002A3273, GUI command mode)")
 {
 	synthetichud::Rig r;

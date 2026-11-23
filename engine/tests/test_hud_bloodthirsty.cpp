@@ -68,6 +68,51 @@ bool reachableSpot(hudtest::Rig &rig, Object *walker, float distance, Coord3D &o
 }
 } // namespace
 
+// The owner's 2026-11-21 report: a right click cancelled the aim and the orcs then ran across the map. The cancel belongs to GUICommandTranslator's click
+// (RW 0x83DB8D): it destroys the click before CommandTranslator can read it as an ordinary move (RW 0x81FAFE's "the right click orders nothing" while a
+// non-attack GUI command waits).
+TEST_CASE("S-1991 retail: cancelling the Bloodthirsty aim with a right click sends no move")
+{
+	if (!hudtest::haveWorld("S-1991 Bloodthirsty cancel"))
+	{
+		return;
+	}
+	factb::HudGame g(hudtest::shared(), "FactionIsengard");
+	g.logic().combat().setAutoAcquireEnabled(false);
+	const Coord3D home = g.home();
+	const Coord3D at = g.rig.freeSpot(home.x, home.y, 350.0f);
+	Object *source = g.rig.make("IsengardFighterHorde", at.x, at.y);
+	REQUIRE(source);
+	g.step(20);
+	REQUIRE(g.select(source));
+	ControlBarButton button;
+	REQUIRE(g.reveal(source, [](const CommandButton &b) { return b.m_command == GUI_COMMAND_BLOODTHIRSTY; }, button));
+	REQUIRE(g.press(button));
+	REQUIRE(g.hud->input().ui().getGUICommand() != nullptr);
+	const size_t before = g.hud->input().messageLog().size();
+	g.clickAt({ at.x + 260.0f, at.y + 120.0f, 0.0f }, HudInput::Button::Right);
+	g.step(2);
+	CHECK(g.hud->input().ui().getGUICommand() == nullptr);
+	const std::vector<std::string> &log = g.hud->input().messageLog();
+	for (size_t i = before; i < log.size(); ++i)
+	{
+		CHECK_MESSAGE(log[i].find("MSG_DO_MOVETO") == std::string::npos, log[i]);
+		CHECK_MESSAGE(log[i].find("MSG_SACRIFICE") == std::string::npos, log[i]);
+	}
+	// the left click is the aim's target click too: on empty ground it cancels like the right click (owner report 2026-11-21)
+	REQUIRE(g.press(button));
+	REQUIRE(g.hud->input().ui().getGUICommand() != nullptr);
+	const size_t beforeLeft = g.hud->input().messageLog().size();
+	g.clickAt({ at.x - 180.0f, at.y + 160.0f, 0.0f }, HudInput::Button::Left);
+	g.step(2);
+	CHECK(g.hud->input().ui().getGUICommand() == nullptr);
+	for (size_t i = beforeLeft; i < log.size(); ++i)
+	{
+		CHECK_MESSAGE(log[i].find("MSG_DO_MOVETO") == std::string::npos, log[i]);
+		CHECK_MESSAGE(log[i].find("MSG_SACRIFICE") == std::string::npos, log[i]);
+	}
+}
+
 TEST_CASE("STOPS-B1 S-1991 retail: the Isengard Bloodthirsty button selects an ally target and sacrifices it")
 {
 	if (!hudtest::haveWorld("S-1991 Bloodthirsty"))

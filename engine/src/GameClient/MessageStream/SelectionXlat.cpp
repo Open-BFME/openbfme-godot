@@ -519,12 +519,14 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 			}
 			break;
 		case CMSG_RAW_MOUSE_RIGHT_BUTTON_DOWN:
+			m_ctx.ui.clearRightClickCommandCancel(); // a stale cancel cannot skip a later click's deselection
 			m_deselectAnchor = msg.arg(0).pixel;
 			m_lastClick = msg.arg(2).integer;
 			m_deselectDownCamera = m_ctx.view.position();
 			break;
 		case CMSG_RAW_MOUSE_RIGHT_BUTTON_UP:
 		{
+			const bool cancelledCommand = m_ctx.ui.takeRightClickCommandCancel();
 			const ICoord2D pixel = msg.arg(0).pixel;
 			const int now = msg.arg(2).integer;
 			bool isClick = true;
@@ -543,19 +545,17 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 			if (isClick)
 			{
 				// BFME2 SelectionTranslator::translateGameMessage (0x0043003C, SelectionXlatTranslateGameMessage.cpp, matched), the right button up:
-				// a waiting ATTACK_MOVE (type 10) is not cancelled here (GUICommandTranslator's click roles own it, 0x004314B1) and takes the
-				// no-command branch: the standard mouse setup deselects
+				// a waiting ATTACK_MOVE (type 10) is not cancelled here (GUICommandTranslator's click roles own it, 0x004314B1)
+				// and takes the no-command branch: the standard mouse setup deselects. A waiting command of another type is GUICommandTranslator's too:
+				// its right click ends it and is destroyed before CommandTranslator sees it (GUICommandTranslator.cpp, RW 0x83DB8D). Cancelling it here
+				// cleared the command on the raw-up message, so the same click became an ordinary move (owner report 2026-11-21, Bloodthirsty).
 				const CommandButton *command = m_ctx.ui.getGUICommand();
-				if (command && command->m_command != GUI_COMMAND_ATTACK_MOVE)
+				if (!cancelledCommand && (!command || command->m_command == GUI_COMMAND_ATTACK_MOVE))
 				{
-					// cancel the GUI command mode without deselecting
-					m_ctx.ui.setGUICommand(nullptr);
-					disp = MessageDisposition::Destroy;
-					m_ctx.ui.setScrolling(false);
-				}
-				else if (!m_commands.useAlternateMouse())
-				{
-					m_ctx.ui.deselectAll();
+					if (!m_commands.useAlternateMouse())
+					{
+						m_ctx.ui.deselectAll();
+					}
 				}
 			}
 			break;

@@ -109,6 +109,16 @@ public:
 	bool isInPreferSelectionMode() const { return m_preferSelection; }
 	void setPreferSelectionMode(bool on) { m_preferSelection = on; }
 	bool getInputEnabled() const { return m_inputEnabled; }
+	// lane HUD-1: GUICommandTranslator's right click ended a pending command; the raw button up that follows must not also run
+	// SelectionTranslator's standard-setup deselection (retail keeps the selection when a command is cancelled).
+	void noteRightClickCommandCancel() { m_rightClickCommandCancel = true; }
+	bool takeRightClickCommandCancel()
+	{
+		const bool v = m_rightClickCommandCancel;
+		m_rightClickCommandCancel = false;
+		return v;
+	}
+	void clearRightClickCommandCancel() { m_rightClickCommandCancel = false; }
 
 	// ---- lane HOVER-1: the help box's tooltip policy and late UI mode gate ----
 	// RW 0x69BB14 (vslot +0x1BC), BFME2 donor InGameUI_Rva0029B04D.cpp: true when the global tooltip setting is off
@@ -376,6 +386,7 @@ private:
 	}
 	bool m_scriptMouseHidden = false; ///< lane OWNERFIX-1: Mouse::setVisibility(false) of DISABLE_INPUT
 	bool m_inputEnabled = true, m_scrolling = false, m_selecting = false, m_quitMenuVisible = false;
+	bool m_rightClickCommandCancel = false; ///< lane HUD-1: the next raw right button up is the cancel of a pending command
 	bool m_tooltipsEnabled = true;          ///< GlobalData +0xDD0 (RW 0x69BB19)
 	unsigned m_tooltipDisableUntil = 0;     ///< +0x7EC (RW 0x69BB44 / 0x69BAF9)
 	bool m_modeGate810 = false;             ///< +0x810 (RW 0x48E916 / 0x69B6A8)

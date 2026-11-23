@@ -57,6 +57,32 @@
 #include <chrono>
 #include <set>
 
+namespace
+{
+// Retail input (RW 0x6C23AD / 0x715A84) makes the top screen's full-stage GameWindow own the pointer. The port's shell
+// top/level did not consistently identify TimeLine.apt after QuitMenuExit (the score screen lost input), so the proven
+// Palantir root block stays while a menu is modal: the menu levels remain above it, the Palantir stays drawn, and TimeLine
+// at any level is not blocked. AptInput::setInputTopLevel is kept for a later, verified top-screen port.
+void applyModalInputState(WindowManager *wm, bool modal, Shell *shell, AptPalantir *palantir)
+{
+	(void)shell;
+	if (!wm)
+	{
+		return;
+	}
+	AptInput &input = wm->apt().input();
+	input.setInputTopLevel(-1);
+	input.clearBlockedRoots();
+	if (modal && palantir && palantir->level() >= 0)
+	{
+		if (AptSpriteInst *root = wm->apt().level(palantir->level()))
+		{
+			input.setRootBlocked(root, true);
+		}
+	}
+}
+} // namespace
+
 InGameHud::InGameHud(Config config)
 	: m_config(config)
 	, m_source(config.fs)
@@ -1496,6 +1522,7 @@ void InGameHud::setModal(bool modal)
 		m_input->cancelHeld(); // what began before the menu opened ends with it
 	}
 	m_modal = modal;
+	applyModalInputState(m_wm, m_modal, m_shellRef, m_palantirRef);
 }
 
 void InGameHud::mouseMove(int x, int y, int keyState)
@@ -1507,6 +1534,7 @@ void InGameHud::mouseMove(int x, int y, int keyState)
 	m.windowH = (float)m_windowH;
 	float sx, sy;
 	m.windowToStage((float)x, (float)y, sx, sy);
+	applyModalInputState(m_wm, m_modal, m_shellRef, m_palantirRef);
 	if (m_booted && (!m_broadcastClean || m_wm->capturesMouse()))
 	{
 		m_wm->postMouseMove(sx, sy);
@@ -1529,6 +1557,7 @@ void InGameHud::mouseButton(HudInput::Button button, bool down, int x, int y, in
 {
 	m_keyState = keyState;
 	const auto worldContext = enterContext(); // this world's stores for the whole call (see InGameHud.h)
+	applyModalInputState(m_wm, m_modal, m_shellRef, m_palantirRef);
 	if (m_modal)
 	{
 		// lane OPTS-6: a press goes to the menus' movies (their buttons, gadgets and the ones the quit menu sits over: nothing of the game); a release too

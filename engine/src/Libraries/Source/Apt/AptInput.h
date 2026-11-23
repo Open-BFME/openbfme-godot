@@ -108,6 +108,15 @@ public:
 	// screen that covers the stage over a game (Options.apt, WindowManager::capturesMouse) sets its own level: the Palantir under it hears no click
 	void setInputFloor(int level) { m_inputFloor = level; }
 	int inputFloor() const { return m_inputFloor; }
+	// NOT RETAIL: a level root (the Palantir under the pause menu) takes no pointer input while the menu covers it. Unlike setInputFloor,
+	// which skips every level below it, this leaves the other levels alone: the score screen can take a low, freed level after the game.
+	void setRootBlocked(AptSpriteInst *root, bool blocked);
+	void clearBlockedRoots() { m_blockedRoots.clear(); }
+	bool rootBlocked(const AptSpriteInst *root) const { return m_blockedRoots.count(root) != 0; }
+	// Retail (RW 0x6C23AD / 0x715A84): the top screen's full-stage GameWindow owns the pointer; only that screen's Apt level is hit.
+	// -1 restores every level. The levels below stay loaded and drawn.
+	void setInputTopLevel(int level) { m_inputTopLevel = level; }
+	int inputTopLevel() const { return m_inputTopLevel; }
 
 	void forget(AptSpriteInst *level); // a level was unloaded: drop references into it
 	void markRoots(AptGC &gc);
@@ -136,6 +145,8 @@ private:
 	std::set<int> m_keys;
 	int m_lastKey = 0;
 	int m_inputFloor = -1; // lane OPTS-6
+	std::set<const AptSpriteInst *> m_blockedRoots; // NOT RETAIL: the Palantir under a modal menu
+	int m_inputTopLevel = -1; // retail top-screen input: only this Apt level is hit when >= 0
 	std::vector<AptValue> m_mouseListeners;
 	std::vector<AptValue> m_keyListeners;
 };

@@ -138,6 +138,22 @@ void AptInput::postKey(int keyCode, bool down)
 	++m_posted;
 }
 
+void AptInput::setRootBlocked(AptSpriteInst *root, bool blocked)
+{
+	if (!root)
+	{
+		return;
+	}
+	if (blocked)
+	{
+		m_blockedRoots.insert(root);
+	}
+	else
+	{
+		m_blockedRoots.erase(root);
+	}
+}
+
 std::uint64_t AptInput::postCancelPress()
 {
 	Event e;
@@ -163,6 +179,7 @@ void AptInput::processQueued()
 
 void AptInput::forget(AptSpriteInst *level)
 {
+	m_blockedRoots.erase(level);
 	auto inLevel = [&](AptCharacterInst *c) {
 		for (; c; c = c->parent())
 		{
@@ -214,12 +231,20 @@ void AptInput::collectSprites(std::vector<AptSpriteInst *> &out) const
 {
 	for (int lvl : m_apt.loadedLevels())
 	{
+		if (m_inputTopLevel >= 0 && lvl != m_inputTopLevel)
+		{
+			continue; // retail: the top screen's GameWindow owns the pointer
+		}
 		if (lvl < m_inputFloor)
 		{
 			continue; // lane OPTS-6: under a modal screen
 		}
 		if (AptSpriteInst *root = m_apt.level(lvl))
 		{
+			if (m_blockedRoots.count(root))
+			{
+				continue;
+			}
 			walk(root, [&](AptCharacterInst *c) {
 				if (AptSpriteInst *s = c->asSprite())
 				{
@@ -237,12 +262,20 @@ void AptInput::collectButtons(std::vector<AptButtonInst *> &out) const
 {
 	for (int lvl : m_apt.loadedLevels())
 	{
+		if (m_inputTopLevel >= 0 && lvl != m_inputTopLevel)
+		{
+			continue; // retail: the top screen's GameWindow owns the pointer
+		}
 		if (lvl < m_inputFloor)
 		{
 			continue; // lane OPTS-6: under a modal screen
 		}
 		if (AptSpriteInst *root = m_apt.level(lvl))
 		{
+			if (m_blockedRoots.count(root))
+			{
+				continue;
+			}
 			walk(root, [&](AptCharacterInst *c) {
 				if (AptButtonInst *b = c->asButton())
 				{
