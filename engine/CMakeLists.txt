@@ -186,6 +186,7 @@ include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Port166.cmake) # PORT-166: the ordered slot lock survives the shot that starts the reload (fork issue 395; OPENBFME_PORT166_TESTS)
 include(cmake/Port302.cmake) # retail 2.01 InactiveBody armor flags and damage
 include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
+include(cmake/Port28.cmake) # PORT-28: Weapon/RotatingTurret, the turret aim vector (issue fork issue 100; OPENBFME_PORT28_TESTS)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
 include(cmake/Port12.cmake) # PORT-12: BuildAssistant edge margin / SupplyBuildBorder (issue #67; OPENBFME_PORT12_TESTS)
@@ -777,6 +778,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT40_TESTS}
     ${OPENBFME_PORT46_TESTS}
     ${OPENBFME_PORT13_TESTS}
+    ${OPENBFME_PORT28_TESTS}
     ${OPENBFME_PORT9_TESTS}
     ${OPENBFME_PORT7_TESTS}
     ${OPENBFME_PORT58_TESTS}

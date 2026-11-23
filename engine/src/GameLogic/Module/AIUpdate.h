@@ -297,6 +297,10 @@ public:
 	TurretAI *turretForCurWeapon() const;
 	// RW 0x662411 getTurretTurnRate
 	float turretTurnRate() const;
+	// RW 0x66246B getWhichTurretForWeaponSlot(slot, &angle, &pitch): the index of the turret (AI + 0x20C, one slot) whose
+	// ControlledWeaponSlots (TurretAIData + 0x4C, RW 0x8DC4ED) hold `slot`, with the turret's current angle and pitch (TurretAI +
+	// 0x18 / + 0x1C); TURRET_INVALID (-1) for a slot that is on no turret (RW 0x662494)
+	int whichTurretForWeaponSlot(int slot, float *angle, float *pitch) const;
 
 	// ---- lane GARRISON-1 (GameLogic/AI/AIGarrisonStates.h): the enter / exit commands of RotWK's aiDoCommand (RW 0x66A7EC) ----
 	// AI command 0x42 -> RW 0x66D85F privateEnter: a mobile unit goes to AIMoveToPositionAndEnterState (56) with the container as the goal (MSG_ENTER's group,

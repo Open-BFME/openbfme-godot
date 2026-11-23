@@ -36,8 +36,9 @@
 // the turret's idle sleeps use the AI's MoodAttackCheckRate from now) and its mood matrix (RW 0x664E18) (the idle target's weapon criteria 5 runs
 // since lane DECOMP-1: RW 0x68B619(target, 5, 2)); isAbleToAttack / the continued-target test of the aim (RW 0x691269 / 0x68D6A6: ObjectWeapons::canAttackObject stands in);
 // the AI slot 0x1C4 test of RW 0x6658D3 (taken as false); the pitch of AllowsPitch turrets; the turret's position in RW's update (after the path-request timer:
-// here before AIMover::update, which runs that timer); the launch composition of a turreted weapon (RW 0x6CAD3F .. 0x6CB43B: the projectile leaves from the
-// drawable's launch bone, S-360).
+// here before AIMover::update, which runs that timer). The launch composition of a turreted weapon (RW 0x6CAD3F .. 0x6CB43B) is ported since PORT-28
+// (issue fork issue 100): BezierProjectileBehavior::calcLaunchTransform turns the launch bone by this turret's angle (+ 0x18) and pitch (+ 0x1C), gated by
+// Weapon/RotatingTurret and by whichTurretForWeaponSlot (the getter at RW 0x66246B).
 
 #pragma once
 
@@ -118,6 +119,7 @@ public:
 	// the target (RW + 0x2C: 0 none, 1 object, 2 position); a dead object target clears (RW 0x8DC507)
 	int getTurretTarget(Object *&obj, Coord3D &pos);
 	float getTurretAngle() const { return m_angle; }
+	int whichTurret() const { return m_whichTurret; } // + 0x0C (the index RW 0x66246B answers, RW 0x6624C5 `mov eax,ebx`)
 	float getTurretPitch() const { return m_pitch; }
 	const TurretAIData &data() const { return *m_data; }
 	AIUpdateInterface &ai() const { return *m_ai; }
