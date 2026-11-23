@@ -122,7 +122,7 @@ void GameWorld::update_blob_shadows()
 	if (fwd.y < -1e-4f)
 	{
 		const godot::Vector3 p = camPos + fwd * (-camPos.y / fwd.y);
-		groundZ = m_game->logic().getGroundHeight(p.x, -p.z);
+		groundZ = m_game->mapGroundHeight(p.x, -p.z); // review: the render thread does not wait for the logic worker here
 	}
 	float rect[4];
 	if (!groundFootprint(vp, groundZ, BlobShadowLayer::kMaxSpan, rect))
@@ -140,7 +140,6 @@ void GameWorld::update_blob_shadows()
 	std::copy(rect, rect + 4, m_blobRect);
 	m_blobs.begin(rect[0], rect[1], rect[2], rect[3]);
 	DrawableManager &dm = m_game->drawables();
-	GameLogic &logic = m_game->logic();
 	for (size_t id = 1; id < m_views.size(); ++id)
 	{
 		const DrawableView &v = m_views[id];
@@ -194,7 +193,7 @@ void GameWorld::update_blob_shadows()
 			}
 			const BlobShadow::Spec &spec = cached.spec;
 			// one blob per drawable: the first model draw that names one (the object template's shadow belongs to the drawable, not to each module)
-			if (BlobShadow::drawnAtLOD(spec, s_shadowDecals) && BlobShadow::belowMaxHeight(spec, p.z, logic.getGroundHeight(p.x, p.y)))
+			if (BlobShadow::drawnAtLOD(spec, s_shadowDecals) && BlobShadow::belowMaxHeight(spec, p.z, m_game->mapGroundHeight(p.x, p.y)))
 			{
 				// lane BLOBSHADOW-2: a zero size takes the model's box (RW 0x50C01D; workers, animals, lairs: 124 retail rows have no size)
 				float extentX = 0.0f, extentY = 0.0f;

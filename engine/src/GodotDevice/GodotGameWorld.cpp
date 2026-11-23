@@ -793,6 +793,7 @@ void GameWorld::clear_scene()
 	m_cahCameraOffsetValid = false;
 	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset(); // the objects (and through them the drawables) first
+	m_blobSpecs.clear(); // lane BLOBSHADOW-1 (review): keyed by template, module and state addresses, which the next map's data may reuse
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
 	for (uint32_t id = 0; id < m_views.size(); ++id) remove_view(id);
