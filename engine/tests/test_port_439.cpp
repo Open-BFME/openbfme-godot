@@ -144,7 +144,7 @@ TEST_CASE("PORT-439 focal length: the view's conversions (RW 0x8DAEEE, RW 0x8DAF
 	// RW 0x8DAEEE: 2 * atan(12 / mm), and mm <= 0 answers pi / 2 (RW 0xBD89D0 = 1.5707964)
 	CHECK(TacticalCamera::focalLengthToFov(0.0f) == 1.5707964f);
 	CHECK(TacticalCamera::focalLengthToFov(-5.0f) == 1.5707964f);
-	CHECK(TacticalCamera::focalLengthToFov(50.0f) == doctest::Approx(0.4713475f).epsilon(1e-5)); // tolerance: 2 * atan(0.24) at double precision, stored as float32 (the retail value is not pinned to a bit)
+	CHECK(TacticalCamera::focalLengthToFov(50.0f) == doctest::Approx(0.4710899f).epsilon(1e-5)); // tolerance: 2 * atan(0.24) at double precision, stored as float32 (the retail value is not pinned to a bit)
 	// the defaults: the view is 50 degrees = 2 * atan(12 / 28.8991..) (View + 0x6C, RW 0xBDD410)
 	CHECK(degrees(TacticalCamera::focalLengthToFov(TacticalCamera::fovToFocalLength(0.8726646f))) == doctest::Approx(50.0f).epsilon(1e-4)); // tolerance: the round trip through the float32 mm value (View + 0x6C is the pooled 50 degrees)
 
@@ -210,12 +210,12 @@ TEST_CASE("PORT-439 focal length: the director keeps the viewers' angle (the sam
 {
 	ScriptCameraDirector d;
 	const Coord3D origin{ 0.0f, 0.0f, 0.0f };
-	CHECK(d.focalDegrees() == 0.0f);
+	CHECK(d.focalDegrees() == 50.0f); // the view's default angle, 50 degrees (View + 0x6C, RW 0xBDD410): the ramp starts from it
 	d.apply(focalRequest(35.0f, 1.0f, 0.0f, 0.0f), origin, 0.0f);
 	REQUIRE(d.focalAnimating());
 	// the target angle is the focal length's (RW 0x8DAF6C), reached over the action's second without ease
 	d.update(500.0);
-	CHECK(d.focalDegrees() == doctest::Approx(degrees(TacticalCamera::focalLengthToFov(35.0f)) * 0.5f).epsilon(1e-3)); // tolerance: the director's float32 degree lerp, half of two rounded angles
+	CHECK(d.focalDegrees() == doctest::Approx((50.0f + degrees(TacticalCamera::focalLengthToFov(35.0f))) * 0.5f).epsilon(1e-3)); // tolerance: the director's float32 degree lerp, half of two rounded angles
 	d.update(500.0);
 	CHECK_FALSE(d.focalAnimating());
 	CHECK(d.focalDegrees() == doctest::Approx(degrees(TacticalCamera::focalLengthToFov(35.0f))).epsilon(1e-4)); // tolerance: float32 angles over the ease, the value is the exact target at the end
