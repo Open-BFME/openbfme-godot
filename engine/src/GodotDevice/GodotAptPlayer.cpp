@@ -4129,6 +4129,9 @@ RID AptMenuPlayer::takeItem(RID parent, int drawIndex)
 		rs->canvas_item_set_custom_rect(r, false, Rect2());
 		rs->canvas_item_set_material(r, RID());
 		rs->canvas_item_set_copy_to_backbuffer(r, false, Rect2());
+		// lane VIEW3DFADE-1: a faded-out View3D hides its composite item (AptView3DViewers::syncVisibility); back in the pool it must not hide what is
+		// drawn into it next (a reused hidden item made whole parts of the game's picture flicker)
+		rs->canvas_item_set_visible(r, true);
 	}
 	else
 	{
