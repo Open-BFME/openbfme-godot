@@ -1922,6 +1922,8 @@ public:
 	std::uint32_t currentFrame() override { return m_obj.logic().getFrame(); }
 	GameLogicRandom &logicRandom() override { return m_obj.logic().random(); }
 	std::uint32_t weaponBonusConditionMask() override { return m_obj.weaponBonusConditionMask(); }
+	// GameData's global WeaponBonus set is the existing S-320 gap (the normal weapon host answers null as well); the constructor's ammo load
+	// (Weapon::reloadAmmo) does not read the bonus
 	const WeaponBonusSet *globalWeaponBonusSet() override { return nullptr; }
 	float rateOfFireAttributeProduct() override { return 1.0f; }
 	bool containedAmmo(const ObjectFilter &, unsigned &count) override
@@ -2994,11 +2996,33 @@ void SpecialAbilityUpdate::xfer(Xfer &x)
 
 // the special weapon is made on first use (specialWeapon): a load makes it when the snapshot's was made, then loads its state
 // RW 0x895C75 (DONOR BFME2 0x004925E5): m_weapon (+0x88) is made and loaded in the constructor, not lazily; version 2 drops the port's
-// m_weaponMade flag (version 1 saves are refused explicitly). RW 0x895C9F returns immediately on XferCRC after SpecialAbilityUpdate::xfer.
+// m_weaponMade flag. RW 0x895C9F returns immediately on XferCRC after SpecialAbilityUpdate::xfer.
+// Version 1 (the port's lazy weapon: `made`, then `has`, the weapon, the shot count) still loads, so older saves keep working:
+// made && has restores the saved weapon onto the constructor's; !has keeps the weapon the constructor made (a save from before the first use, or
+// one whose template is missing: then m_weapon stays null), and the shot count is read either way so the stream stays aligned.
 void WeaponFireSpecialAbilityUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 2, 2);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	SpecialAbilityUpdate::xfer(x);
+	if (v.current < 2)
+	{
+		bool made = false;
+		x.xferBool(&made); // version 1's lazy-weapon flag: it only told whether `has` could be true
+		bool has = false;
+		x.xferBool(&has);
+		if (has)
+		{
+			if (!m_weapon)
+			{
+				throw XferException("the version 1 snapshot's special ability weapon of object " + std::to_string(getObject()->getID()) +
+					" exists, this one's template has none");
+			}
+			m_weapon->xfer(x);
+		}
+		x.xferUnsignedInt(&m_shots);
+		return;
+	}
 	if (x.getXferMode() == XFER_CRC)
 	{
 		return; // RW 0x895C9F .. 0x895CA4

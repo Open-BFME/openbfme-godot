@@ -261,7 +261,7 @@ TEST_CASE("LOCAL-59: WeaponFireSpecialAbilityUpdate makes and loads its special 
 	CHECK(target->getBodyModule()->getHealth() == hpBefore - 40.0f);
 }
 
-TEST_CASE("LOCAL-59: WeaponFireSpecialAbilityUpdate xfer uses version 2, skips weapon on XferCRC (RW 0x895C9F), and refuses version 1")
+TEST_CASE("LOCAL-59: WeaponFireSpecialAbilityUpdate xfer uses version 2, skips weapon on XferCRC (RW 0x895C9F), and still loads version 1 saves")
 {
 	WeaponFireWorld f1;
 	Object *caster1 = f1.unit("TestWeaponedCaster", 'A', 100, 100);
@@ -286,16 +286,41 @@ TEST_CASE("LOCAL-59: WeaponFireSpecialAbilityUpdate xfer uses version 2, skips w
 	CHECK(crcBefore.getCRC() == crcAfter.getCRC());
 	wf1->ownedWeapon()->setAmmoInClip(savedAmmo);
 
-	// Save before any ability fire: version byte is 2, version 1 is explicitly refused
+	// Save before any ability fire: version byte is 2
 	XferSave savePreFire;
 	wf1->xfer(savePreFire);
 	REQUIRE(!savePreFire.data().empty());
 	CHECK(savePreFire.data()[0] == 2);
 
-	std::vector<std::uint8_t> badV1 = savePreFire.data();
-	badV1[0] = 1;
-	XferLoad loadV1(badV1);
-	CHECK_THROWS_WITH_AS(wf1->xfer(loadV1), doctest::Contains("Found version 1 but the earliest supported is 2"), XferException);
+	// version 1 payloads in their old layout: the version, SpecialAbilityUpdate's block, `made`, `has`, the weapon when `has`, the shot count.
+	// SpecialAbilityUpdate's block length is read off a weaponless version 2 save ([2][block][has = 0][shots]: 6 bytes around it)
+	XferSave saveMissingPre;
+	wfMissing1->xfer(saveMissingPre);
+	const std::vector<std::uint8_t> &mp = saveMissingPre.data();
+	REQUIRE(mp.size() > 6); // tolerance: a precondition (the SpecialAbilityUpdate block between the version and the 5 trailing bytes is not empty)
+	const size_t blockLen = mp.size() - 6;
+	const auto v1Payload = [&](const std::vector<std::uint8_t> &v2, bool made) {
+		std::vector<std::uint8_t> v1(v2.begin(), v2.begin() + 1 + (std::ptrdiff_t)blockLen); // the version and the block
+		v1[0] = 1;
+		v1.push_back(made ? 1 : 0);                                                       // version 1's `made`
+		v1.insert(v1.end(), v2.begin() + 1 + (std::ptrdiff_t)blockLen, v2.end());       // `has`, the weapon, the shot count as version 2 writes them
+		return v1;
+	};
+	// not made, no weapon in the payload: the constructor's weapon stays (RW 0x895C75), the stream stays aligned
+	{
+		XferLoad notMade(v1Payload(mp, false)); // the same SpecialAbilityUpdate block with `made` 0 and `has` 0
+		wf1->xfer(notMade);
+		CHECK(notMade.atEnd());
+		CHECK(wf1->ownedWeapon() != nullptr);
+		CHECK(wf1->ownedWeapon()->ammoInClip() == savedAmmo);
+	}
+	// a missing template: no weapon either way, the shot count still read
+	{
+		XferLoad missingV1(v1Payload(mp, false));
+		wfMissing1->xfer(missingV1);
+		CHECK(missingV1.atEnd());
+		CHECK(wfMissing1->ownedWeapon() == nullptr);
+	}
 
 	// Fire once, verify state change, and round-trip into a second world
 	const SpecialPowerTemplate *sp = f1.powers.findSpecialPowerTemplate("TestSpecialBoltPower");
@@ -336,6 +361,22 @@ TEST_CASE("LOCAL-59: WeaponFireSpecialAbilityUpdate xfer uses version 2, skips w
 	wf1->crc(h1);
 	wf2->crc(h2);
 	CHECK(h1.value() == h2.value());
+
+	// version 1, made and with its weapon (the fired state): the saved weapon is restored onto the constructor's
+	{
+		WeaponFireWorld f3;
+		Object *caster3 = f3.unit("TestWeaponedCaster", 'A', 100, 100);
+		REQUIRE(caster3);
+		auto *wf3 = dynamic_cast<WeaponFireSpecialAbilityUpdate *>(caster3->findModule("WeaponFireSpecialAbilityUpdate"));
+		REQUIRE(wf3);
+		XferLoad madeV1(v1Payload(saveFired.data(), true));
+		wf3->xfer(madeV1);
+		CHECK(madeV1.atEnd());
+		CHECK(wf3->shotsFired() == 1);
+		REQUIRE(wf3->ownedWeapon() != nullptr);
+		CHECK(wf3->ownedWeapon()->ammoInClip() == 2);
+		CHECK(wf3->ownedWeapon()->lastFireFrame() == wf1->ownedWeapon()->lastFireFrame());
+	}
 
 	// Missing weapon round-trips as null; loading a snapshot with weapon=true onto missing-weapon module throws
 	XferLoad loadMissing(saveMissing.data());
