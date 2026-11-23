@@ -209,14 +209,32 @@ TEST_CASE("LOCAL-91 ProductionUpdate: cancelUnitCreateByTemplate immediate, defe
 
 	XferSave saver;
 	pu->xfer(saver);
+	// loaded into another factory's module (review: reloading into the same module passes with the transfer removed)
+	Object *fort2 = w.make("L91_Fortress", w.teamOf("Alice"));
+	REQUIRE(fort2 != nullptr);
+	ProductionUpdate *pu2 = dynamic_cast<ProductionUpdate *>(fort2->getProductionUpdate());
+	REQUIRE(pu2 != nullptr);
 	XferLoad loader(saver.data().data(), saver.data().size());
-	pu->xfer(loader);
+	pu2->xfer(loader);
 	CHECK(loader.position() == saver.data().size());
-	CHECK(pu->isUnitInQueue(s3));
+	CHECK(pu2->isUnitInQueue(s3));
+	CHECK(pu2->isUnitInQueue(a1));
 
 	w.frames(1);
-	CHECK_FALSE(pu->isUnitInQueue(s3));
-	CHECK(pu->isUnitInQueue(a1));
+	CHECK_FALSE(pu2->isUnitInQueue(s3)); // the loaded deferred cancellation ran in the new module's update (RW 0x008A1B52)
+	CHECK(pu2->isUnitInQueue(a1));
+
+	// a version 1 snapshot (before the deferred list) loads with nothing waiting: the version byte 1 and the list's count gone
+	XferSave saveV2;
+	pu2->xfer(saveV2);
+	std::vector<std::uint8_t> v1 = saveV2.data();
+	REQUIRE(v1[0] == 2);
+	v1[0] = 1;
+	v1.resize(v1.size() - 4); // the empty list's 4-byte count
+	XferLoad loadV1(v1);
+	pu2->xfer(loadV1);
+	CHECK(loadV1.atEnd());
+	CHECK(pu2->isUnitInQueue(a1));
 }
 
 TEST_CASE("LOCAL-91 BuildableHeroListUpgrade: processUpgradeRemoval removes hero and cancels factory queue (RW 0x008BC5CB, RW 0x008BC519, RW 0x0078138B)")

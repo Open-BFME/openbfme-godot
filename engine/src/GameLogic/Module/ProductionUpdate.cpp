@@ -1037,6 +1037,11 @@ UpdateSleepTime ProductionUpdate::update()
 			{
 				cancelUnitCreateByTemplate(tt, true);
 			}
+			else
+			{
+				// RW keeps the template pointer itself; the port keeps its name, so a name no template answers (a snapshot of another data set) is an error
+				logic.reportError("ProductionUpdate: the deferred cancellation names no template: " + name);
+			}
 		}
 	}
 	pauseHeroEntries(); // RW 0x8A0669 (lane HERO-1)
@@ -1558,17 +1563,21 @@ void ProductionUpdate::crc(StateHasher &h) const
 	h.addBool(m_cancellingAll);
 	h.addBool(m_factoryDisabled);
 	h.addU32(m_heroCountdown); // lane HERO-1
-	h.addU32((std::uint32_t)m_pendingCancelTemplates.size());
-	for (const std::string &name : m_pendingCancelTemplates)
+	if (!m_pendingCancelTemplates.empty()) // hashed only while something waits (a game without a deferred cancellation keeps its hash)
 	{
-		h.addString(name);
+		h.addU32((std::uint32_t)m_pendingCancelTemplates.size());
+		for (const std::string &name : m_pendingCancelTemplates)
+		{
+			h.addString(name);
+		}
 	}
 }
 
 // ---- lane SAVE-4b: the snapshot (OpenBFME native, S-4190: the queue's entries with their templates by name, then the crc's fields) ---------------------
 void ProductionUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 2, 2);
+	XferVersion v{ 1, 2 }; // 2: LOCAL-91's deferred cancellation list (RW 0x008A30A0 / 0x008A1B52); version 1 (no list) still loads, the list empty
+	x.xferVersion(v);
 	xferUpdateModule(x);
 	GameLogic &logic = getObject()->logic();
 	// the queue: each entry's fewest bytes are its fixed fields with the three names empty (49); a load builds the queue aside, then replaces it
@@ -1623,6 +1632,11 @@ void ProductionUpdate::xfer(Xfer &x)
 	x.xferBool(&m_cancellingAll);
 	x.xferBool(&m_factoryDisabled);
 	x.xferUnsignedInt(&m_heroCountdown);
+	if (v.current < 2)
+	{
+		m_pendingCancelTemplates.clear(); // a version 1 snapshot predates the deferred list: nothing waits
+		return;
+	}
 	std::uint32_t pendingCount = x.isLoading() ? 0 : (std::uint32_t)m_pendingCancelTemplates.size();
 	x.xferCount(&pendingCount, 2, sizeof(std::string));
 	if (x.isLoading())
