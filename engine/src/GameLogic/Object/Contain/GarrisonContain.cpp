@@ -1186,8 +1186,16 @@ void GarrisonContain::containReactToTransformChange()
 // ---------------------------------------------------------------------------------------------------------------------------------
 
 // RW 0x991027 (the horde garrison's slot 0x80): every rider: a horde gets slot 0x84 (its AI command 0x3E), another rider with an AI gets aiExit (command 0x1A)
+// RW 0x867D6A (a plain GarrisonContain's slot 0x80, contain table RW 0xC5C698 + 0x80): every rider with an AI gets aiExit, no class checks (the same body as
+// OpenContain::orderAllPassengersToExit; only TunnelContain (RW 0xC5DCE0) and HordeGarrisonContain (RW 0xC5C9F0) point slot 0x80 at RW 0x87CE8F -> RW 0x991027).
+// lane PORT-329 / S-7715: branch by the contain's class on the module data pointer (m_horde, set for the HordeGarrisonContain family only)
 void GarrisonContain::orderAllPassengersToExit(int source)
 {
+	if (!m_horde)
+	{
+		OpenContain::orderAllPassengersToExit(source); // RW 0x867D6A
+		return;
+	}
 	const ContainedItemsList &list = *getContainedItemsList(); // RW 0x991027 reads contain slot 0x118 (a tunnel answers its network's list)
 	const std::vector<Object *> riders(list.begin(), list.end());
 	for (Object *r : riders)
