@@ -1813,8 +1813,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 		remove_view((uint32_t)id);
 		return;
 	}
-	const Coord3D shownAt = *d->getPosition();
-	const Transform3D xf = toTransform(d->getBasis(), shownAt, d->getInstanceScale());
+	float presentationBasis[9];
+	Coord3D shownAt;
+	d->getPresentationPose(presentationBasis, shownAt);
+	const Transform3D xf = toTransform(presentationBasis, shownAt, d->getInstanceScale());
 	const bool xfChanged = !v.haveXf || !(xf == v.lastXf);
 	// VIS-1 / STEALTH-1 / GARRISON-1 / lane VISUAL-2: what the presented snapshot leaves undrawn and the fogged ghost's light (Drawable::presentedLook,
 	// shared with the attached particle systems, the buffs and the streaks)

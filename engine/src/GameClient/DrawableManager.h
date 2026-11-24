@@ -149,6 +149,8 @@ private:
 	size_t m_dependencyUpdates = 0; ///< lane COMBAT-4: dependent drawables whose shared flags changed (RW 0x4BF2D8)
 	std::uint32_t m_nextSeq = 0;
 	size_t m_eventsApplied = 0;
+	double m_clientClockMs = 0.0;
+	unsigned m_clientFrame = 0; ///< LOCAL-25: the shared client frame counter the presentation physics steps by
 	std::vector<std::unique_ptr<Drawable>> m_slots; ///< index = drawable id
 	size_t m_live = 0;
 	size_t m_created = 0, m_destroyed = 0;
