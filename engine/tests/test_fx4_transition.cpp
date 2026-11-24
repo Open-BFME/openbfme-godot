@@ -366,7 +366,7 @@ TEST_CASE("fx4 bones: RandomBone draws the logic random among the drawable's bon
 	w.combat().setLaunchOffsets(nullptr);
 }
 
-TEST_CASE("fx4 save: the last damage record's type round-trips in ActiveBody's xfer version 2; a version 1 body loads and keeps UNDEFINED")
+TEST_CASE("fx4 save: the last damage record's type round-trips in ActiveBody's xfer (version 3); a version 1 body loads and keeps UNDEFINED")
 {
 	FxWorld w;
 	Object *a = w.unit("TdfxProbe", 'B', 400, 300);
@@ -386,7 +386,7 @@ TEST_CASE("fx4 save: the last damage record's type round-trips in ActiveBody's x
 	XferSave saved;
 	ba->xfer(saved);
 	REQUIRE_FALSE(saved.data().empty());
-	CHECK(saved.data()[0] == 2); // the version
+	CHECK(saved.data()[0] == 3); // the version (3: lane BLDGDEBRIS-1's side stage and values)
 	XferLoad load(saved.data());
 	bb->xfer(load);
 	REQUIRE(load.atEnd());
@@ -396,10 +396,10 @@ TEST_CASE("fx4 save: the last damage record's type round-trips in ActiveBody's x
 	XferSave again;
 	bb->xfer(again);
 	CHECK(again.data() == saved.data());
-	// version 1 (before lane FX-4): the same layout without the trailing type
+	// version 1 (before lane FX-4): the same layout without the trailing type (and without version 3's stage and four value / flag pairs, 24 bytes)
 	std::vector<std::uint8_t> v1 = saved.data();
 	v1[0] = 1;
-	v1.resize(v1.size() - 4);
+	v1.resize(v1.size() - 4 - 24);
 	XferLoad old(v1);
 	bc->xfer(old);
 	REQUIRE(old.atEnd());

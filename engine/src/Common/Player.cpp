@@ -12,6 +12,9 @@
 #include "Common/Team.h"
 #include "Common/Upgrade.h"
 #include "Common/Xfer.h"
+#include "GameLogic/GameLogic.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
+#include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
 
@@ -866,4 +869,19 @@ void Player::xfer(Xfer &x, TeamFactory &teams)
 	{
 		m_resourceGathering.reset(); // a version 1 snapshot predates the supply centers' registration
 	}
+}
+
+// PORT-198: RW 0x6AA688 (Player::onUnitCreated, called by RW 0x862BC5 after a spawn and RW 0x62B147 after a starting-base unit):
+//   * RW 0x6AA68B .. 0x6AA69F refreshes the script engine's object-change frame (RW 0x603300); this port evaluates the object-count conditions
+//     afresh (SCRIPT-1), so there is no cached frame to refresh, and Object::friend_objectEnteredWorld already registered the new object.
+//   * RW 0x6AA6A1 .. 0x6AA6AF forwards (factory, unit) to the player's AIPlayer vslot 0x1C; the AIPlayer team-build queue is not ported (S-1425).
+//   * RW 0x6AA6B2 .. 0x6AA6CA finds this player's skirmish AI (RW 0x6A950B) and, unless it is disabled (RW 0x6C77C9), calls RW 0x8F06FF
+//     with built = 0. That call is ported as SkirmishAIManager::unitCreated -> AIBaseBuilder::onStructureBuilt(..., false).
+void Player::onUnitCreated(Object *factory, Object *unit)
+{
+	if (!factory || !unit)
+	{
+		return; // both RW callees RW 0x8F0703 and RW 0x6C77C9 return before using a null factory
+	}
+	unit->logic().skirmishAI().unitCreated(*factory, *unit);
 }

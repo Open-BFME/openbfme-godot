@@ -29,6 +29,9 @@ namespace
 {
 // S-7581: noted when AIWanderState reaches the repulsor scan it does not port (RW 0x74BBCA .. 0x74BC06)
 const char *const kStopWanderRepulsor = "[S-7581] AIWanderState: the repulsor scan (AI::findClosestRepulsor RW 0x6FF3A2) and the flee to AIRunAwayPanicState (state 0x28) are not ported; a CAN_BE_REPULSED wanderer keeps wandering";
+// S-7581: noted when AIWanderState fails (no or an absent waypoint, a goal it cannot move to) and the machine takes the registered
+// substitution: retail's failure state 0x28 (AIRunAwayPanicState, RW 0x753E1F) is not ported, the port goes to AI_PANIC 0x14 (AIUpdate.cpp)
+const char *const kStopWanderFailure = "[S-7581] AIWanderState: a failed wander goes to AI_PANIC (0x14) instead of AIRunAwayPanicState (state 0x28, RW 0x753E1F), which is not ported";
 } // namespace
 
 const char *waypointPathStopLine()
@@ -388,6 +391,7 @@ StateReturnType AIWanderState::onEnter()
 	m_current = m_goalWaypoint;
 	if (m_current < 0)
 	{
+		owner().logic().noteStop(kStopWanderFailure);
 		return STATE_FAILURE;
 	}
 	applyWanderOffset(0x2954, 0x2955);
@@ -395,6 +399,10 @@ StateReturnType AIWanderState::onEnter()
 	m_waitFrames = (int)((std::uint32_t)owner().getID() & 7u) + 10; // RW 0x750C49 .. 0x750C5C
 	const StateReturnType ret = startMove();
 	ai().setPathExtraDistance(calcExtraPathDistance()); // RW 0x750C6F -> 0x6631AE
+	if (ret == STATE_FAILURE)
+	{
+		owner().logic().noteStop(kStopWanderFailure);
+	}
 	return ret;
 }
 
@@ -408,6 +416,7 @@ StateReturnType AIWanderState::update()
 	}
 	if (!m_move)
 	{
+		owner().logic().noteStop(kStopWanderFailure);
 		return STATE_FAILURE;
 	}
 	const StateReturnType moved = m_move->update(); // RW 0x74BBC3
@@ -435,7 +444,12 @@ StateReturnType AIWanderState::update()
 		}
 		applyWanderOffset(0x2987, 0x2988);
 		const StateReturnType r = startMove();
-		return r == STATE_FAILURE ? STATE_FAILURE : STATE_CONTINUE;
+		if (r == STATE_FAILURE)
+		{
+			owner().logic().noteStop(kStopWanderFailure);
+			return STATE_FAILURE;
+		}
+		return STATE_CONTINUE;
 	}
 	return STATE_CONTINUE;
 }

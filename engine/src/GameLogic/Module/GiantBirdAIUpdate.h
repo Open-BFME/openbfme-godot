@@ -39,7 +39,7 @@
 //     RW 0xC2DB00: enter RW 0x76A451, update RW 0x76B14A, exit RW 0x76B228, next point RW 0x76A496), entered by RW 0x76D84B; each next point is the path's
 //     point at the terrain height + the path height, the following one the look-ahead (AI flags bit 7), built with RW 0x769EA5 (mask RW 0xDE7908); the
 //     loop flag + 0x614 restarts the path when the waypoint chain closes on its first waypoint. BFME2 decomp GiantBirdFollowPathStates.cpp,
-//     GiantBirdAIUpdatePrivateFollowPathAppend.cpp, GiantBirdAIUpdate_privateFollowPath.cpp, Rva00368344Rva0036BB2F.cpp (RotWK read in Ghidra: the same statements);
+//     GiantBirdAIUpdate.cpp (privateFollowPathAppend), GiantBirdAIUpdate_privateFollowPath.cpp, Rva00368344Rva0036BB2F.cpp (RotWK read in Ghidra: the same statements);
 //
 //   * the face commands 0x26 / 0x27: AI vslots 0x114 / 0x118 (RW 0x76B543 / 0x76B559) -> RW 0x76AB4E (target position, source, object flag): unless IMMOBILE,
 //     the goal angle + 0x5F0 = the angle to the point + the orientation, the machine cleared, the goal position the bird's own, the source, state 0x3FF

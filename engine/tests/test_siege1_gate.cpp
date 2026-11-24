@@ -237,27 +237,33 @@ TEST_CASE("siege1 gate: the stone and bolt throwers in front of Helm's Deep's ga
 	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the throwers' drives, the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps them): the catapult 7 shots (6), one contact while the gate stands (0), death 224 (190); the trebuchet death 387 (341); the Dwarven
 	// catapult no contact (2), death 301 (369); the ballista one contact (0); what they met was not identified (as since q31)
 	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): shots 7 -> 9
-	CHECK(c.shots == 9);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): shots 9 -> 7
+	CHECK(c.shots == 7);
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): contacts while it stood 1 -> 0
 	CHECK(c.contactsWhileStanding == 0);
 	CHECK(c.firstHit == 20);
 	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): death 224 -> 292
-	CHECK(c.deathFrame == 292);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): death 292 -> 224
+	CHECK(c.deathFrame == 224);
 	const GateRun t = pinnedRun(*s, kHelmsDeep, "Main Gate", "GondorTrebuchet", 400.0f, 600);
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): contacts while it stood 0 -> 1
 	CHECK(t.contactsWhileStanding == 1);
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first hit 19 -> 18
-	CHECK(t.firstHit == 18);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): first hit 18 -> 19
+	CHECK(t.firstHit == 19);
 	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): death 387 -> 386
-	CHECK(t.deathFrame == 386);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): death 386 -> 341
+	CHECK(t.deathFrame == 341);
 	const GateRun dc = pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenCatapult", 400.0f, 600);
 	// its two stones a throw (until q31): both met HelmsDeepGatehouseLeft at frame 102 and, at frame 341, the front of the arch (HelmsDeepGatehouseCenter) 51 before
 	// its centre at z 174, below the lintel (the stones fell short; not the lintel reaching down, which the pair rule removed)
-	CHECK(dc.contactsWhileStanding == 0);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): contacts while it stood 0 -> 2
+	CHECK(dc.contactsWhileStanding == 2);
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the Dwarven catapult's death 301 -> 267
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 267 -> 367
 	// pin: merge queue q42 (#220: a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 / 0x6EA52E; measured once on the merged tree and at each merge point, #216, CASTLEATK-1 and #225 keep it): death 367 -> 334
-	CHECK(dc.deathFrame == 334);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): death 334 -> 266
+	CHECK(dc.deathFrame == 266);
 	const GateRun b = pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBallista", 400.0f, 600);
 	// merge queue q27: one contact while the gate stands (was 0) and death 311 -> 389, LOS-1 (the terrain line of sight with the wall layers' heights;
 	// measured at each merge point)
@@ -274,13 +280,15 @@ TEST_CASE("siege1 gate: Mordor's catapult and Gondor's trebuchet in front of Min
 	// merge queue q28 (measured once on the merged tree and at each merge point): the catapult's stones no longer meet MinisGate1 while the gate stands
 	// (1 -> 0) and the first hit is at 20 (21); the trebuchet breaks the gate at 158 (203)
 	// lane PATH-REBUILD (the found paths rebuilt from their optimised nodes, RW 0x767B0E; the throwers' drives, the AI defender and the random stream move; measured twice on the lane's tree): the catapult one contact while the gate stands (0), first hit 23 (21), death 125 (123); the trebuchet holds
-	CHECK(c.contactsWhileStanding == 1);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): contacts while the gate stood 1 -> 0
+	CHECK(c.contactsWhileStanding == 0);
 	// With map creeps removed, both first-hit engine pins are frame 21.
 	// Contact limits and the original gate-death pins remain unchanged.
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): first hit 23 -> 22
 	CHECK(c.firstHit == 22);
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 125 -> 124
-	CHECK(c.deathFrame == 124);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): death 124 -> 90
+	CHECK(c.deathFrame == 90);
 	const GateRun t = pinnedRun(*s, kMinasTirith, "Gate", "GondorTrebuchet", 400.0f, 600);
 	CHECK(t.contactsWhileStanding == 0);
 	CHECK(t.firstHit == 21);
@@ -295,7 +303,8 @@ TEST_CASE("siege1 gate: the rams, Grond and the mumak in front of the gates (no 
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 131);
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 143 -> 136
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 136); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244); lane WARG-1 (FindClosestPath, measured once on the lane's tree): 145 -> 143
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorGrond", 250.0f, 600).deathFrame == 128);
+	// pin: lane FIRINGTRACKER-1 (the FiringTracker read on the bytes, RW 0x8E326D / 0x8E30DD: a weapon without ContinuousFireCoast keeps its shot count between shots instead of losing it on every AI update, so a PER_ATTACK pre-attack delay, RW 0x68C54E -> 0x8E2E12, is paid on the first shot at a target only; the tracker runs as the PHASE_FINAL FiringTrackerHelper; measured on the lane's tree): the defenders shoot Grond faster, death 128 -> 114
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorGrond", 250.0f, 600).deathFrame == 114);
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorMumakil", 250.0f, 600).deathFrame == 246); // merge queue q27: 246 -> 247, LOS-1; lane PATH-REBUILD: 247 -> 246
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 90 -> 94
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 94);

@@ -308,3 +308,47 @@ End
 	CHECK(stopNoted(*w.logic, "[S-7581]"));
 	w.logic->setTerrain(nullptr);
 }
+
+TEST_CASE("LOCAL-57 synthetic: a wander that fails at once (no or an absent waypoint) reports S-7581's failure substitution (RW 0x753E1F)")
+{
+	const char *extraIni = R"(
+Object PlainWanderer
+  KindOf = INFANTRY SELECTABLE
+  Body = ActiveBody ModuleTag_Body
+    MaxHealth = 100
+  End
+  Behavior = AIUpdateInterface ModuleTag_AI
+  End
+  LocomotorSet
+    Locomotor = WalkerLoco
+    Condition = SET_NORMAL
+    Speed = 10
+  End
+End
+)";
+	const char *failure = "[S-7581] AIWanderState: a failed wander goes to AI_PANIC";
+	for (const int waypoint : { -1, 999 })
+	{
+		CAPTURE(waypoint);
+		combattest::CombatWorld w(extraIni, 101);
+		WanderTerrain terrain(w);
+		Object *unit = w.unit("PlainWanderer", 'A', 380.0f, 200.0f);
+		REQUIRE(unit->getAIUpdateInterface()->aiWander(waypoint, CMD_FROM_SCRIPT));
+		w.logic->runLogicFrame();
+		CHECK(unit->getAIUpdateInterface()->currentStateId() != (unsigned)AI_WANDER);
+		CHECK(stopNoted(*w.logic, failure));
+		w.logic->setTerrain(nullptr);
+	}
+	// a wander on a real path never fails, so it never notes the substitution
+	combattest::CombatWorld w(extraIni, 101);
+	WanderTerrain terrain(w);
+	Object *unit = w.unit("PlainWanderer", 'A', 380.0f, 200.0f);
+	REQUIRE(unit->getAIUpdateInterface()->aiWander(1, CMD_FROM_SCRIPT));
+	for (int i = 0; i < 20; ++i)
+	{
+		w.logic->runLogicFrame();
+	}
+	CHECK(unit->getAIUpdateInterface()->currentStateId() == (unsigned)AI_WANDER);
+	CHECK_FALSE(stopNoted(*w.logic, failure));
+	w.logic->setTerrain(nullptr);
+}

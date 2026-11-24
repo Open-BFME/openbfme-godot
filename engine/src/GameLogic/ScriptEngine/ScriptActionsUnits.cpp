@@ -82,6 +82,7 @@
 #include "GameClient/ControlBarCommands.h"
 #include "Common/CommandPoints.h"
 #include "Common/BuildAssistant.h"
+#include "GameLogic/BuildAssistantSell.h"
 #include "Common/Upgrade.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -998,6 +999,105 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 			{
 				dozer->construct(*tt, w->location, param(a, 2).realValue, *o->getControllingPlayer());
 			}
+		}
+		return true;
+	}
+	if (name == "PLAYER_ENABLE_FACTORIES") // RW 0x7CC30D -> RW 0x7BBE76(player, templateName) -> Player::enableFactories RW 0x6AC7C5(templateName, 1)
+	{
+		const std::string &tmplName = param(a, 1).stringValue;
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() == p && o->getTemplate() && o->getTemplate()->getName() == tmplName)
+				{
+					o->setScriptStatus(1, false); // RW 0x6AC821 -> RW 0x69317D(1, 0): clears DISABLED_SCRIPT_DISABLED
+				}
+			}
+		}
+		return true;
+	}
+	if (name == "PLAYER_SELL_EVERYTHING") // RW 0x7CC288 -> RW 0x7BBD3B(player) -> Player::sellEverythingUnderTheSun RW 0x6ABFF9
+	{
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			std::vector<Object *> objs;
+			for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() == p)
+				{
+					objs.push_back(o);
+				}
+			}
+			for (Object *o : objs)
+			{
+				logic.sellList().sellObject(o); // RW 0x6AC042 -> TheBuildAssistant vslot 0x6C (RW 0x7966BB)
+			}
+		}
+		return true;
+	}
+	if (name == "TEAM_SET_PLAYERS_NEAREST_UNIT_OF_TYPE_TO_REFERENCE") // RW 0x7CE80F -> RW 0x7C50BB(types, team, refName)
+	{
+		Team *t = ScriptConditions::team(engine, param(a, 1).stringValue); // RW 0x759FDA(team, 0)
+		if (!t)
+		{
+			return true;
+		}
+		Player *p = t->getControllingPlayer(); // RW 0x79FD6F
+		Coord3D centre{ 0.0f, 0.0f, 0.0f };
+		int n = 0;
+		for (Object *o : ScriptConditions::members(*t)) // RW 0x7A0ECD: Team::getApproximatePosition (all members)
+		{
+			centre.x = SimMath::sseAdd(centre.x, o->getPosition()->x);
+			centre.y = SimMath::sseAdd(centre.y, o->getPosition()->y);
+			centre.z = SimMath::sseAdd(centre.z, o->getPosition()->z);
+			++n;
+		}
+		if (n > 0)
+		{
+			const float inv = SimMath::sseDiv(1.0f, SimMath::sseFromInt32(n));
+			centre.x = SimMath::sseMul(inv, centre.x);
+			centre.y = SimMath::sseMul(inv, centre.y);
+			centre.z = SimMath::sseMul(inv, centre.z);
+		}
+		const auto closestOf = [&](const ThingTemplate *tt) -> Object * {
+			auto owned = [p](Object &o) { return o.getControllingPlayer() == p; }; // RW 0xC10E38 -> RW 0x66107F
+			auto typed = [tt](Object &o) { return ScriptConditions::equivalentTemplates(o.getTemplate(), tt); }; // RW 0xC3603C -> RW 0x66114D
+			PartitionFilterFn<decltype(owned)> fOwned(owned);
+			PartitionFilterFn<decltype(typed)> fTyped(typed);
+			return logic.partition().getClosestObject(centre, 1000000.0f, FROM_CENTER_2D, { &fOwned, &fTyped });
+		};
+		Object *found = nullptr;
+		if (const std::vector<std::string> *list = engine.findObjectList(param(a, 0).stringValue)) // RW 0x759158 -> RW 0x7C2F85
+		{
+			float best = 3.4028235e38f;
+			for (const std::string &typeName : *list)
+			{
+				const ThingTemplate *tt = logic.things().findTemplate(typeName);
+				Object *c = tt ? closestOf(tt) : nullptr;
+				if (!c)
+				{
+					continue;
+				}
+				const float dx = SimMath::sseSub(centre.x, c->getPosition()->x);
+				const float dz = SimMath::sseSub(centre.z, c->getPosition()->z);
+				const float dy = SimMath::sseSub(centre.y, c->getPosition()->y);
+				const float d = SimMath::sseAdd(SimMath::sseAdd(SimMath::sseMul(dz, dz), SimMath::sseMul(dy, dy)), SimMath::sseMul(dx, dx));
+				if (d < best)
+				{
+					best = d;
+					found = c;
+				}
+			}
+		}
+		else if (const ThingTemplate *tt = logic.things().findTemplate(param(a, 0).stringValue))
+		{
+			found = closestOf(tt);
+		}
+		if (found)
+		{
+			engine.setReference(param(a, 2).stringValue, *found); // RW 0x7C51C2 -> RW 0x608397
+			engine.nameInCache(param(a, 2).stringValue, *found);  // RW 0x7C51D2 -> RW 0x60A1D5
 		}
 		return true;
 	}

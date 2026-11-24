@@ -336,7 +336,7 @@ public:
 
 protected:
 	void upgradeImplementation() override; ///< RW 0x8BC4C6
-	void processUpgradeRemoval() override {}
+	void processUpgradeRemoval() override; ///< slot 8, RW 0x008BC5CB
 };
 
 namespace HeroModules
