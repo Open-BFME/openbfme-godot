@@ -303,7 +303,8 @@ TEST_CASE("siege1 gate: the rams, Grond and the mumak in front of the gates (no 
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 131);
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 143 -> 136
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", 250.0f, 600).deathFrame == 136); // lane MODCOMPAT-MOD1: 101 -> 102 (GeometryUpgrade's own GeometryInfo per object, RW 0x68B244); lane WARG-1 (FindClosestPath, measured once on the lane's tree): 145 -> 143
-	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorGrond", 250.0f, 600).deathFrame == 128);
+	// pin: lane FIRINGTRACKER-1 (the FiringTracker read on the bytes, RW 0x8E326D / 0x8E30DD: a weapon without ContinuousFireCoast keeps its shot count between shots instead of losing it on every AI update, so a PER_ATTACK pre-attack delay, RW 0x68C54E -> 0x8E2E12, is paid on the first shot at a target only; the tracker runs as the PHASE_FINAL FiringTrackerHelper; measured on the lane's tree): the defenders shoot Grond faster, death 128 -> 114
+	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorGrond", 250.0f, 600).deathFrame == 114);
 	CHECK(pinnedRun(*s, kHelmsDeep, "Main Gate", "MordorMumakil", 250.0f, 600).deathFrame == 246); // merge queue q27: 246 -> 247, LOS-1; lane PATH-REBUILD: 247 -> 246
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): death 90 -> 94
 	CHECK(pinnedRun(*s, kMinasTirith, "Gate", "IsengardBatteringRam", 250.0f, 600).deathFrame == 94);

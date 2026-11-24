@@ -69,6 +69,7 @@ class ExperienceTracker;
 class GameLogic;
 class ObjectClientHooks;
 class ObjectWeapons;
+class FiringTrackerHelper;
 struct DamageInfo;
 class Team;
 class TeamPrototype;
@@ -434,6 +435,8 @@ public:
 	// ---- modules ----------------------------------------------------------------------------------------------------------
 	const std::vector<std::unique_ptr<BehaviorModule>> &modules() const { return m_modules; }
 	size_t helperCount() const { return m_helperCount; }
+	// RW Object + 0x248: the FiringTrackerHelper (null when the template cannot have a weapon); lane FIRINGTRACKER-1
+	FiringTrackerHelper *firingTrackerHelper() const { return m_firingTrackerHelper; }
 	BodyModuleInterface *getBodyModule() const { return m_body; }
 	ContainModuleInterface *getContain() const { return m_contain; }
 	AIUpdateInterface *getAIUpdateInterface() const { return m_ai; }
@@ -648,6 +651,7 @@ private:
 	bool m_moduleLookupsCached = false; ///< m_moduleCachesBuilt until ~Object starts deleting the modules
 	void rebuildCollideModules();
 	size_t m_helperCount = 0;
+	FiringTrackerHelper *m_firingTrackerHelper = nullptr; ///< RW + 0x248, owned by m_modules
 	BodyModuleInterface *m_body = nullptr;
 	ContainModuleInterface *m_contain = nullptr;
 	AIUpdateInterface *m_ai = nullptr;
