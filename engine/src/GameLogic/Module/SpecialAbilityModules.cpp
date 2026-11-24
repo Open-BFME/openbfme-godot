@@ -17,6 +17,7 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Contain/OpenContainRuntime.h"
 
+#include "Common/Audio/AudioRequests.h"
 #include "Common/GameCommon.h"
 #include "Common/INIException.h"
 #include "Common/Player.h"
@@ -1686,7 +1687,16 @@ void SpecialAbilityUpdate::startPacking(bool success)
 	{
 		obj->getAIUpdateInterface()->aiBusy(CMD_FROM_AI); // RW 0x852E2A(0, 2): AI command 0x31
 	}
-	(void)success; // RW 0x85362A: the voice of a success (client)
+	if (success && t)
+	{
+		const int type = t->getFinalOverride()->m_type; // RW 0x85365C / 0x85366A -> 0x688D3C, + 0x1C
+		if (type == 0x1A || type == 0x1D)
+		{
+			// RW 0x853661 .. 0x85368D: SPECIAL_BLACKLOTUS_CAPTURE_BUILDING (0x1A) / SPECIAL_INFANTRY_CAPTURE_BUILDING (0x1D) -> 0x7DD (VoiceCaptureBuildingComplete)
+			AudioApi::postUnitVoice(0x7DD, obj->getID());
+		}
+		// RW 0x853679 (0x7DE VoiceTaskComplete on other powers) and RW 0x8536BD (EvaEventToPlayOnSuccess) remain outside Port 86
+	}
 }
 
 // RW 0x8536EA

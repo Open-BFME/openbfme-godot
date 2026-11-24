@@ -3,6 +3,7 @@
 
 #include "GameLogic/AI/AIEmotionStates.h"
 
+#include "Common/Audio/AudioRequests.h"
 #include "Common/GameCommon.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -316,7 +317,9 @@ StateReturnType AIBackAwayState::update()
 	}
 	if (attacked && !machine().temporaryStateLocked())
 	{
-		return STATE_SUCCESS; // the client's VoiceDesperateAttack (RW 0x8DEDBB) is not ported (S-1027)
+		// RW 0x754772 .. 0x7547B4: { owner->getDrawable() } -> pickAndPlayUnitVoiceResponse(0x7DB)
+		AudioApi::postUnitVoice(0x7DB, owner().getID());
+		return STATE_SUCCESS;
 	}
 	return STATE_CONTINUE;
 }

@@ -23,7 +23,7 @@
 //     model conditions cleared); a horde records its members' back-up points (horde interface slot 0x19C RW 0x878905), sets "cowering" (0x1A0) and is marked dirty
 //     (0x1D0); a lone object turns to the source. update RW 0x7546DD: the source gone, or dead without KindOf bit 0x8B (template + 0x117 bit 3) -> SUCCESS; no AI ->
 //     FAILURE; attacked within 4 seconds (RW 0x68C933, a horde: slot 0x90 RW 0x86EE52) by an attacker with an AI (RW 0x693A6E -> AI vslot 0x248, true) while the
-//     temporary state is not locked -> SUCCESS (the client's VoiceDesperateAttack event, RW 0x8DEDBB: not ported). onExit RW 0x741CA9: the outermost container's
+//     temporary state is not locked -> posts client VoiceDesperateAttack (0x7DB, RW 0x7547AF -> 0x8DEDBB) and returns SUCCESS. onExit RW 0x741CA9: the outermost container's
 //     tracker drops its FEAR request (RW 0x68F3A3(4)), a horde stops cowering.
 //   * 58 AIQuarrelState (RW 0x7411AC, vtable 0xC28010): onEnter RW 0x74983C: the object's horde begins a quarrel (slot 0x1A8 RW 0x876DA5: spectators 50 .. 60 away,
 //     EMOTION_QUARRELSOME on the spectators, QUARRELSOME_FIGHTING on the two fighters); update RW 0x741D1C: attacked within 4 seconds -> SUCCESS; onExit RW 0x741CEF:
