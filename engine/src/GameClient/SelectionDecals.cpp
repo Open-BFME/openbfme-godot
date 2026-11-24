@@ -519,11 +519,11 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 			}
 			merge.push_back(it);
 		}
-		else if ((d.style & (kAlphaStyles | kAdditiveStyles)) || ((d.style & kTerrainClaimStyle) && d.maskW > 0))
+		else if ((d.style & (kAlphaStyles | kAdditiveStyles | kMultiplicativeStyle)) || ((d.style & kTerrainClaimStyle) && d.maskW > 0))
 		{
 			// lane PLACEDECAL-1: a SHADOW_DECAL_TERRAIN_CLAIM decal with its vertex mask is drawn with the same shader (RW 0x509A1F: 0x2000 -> 0x1198B3), its
 			// alpha weighted per terrain vertex (RW 0x50D264); a mask (of any decal) holds one alpha a vertex. Lane ECOCIRCLE-2: an additive style has one
-			// blend mode more (kAdditiveStyles), same shader, the destination kept
+			// blend mode more (kAdditiveStyles), same shader, the destination kept. Lane LOCAL-14: multiplicative SHADOW_DECAL (0x1, RW 0x509A70)
 			if ((d.maskW > 0 || d.maskH > 0 || !d.maskAlpha.empty()) &&
 				(d.maskW <= 0 || d.maskH <= 0 || d.maskAlpha.size() != (size_t)d.maskW * (size_t)d.maskH))
 			{
@@ -533,7 +533,7 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 			}
 			// lane HERORING-1: RotWK's flushDecals draws these with one blended shader (RW 0x509A1F: ShaderClass 0x1198B3, SRC_ALPHA / ONE_MINUS_SRC_ALPHA,
 			// no alpha test); only Texture is drawn (Texture2 of a non-merge decal is not used)
-			const float extent = std::max(d.size, d.sizeY > 0.0f ? d.sizeY : d.size); // lane PLACEDECAL-1: the longer side
+			const float extent = std::max(std::abs(d.size), d.sizeY != 0.0f ? std::abs(d.sizeY) : std::abs(d.size)); // lane PLACEDECAL-1, LOCAL-19: the longer side (sizeY may be negative)
 			Item it{ &d, {}, {}, true, extent * 0.5f * (d.angle != 0.0f ? 1.41421356f : 1.0f) };
 			if (!rect(d.texture, it.tex) || it.tex.w <= 0 || it.tex.h <= 0)
 			{
@@ -661,12 +661,24 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 		{
 			// lane HERORING-1: an alpha decal's turn as its cosine and sine (sel_alpha_at); no Texture2. Lane PLACEDECAL-1: its y size and its terrain-only
 			// flag or vertex mask (written below). Lane ECOCIRCLE-2: a terrain-only additive decal is -2 and one that may also draw on a wall -3; the
-			// additive flag is the style's (kAdditiveStyles)
+			// additive flag is the style's (kAdditiveStyles). Lane LOCAL-14: multiplicative SHADOW_DECAL is -4 (terrain-only) or -5 (terrain and wall)
 			const bool additive = (items[i].d->style & kAdditiveStyles) != 0;
+			const bool multiplicative = (items[i].d->style & kMultiplicativeStyle) != 0;
 			p[12] = std::cos(d.angle);
 			p[13] = std::sin(d.angle);
-			p[14] = d.sizeY > 0.0f ? d.sizeY : d.size;
-			p[15] = d.terrainOnly || d.maskW > 0 ? (additive ? -2.0f : -1.0f) : (additive ? -3.0f : 0.0f);
+			p[14] = d.sizeY != 0.0f ? d.sizeY : d.size;
+			if (multiplicative)
+			{
+				p[15] = d.terrainOnly || d.maskW > 0 ? -4.0f : -5.0f;
+			}
+			else if (additive)
+			{
+				p[15] = d.terrainOnly || d.maskW > 0 ? -2.0f : -3.0f;
+			}
+			else
+			{
+				p[15] = d.terrainOnly || d.maskW > 0 ? -1.0f : 0.0f;
+			}
 		}
 		else
 		{
@@ -698,7 +710,7 @@ bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::f
 				float *e = t + ((size_t)out.indexOffset + at) * 4;
 				e[0] = items[i].d->position.x;
 				e[1] = items[i].d->position.y;
-				e[2] = std::max(items[i].d->size, items[i].d->sizeY); // lane PLACEDECAL-1: the longer side (the circumcircle test)
+				e[2] = std::max(std::abs(items[i].d->size), items[i].d->sizeY != 0.0f ? std::abs(items[i].d->sizeY) : std::abs(items[i].d->size)); // lane PLACEDECAL-1, LOCAL-19: circumcircle test
 				e[3] = items[i].d->raised ? -(float)(i + 1) : (float)i; // lane SELWALL-1: the terrain skips a raised decal
 			}
 		}
@@ -954,8 +966,11 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 				}
 				const float *d = t + (size_t)(e[3] < 0.0f ? -e[3] - 1.0f : e[3]) * 16;
 				// lane ECOCIRCLE-2: rec3.w -2 / -3 is an additive decal; -3 may draw on a wall too (terrain-only is every other nonzero value)
+				// lane LOCAL-14: rec3.w -4 / -5 is multiplicative SHADOW_DECAL; -5 draws on wall too (RW 0x50CDE4)
 				const bool additive = d[15] == -2.0f || d[15] == -3.0f;
-				if (receiver == DecalReceiver::Wall && ((d[15] != 0.0f && d[15] != -3.0f) || !(std::fabs(z - d[7]) <= kSelectionDecalMaxHeight)))
+				const bool multiplicative = d[15] == -4.0f || d[15] == -5.0f;
+				const bool wallReceiver = d[15] == 0.0f || d[15] == -3.0f || d[15] == -5.0f;
+				if (receiver == DecalReceiver::Wall && (!wallReceiver || !(std::fabs(z - d[7]) <= kSelectionDecalMaxHeight)))
 				{
 					continue; // lane PLACEDECAL-1: a terrain-only decal draws on no wall top
 				}
@@ -975,6 +990,23 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 				if (d[15] > 0.0f)
 				{
 					a *= maskAt(t, (size_t)d[15], x, y) / 255.0f; // lane PLACEDECAL-1: the vertex mask
+				}
+				if (multiplicative)
+				{
+					// RW 0x509A70: SHADOW_DECAL multiplicative blend (SRCBLEND_ZERO / DSTBLEND_SRC_COLOR, MODULATE texel * diffuse)
+					float op = d[3] / 255.0f;
+					if (d[15] > 0.0f)
+					{
+						op *= maskAt(t, (size_t)d[15], x, y) / 255.0f;
+					}
+					for (int ch = 0; ch < 3; ++ch)
+					{
+						const float factor = s[ch] * (d[4 + ch] / 255.0f);
+						const float m = 1.0f - op + factor * op;
+						c[ch] *= m;
+					}
+					drawn = true;
+					continue;
 				}
 				for (int ch = 0; ch < 3; ++ch)
 				{
@@ -1039,7 +1071,7 @@ bool MergeDecalAtlas::update(const std::vector<SelectionDecal> &decals, const Se
 	const std::function<DecalImage(const std::string &)> &image, std::vector<std::string> &errors)
 {
 	// the merge decals' textures (Texture2 only for the two passes) and, lane HERORING-1, the alpha decals' Texture (lane ECOCIRCLE-2: the additive
-	// decals' too), not in the atlas yet
+	// decals' too; lane LOCAL-14: multiplicative shadow decals too), not in the atlas yet
 	std::vector<std::string> names = m_names;
 	auto known = [&](const std::string &n) {
 		return std::find(names.begin(), names.end(), n) != names.end() || std::find(m_rejected.begin(), m_rejected.end(), n) != m_rejected.end();
@@ -1047,7 +1079,7 @@ bool MergeDecalAtlas::update(const std::vector<SelectionDecal> &decals, const Se
 	for (const SelectionDecal &d : decals)
 	{
 		const bool merge = (d.style & kMergeStyle) != 0;
-		if (!merge && !(d.style & (kAlphaStyles | kAdditiveStyles)) && !((d.style & kTerrainClaimStyle) && d.maskW > 0))
+		if (!merge && !(d.style & (kAlphaStyles | kAdditiveStyles | kMultiplicativeStyle)) && !((d.style & kTerrainClaimStyle) && d.maskW > 0))
 		{
 			continue;
 		}

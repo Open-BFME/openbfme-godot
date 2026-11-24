@@ -1050,6 +1050,8 @@ add_executable(openbfme_tests
     # lane LOCAL-62 (capturing a production building cancels and releases its queue, RW 0x69974D -> RW 0x8A1666)
     tests/test_local_62.cpp
     tests/test_local_91.cpp
+    # lane LOCAL-14 (object decal shadows: ShadowTexture, ShadowSizeX / Y, RW 0x50BF6A)
+    tests/test_local_14.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy
