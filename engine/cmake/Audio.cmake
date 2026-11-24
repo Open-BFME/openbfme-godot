@@ -37,7 +37,9 @@ set(OPENBFME_AUDIO_TESTS
     tests/test_audio5.cpp
     tests/test_world_context.cpp
     tests/test_unit_voice.cpp
-    tests/test_music_scripts.cpp)
+    tests/test_music_scripts.cpp
+    # lane OBJSOUND-1 (S-707): the object sounds of a damage state change
+    tests/test_object_sounds.cpp)
 
 # Dev tool: decodes a WAV / MP3 file to raw s16le on stdout (tools/audio/oracle_check.py drives it against ffmpeg / mpg123).
 add_executable(audio_decode_cli tests/audio_decode_cli.cpp)
