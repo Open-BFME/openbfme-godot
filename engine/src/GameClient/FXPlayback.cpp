@@ -287,6 +287,10 @@ bool FXPlayback::playFXList(const std::string &name, const Coord3D &pos, bool as
 void FXPlayback::step()
 {
 	++m_frame;
+	if (m_stepHook)
+	{
+		m_stepHook(m_lightPulses); // lane LIGHTDRAW-1: the W3DLightDraw modules' draw (RW 0x4CF2B5)
+	}
 	// lane FEAT-BLDFX-1: the dynamic lights' On_Frame_Update (DONOR BFME2 0x6DE3D) and the expired decals (DONOR BFME2 0x10C785's release loop)
 	m_lightPulses.step();
 	m_decals.erase(std::remove_if(m_decals.begin(), m_decals.end(), [this](const DecalFx &d) { return d.expired(m_frame); }), m_decals.end());

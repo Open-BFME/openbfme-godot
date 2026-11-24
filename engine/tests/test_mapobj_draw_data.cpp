@@ -118,7 +118,8 @@ TEST_CASE("mapobj draw data: the registry's 20 draw classes are all classified, 
 		const ModuleFactory::ModuleTemplate *t = w.modules.findModuleTemplate(c.name, MODULETYPE_DRAW);
 		REQUIRE_MESSAGE(t != nullptr, c.name);
 		const bool typedKind = c.kind == W3D_DRAWKIND_MODEL || c.kind == W3D_DRAWKIND_TREE || c.kind == W3D_DRAWKIND_PROP || c.kind == W3D_DRAWKIND_FLOOR ||
-			std::string(c.name) == "W3DDefaultDraw" || std::string(c.name) == "W3DStreakDraw"; // RENDER-1 binds the streak data
+			std::string(c.name) == "W3DDefaultDraw" || std::string(c.name) == "W3DStreakDraw" || // RENDER-1 binds the streak data
+			c.kind == W3D_DRAWKIND_LIGHT; // LIGHTDRAW-1 binds W3DLightDraw's
 		CHECK_MESSAGE(t->typed == typedKind, c.name);
 	}
 	size_t drawClasses = 0;
@@ -127,13 +128,14 @@ TEST_CASE("mapobj draw data: the registry's 20 draw classes are all classified, 
 		(void)n;
 		++drawClasses;
 	}
-	CHECK(w.modules.typedCount() == 12); // + W3DStreakDraw (RENDER-1)
+	CHECK(w.modules.typedCount() == 13); // + W3DStreakDraw (RENDER-1), + W3DLightDraw (LIGHTDRAW-1)
 	CHECK(W3DDrawModules::find("w3dtreedraw") == nullptr); // class names are case sensitive
 	REQUIRE(W3DDrawModules::find("W3DTreeDraw") != nullptr);
 	CHECK(W3DDrawModules::find("W3DTreeDraw")->kind == W3D_DRAWKIND_TREE);
-	CHECK(W3DDrawModules::find("W3DLightDraw")->kind == W3D_DRAWKIND_NOT_DRAWN);
+	CHECK(W3DDrawModules::find("W3DLightDraw")->kind == W3D_DRAWKIND_LIGHT); // LIGHTDRAW-1: a dynamic light, no model
+	CHECK(W3DDrawModules::find("W3DTornadoDraw")->kind == W3D_DRAWKIND_NOT_DRAWN);
 	CHECK(W3DDrawModules::find("W3DDefaultDraw")->kind == W3D_DRAWKIND_NOTHING);
-	CHECK(W3DDrawModules::notDrawnClasses().size() == 10); // nine effect draws + W3DDefaultDraw
+	CHECK(W3DDrawModules::notDrawnClasses().size() == 9); // eight effect draws + W3DDefaultDraw
 }
 
 TEST_CASE("mapobj draw data: W3DTreeDraw parses every field and keeps the constructor defaults (RW 0x4CE3A8)")

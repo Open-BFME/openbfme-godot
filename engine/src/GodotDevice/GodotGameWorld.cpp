@@ -784,8 +784,13 @@ void GameWorld::clear_scene()
 	m_liveFX.reset(); // lane FX-2: the effect player leaves the logic and the drawables before they go
 	if (m_fxPlayer)
 	{
+		if (m_fxPlayer->playback())
+		{
+			m_fxPlayer->playback()->setStepHook(nullptr); // lane LIGHTDRAW-1: the light draws read the drawables
+		}
 		m_fxPlayer->clear();
 	}
+	m_lightDraws.reset();
 	m_spellStore.reset(); // lane SPELL-2 (review r1): the spell book screens hold the game's player and templates: they go before it
 	m_spellBar.reset();
 	m_cahCameraOffsetValid = false;
@@ -1301,6 +1306,17 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	if (m_fxPlayer && m_fxPlayer->playback())
 	{
 		m_liveFX.reset(new LiveFX(*m_game, *m_fxPlayer->playback())); // lane FX-2: from here on the logic's effect calls play
+		// lane LIGHTDRAW-1: the drawables' W3DLightDraw modules draw on the effect player's 30 Hz client step (RW 0x4CF2B5) into its light pool
+		m_lightDraws.reset();
+		m_fxPlayer->playback()->setStepHook([this](LightPulsePool &pool) {
+			if (m_game)
+			{
+				const double tl = nowMs();
+				const std::shared_ptr<const LogicSnapshot> presented = m_game->presentedSnapshot();
+				m_lightDraws.update(m_game->drawables(), presented.get(), m_shroudDrawn, pool);
+				m_lightDrawMs += timing::elapsedMs(tl);
+			}
+		});
 		// lane FEAT-BLDFX-1 (S-117): the map's Scorch objects enter the terrain scorch buffer (BFME2 W3DTerrainVisualLoad.cpp:526)
 		for (const MapScorch &s : m_game->classified().report.scorches)
 		{
@@ -1584,6 +1600,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 			}
 			stops.push_back(toGodot(W3DStreakDrawStopLine()));
 			stops.push_back(toGodot(W3DStreakRenderStopLine())); // lane PROJ-2
+			stops.push_back(toGodot(W3DLightDrawStopLine())); // lane LIGHTDRAW-1
 		}
 		else
 		{
@@ -4234,6 +4251,10 @@ Dictionary GameWorld::get_frame_timings() const
 	t["logic_ms"] = m_lastLogicMs;
 	t["sync_ms"] = m_lastSyncMs;
 	t["streak_ms"] = m_lastStreakMs;
+	t["light_draw_ms"] = m_lightDrawMs; // lane LIGHTDRAW-1: the W3DLightDraw steps since the last read (0 .. 4 client steps a render frame)
+	m_lightDrawMs = 0.0;
+	t["light_draws"] = (double)m_lightDraws.size(); // the modules with a light (the perf line prints the window's mean)
+	t["lights_shown"] = m_fxPlayer ? (double)m_fxPlayer->lightsShown() : 0.0; // the lights the object shaders got (0 .. 4)
 	t["advance_ms"] = m_lastAdvanceMs;
 	t["shroud_ms"] = m_lastShroudMs; // lane PERF-1: the parts of sync_ms and the first-use work of the frame
 	t["views_ms"] = m_lastViewsMs;
@@ -7036,6 +7057,9 @@ Dictionary GameWorld::get_fx_report() const
 		lights["additions"] = (int64_t)playback.lightPulses().additions();
 		lights["refused_range"] = (int64_t)playback.lightPulses().refusedRange();
 		lights["overflow"] = (int64_t)playback.lightPulses().overflow();
+		lights["draw_lights"] = (int64_t)playback.lightPulses().drawLightCount(); // lane LIGHTDRAW-1: the W3DLightDraw modules' lights
+		lights["light_draws"] = (int64_t)m_lightDraws.size();
+		lights["shown"] = (int64_t)m_fxPlayer->lightsShown(); // the lights the object shaders got in the last frame (0 .. 4)
 		d["light_pulses"] = lights;
 	}
 	return d;

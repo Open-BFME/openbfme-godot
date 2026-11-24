@@ -94,7 +94,7 @@ const char *kObjects =
 	"Object AnchoredXY\n  Draw = W3DScriptedModelDraw ModuleTag_01\n    DefaultModelConditionState\n      Model = Anch2\n    End\n  End\n"
 	"  GeometryRotationAnchorOffset = X:30 Y:20\n  KindOf = STRUCTURE\nEnd\n"
 	"Object Invisible\n  Draw = W3DScriptedModelDraw ModuleTag_01\n    DefaultModelConditionState\n      Model = None\n    End\n  End\n  KindOf = INFANTRY\nEnd\n"
-	"Object Effect1\n  Draw = W3DLightDraw ModuleTag_01\n  End\n  KindOf = STRUCTURE\nEnd\n"
+	"Object Effect1\n  Draw = W3DTornadoDraw ModuleTag_01\n  End\n  KindOf = STRUCTURE\nEnd\n"
 	"Object NoDraw\n  KindOf = STRUCTURE\nEnd\n"
 	"Object ShrubOnlyStruct\n  Draw = W3DScriptedModelDraw ModuleTag_01\n    DefaultModelConditionState\n      Model = ShrubStruct\n    End\n  End\n  KindOf = SHRUBBERY STRUCTURE\nEnd\n"
 	"Object FloorBuilding\n  Draw = W3DFloorDraw ModuleTag_Floor\n    ModelName = Bib\n    StartHidden = Yes\n  End\n"

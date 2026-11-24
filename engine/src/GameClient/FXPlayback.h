@@ -20,6 +20,7 @@
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "Libraries/WWVegas/WW3D2/part_emt.h"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -138,6 +139,9 @@ public:
 	const ScorchBuffer &scorches() const { return m_scorches; }
 	const std::vector<DecalFx> &decals() const { return m_decals; }
 	const LightPulsePool &lightPulses() const { return m_lightPulses; }
+	// lane LIGHTDRAW-1: called at the start of every client step with the light pool, before the lights' On_Frame_Update: the game's W3DLightDraw modules
+	// draw there (W3DLightDrawSet; retail draws each drawable once per Display::draw at the 30 FPS limit). Empty: none.
+	void setStepHook(std::function<void(LightPulsePool &)> hook) { m_stepHook = std::move(hook); }
 	// the CameraShakerVolume calls since the last take, for the view (the HUD forwards them to TacticalCamera and steps them there)
 	std::vector<CameraShakerFx> takeCameraShakers()
 	{
@@ -181,6 +185,7 @@ private:
 	ScorchBuffer m_scorches;             // lane FEAT-BLDFX-1 (TARGET RW 0x5E0045 / DONOR BFME2 0x67EA3)
 	std::vector<DecalFx> m_decals;      // lane FEAT-BLDFX-1 (TARGET RW 0x5E05AB / DONOR BFME2 0x330A37 / 0x10C785)
 	LightPulsePool m_lightPulses;       // lane FEAT-BLDFX-1 (TARGET RW 0x5DFAA3 / DONOR BFME2 0x4423C / 0x6DE3D)
+	std::function<void(LightPulsePool &)> m_stepHook; // lane LIGHTDRAW-1
 	std::vector<CameraShakerFx> m_pendingShakers; // lane FEAT-BLDFX-1 (TARGET RW 0x5DFE90 / DONOR BFME2 0x65DAD), taken by the view
 	std::map<std::string, std::shared_ptr<W3DFileContents>> m_emitterFiles;
 	std::unique_ptr<Environment> m_env;

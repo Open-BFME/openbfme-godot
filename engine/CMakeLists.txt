@@ -319,6 +319,7 @@ include(cmake/Platformicon1.cmake) # PLATFORMICON-1: each player's system beside
 include(cmake/Ownerfix1.cmake)  # OWNERFIX-1: problems the owner hit playing (OPENBFME_OWNERFIX1_TESTS)
 include(cmake/B2spell1.cmake)  # B2SPELL-1: the BFME2 campaign spell book (OPENBFME_B2SPELL1_TESTS)
 include(cmake/Visual2.cmake)    # VISUAL-2: the owner's fog leak, tree sway and colouring (OPENBFME_VISUAL2_SOURCES / _TESTS)
+include(cmake/Lightdraw1.cmake) # LIGHTDRAW-1: W3DLightDraw, the dynamic light of fires and torches (OPENBFME_LIGHTDRAW1_SOURCES / _TESTS)
 include(cmake/Ownerfix2.cmake)  # OWNERFIX-2: the owner's playtest of 2026-10-17 (OPENBFME_OWNERFIX2_CLIENT_SOURCES / _TESTS)
 include(cmake/Lumber1.cmake)    # LUMBER1: the evil lumber mills' harvesting workers (appends to OPENBFME_SIM_SOURCES; OPENBFME_LUMBER1_TESTS)
 include(cmake/Trees1.cmake)     # TREES1: units crush trees, construction clears them (OPENBFME_TREES1_TESTS)
@@ -405,6 +406,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_CAMP2_SOURCES}
     ${OPENBFME_CAMPUI1_STANCE_SOURCES}
     ${OPENBFME_VISUAL2_SOURCES}
+    ${OPENBFME_LIGHTDRAW1_SOURCES}
     ${OPENBFME_CAMPSAVE1_SOURCES}
     src/Common/AsciiString.cpp
     src/Common/ShaderVaryings.cpp
@@ -914,6 +916,7 @@ add_executable(openbfme_tests
     ${OPENBFME_OWNERFIX1_TESTS}
     ${OPENBFME_B2SPELL1_TESTS}
     ${OPENBFME_VISUAL2_TESTS}
+    ${OPENBFME_LIGHTDRAW1_TESTS}
     ${OPENBFME_OWNERFIX2_TESTS}
     ${OPENBFME_WOTR1_TESTS}
     ${OPENBFME_MENUFIX1_TESTS}

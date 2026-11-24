@@ -36,6 +36,7 @@
 #include "GameNetwork/NetGameSession.h"
 #include "GameNetwork/ProfileChoice.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DStreakDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DVegetationSway.h"
 #include "GodotDevice/GodotW3DMaterial.h"
@@ -970,6 +971,7 @@ private:
 	double m_timeScale = 1.0;
 	double m_textureClock = 0.0;
 	double m_lastAdvanceMs = 0.0, m_lastLogicMs = 0.0, m_lastSyncMs = 0.0, m_lastStreakMs = 0.0;
+	mutable double m_lightDrawMs = 0.0; ///< lane LIGHTDRAW-1: the light draw steps' time since get_frame_timings last read it
 	// lane PERF-1: what the last advance spent where, for the hitch report of the benchmarks (get_frame_timings): the shroud texture, the views, the effect
 	// player, and the first-use work (models the dynamic instancer built, streak materials created) with its time
 	double m_lastShroudMs = 0.0, m_lastViewsMs = 0.0, m_lastFxMs = 0.0, m_lastNewModelMs = 0.0;
@@ -1025,6 +1027,7 @@ private:
 	ObjectID m_glowHost;                       ///< lane GLOW-1: the loaded game's glow pass host (a child, freed by clear_scene)
 	int64_t m_effectsLod = 4;                  ///< lane GLOW-1: GameLODManager::kDetectedLevel until the options say otherwise
 	std::unique_ptr<LiveFX> m_liveFX;          ///< destroyed before m_game (it is the logic's FX sink and the drawables' FX host)
+	W3DLightDrawSet m_lightDraws;              ///< lane LIGHTDRAW-1: the drawables' W3DLightDraw modules (stepped by the effect player's step hook)
 	std::unique_ptr<GodotWeather> m_weather;   ///< lane WEATHER-1: the map's weather (snow / rain, darkness, lightning, its sound); destroyed before m_game
 	// lane SPELL-4: the BuffNugget buffs (GameClient/BuffDraw.h) as instances of the live objects' instancer, by TBuff serial
 	std::map<uint64_t, int64_t> m_buffInstances;

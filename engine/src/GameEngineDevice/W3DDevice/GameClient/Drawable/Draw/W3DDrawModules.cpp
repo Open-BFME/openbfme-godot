@@ -4,6 +4,7 @@
 
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
 
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DStreakDraw.h"
@@ -20,7 +21,7 @@ const std::vector<W3DDrawClassInfo> kClasses = {
 	{ "W3DFloorDraw", W3D_DRAWKIND_FLOOR },
 	{ "W3DHordeModelDraw", W3D_DRAWKIND_MODEL },
 	{ "W3DLaserDraw", W3D_DRAWKIND_NOT_DRAWN },
-	{ "W3DLightDraw", W3D_DRAWKIND_NOT_DRAWN },
+	{ "W3DLightDraw", W3D_DRAWKIND_LIGHT },
 	{ "W3DProjectileStreamDraw", W3D_DRAWKIND_NOT_DRAWN },
 	{ "W3DPropDraw", W3D_DRAWKIND_PROP },
 	{ "W3DQuadrupedDraw", W3D_DRAWKIND_MODEL },
@@ -67,6 +68,7 @@ void W3DDrawModules::registerTypedDrawModuleData(ModuleFactory &modules)
 	modules.bindTypedData<W3DTankDrawModuleData>("W3DTankDraw", MODULETYPE_DRAW);
 	modules.bindTypedData<W3DSupplyDrawModuleData>("W3DSupplyDraw", MODULETYPE_DRAW);
 	modules.bindTypedData<W3DStreakDrawModuleData>("W3DStreakDraw", MODULETYPE_DRAW); // RENDER-1: RW 0x46473E / 0xBE39F8
+	modules.bindTypedData<W3DLightDrawModuleData>("W3DLightDraw", MODULETYPE_DRAW);   // LIGHTDRAW-1: RW 0x464626 / 0xBE3638
 }
 
 std::vector<std::string> W3DDrawModules::notDrawnClasses()
