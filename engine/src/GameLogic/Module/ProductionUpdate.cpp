@@ -761,6 +761,64 @@ void ProductionUpdate::cancelUnitCreateByType(const ThingTemplate *type, bool al
 }
 
 // RW 0x8A056C
+// slot 9, RW 0x008A03C1
+bool ProductionUpdate::isUnitInQueue(ProductionID id) const
+{
+	for (const auto &e : m_queue)
+	{
+		// RW 0x00729661: PRODUCTION_UNIT (1) or PRODUCTION_BUILD_INDEX (3)
+		if ((e->type == PRODUCTION_UNIT || e->type == PRODUCTION_BUILD_INDEX) && e->productionID == id)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// slot 19, RW 0x008A0625
+int ProductionUpdate::countValue30InQueue(int value30) const
+{
+	int count = 0;
+	for (const auto &e : m_queue)
+	{
+		if (e->value30 == value30)
+		{
+			++count;
+		}
+	}
+	return count;
+}
+
+// slot 13, RW 0x008A30A0
+void ProductionUpdate::cancelUnitCreateByTemplate(const ThingTemplate *unitType, bool immediate)
+{
+	if (!unitType)
+	{
+		return;
+	}
+	if (!immediate)
+	{
+		m_pendingCancelTemplates.push_back(unitType->getName());
+		return;
+	}
+	// RW 0x008A30BF .. 0x008A310B: cancel every unfinished (< 100.0f, RW 0xBD88D8) unit or hero entry
+	// whose template is equivalent (RW 0x73D5C2)
+	std::vector<ProductionID> toCancel;
+	for (const auto &e : m_queue)
+	{
+		if (e->percentComplete < 100.0f &&
+			(e->type == PRODUCTION_UNIT || e->type == PRODUCTION_BUILD_INDEX) &&
+			BuildAssistant::isEquivalentTo(unitType, e->objectToProduce))
+		{
+			toCancel.push_back(e->productionID);
+		}
+	}
+	for (ProductionID id : toCancel)
+	{
+		cancelUnitCreate(id);
+	}
+}
+
 int ProductionUpdate::countUnitTypeInQueue(const ThingTemplate *type) const
 {
 	int n = 0;
@@ -968,7 +1026,24 @@ UpdateSleepTime ProductionUpdate::update()
 	GameLogic &logic = us->logic();
 	const UnsignedInt now = logic.getFrame();
 	const DoorBits &bits = doorBits();
-	// (the pending template name set RW +0x130 (RW 0x8A1B52) is filled by a slot whose caller is not located)
+	// RW 0x008A1B52: drain deferred template cancellations queued by slot 13 (RW 0x008A30A0)
+	if (!m_pendingCancelTemplates.empty())
+	{
+		std::vector<std::string> pending = std::move(m_pendingCancelTemplates);
+		m_pendingCancelTemplates.clear();
+		for (const std::string &name : pending)
+		{
+			if (const ThingTemplate *tt = logic.things().findTemplate(name))
+			{
+				cancelUnitCreateByTemplate(tt, true);
+			}
+			else
+			{
+				// RW keeps the template pointer itself; the port keeps its name, so a name no template answers (a snapshot of another data set) is an error
+				logic.reportError("ProductionUpdate: the deferred cancellation names no template: " + name);
+			}
+		}
+	}
 	pauseHeroEntries(); // RW 0x8A0669 (lane HERO-1)
 	ProductionEntry *entry = currentEntry();
 	Player *player = us->getControllingPlayer();
@@ -1488,12 +1563,21 @@ void ProductionUpdate::crc(StateHasher &h) const
 	h.addBool(m_cancellingAll);
 	h.addBool(m_factoryDisabled);
 	h.addU32(m_heroCountdown); // lane HERO-1
+	if (!m_pendingCancelTemplates.empty()) // hashed only while something waits (a game without a deferred cancellation keeps its hash)
+	{
+		h.addU32((std::uint32_t)m_pendingCancelTemplates.size());
+		for (const std::string &name : m_pendingCancelTemplates)
+		{
+			h.addString(name);
+		}
+	}
 }
 
 // ---- lane SAVE-4b: the snapshot (OpenBFME native, S-4190: the queue's entries with their templates by name, then the crc's fields) ---------------------
 void ProductionUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 }; // 2: LOCAL-91's deferred cancellation list (RW 0x008A30A0 / 0x008A1B52); version 1 (no list) still loads, the list empty
+	x.xferVersion(v);
 	xferUpdateModule(x);
 	GameLogic &logic = getObject()->logic();
 	// the queue: each entry's fewest bytes are its fixed fields with the three names empty (49); a load builds the queue aside, then replaces it
@@ -1548,4 +1632,19 @@ void ProductionUpdate::xfer(Xfer &x)
 	x.xferBool(&m_cancellingAll);
 	x.xferBool(&m_factoryDisabled);
 	x.xferUnsignedInt(&m_heroCountdown);
+	if (v.current < 2)
+	{
+		m_pendingCancelTemplates.clear(); // a version 1 snapshot predates the deferred list: nothing waits
+		return;
+	}
+	std::uint32_t pendingCount = x.isLoading() ? 0 : (std::uint32_t)m_pendingCancelTemplates.size();
+	x.xferCount(&pendingCount, 2, sizeof(std::string));
+	if (x.isLoading())
+	{
+		m_pendingCancelTemplates.resize(pendingCount);
+	}
+	for (std::uint32_t i = 0; i < pendingCount; ++i)
+	{
+		x.xferAsciiString(&m_pendingCancelTemplates[i]);
+	}
 }
