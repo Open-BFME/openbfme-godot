@@ -161,7 +161,7 @@ TEST_CASE("shader text: the normal-mapped building permutation fits Intel Arc's 
 {
 	// Godot reported "Too many varyings used in shader (30 used, maximum supported is 29)" on an Intel Arc A770 (Mesa ANV, Vulkan 1.4)
 	// for the selection-decal permutation; this building permutation declared 14 and sat at 29 of Intel's 29 (Forward+ itself takes
-	// the other 15). The smooth varyings are packed into vec4s, so it now declares 12 and uses 27, and the worst permutation uses 28.
+	// the other 15). The smooth varyings are packed into vec4s, so it now declares 13 and uses 28, including the overlay share on opaque surfaces.
 	W3DShaderKey key;
 	key.Fx = key.NormalMap = key.Tangents = key.HouseColor = key.Uv2 = true;
 	key.Tex[0] = key.Tex[1] = key.Texturing = true;
@@ -179,7 +179,7 @@ TEST_CASE("shader text: the normal-mapped building permutation fits Intel Arc's 
 	{
 		if (line.find("varying ") == 0) ++varyings;
 	}
-	CHECK(varyings == 12); // includes the fragment-to-light shadow colour; v_fade rides in w of the packed view position
+	CHECK(varyings == 13); // includes both fragment-to-light shadow/overlay colours; v_fade rides in w of the packed view position
 	// the two UV sets share one interpolator, and the world position is a vertex() local
 	CHECK(has(code, "varying vec4 v_uv;"));
 	CHECK(has(code, "v_uv = vec4(UV, UV2);"));
@@ -227,7 +227,7 @@ std::vector<std::string> varyingNames(const ShaderVaryings::Result &result)
 	return names;
 }
 
-std::vector<std::string> expectedW3DVaryings(bool fx, bool shadow, bool selectionDecals)
+std::vector<std::string> expectedW3DVaryings(bool fx, bool shadow)
 {
 	std::vector<std::string> names = { "v_instance", "v_pack_pos", "v_uv", "v_vnrm", "v_wnrm", "v_wview" };
 	if (fx)
@@ -247,7 +247,7 @@ std::vector<std::string> expectedW3DVaryings(bool fx, bool shadow, bool selectio
 	{
 		names.push_back("v_shadow_color");
 	}
-	if (selectionDecals && shadow)
+	if (shadow)
 	{
 		names.push_back("v_shadow_over");
 	}
@@ -283,7 +283,7 @@ TEST_CASE("shader budget: the Fx, occlusion, blend and alpha-override cross prod
 					key.NormalMap = fx;
 					key.Tangents = fx;
 					const bool shadow = shadowReceiver(key);
-					const int expected = 15 + 6 + (fx ? 5 : 2) + (shadow ? 1 : 0);
+					const int expected = 15 + 6 + (fx ? 5 : 2) + (shadow ? 2 : 0);
 					const ShaderVaryings::Result result = countW3D(key);
 					CAPTURE(fx);
 					CAPTURE(occlusion);
@@ -291,7 +291,7 @@ TEST_CASE("shader budget: the Fx, occlusion, blend and alpha-override cross prod
 					CAPTURE(alphaOverride);
 					REQUIRE(result.ok);
 					CHECK(result.used == expected);
-					CHECK(varyingNames(result) == expectedW3DVaryings(fx, shadow, false));
+					CHECK(varyingNames(result) == expectedW3DVaryings(fx, shadow));
 					if (result.used > worst)
 					{
 						worst = result.used;
@@ -303,7 +303,7 @@ TEST_CASE("shader budget: the Fx, occlusion, blend and alpha-override cross prod
 		}
 	}
 	CHECK(checked == 2 * 3 * 8 * 2);
-	CHECK(worst == 27); // Fx + shadow receiver; every count above is exact, so this is the cross product's largest
+	CHECK(worst == 28); // Fx + shadow receiver; every count above is exact, so this is the cross product's largest
 	std::fprintf(stderr, "w3d shader budget: %d varying-bearing variants, the most is %d/%d (Fx %d, occlusion %d, blend %d, alpha override %d)\n",
 		checked, worst, ShaderVaryings::kMaxVaryings, worstKey.Fx, worstKey.OcclusionPass, worstKey.Blend, worstKey.AlphaOverride);
 }
@@ -383,7 +383,7 @@ TEST_CASE("shader budget: no other W3D key field changes the varying set")
 						{
 							W3DShaderKey key = base;
 							field.set(key, value);
-							const std::vector<std::string> expected = expectedW3DVaryings(fx, shadow, key.SelectionDecals && shadow);
+							const std::vector<std::string> expected = expectedW3DVaryings(fx, shadow);
 							const ShaderVaryings::Result result = countW3D(key);
 							CAPTURE(field.name);
 							CAPTURE(value);

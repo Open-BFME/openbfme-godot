@@ -268,8 +268,8 @@ void CombatState::crc(StateHasher &h) const
 std::vector<std::string> CombatState::stops()
 {
 	return {
-		"[S-320] weapon sets: the object's weapon set is the best WeaponSet block for its WeaponSet conditions (RW 0x73D89F) with a Weapon per slot (WEAPON-1 timing code); the RATE_OF_FIRE / RANGE attribute "
-		"modifiers, GameData's global WeaponBonus set, the drawable's barrel count (1 barrel), the garrison range scale, the box-to-box distance of RW 0x68F430 (a box counts as its bounding circle), the "
+		"[S-320] weapon sets: the object's weapon set is the best WeaponSet block for its WeaponSet conditions (RW 0x73D89F) with a Weapon per slot (WEAPON-1 timing code); "
+		"GameData's global WeaponBonus set, the drawable's barrel count (1 barrel), the garrison range scale, the box-to-box distance of RW 0x68F430 (a box counts as its bounding circle), the "
 		"target pitch test and the FiringTrackerHelper shell (the tracker runs from the AI update; the WeaponStatusHelper is ported, lane PROJ-2) are not available; a weapon that needs them answers as "
 		"if they were neutral",
 		"[S-321] delivery: DamageNugget is delivered (radius damage scans the object list in list order, RW's partition order is implementation defined); a weapon with a ProjectileNugget launches a projectile "

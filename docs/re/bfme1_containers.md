@@ -33,7 +33,14 @@ firing IDs); version 5 additionally carries an armed shared script threat cache.
 BFME2/RotWK write version 2 without that cache or their own version 3 with it;
 they never transfer or hash the BFME1 index. Older BFME1 versions 3/4 keep their
 original layouts and load with a cleared shared threat cache. Versions 1/2 also
-initialize the previously absent index to -1.
+initialize the previously absent index to -1. A nonzero shared vision ground
+reference uses BFME2/RotWK version 6 or BFME1 version 7; both include the shared
+threat pair even when cleared. BFME1 versions 3/4/5 retain their original byte
+layouts and clear the absent vision reference on load. Main independently used
+version 4 for shared vision before integration: that layout conflicts with the
+BFME1 version 4 IDs and is explicitly rejected in BFME2/RotWK, rather than guessed.
+BFME1 refuses shared version 6; BFME2/RotWK refuse native versions 5/7 before
+transferring object state. These are OpenBFME snapshot boundaries (S-4190).
 
 ## Rank and member adoption
 

@@ -1060,7 +1060,8 @@ public:
 	// orientation's when the goal is in the cell it stands in
 	void updateGoalAngle(PathfindObject &obj, const Coord3D *newGoalPos, float angle, PathfindLayerEnum layer);
 	void removeGoal(PathfindObject &obj);
-	void updatePos(PathfindObject &obj);
+	// true when the unit took a new position cell (RW 0x8E26B7 returns 1 only then: Object + 0x1C4's ground ring is sampled again, RW 0x692715)
+	bool updatePos(PathfindObject &obj);
 	void removePos(PathfindObject &obj);
 	void removeUnitFromPathfindMap(PathfindObject &obj);
 	// the goal / position cell the pathfinder holds for a unit ((-1, -1) when none) and what kind it registered with

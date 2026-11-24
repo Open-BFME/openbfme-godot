@@ -2445,7 +2445,38 @@ TEST_CASE("bfme1 ai: object snapshot versions preserve native fields and the sha
 			CHECK(obj->bfme1CollisionIgnoreID() == 0x12345678u);
 			CHECK(obj->takeBfme1FiringTarget() == 0x76543210u);
 		}
+		// A nonzero vision ground reference needs its own version: main's former v4 collided with the BFME1 ID layout.
+		// Moving without an AI seeds the reference with z, as Object::reactToTransformChange does in VISIONDEF-1.
+		Coord3D raised{0.0f, 0.0f, 2.0f}; obj->setPosition(&raised);
+		CHECK(obj->visionGroundReference() == 2.0f);
+		for (bool cacheArmed : {false, true})
+		{
+			obj->setScriptThreatCache(cacheArmed ? 12.5f : 0.0f, cacheArmed ? 1234u : 0u);
+			XferSave vision; obj->xfer(vision);
+			CHECK(vision.data().front() == (bfme1 ? 7 : 6));
+			CHECK(vision.data().size() == base.data().size() + 12); // both new layouts carry the threat pair and vision float
+			StateHasher visionBefore; obj->crc(visionBefore);
+			XferLoad clear(base.data()); obj->xfer(clear);
+			CHECK(obj->visionGroundReference() == 0.0f);
+			obj->setScriptThreatCache(99.0f, 9999u);
+			XferLoad visionLoad(vision.data()); obj->xfer(visionLoad);
+			CHECK(obj->visionGroundReference() == 2.0f);
+			CHECK(obj->scriptThreatCache() == (cacheArmed ? 12.5f : 0.0f));
+			CHECK(obj->scriptThreatDeadline() == (cacheArmed ? 1234u : 0u));
+			StateHasher visionAfter; obj->crc(visionAfter); CHECK(visionAfter.value() == visionBefore.value());
+			XferSave visionAgain; obj->xfer(visionAgain); CHECK(visionAgain.data() == vision.data());
+			if (bfme1)
+			{
+				CHECK(obj->bfme1IndicatorColorIndex() == 7);
+				CHECK(obj->bfme1CollisionIgnoreID() == 0x12345678u);
+				auto shared = vision.data(); shared.front() = 6;
+				XferLoad wrongEdition(shared);
+				CHECK_THROWS_WITH(obj->xfer(wrongEdition), "BFME2/RotWK object snapshot loaded into BFME1");
+				XferSave unchanged; obj->xfer(unchanged); CHECK(unchanged.data() == vision.data());
+			}
+		}
 		XferLoad oldLoad(base.data()); obj->xfer(oldLoad);
+		CHECK(obj->visionGroundReference() == 0.0f);
 		CHECK(obj->scriptThreatCache() == 0.0f);
 		CHECK(obj->scriptThreatDeadline() == 0u);
 		if (bfme1)
@@ -2478,11 +2509,12 @@ TEST_CASE("bfme1 ai: object snapshot versions preserve native fields and the sha
 		}
 		else
 		{
-			for (std::uint8_t version : {4, 5})
+			for (std::uint8_t version : {4, 5, 7})
 			{
 				auto native = base.data(); native.front() = version;
 				XferLoad otherEdition(native);
-				CHECK_THROWS_WITH(obj->xfer(otherEdition), "BFME1 object snapshot loaded into another edition");
+				CHECK_THROWS_WITH(obj->xfer(otherEdition), version == 4 ? "Object snapshot version 4 has ambiguous BFME1/shared vision layouts" : "BFME1 object snapshot loaded into another edition");
+				XferSave unchanged; obj->xfer(unchanged); CHECK(unchanged.data() == base.data());
 			}
 		}
 	}

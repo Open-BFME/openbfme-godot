@@ -571,8 +571,9 @@ public:
 	// the emotion states' stop lines (S-1021 / S-1027)
 	static std::vector<std::string> emotionStops();
 
-	// ZH Object::reactToTransformChange -> Pathfinder::updatePos: the unit's position cell follows it (RW 0x8E26B7)
-	void reactToTransformChange();
+	// ZH Object::reactToTransformChange -> Pathfinder::updatePos: the unit's position cell follows it (RW 0x8E26B7); true when it took a new cell (lane
+	// VISIONDEF-1: Object::updateTriggerAreaFlags samples the vision ground ring again then, RW 0x6926F6)
+	bool reactToTransformChange();
 	// RW 0x66E233 through the collision pass of AIWorld
 	void onCollide(PathfindObject &other) { m_mover->onCollide(other); }
 

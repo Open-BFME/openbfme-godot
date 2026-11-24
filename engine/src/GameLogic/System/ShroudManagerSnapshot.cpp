@@ -54,7 +54,8 @@ void xferU64(Xfer &x, unsigned long long &v)
 
 void ShroudManager::xferState(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	// lane VISIONDEF-1: version 2 drops the records' vision ground reference (now the object's)
+	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	x.xferUnsignedInt(&m_counter);
@@ -190,10 +191,18 @@ void ShroudManager::xferState(Xfer &x)
 			AIXfer::inRange(r.previous[(size_t)p], 0, OBJECTSHROUD_SHROUDED, "shroud: a record's previous status");
 			AIXfer::inRange(r.seen[(size_t)p], 0, 1, "shroud: a record's seen flag");
 		}
-		x.xferBool(&r.groundValid);
-		x.xferInt(&r.groundX);
-		x.xferInt(&r.groundY);
-		x.xferReal(&r.groundRef);
+		if (v.current < 2)
+		{
+			// version 1 kept the vision ground reference here (valid flag, integer position, height); it is the object's now (lane VISIONDEF-1:
+			// Object + 0x1C4, Object::xfer version 4): read and dropped
+			bool groundValid = false;
+			std::int32_t groundX = 0, groundY = 0;
+			float groundRef = 0.0f;
+			x.xferBool(&groundValid);
+			x.xferInt(&groundX);
+			x.xferInt(&groundY);
+			x.xferReal(&groundRef);
+		}
 	}
 	// the slot lists
 	auto xferSlots = [&](std::vector<std::uint32_t> &list, const char *what) {

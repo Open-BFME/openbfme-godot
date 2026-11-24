@@ -945,7 +945,15 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q56 (measured once on the merged tree and at each merge point; #323's stunned units halting their AI, RW 0x669652, moves them, #321
 	// keeps them): seed 2 ends with Mordor's defeat at 3109 (4297), its table unchanged up to the 2000 window, seed 7 with Mordor's defeat at 2557
 	// (2667); seed 1234 stays open at 9000. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 3109 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 2557 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's
+	// sight moves the AIs' scouting, targets and fights; measured on the lane's tree): seed 2 stays open at 9000 with a new table from the first window on,
+	// seed 7 ends with Mordor's defeat at 5371 (2557), seed 1234 with the Men's defeat (start position 1) at 7362 (open before). Engine pins, not retail values.
+	// Lane BLDGDEBRIS-1 (measured once on its head; the siege side damage and side stages, RW 0x8C3CB8 / 0x8C2C5D: SIEGE hits now fill the four side values,
+	// and a REALLYDAMAGED victim with a full side gets DESTROYED_<side> and creates its DamageCreationList chunks, e.g. a GondorFarm's at frame 2104 in seed 2):
+	// seed 7 ends with Mordor's defeat at 2553 (2557); seed 2 (3109, its table) and seed 1234 (open at 9000) keep theirs. Engine pins, not retail values.
+	// Merge queue q59 (measured once on the merged tree and at its merge points; VISIONDEF-1 and BLDGDEBRIS-1 both move them): seed 2 stays open at 9000,
+	// its table unchanged up to the 4000 window, seed 7 ends with Mordor's defeat at 5013, seed 1234 stays open at 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 5013 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -1005,10 +1013,18 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// merge queue q53 (measured once on the merged tree and at each merge point; see above): the same table; the game ends with Mordor's defeat at 4297
 			// merge queue q56 (measured once on the merged tree and at each merge point; see above): the same table up to the 2000 window; the game ends with
 			// Mordor's defeat at 3109
+			// lane VISIONDEF-1 (measured on the lane's tree; see above): a new table from the first window on; the game stays open at 9000
+			// merge queue q59 (measured once on the merged tree; see above): the same table up to the 4000 window; the game stays open at 9000
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 0 built 71u/7s destroyed 19u/1s] [1 attacks 1 built 91u/8s destroyed 43u/2s]\n"
-		"frame 2000: [0 attacks 1 built 191u/9s destroyed 83u/1s] [1 attacks 1 built 167u/11s destroyed 157u/6s]\n"
-		"frame 3000: [0 attacks 1 built 213u/12s destroyed 167u/1s] [1 attacks 3 built 275u/15s destroyed 228u/11s]\n");
+		"frame 1000: [0 attacks 1 built 91u/7s destroyed 34u/1s] [1 attacks 1 built 79u/7s destroyed 20u/1s]\n"
+		"frame 2000: [0 attacks 4 built 248u/10s destroyed 178u/1s] [1 attacks 3 built 245u/10s destroyed 139u/2s]\n"
+		"frame 3000: [0 attacks 5 built 372u/13s destroyed 307u/3s] [1 attacks 6 built 395u/13s destroyed 253u/2s]\n"
+		"frame 4000: [0 attacks 6 built 542u/17s destroyed 434u/4s] [1 attacks 9 built 533u/14s destroyed 388u/3s]\n"
+		"frame 5000: [0 attacks 7 built 633u/19s destroyed 581u/5s] [1 attacks 10 built 650u/17s destroyed 543u/4s]\n"
+		"frame 6000: [0 attacks 10 built 736u/23s destroyed 659u/5s] [1 attacks 11 built 720u/21s destroyed 617u/5s]\n"
+		"frame 7000: [0 attacks 11 built 806u/27s destroyed 791u/8s] [1 attacks 13 built 870u/24s destroyed 667u/6s]\n"
+		"frame 8000: [0 attacks 11 built 864u/27s destroyed 941u/11s] [1 attacks 16 built 1011u/26s destroyed 791u/6s]\n"
+		"frame 9000: [0 attacks 13 built 968u/27s destroyed 998u/12s] [1 attacks 17 built 1070u/27s destroyed 933u/6s]\n");
 		}
 	}
 }

@@ -327,6 +327,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				d->showModule(ev.name, ev.visible, ev.permanent);
 			}
 			break;
+		case ClientEvent::UPGRADE_TEXTURE:
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->upgradeTexture(ev.textureSwap, ev.on);
+			}
+			break;
 		case ClientEvent::SHOW_SUB_OBJECT:
 			if (Drawable *d = findByObject(ev.object))
 			{
