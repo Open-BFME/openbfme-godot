@@ -17,6 +17,8 @@
 ##   wall      F7: a wall hub's Begin Wall Span button and a click (the span rises along its length)
 ##   produce   QA-2's treadmill finding: a barracks trains three soldier hordes through its buttons; every member's AI state is counted for 60 s
 ##             (members left in AI_FOLLOW_EXITPRODUCTION_PATH standing still with MOVING set)
+##   lights    lane LIGHTDRAW-1: W3DLightDraw templates (castle wall and gate torches, torches, orc scouts) in a row in front of the base; screenshots
+##             of the row (lights-*.png), then --qa-lights-seconds of game time (default 60) for the --perf windows
 extends "res://scripts/qa_player.gd"
 
 var _rec_dir := ""
@@ -170,6 +172,8 @@ func scene(name: String) -> Dictionary:
 			await _scene_wall()
 		"produce":
 			await _scene_produce()
+		"lights":
+			await _scene_lights()
 		_:
 			issue("scene_setup", name, "unknown scene")
 	_rec_stop()
@@ -586,6 +590,31 @@ func _scene_wall() -> void:
 		print("QA scene wall t+%.1f s: %d structures along the span" % [3.0 * (i + 1), pieces])
 	_rec_stop()
 	_shot("wall-end")
+
+
+## lane LIGHTDRAW-1: every object of the row holds a W3DLightDraw light (RW 0x4CF121); the camera looks along the row
+func _scene_lights() -> void:
+	var ang := _dir.angle()
+	var side := Vector2(-_dir.y, _dir.x)
+	var templates := ["GBCastleWallsA", "GBCastleGate", "GenericTorch", "GondorTownsmanTorch", "MordorOrcScout_Unit", "ArnorGBCastleWallsA"]
+	var placed := 0
+	for i in 12:
+		var t: String = templates[i % templates.size()]
+		var p := _spot + side * (float(i) - 5.5) * 45.0 + _dir * (40.0 if i % 2 == 0 else -40.0)
+		if _hook_create(t, _local_index(), p, ang + PI) > 0:
+			placed += 1
+	await _wait_game(2.0)
+	await _zoom_some(_spot, 6)
+	await _frames(10)
+	print("QA scene lights: %d objects placed; %s" % [placed, JSON.stringify(_world.get_fx_report().get("light_pulses", {}))])
+	_shot("lights-start")
+	var seconds := 60.0
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--qa-lights-seconds="):
+			seconds = float(arg.get_slice("=", 1))
+	await _wait_game(seconds)
+	print("QA scene lights after %.0f s: %s" % [seconds, JSON.stringify(_world.get_fx_report().get("light_pulses", {}))])
+	_shot("lights-end")
 
 
 func _scene_produce() -> void:

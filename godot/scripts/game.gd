@@ -157,7 +157,7 @@
 ##     --qa-tag=<name>       the run's name in the screenshots (--screens: qa1-<tag>-*.png)
 ##     --teams=<t0,t1,...>   (with --auto) the lobby Team of each slot in order (-1 = none)
 ##     --qa-scene=<name>     (lane QA-2, with --qa) instead of playing, one feedback scene (scripts/qa_scene.gd: melee, archers, troll, rohirrim, charge,
-##                           garrison, grond, wall) is set up by a logged test hook, ordered through the HUD's input and recorded (--screens)
+##                           garrison, grond, wall, lights) is set up by a logged test hook, ordered through the HUD's input and recorded (--screens)
 ##   lane MP-1, a LAN game without the shell's lobby screens (GameNetwork/LANLobby.h: join by address; the APT LAN lobby is NET-2):
 ##     --net-host=PORT       host a game: --map, --seed, --net-slots=kind:Faction:start:team;... (kind human / easy / medium / hard / brutal; the
 ##                           first human slot is the host's), --net-run-ahead=N, --net-crc=N (CRC interval)
