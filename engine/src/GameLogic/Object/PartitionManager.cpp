@@ -6,6 +6,8 @@
 
 #include "GameLogic/Object/PartitionManager.h"
 
+#include "Common/BuildAssistant.h"
+
 #include "Common/JobSystem.h"
 #include "Common/Player.h"
 #include "Common/StateHash.h"
@@ -1132,8 +1134,29 @@ struct FarToNear
 {
 	bool operator()(const PartitionHit &a, const PartitionHit &b) const { return b.distSqr < a.distSqr; }
 };
+struct CheapToExpensive
+{
+	// RW 0x950624 (SimpleObjectIterator::sort RW 0x952EE1 case 3): unsigned 16-bit ThingTemplate + 0x5EA (BuildCost)
+	bool operator()(const PartitionHit &a, const PartitionHit &b) const
+	{
+		const unsigned ca = (a.object && a.object->getTemplate()) ? BuildAssistant::buildCost(*a.object->getTemplate()) : 0u;
+		const unsigned cb = (b.object && b.object->getTemplate()) ? BuildAssistant::buildCost(*b.object->getTemplate()) : 0u;
+		return ca < cb;
+	}
+};
+struct ExpensiveToCheap
+{
+	// RW 0x95064B (SimpleObjectIterator::sort RW 0x952EE1 case 4): unsigned 16-bit ThingTemplate + 0x5EA (BuildCost)
+	bool operator()(const PartitionHit &a, const PartitionHit &b) const
+	{
+		const unsigned ca = (a.object && a.object->getTemplate()) ? BuildAssistant::buildCost(*a.object->getTemplate()) : 0u;
+		const unsigned cb = (b.object && b.object->getTemplate()) ? BuildAssistant::buildCost(*b.object->getTemplate()) : 0u;
+		return cb < ca;
+	}
+};
 } // namespace
 
+// RW 0x952EE1 (SimpleObjectIterator::sort)
 void PartitionManager::sortHits(std::vector<PartitionHit> &hits, IterOrderType order)
 {
 	if (hits.empty())
@@ -1147,6 +1170,14 @@ void PartitionManager::sortHits(std::vector<PartitionHit> &hits, IterOrderType o
 	else if (order == ITER_SORTED_FAR_TO_NEAR)
 	{
 		HitSort<FarToNear>{}.sort(hits.data(), hits.data() + hits.size());
+	}
+	else if (order == ITER_SORTED_CHEAP_TO_EXPENSIVE)
+	{
+		HitSort<CheapToExpensive>{}.sort(hits.data(), hits.data() + hits.size());
+	}
+	else if (order == ITER_SORTED_EXPENSIVE_TO_CHEAP)
+	{
+		HitSort<ExpensiveToCheap>{}.sort(hits.data(), hits.data() + hits.size());
 	}
 }
 

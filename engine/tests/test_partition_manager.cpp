@@ -538,3 +538,71 @@ TEST_CASE("partition: stop S-1020 is in the logic report (template geometry, no 
 	CHECK(found);
 	CHECK(PartitionManager::stopLines().size() == 1);
 }
+
+TEST_CASE("PartitionManager: SimpleObjectIterator::sort cheap and expensive modes (RW 0x952EE1)")
+{
+	// Expectations from RotWK 2.01 SimpleObjectIterator::sort (RW 0x952EE1):
+	//   case 3 ITER_SORTED_CHEAP_TO_EXPENSIVE -> RW 0x950624 (unsigned 16-bit ThingTemplate + 0x5EA BuildCost ascending)
+	//   case 4 ITER_SORTED_EXPENSIVE_TO_CHEAP -> RW 0x95064B (unsigned 16-bit ThingTemplate + 0x5EA BuildCost descending)
+	logictest::LogicWorld lw;
+	const std::string err = lw.w.load(R"(
+Object CheapUnit
+  BuildCost = 100
+  Geometry = CYLINDER
+  GeometryMajorRadius = 5.0
+  GeometryHeight = 10.0
+End
+Object MidUnit
+  BuildCost = 400
+  Geometry = CYLINDER
+  GeometryMajorRadius = 5.0
+  GeometryHeight = 10.0
+End
+Object ExpensiveUnit
+  BuildCost = 1200
+  Geometry = CYLINDER
+  GeometryMajorRadius = 5.0
+  GeometryHeight = 10.0
+End
+)", INI_LOAD_OVERWRITE, "sort_cost.ini");
+	REQUIRE_MESSAGE(err.empty(), err);
+
+	lw.logic->partition().setRegion(0.0f, 0.0f, 1000.0f, 1000.0f);
+
+	Object *mid = lw.make("MidUnit");
+	Object *expensive = lw.make("ExpensiveUnit");
+	Object *cheap = lw.make("CheapUnit");
+	REQUIRE(mid != nullptr);
+	REQUIRE(expensive != nullptr);
+	REQUIRE(cheap != nullptr);
+
+	const Coord3D pMid{ 110.0f, 100.0f, 0.0f };
+	const Coord3D pExpensive{ 120.0f, 100.0f, 0.0f };
+	const Coord3D pCheap{ 130.0f, 100.0f, 0.0f };
+	mid->setPosition(&pMid);
+	expensive->setPosition(&pExpensive);
+	cheap->setPosition(&pCheap);
+
+	const Coord3D origin{ 100.0f, 100.0f, 0.0f };
+
+	const PartitionHits cheapFirst = lw.logic->partition().iterateObjectsInRange(
+		origin, 100.0f, FROM_CENTER_2D, PartitionFilterList{}, ITER_SORTED_CHEAP_TO_EXPENSIVE);
+	REQUIRE(cheapFirst.size() == 3);
+	CHECK(cheapFirst[0].object == cheap);
+	CHECK(cheapFirst[1].object == mid);
+	CHECK(cheapFirst[2].object == expensive);
+
+	const PartitionHits expensiveFirst = lw.logic->partition().iterateObjectsInRange(
+		origin, 100.0f, FROM_CENTER_2D, PartitionFilterList{}, ITER_SORTED_EXPENSIVE_TO_CHEAP);
+	REQUIRE(expensiveFirst.size() == 3);
+	CHECK(expensiveFirst[0].object == expensive);
+	CHECK(expensiveFirst[1].object == mid);
+	CHECK(expensiveFirst[2].object == cheap);
+
+	const PartitionHits nearFirst = lw.logic->partition().iterateObjectsInRange(
+		origin, 100.0f, FROM_CENTER_2D, PartitionFilterList{}, ITER_SORTED_NEAR_TO_FAR);
+	REQUIRE(nearFirst.size() == 3);
+	CHECK(nearFirst[0].object == mid);
+	CHECK(nearFirst[1].object == expensive);
+	CHECK(nearFirst[2].object == cheap);
+}
