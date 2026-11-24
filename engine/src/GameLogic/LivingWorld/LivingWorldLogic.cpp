@@ -4227,19 +4227,27 @@ void LivingWorldLogic::checkVictory()
 			bool beaten = false;
 			for (const Condition &c : victoryConditions(1))
 			{
+				// RW 0x901171 (TeamDefeatCondition::isTeamDefeated): sum GetNumRegionsOwned (RW 0x6E2333)
+				// across all players on the team; defeated iff totalRegions <= NumControlledRegionsLessOrEqualTo.
 				if (c.numControlledRegionsLessOrEqualTo < 0)
 				{
 					continue;
 				}
-				bool all = true;
+				int totalRegions = 0;
+				bool exceeds = false;
 				for (int p = 0; p < (int)m_players.size(); ++p)
 				{
-					if (m_players[(size_t)p].team == team && !m_players[(size_t)p].defeated && regionCount(p) > c.numControlledRegionsLessOrEqualTo)
+					if (m_players[(size_t)p].team == team)
 					{
-						all = false;
+						totalRegions += regionCount(p);
+						if (totalRegions > c.numControlledRegionsLessOrEqualTo)
+						{
+							exceeds = true;
+							break;
+						}
 					}
 				}
-				beaten = beaten || all;
+				beaten = beaten || !exceeds;
 			}
 			if (beaten)
 			{
