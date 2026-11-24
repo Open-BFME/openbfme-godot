@@ -856,7 +856,7 @@ private:
 	struct DecalFadeView
 	{
 		bool valid = false, hasLast = false;
-		ObjectID object = INVALID_ID; ///< a drawable id the next object reuses starts its own fade
+		::ObjectID object = INVALID_ID; ///< a drawable id the next object reuses starts its own fade
 		BlobShadow::DecalSpec spec;
 		BlobShadow::DecalFade fade;
 		SelectionDecal last; ///< where it was last drawn (a fade-out stands there)
