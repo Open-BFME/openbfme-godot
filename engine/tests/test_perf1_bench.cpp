@@ -588,6 +588,18 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // placement check before it answers as before (both runs logged, 136 checks), and there Isengard's computer player checks its next Furnace site with
 // 0x85 (terrain, overlap, fogged objects ignored): the retail clear test refuses it (code 8) where ZH's overlap rule passed it and the porter's 0x49F
 // gate refused it a step later. The big battle does not move. Re-measured once on this lane's head (OPENBFME_PERF1_REGEN=1).
+// pin: BLDGDEBRIS-1 (the siege side damage of ActiveBody, RW 0x8C3E70 -> 0x8C3CB8, hashed only once a side value is set) moves both vectors at their first
+// SIEGE hit: the big battle from vector frame 39 (a siege rock on GondorAragorn, logic frame 43), the skirmish from vector frame 1156 (a siege hit on a
+// MordorEasterlingHorde, logic frame 1158); nothing of the change runs earlier in either game (an instrumented run logged every side fill, side stage,
+// revive reset and OCL). Later the side stages (DESTROYED_<side>, the chunk OCLs) move the games themselves. Re-measured once on this lane's head
+// (OPENBFME_PERF1_REGEN=1).
+// pin: merge queue q59 (VISIONDEF-1's ground reference, RW 0x69264D, then BLDGDEBRIS-1's siege side damage, RW 0x8C3CB8): measured once on the merged
+// tree and at the VISIONDEF-1 merge point. VISIONDEF-1 alone moves only the skirmish (its lane's vector); BLDGDEBRIS-1 on top of it moves the big
+// battle at its first SIEGE hit (as on its own lane) and the skirmish again, whose games now differ from both lanes' runs. Re-measured with
+// OPENBFME_PERF1_REGEN=1; uber1 does not move.
+// pin: merge queue q63 (#355 ForceHordesToLowLOD, AIData + 0xBB; retail aidata.ini sets it): every horde member is created with the hashed status
+// CREATE_DRAWABLE_WITH_LOW_DETAIL (bit 55, RW 0x86A151 / 0x86B282 / 0x8A25E4), so the big battle, the allied blob and the skirmish move from their first
+// horde. Measured once on the merged tree with OPENBFME_PERF1_REGEN=1 and at the merge points (#350 moves nothing; #358's equals the merged tree's).
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

@@ -4,6 +4,7 @@
 #include "GameClient/GUI/WindowManager.h"
 
 #include "GameClient/GUI/AptGadgetLayer.h"
+#include "GameClient/GUI/AptScreen.h"
 #include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "Libraries/Source/Apt/AptButtonInst.h"
@@ -1426,7 +1427,15 @@ bool WindowManager::postMouseButton(bool down)
 
 bool WindowManager::postMouseWheel(int delta)
 {
-	const bool used = m_gadgetLayer && !componentInputBlocked() ? m_gadgetLayer->mouseWheel(delta) : false;
+	bool used = m_gadgetLayer && !componentInputBlocked() ? m_gadgetLayer->mouseWheel(delta) : false;
+	if (!used && m_shell && !componentInputBlocked())
+	{
+		// lane CAHWHEEL-1 (NOT RETAIL, S-7186): the input top screen hears a notch no gadget used (the Create-a-Hero power matrix)
+		if (AptScreen *top = m_shell->inputTop())
+		{
+			used = top->inputWheel(delta);
+		}
+	}
 	m_apt->input().postMouseWheel(delta);
 	return used;
 }

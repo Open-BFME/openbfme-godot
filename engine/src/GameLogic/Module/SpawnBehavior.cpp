@@ -262,7 +262,7 @@ namespace
 {
 // RW 0x6C91F7 / 0x6C9207: UNATTACKABLE is refused for every attacker; the rest is the port's bool ObjectWeapons::canAttackObject,
 // which stands in for RW's four answer codes (S-286).
-SpawnCanAttackResult spawnWeaponAnswer(const Object &spawn, const Object *target, CommandSourceType source)
+SpawnCanAttackResult spawnWeaponAnswer(const Object &spawn, int attackType, const Object *target, CommandSourceType source)
 {
 	if (!target || !spawn.getWeapons())
 	{
@@ -273,7 +273,10 @@ SpawnCanAttackResult spawnWeaponAnswer(const Object &spawn, const Object *target
 	{
 		return SPAWN_ATTACKRESULT_NOT_POSSIBLE;
 	}
-	return spawn.getWeapons()->canAttackObject(*target, source, true) ? SPAWN_ATTACKRESULT_POSSIBLE
+	// RW 0x8629B4 / 0x862A0F pass the caller's attack type on to RW 0x68D6A6 / 0x68B5FA; only the forced types (1, 9) skip the
+	// relationship veto (ZH Object::getAbleToAttackSpecificObject, isForcedAttack). MERGEQ-63 port fix: was always forced.
+	const bool forced = attackType == SPAWN_ATTACK_NEW_TARGET_FORCED || attackType == SPAWN_ATTACK_CONTINUED_FORCED;
+	return spawn.getWeapons()->canAttackObject(*target, source, forced) ? SPAWN_ATTACKRESULT_POSSIBLE
 	                                                                 : SPAWN_ATTACKRESULT_NOT_POSSIBLE;
 }
 } // namespace
@@ -292,7 +295,7 @@ SpawnCanAttackResult SpawnBehavior::canAnySlavesAttackSpecificTarget(int attackT
 		{
 			continue;
 		}
-		const SpawnCanAttackResult r = spawnWeaponAnswer(*o, target, source);
+		const SpawnCanAttackResult r = spawnWeaponAnswer(*o, attackType, target, source);
 		if (r >= SPAWN_ATTACKRESULT_POSSIBLE_AFTER_MOVING)
 		{
 			return SPAWN_ATTACKRESULT_POSSIBLE;
@@ -317,7 +320,7 @@ SpawnCanAttackResult SpawnBehavior::canAnySlavesUseWeaponAgainstTarget(int attac
 			continue;
 		}
 		// The port's bool eligibility test is asked about the victim; RW's ground form chooses a bombard weapon for the point.
-		const SpawnCanAttackResult r = spawnWeaponAnswer(*o, target, source);
+		const SpawnCanAttackResult r = spawnWeaponAnswer(*o, attackType, target, source);
 		if (r >= SPAWN_ATTACKRESULT_POSSIBLE_AFTER_MOVING)
 		{
 			return SPAWN_ATTACKRESULT_POSSIBLE;

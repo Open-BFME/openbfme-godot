@@ -155,6 +155,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // pin: PORT-12 hashes MinDistFromEdgeOfMapForBuild in GameLogicSettings::crc (RotWK GlobalData +0xA68; BFME2 1.06's data/ini/gamedata.ini carries the
 // same 30.0 row), so the vector moves from frame 0; the Uber battle never places a building, so the margin check itself cannot move it. Re-measured
 // once (OPENBFME_UBER1_REGEN=1, Windows MSVC) on this tree with the other open ports merged.
+// pin: merge queue q63 (#355 ForceHordesToLowLOD): the battle's horde members carry the hashed status CREATE_DRAWABLE_WITH_LOW_DETAIL (bit 55) from
+// their creation. Re-measured once on the merged tree (OPENBFME_UBER1_REGEN=1); #350 keeps it, #358's merge point equals the merged tree's.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

@@ -391,7 +391,7 @@ TEST_CASE("heroring1: the wall shader blends the alpha decals over the surface's
 	sel.Tex[0] = true;
 	sel.SelectionDecals = true;
 	const std::string code = Generate_W3D_Shader_Code(sel);
-	CHECK(code.find("vec4 sela = sel_up ? sel_alpha_at(sel_at, true, clamp(cur.rgb, 0.0, 1.0)) : vec4(0.0);") != std::string::npos);
+	CHECK(code.find("vec4 sela = sel_up ? sel_alpha_projected_at(sel_at, true, true, clamp(cur.rgb, 0.0, 1.0)) : vec4(0.0);") != std::string::npos);
 	// review r2 (#208): the surface's shadowed share and the ring over it go to light() (one colour space), the shadow split keeps the merge share
 	CHECK(code.find("varying vec3 v_shadow_over;") != std::string::npos);
 	CHECK(code.find("vec3 sel_shadow = clamp(cur.rgb, 0.0, 1.0);") != std::string::npos);

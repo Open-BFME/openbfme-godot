@@ -354,3 +354,14 @@ TEST_CASE("sorting across batches: group A at depths 20 and 2, group B at depth 
 	CHECK(startsWith(hit.Message, "[S-029] "));
 	CHECK(hit.Message.find("batch by batch") != std::string::npos);
 }
+
+TEST_CASE("stops: rigid exporter influences are explicitly counted for forged-blade compatibility")
+{
+	SynthMesh s = quad();
+	s.Influences = { {1, 0, 100, 0}, {1, 0, 100, 0}, {1, 0, 100, 0}, {1, 0, 100, 0} };
+	Built b;
+	build(s, b);
+	const auto hits = meshStops(b);
+	REQUIRE(countId(hits, "S-020") == 1);
+	CHECK(find(hits, "S-020")->Count == 4);
+}

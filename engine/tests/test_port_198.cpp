@@ -111,6 +111,26 @@ const char kObjects[] =
 	"    UnitCreatePoint = X:20.0 Y:0.0 Z:0.0\n"
 	"    NaturalRallyPoint = X:40.0 Y:0.0 Z:0.0\n"
 	"  End\n"
+	"End\n"
+	// a spawner with an AI of its own (a camp / siege spawner): the port's AIGroup admits only objects with an AI (S-2480 note below),
+	// so the ground order through the group is tested with this lair; its own AI has no weapon, the guards' orders come from slot 4
+	"Object P198AiLair\n"
+	"  KindOf = STRUCTURE IMMOBILE SELECTABLE\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 25\n"
+	"  GeometryMinorRadius = 25\n"
+	"  GeometryHeight = 40\n"
+	"  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 1000\n  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n    AutoAcquireEnemiesWhenIdle = No\n  End\n"
+	"  Behavior = SpawnBehavior ModuleTag_Spawn\n"
+	"    SpawnNumber = 2\n"
+	"    SpawnReplaceDelay = 100000\n"
+	"    SpawnTemplateName = P198Guard\n"
+	"  End\n"
+	"  Behavior = QueueProductionExitUpdate ModuleTag_Exit\n"
+	"    UnitCreatePoint = X:20.0 Y:0.0 Z:0.0\n"
+	"    NaturalRallyPoint = X:40.0 Y:0.0 Z:0.0\n"
+	"  End\n"
 	"End\n";
 
 // The AI-notification world needs no weapon: only the template name and the factory id are read by RW 0x8F0739 / 0x8F073F.
@@ -310,6 +330,14 @@ TEST_CASE("PORT-198 SpawnBehavior: slots 5 / 6 ask the guards whether the spawne
 	// player-relationship veto; UNATTACKABLE is refused even when forced (RW 0x6C9207)
 	CHECK(si->canAnySlavesAttackSpecificTarget(SPAWN_ATTACK_NEW_TARGET_FORCED, victim, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_POSSIBLE);
 	CHECK(si->canAnySlavesUseWeaponAgainstTarget(SPAWN_ATTACK_NEW_TARGET_FORCED, victim, nullptr, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_POSSIBLE);
+	// MERGEQ-63: RW 0x8629B4 / 0x862A0F pass the attack type on, so a non-forced player order keeps the relationship veto (RW 0x6C9147):
+	// the lair owner's own unit is refused for SPAWN_ATTACK_NEW_TARGET and accepted for the forced types (1, 9)
+	Object *own = w.at("P198Victim", "Alice", 340.0f, 320.0f);
+	CHECK(si->canAnySlavesAttackSpecificTarget(SPAWN_ATTACK_NEW_TARGET, own, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_NOT_POSSIBLE);
+	CHECK(si->canAnySlavesUseWeaponAgainstTarget(SPAWN_ATTACK_NEW_TARGET, own, nullptr, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_NOT_POSSIBLE);
+	CHECK(si->canAnySlavesAttackSpecificTarget(SPAWN_ATTACK_NEW_TARGET_FORCED, own, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_POSSIBLE);
+	CHECK(si->canAnySlavesAttackSpecificTarget(SPAWN_ATTACK_CONTINUED_FORCED, own, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_POSSIBLE);
+	CHECK(si->canAnySlavesAttackSpecificTarget(SPAWN_ATTACK_NEW_TARGET, victim, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_POSSIBLE);
 	CHECK(si->canAnySlavesAttackSpecificTarget(SPAWN_ATTACK_NEW_TARGET_FORCED, unattackable, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_NOT_POSSIBLE);
 	CHECK(si->canAnySlavesUseWeaponAgainstTarget(SPAWN_ATTACK_NEW_TARGET_FORCED, unattackable, nullptr, CMD_FROM_PLAYER) == SPAWN_ATTACKRESULT_NOT_POSSIBLE);
 }
@@ -320,14 +348,18 @@ TEST_CASE("PORT-198 SpawnBehavior: a ground order through AIGroup and an idle or
 {
 	ModEngineFeatures::reset();
 	Port198World w;
-	Object *lair = w.at("P198Lair", "Alice", 300.0f, 300.0f);
+	// MERGEQ-63 port fix: the port's AIGroup (AIGroup.cpp ctor) admits only objects with an AI; retail's add (ZH AIGroup::add) also admits
+	// AI-less STRUCTURE / ALWAYS_SELECTABLE objects, which the port does not yet. The lair here has an AI without a weapon, so the guards
+	// change state only through the spawn interface's slot 4.
+	Object *lair = w.at("P198AiLair", "Alice", 300.0f, 300.0f);
 	SpawnBehavior *spawner = w.module(*lair);
 	w.waitSpawns(*spawner, 2);
-	REQUIRE(lair->getAIUpdateInterface() == nullptr); // the lair has no AI of its own, its guards are its weapons
+	REQUIRE(lair->getAIUpdateInterface() != nullptr);
 	const std::vector<Object *> guards = w.guards(*spawner);
+	REQUIRE(guards.size() == 2);
 	w.waitIdle(guards);
 
-	AIGroup group(*w.logic, { lair->getID() }); // RW 0x6AAB85 -> RW 0x770917 lets an AI-less spawner into the group
+	AIGroup group(*w.logic, { lair->getID() }); // RW 0x772369: the group's position order reaches the spawner
 	REQUIRE(group.size() == 1);
 	const Coord3D point{ 450.0f, 300.0f, 0.0f };
 	group.groupAttackPosition(point, 3, CMD_FROM_PLAYER); // RW 0x772380 -> vtable + 0x10
