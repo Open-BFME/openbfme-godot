@@ -1002,6 +1002,7 @@ add_executable(openbfme_tests
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp
+    tests/test_local_93.cpp
     tests/test_mapobj_shadergen.cpp
     tests/test_mapobj_retail.cpp
     # ---- LUA-1 (Lua scripting) ----

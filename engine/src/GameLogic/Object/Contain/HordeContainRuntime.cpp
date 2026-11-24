@@ -352,7 +352,6 @@ void HordeContain::createPayload()
 	GameLogic &logic = horde->logic();
 	ThingFactory &things = logic.things();
 	const TransportContainModuleData &transport = m_data->horde.m_transport;
-	ObjectStatusMaskType status{};
 	for (const InitialPayloadEntry &e : transport.m_initialPayload)
 	{
 		if (e.count <= 0)
@@ -365,6 +364,15 @@ void HordeContain::createPayload()
 		{
 			logic.reportError("HordeContain of " + horde->getTemplate()->getName() + ": InitialPayload template '" + e.name + "' does not exist");
 			continue;
+		}
+		ObjectStatusMaskType status{};
+		if (logic.settings().forceHordesToLowLOD) // RW 0x86A104 -> RW 0x86A117 .. 0x86A15E: HordeContain + !HERO (+0x113 bit 2) + !MONSTER (+0x109 bit 2) + AIData +0xBB
+		{
+			const auto &ko = logic.templateInfo(tt->getFinalOverride()).kindOf;
+			if (!MaskTest(ko, 90u) && !MaskTest(ko, 10u))
+			{
+				MaskSet(status, OBJECT_STATUS_CREATE_DRAWABLE_WITH_LOW_DETAIL, true);
+			}
 		}
 		for (int i = 0; i < e.count; ++i)
 		{
