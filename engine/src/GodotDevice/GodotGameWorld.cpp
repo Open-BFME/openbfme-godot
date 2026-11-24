@@ -798,7 +798,6 @@ void GameWorld::clear_scene()
 	m_decalSpecs.clear(); // lane DRAWDECAL-1: the same keys
 	m_decalShadows.clear();
 	m_decalFades.clear();
-	m_decalFadingOut.clear();
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
 	for (uint32_t id = 0; id < m_views.size(); ++id) remove_view(id);
@@ -2439,6 +2438,7 @@ void GameWorld::advance(double delta)
 		}
 		refresh_streaks(false);
 		update_blob_shadows(); // lane BLOBSHADOW-1 (review): the blob layer covers the camera's ground footprint, and the camera moves while paused
+		update_decal_shadows(0.0); // lane DRAWDECAL-1 (review): turning the shadows off in the paused game's options applies at once; the fades' clock stands
 		refresh_shroud(false, timing::secondsToMs(delta)); // lane FOGFX-1: a pending fade goes on while paused (retail's is wall clock)
 		m_game->endClientWindow(); // RENDERWAIT-1: no frames are queued while paused
 		return;

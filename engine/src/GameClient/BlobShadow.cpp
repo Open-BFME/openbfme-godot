@@ -2,13 +2,16 @@
 // See GameClient/BlobShadow.h.
 
 #include "GameClient/BlobShadow.h"
+#include "GameClient/DecalShadowFades.h"
 #include "GameClient/DrawablePick.h"
 
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/SelectionDecals.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
 
+#include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <variant>
 
 namespace BlobShadow
@@ -299,5 +302,109 @@ bool opacityAt(const DecalFade &f, unsigned now, unsigned &opacity)
 		opacity = f.endOpacity;
 	}
 	return true;
+}
+
+void DecalFades::clear()
+{
+	m_views.clear();
+	m_going.clear();
+	m_now = 0;
+}
+
+void DecalFades::begin(unsigned now, bool useShadowDecals)
+{
+	m_now = now;
+	for (auto it = m_views.begin(); it != m_views.end();)
+	{
+		it->second.kept = false;
+		it = drawnAtLOD(it->second.spec, useShadowDecals) ? std::next(it) : m_views.erase(it);
+	}
+	m_going.erase(std::remove_if(m_going.begin(), m_going.end(), [&](const Going &g) { return !drawnAtLOD(g.spec, useShadowDecals); }), m_going.end());
+}
+
+void DecalFades::hide(std::uint32_t drawable)
+{
+	const auto it = m_views.find(drawable);
+	if (it != m_views.end())
+	{
+		it->second.hasLast = false;
+	}
+}
+
+void DecalFades::hide(std::uint32_t drawable, const void *draw)
+{
+	const auto it = m_views.find(drawable);
+	if (it != m_views.end() && it->second.draw == draw)
+	{
+		it->second.hasLast = false;
+	}
+}
+
+void DecalFades::release(const View &v)
+{
+	// RW 0x508B40: a _DYNAMIC decal fades out where it was last drawn; one that was not seen, or another type, goes at once
+	if (v.hasLast && isDynamic(v.spec.type))
+	{
+		m_going.push_back({ v.last, fadeOut(v.fade, m_now), v.spec });
+	}
+}
+
+bool DecalFades::keep(std::uint32_t drawable, ObjectID object, const void *draw, const DecalSpec &spec, unsigned &opacity)
+{
+	const auto found = m_views.find(drawable);
+	const bool same = found != m_views.end() && found->second.object == object && found->second.spec == spec;
+	if (found != m_views.end() && !same)
+	{
+		release(found->second);
+	}
+	View &v = m_views[drawable];
+	if (!same)
+	{
+		v = View();
+		v.object = object;
+		v.spec = spec;
+		v.fade = fadeIn(spec, m_now);
+	}
+	v.draw = draw;
+	v.kept = true;
+	v.hasLast = false; // until drawn()
+	opacity = spec.opacityPeak;
+	return !isDynamic(spec.type) || opacityAt(v.fade, m_now, opacity);
+}
+
+void DecalFades::drawn(std::uint32_t drawable, const SelectionDecal &decal)
+{
+	const auto it = m_views.find(drawable);
+	if (it != m_views.end())
+	{
+		it->second.last = decal;
+		it->second.hasLast = true;
+	}
+}
+
+void DecalFades::end(std::vector<SelectionDecal> &out)
+{
+	for (auto it = m_views.begin(); it != m_views.end();)
+	{
+		if (it->second.kept)
+		{
+			++it;
+			continue;
+		}
+		release(it->second);
+		it = m_views.erase(it);
+	}
+	for (auto it = m_going.begin(); it != m_going.end();)
+	{
+		unsigned opacity = 0;
+		if (!opacityAt(it->fade, m_now, opacity))
+		{
+			it = m_going.erase(it);
+			continue;
+		}
+		out.push_back(it->decal);
+		out.back().color = DecalShadowColor(opacity);
+		++it;
+	}
 }
 } // namespace BlobShadow

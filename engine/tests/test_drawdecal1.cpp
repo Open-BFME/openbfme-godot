@@ -10,6 +10,7 @@
 #include "ObjectTestUtil.h"
 
 #include "GameClient/BlobShadow.h"
+#include "GameClient/DecalShadowFades.h"
 #include "GameClient/DrawableManager.h"
 #include "GameClient/SelectionDecals.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
@@ -154,6 +155,135 @@ TEST_CASE("drawdecal1: a _DYNAMIC decal fades in from Start to Peak, and when it
 	REQUIRE(BlobShadow::opacityAt(quick, 10, o));
 	CHECK(o == 255u);
 	CHECK_FALSE(BlobShadow::opacityAt(BlobShadow::fadeOut(quick, 20), 20, o));
+}
+
+namespace
+{
+// one frame of the fades: the drawables' decals are given by `frame`, the fading ones come back
+template <typename Frame> std::vector<SelectionDecal> fadeFrame(BlobShadow::DecalFades &fades, unsigned now, bool useShadowDecals, Frame frame)
+{
+	fades.begin(now, useShadowDecals);
+	frame();
+	std::vector<SelectionDecal> out;
+	fades.end(out);
+	return out;
+}
+
+BlobShadow::DecalSpec glow(const char *texture)
+{
+	BlobShadow::DecalSpec s;
+	s.type = 0x800;
+	s.texture = texture;
+	s.sizeX = s.sizeY = 100.0f;
+	s.fadeInMs = 1000.0f;
+	s.fadeOutMs = 1000.0f;
+	return s;
+}
+} // namespace
+
+TEST_CASE("drawdecal1: a decal that was seen fades out where it stood; a hidden one, or one the ShadowLOD no longer draws, goes at once")
+{
+	const BlobShadow::DecalSpec eye = glow("Eye.tga");
+	const int drawA = 0, drawB = 0;
+	const ObjectID object = (ObjectID)7;
+	SelectionDecal at;
+	at.texture = "Eye.tga";
+	at.position.x = 50.0f;
+	unsigned o = 0;
+	const auto show = [&](BlobShadow::DecalFades &f, const void *draw, const BlobShadow::DecalSpec &spec) {
+		REQUIRE(f.keep(3, object, draw, spec, o));
+		f.drawn(3, at);
+	};
+
+	SUBCASE("seen, then gone: it fades from Peak for FadeOutTime where it was drawn")
+	{
+		BlobShadow::DecalFades f;
+		CHECK(fadeFrame(f, 10, true, [&] { show(f, &drawA, eye); }).empty());
+		std::vector<SelectionDecal> out = fadeFrame(f, 40, true, [] {});
+		REQUIRE(out.size() == 1);
+		CHECK(out[0].position.x == 50.0f);
+		CHECK(out[0].color == 0xFFFFFFFFu);
+		CHECK(fadeFrame(f, 55, true, [] {}).size() == 1);
+		CHECK(fadeFrame(f, 70, true, [] {}).empty());
+	}
+	SUBCASE("a type without a fade goes at once")
+	{
+		BlobShadow::DecalFades f;
+		BlobShadow::DecalSpec lamp = eye;
+		lamp.type = 0x40;
+		fadeFrame(f, 10, true, [&] { show(f, &drawA, lamp); });
+		CHECK(fadeFrame(f, 11, true, [] {}).empty());
+	}
+	SUBCASE("hidden in an earlier frame, then gone: nothing comes back")
+	{
+		BlobShadow::DecalFades f;
+		fadeFrame(f, 10, true, [&] { show(f, &drawA, eye); });
+		fadeFrame(f, 20, true, [&] {
+			f.hide(3);
+			CHECK(f.keep(3, object, &drawA, eye, o)); // it keeps its fade (and draws nothing)
+		});
+		CHECK(fadeFrame(f, 30, true, [] {}).empty());
+	}
+	SUBCASE("hidden in the frame it changes to another decal or to none: nothing comes back")
+	{
+		BlobShadow::DecalFades f;
+		fadeFrame(f, 10, true, [&] { show(f, &drawA, eye); });
+		CHECK(fadeFrame(f, 11, true, [&] {
+			f.hide(3);
+			CHECK(f.keep(3, object, &drawA, glow("Other.tga"), o));
+		}).empty());
+		BlobShadow::DecalFades g;
+		fadeFrame(g, 10, true, [&] { show(g, &drawA, eye); });
+		CHECK(fadeFrame(g, 11, true, [&] { g.hide(3); }).empty());
+	}
+	SUBCASE("its draw is hidden and another draw's decal takes over: the hidden one does not fade out; hiding a draw it does not come from changes nothing")
+	{
+		BlobShadow::DecalFades f;
+		fadeFrame(f, 10, true, [&] { show(f, &drawA, eye); });
+		CHECK(fadeFrame(f, 11, true, [&] {
+			f.hide(3, &drawA);
+			show(f, &drawB, glow("Other.tga"));
+		}).empty());
+		CHECK(fadeFrame(f, 12, true, [&] { f.hide(3, &drawA); }).size() == 1); // drawB's decal was seen
+	}
+	SUBCASE("another decal without any hiding: the old one fades out beside the new one")
+	{
+		BlobShadow::DecalFades f;
+		fadeFrame(f, 10, true, [&] { show(f, &drawA, eye); });
+		CHECK(fadeFrame(f, 11, true, [&] { show(f, &drawA, glow("Other.tga")); }).size() == 1);
+	}
+	SUBCASE("hidden and shown again: the fade went on")
+	{
+		BlobShadow::DecalFades f;
+		fadeFrame(f, 10, true, [&] { show(f, &drawA, eye); });
+		fadeFrame(f, 15, true, [&] {
+			f.hide(3);
+			CHECK(f.keep(3, object, &drawA, eye, o));
+		});
+		fadeFrame(f, 40, true, [&] { show(f, &drawA, eye); });
+		CHECK(o == 255u);
+	}
+	SUBCASE("the ShadowLOD turned off: the live decal and a fading one go at once, one with ShadowOverrideLODVisibility fades on")
+	{
+		BlobShadow::DecalFades f;
+		fadeFrame(f, 10, true, [&] { show(f, &drawA, eye); });
+		CHECK(fadeFrame(f, 11, false, [] {}).empty()); // live
+		fadeFrame(f, 20, true, [&] { show(f, &drawA, eye); });
+		CHECK(fadeFrame(f, 21, true, [] {}).size() == 1);
+		CHECK(fadeFrame(f, 22, false, [] {}).empty()); // fading
+		CHECK(fadeFrame(f, 23, true, [] {}).empty());  // and it does not return with the decals
+		BlobShadow::DecalSpec over = eye;
+		over.overrideLOD = true;
+		fadeFrame(f, 30, true, [&] { show(f, &drawA, over); });
+		CHECK(fadeFrame(f, 31, false, [] {}).size() == 1);
+	}
+	SUBCASE("a drawable id the next object reuses starts its own fade")
+	{
+		BlobShadow::DecalFades f;
+		fadeFrame(f, 10, true, [&] { show(f, &drawA, eye); });
+		fadeFrame(f, 40, true, [&] { CHECK(f.keep(3, (ObjectID)8, &drawA, eye, o)); });
+		CHECK(o == 0u);
+	}
 }
 
 namespace

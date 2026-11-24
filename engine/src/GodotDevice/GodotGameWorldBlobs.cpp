@@ -15,7 +15,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <set>
 
 using namespace godot;
 
@@ -244,8 +243,8 @@ void GameWorld::update_decal_shadows(double deltaMs)
 	// HUD's grid places them); drawn for the same drawables as the blobs: none for a shrouded, fogged, hidden, faded-out or shadowless one
 	// (setFullyObscuredByShroud -> enableShadowInvisible). A _DYNAMIC one fades (BlobShadow::DecalFade): in from the frame its shadow appears (the model
 	// draw's shadow setup), out from the frame it goes (its drawable gone, or its state naming another or none), standing where it was last drawn.
-	// The client clock: 30 frames a second of render time (TheGameClient's frame, as Radar::advanceClock); it stands while the game is paused, as this
-	// update does. INFERENCE (S-3304): a state change that names the same decal keeps the shadow (and its fade); retail draws a _DYNAMIC one (0xC00)
+	// The client clock: 30 frames a second of render time (TheGameClient's frame, as Radar::advanceClock); it stands while the game is paused (a paused
+	// frame brings 0 ms). INFERENCE (S-3304): a state change that names the same decal keeps the shadow (and its fade); retail draws a _DYNAMIC one (0xC00)
 	// also while its render object is not really visible (BFME2 renderShadows), here it goes with the drawable's look
 	m_decalShadows.clear();
 	if (!m_game)
@@ -255,7 +254,7 @@ void GameWorld::update_decal_shadows(double deltaMs)
 	m_decalClockMs += deltaMs > 0.0 ? deltaMs : 0.0;
 	const unsigned now = (unsigned)(m_decalClockMs * 30.0 / 1000.0);
 	DrawableManager &dm = m_game->drawables();
-	std::set<uint32_t> seen;
+	m_decalFades.begin(now, s_shadowDecals);
 	for (size_t id = 1; id < m_views.size(); ++id)
 	{
 		const DrawableView &v = m_views[id];
@@ -264,15 +263,28 @@ void GameWorld::update_decal_shadows(double deltaMs)
 		{
 			continue;
 		}
-		const Coord3D p = *d->getPosition();
+		const bool seen = !v.fogHidden && !v.fogLook && d->drawOpacity() > 0.0f && d->shadowsEnabled();
+		if (!seen)
+		{
+			m_decalFades.hide((uint32_t)id);
+		}
+		// one per drawable, as the blobs: the first shown model draw that names one; a hidden draw's only keeps its fade going while no shown one has any
+		const DrawEntry *chosen = nullptr;
+		const BlobShadow::DecalSpec *spec = nullptr;
+		bool chosenHidden = false;
 		for (const DrawEntry &e : d->entries())
 		{
 			if (e.kind != W3D_DRAWKIND_MODEL || e.missingModel || !e.draw)
 			{
 				continue;
 			}
+			const bool hidden = e.moduleHidden || e.conditionHidden;
+			if (hidden)
+			{
+				m_decalFades.hide((uint32_t)id, e.draw.get());
+			}
 			const auto *module = dynamic_cast<const W3DModelDrawModuleData *>(e.data);
-			if (!module)
+			if (!module || (chosen && (hidden || !chosenHidden)))
 			{
 				continue;
 			}
@@ -297,66 +309,28 @@ void GameWorld::update_decal_shadows(double deltaMs)
 			{
 				continue;
 			}
-			// one per drawable, as the blobs: the first model draw that names one
-			const BlobShadow::DecalSpec &spec = cached.spec;
-			seen.insert((uint32_t)id);
-			DecalFadeView &fv = m_decalFades[(uint32_t)id];
-			if (!fv.valid || fv.object != d->getObjectID() || !(fv.spec == spec))
-			{
-				if (fv.valid && fv.hasLast && BlobShadow::isDynamic(fv.spec.type))
-				{
-					m_decalFadingOut.push_back({ fv.last, BlobShadow::fadeOut(fv.fade, now) });
-				}
-				fv = DecalFadeView();
-				fv.valid = true;
-				fv.object = d->getObjectID();
-				fv.spec = spec;
-				fv.fade = BlobShadow::fadeIn(spec, now);
-			}
-			const bool shown = !v.fogHidden && !v.fogLook && d->drawOpacity() > 0.0f && d->shadowsEnabled() && !e.moduleHidden && !e.conditionHidden;
-			SelectionDecal decal;
-			if (shown && BlobShadow::belowMaxHeight(spec, p.z, m_game->mapGroundHeight(p.x, p.y)) && BlobShadow::decal(spec, p.x, p.y, p.z, d->getOrientation(), decal))
-			{
-				decal.drawable = (unsigned)id;
-				decal.object = d->getObjectID();
-				unsigned opacity = spec.opacityPeak;
-				if (BlobShadow::isDynamic(spec.type) && !BlobShadow::opacityAt(fv.fade, now, opacity))
-				{
-					break;
-				}
-				decal.color = DecalShadowColor(opacity);
-				fv.last = decal;
-				fv.hasLast = true;
-				m_decalShadows.push_back(std::move(decal));
-			}
-			break;
+			chosen = &e;
+			spec = &cached.spec;
+			chosenHidden = hidden;
 		}
-	}
-	// the shadows that went: a _DYNAMIC one fades out where it was last drawn (RW 0x508B40)
-	for (auto it = m_decalFades.begin(); it != m_decalFades.end();)
-	{
-		if (seen.count(it->first))
+		if (!chosen)
 		{
-			++it;
 			continue;
 		}
-		if (it->second.hasLast && BlobShadow::isDynamic(it->second.spec.type))
-		{
-			m_decalFadingOut.push_back({ it->second.last, BlobShadow::fadeOut(it->second.fade, now) });
-		}
-		it = m_decalFades.erase(it);
-	}
-	for (auto it = m_decalFadingOut.begin(); it != m_decalFadingOut.end();)
-	{
+		const Coord3D p = *d->getPosition();
 		unsigned opacity = 0;
-		if (!BlobShadow::opacityAt(it->second, now, opacity))
+		const bool draws = m_decalFades.keep((uint32_t)id, d->getObjectID(), chosen->draw.get(), *spec, opacity);
+		SelectionDecal decal;
+		if (draws && seen && !chosenHidden && BlobShadow::belowMaxHeight(*spec, p.z, m_game->mapGroundHeight(p.x, p.y))
+			&& BlobShadow::decal(*spec, p.x, p.y, p.z, d->getOrientation(), decal))
 		{
-			it = m_decalFadingOut.erase(it);
-			continue;
+			decal.drawable = (unsigned)id;
+			decal.object = d->getObjectID();
+			decal.color = DecalShadowColor(opacity);
+			m_decalFades.drawn((uint32_t)id, decal);
+			m_decalShadows.push_back(std::move(decal));
 		}
-		SelectionDecal decal = it->first;
-		decal.color = DecalShadowColor(opacity);
-		m_decalShadows.push_back(std::move(decal));
-		++it;
 	}
+	// the decals that went: a _DYNAMIC one fades out where it was last drawn (RW 0x508B40)
+	m_decalFades.end(m_decalShadows);
 }

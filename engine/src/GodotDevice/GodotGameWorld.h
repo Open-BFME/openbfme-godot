@@ -40,6 +40,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/W3DVegetationSway.h"
 #include "GodotDevice/GodotW3DMaterial.h"
 #include "GodotDevice/GodotBlobShadows.h" // lane BLOBSHADOW-1: m_blobs
+#include "GameClient/DecalShadowFades.h" // lane DRAWDECAL-1: m_decalFades
 #include "GameClient/SelectionDecals.h" // lane DRAWDECAL-1: m_decalShadows
 #include "GameEngineDevice/W3DDevice/GameClient/HouseColor.h" // lane HCKEY-1: EntryView::staticKeyPalette
 
@@ -853,16 +854,7 @@ private:
 	// decals (decal_shadows), and the resolved decal of a (template, module, model state)
 	void update_decal_shadows(double deltaMs);
 	// the _DYNAMIC fades (BlobShadow::DecalFade) by drawable, the decals that went and fade out, and the client clock they run on (30 frames a second)
-	struct DecalFadeView
-	{
-		bool valid = false, hasLast = false;
-		::ObjectID object = INVALID_ID; ///< a drawable id the next object reuses starts its own fade
-		BlobShadow::DecalSpec spec;
-		BlobShadow::DecalFade fade;
-		SelectionDecal last; ///< where it was last drawn (a fade-out stands there)
-	};
-	std::map<uint32_t, DecalFadeView> m_decalFades;
-	std::vector<std::pair<SelectionDecal, BlobShadow::DecalFade>> m_decalFadingOut;
+	BlobShadow::DecalFades m_decalFades;
 	double m_decalClockMs = 0.0;
 	std::vector<SelectionDecal> m_decalShadows;
 	struct DecalSpecCache
