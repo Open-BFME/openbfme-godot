@@ -2,6 +2,8 @@
 
 Lane FEATMAP-1, 2026-10-19, tree `fdab4741d` (archive head). Every feature of the game a player would recognise, what we have for it, where our code came from (RotWK binary, BFME2 decomp, Zero Hour source or a best guess), and what is still to copy from the original, without the original's performance problems.
 
+Synced with main at `be270dc1` on 2026-11-24: the CSV caught up with the rows edited here since 2026-10-22, the rows whose feature had been ported since were checked against the code and the stops, and the counts below were recomputed from the CSV.
+
 Machine-readable copy: [`feature-map.csv`](feature-map.csv). Classes, as the lane brief defines them:
 
 | Class | Meaning |
@@ -16,43 +18,43 @@ A row's class is the provenance of what exists. A ported feature with a player-v
 
 ## Summary
 
-**349 features** across 16 areas.
+**351 features** across 16 areas.
 
 | Class | Features | Share |
 |---|---:|---:|
-| RotWK 1:1 | 182 | 52% |
+| RotWK 1:1 | 251 | 72% |
 | BFME2 1:1 | 1 | 0% |
-| Generals/ZH | 16 | 5% |
-| best guess | 31 | 9% |
-| missing | 119 | 34% |
+| Generals/ZH | 14 | 4% |
+| best guess | 33 | 9% |
+| missing | 52 | 15% |
 
-Completeness: full 58, partial 173, stub 15, none 103. Confidence: high 192, medium 146, low 11.
+Completeness: full 80, partial 220, stub 8, none 43. Confidence: high 192, medium 148, low 11.
 
 What the numbers say:
 
-- **Where we have code, it is almost all RotWK 1:1.** 182 of the 230 implemented features port the RotWK binary. Only 1 feature is a straight BFME2 decomp port; the decomp is used as a cross-check next to RW addresses, not as the source. The 16 Zero Hour features are where BFME kept ZH's design and nobody has yet checked the RotWK binary: terrain height and rendering, the audio engine core and music, the cinematic camera, text and fonts, the lockstep frame model, the LAN lobby, the logic CRC exchange and archive mounting. Most RotWK rows are `partial`: the core is ported, details are open stops.
-- **31 best-guess features.** More than half are OpenBFME-original by design (our online service, relay, rejoin, UDP transport, own save and replay formats, install verification, presentation options); retail had nothing to port there. The ones that matter for faithfulness: unit target choice (S-326), unit collision (S-780), the announcer's timing and selection (S-247), water rendering, group casting of powers, script AI orders without an AI state (S-1186), military captions and the under-attack notifications.
-- **120 missing features.** The biggest blocks are castle sieges (path layers + wall docking), War of the Ring (not on main), the computer player's higher-level decisions, and a long tail of effects and sounds.
-- **Module classes** (the INI building blocks retail data uses; current registry, regenerated for this lane): 153 of 245 ported, 4 run as the plain base AI, 2 parsed only, 86 missing. The 86 missing classes are used by 1,280 object templates (5% of module uses); every one appears in a row below.
+- **Where we have code, it is almost all RotWK 1:1.** 251 of the 299 implemented features port the RotWK binary. Only 1 feature is a straight BFME2 decomp port; the decomp is used as a cross-check next to RW addresses, not as the source. The 14 Zero Hour features are where BFME kept ZH's design and nobody has yet checked the RotWK binary: terrain height and rendering, the audio engine core and music, the cinematic camera, text and fonts, the lockstep frame model, the LAN lobby, the logic CRC exchange and archive reading. Most RotWK rows are `partial`: the core is ported, details are open stops.
+- **33 best-guess features.** Most are OpenBFME-original by design (our online service, relay, rejoin, UDP transport, own save and replay formats including the War of the Ring save, online Create-a-Hero, install verification, presentation options); retail had nothing to port there. The ones that matter for faithfulness: unit collision (S-780), the announcer's timing and selection (S-247), volume shadows as Godot shadow maps, group casting of powers, script AI orders without an AI state (S-1186), military captions and the under-attack notifications.
+- **52 missing features.** Castle sieges and the War of the Ring are on main now (lanes WALL-1/2, SIEGE-1, WOTR2); what is left is a tail: the computer player's wall builder and remaining tactics, object sounds and model-condition sound loops, decal shadows and effect draws, OCL details, a few hero and horde modules, and retail interop (wire format, CRC, retail replays and saves).
+- **Module classes** (the INI building blocks retail data uses; [`module-coverage.md`](module-coverage.md), registry on main at be270dc1): 188 of 245 ported, 2 run as the plain base AI, 1 parsed only, 54 missing. The 54 missing classes are used by 583 object templates (2% of module uses).
 
 ### Features per area
 
 | Area | RotWK 1:1 | BFME2 1:1 | Generals/ZH | best guess | missing | Total |
 |---|---:|---:|---:|---:|---:|---:|
-| Combat | 22 |  |  | 1 | 8 | 31 |
-| Movement/pathing | 19 |  | 1 | 2 | 9 | 31 |
-| AI | 21 |  |  |  | 12 | 33 |
-| Economy | 10 |  |  |  | 7 | 17 |
-| Heroes | 7 |  |  |  | 4 | 11 |
-| Powers/spellbook | 12 |  |  | 1 | 8 | 21 |
-| Structures/garrison/walls/siege | 10 |  |  | 1 | 7 | 18 |
-| Hordes | 17 |  |  |  | 9 | 26 |
-| Campaign | 12 |  | 1 | 3 | 2 | 18 |
-| WotR | 1 |  |  |  | 15 | 16 |
-| Create-a-Hero | 7 |  |  | 1 | 3 | 11 |
-| UI | 22 | 1 | 4 | 3 | 7 | 37 |
-| Audio/FX | 5 |  | 3 | 1 | 7 | 16 |
-| Net/MP | 13 |  | 4 | 11 | 6 | 34 |
+| Combat | 26 |  |  |  | 5 | 31 |
+| Movement/pathing | 24 |  | 1 | 2 | 4 | 31 |
+| AI | 28 |  |  |  | 5 | 33 |
+| Economy | 17 |  |  |  |  | 17 |
+| Heroes | 9 |  |  |  | 2 | 11 |
+| Powers/spellbook | 15 |  |  | 1 | 5 | 21 |
+| Structures/garrison/walls/siege | 16 |  |  | 1 | 1 | 18 |
+| Hordes | 20 |  |  |  | 6 | 26 |
+| Campaign | 13 |  | 1 | 3 | 1 | 18 |
+| WotR | 13 |  |  | 1 | 2 | 16 |
+| Create-a-Hero | 9 |  |  | 2 |  | 11 |
+| UI | 28 | 1 | 3 | 3 | 3 | 38 |
+| Audio/FX | 9 |  | 3 | 1 | 3 | 16 |
+| Net/MP | 14 |  | 4 | 11 | 5 | 34 |
 | Saves/replays | 5 |  | 1 | 3 | 6 | 15 |
 | Mods | 5 |  | 1 | 5 | 4 | 15 |
 
@@ -62,24 +64,24 @@ Rows with class `missing` or `best guess`, grouped where several rows describe o
 
 | # | Feature | Areas | Stops | Where the real thing lives, and size |
 |---:|---|---|---|---|
-| 1 | Castle sieges: path layers, wall walking, ladders and siege towers docking on walls, bridges | Movement/pathing, Structures, AI | S-161, S-1103, S-1105 | RotWK pathfinder layer code + DynamicPortalBehaviour / FakePathfindPortalBehaviour / GateProxyBehavior / SiegeDockingBehavior / SiegeDeploy* / SiegeAIUpdate / BridgeBehavior (RW, BFME2 decomp Behavior/*); large: ~3k LOC layers + ~5k decomp lines of siege modules |
-| 2 | War of the Ring (strategic map, turns, armies, auto-resolve, fought battles, StrategicHUD, AI) | WotR | S-1325..S-1331 | lane/wotr1 (~11.6k lines, WOTR-1/2) is merged onto main 2e5a5985b in feature/wotr (WOTR2, 2026-10-20); still missing there: the fought battle's retail end rule (RW 0x441E4A veto) and placement, WotR save / load, the strategic AI (inferred, its functions sit in WorldBuilder.exe / RW Living World range), MP WotR |
+| 1 | Castle sieges: path layers, wall walking, ladders and siege towers docking on walls, bridges (lanes WALL-1/2, SIEGE-1: ported) | Movement/pathing, Structures, AI | S-161, S-4853, S-4940..S-4944, S-1941 | done: the wall layer and ramps (S-4840), DynamicPortalBehaviour / FakePathfindPortalBehaviour, SiegeAIUpdate, SiegeDockingBehavior, SiegeDeploy* and StopSpecialPower; left: GateProxyBehavior (S-1941), ManTheWallsSpecialPower, WallUpgradeUpdate, the bridge-kind layers (BridgeBehavior, no 2.01 map uses them) |
+| 2 | War of the Ring (strategic map, turns, armies, auto-resolve, fought battles, StrategicHUD, AI; lane WOTR2: on main since 2d919e89) | WotR | S-1320..S-1340, S-852, S-1462 | done: engine/src/GameLogic/LivingWorld/ (turns, armies, auto-resolve, fought battles, retail's LivingWorldAI), StrategicHUD, the strategic map view, the map and battle saves (own format), LAN and online wars; left: retail .BfME2WotR saves, the saved hero records (S-852), Living World audio (S-1462), presentation details (S-1335) and the inferences the stops list |
 | 3 | Unit target choice: retail auto-acquire scan and AttackPriority | Combat | S-326 | lane TARGET-1 ported the mood scan (RW 0x66844A), the target search RW 0x7006D7 with its filters and the AttackPriority / combat chain score, lane LOS-1 the terrain line of sight filter (RW 0x6616AC); left: the crowd query (RW 0xAD2CE0), the stop flag AI + 0x3CC, the script priority actions (S-1180) |
 | 4 | Object shadows (volume and decal shadows) | UI | S-3304 | volume shadows are drawn as Godot shadow maps (best guess); decal blobs and projected shadows are missing: ZH W3DProjectedShadow (W3DShadow.cpp) as reference |
-| 5 | Computer player: tactics, wall builder, AI spell casting (lane AI5 ported the unit and structure upgrade purchases; retail has no AI spell book buyer, S-1875) | AI, Powers/spellbook | S-417, S-412, S-413, S-1421, S-1876 | RotWK skirmish AI (tactics bodies, wall builder RW +0xE4, 4 missing spell decisions); ~3-4k LOC |
-| 6 | Weapon effects never delivered: fire on the ground, damage fields, grab, scare, steal money, open gate, Lua events | Combat | S-321 | 11 nugget deliver functions (~800-1200 LOC), RW WeaponTemplate nugget vtables; BFME2 decomp Weapon*Nugget |
+| 5 | Computer player: tactics, wall builder, AI spell casting (lane AI5 ported the unit and structure upgrade purchases; RAI-DEF, AIEXPAND-1 and RAI-SIEGE the DEFENSIVE / EXPANSION heuristics and the siege tactics; retail has no AI spell book buyer, S-1875) | AI, Powers/spellbook | S-417, S-412, S-1421 | RotWK skirmish AI (the tech-building OPPORTUNITY heuristic and targetless tactics, wall builder RW +0xE4, 2 missing spell decisions HEAL / ARMY_BREAKER); ~2k LOC |
+| 6 | Weapon effects never delivered: fire on the ground (NUGGET-1 and MODCOMPAT-MOD1 delivered the other 10 nuggets) | Combat | S-321, S-191 | FireLogicNugget and TheFireLogicSystem (terrain fire grid, ~20 functions); BFME2 decomp FireLogicSystemObjects.cpp |
 | 7 | Summons and spawned groups: OCL scatter, formations, fades, containers, veterancy | Powers/spellbook | S-530 | ObjectCreationList nuggets (~25 functions, ~1.5k LOC; ZH OCL.cpp as a guide, RotWK binary as the source) |
-| 8 | Angmar Thrall Master summons (orc warriors, wolf riders, Rhudaur units) | Powers/spellbook, Heroes | (no stop yet) | SummonReplacementSpecialAbilityUpdate (RotWK-only: read from the binary), ~300 LOC on top of SpecialAbilityUpdate |
-| 9 | Isengard and Mordor lumber mills / worker tree harvesting | Economy | S-1993, S-655 | WorkerAIUpdate harvest half + SupplyCenterCreate / SupplyCenterDockUpdate (~1.5k LOC) |
+| 8 | Angmar Thrall Master summons (orc warriors, wolf riders, Rhudaur units; lane SUMMON-1: ported) | Powers/spellbook, Heroes | S-530 | done: SummonReplacementSpecialAbilityUpdate from the RotWK binary (SpecialAbilityModules.cpp, RW 0xC05AF8); the Army of the Dead's OathbreakersFadeAwayBehavior / AODCrushCollide remain |
+| 9 | Isengard and Mordor lumber mills / worker tree harvesting (lane LUMBER1: ported) | Economy | S-5200..S-5203 | done: the WorkerAIUpdate harvest half, SupplyCenterCreate / SupplyCenterDockUpdate (S-1993, S-655 closed) |
 | 10 | Effects: damage smoke and fire on buildings, camera shake, light pulses, scorch marks, tints, lasers | Audio/FX, Combat | S-686, S-687 | Done: TransitionDamageFX (FX-4) and the damage-state particle systems; the FXList sinks TerrainScorch, DynamicDecal, LightPulse and CameraShakerVolume (FEAT-BLDFX-1). Left: TintDrawable / AttachedModel presentation, and W3DLightDraw / tornado / laser / debris draws (S-113) |
 | 11 | Object sounds and sound loops (damage, creation, enter/exit, promotion; model-condition loops) | Audio/FX | S-707, S-1242 | ~15 call sites + ModelConditionAudioLoopClientBehavior (254 templates), AnimationSoundClientBehavior |
 | 12 | Announcer (EVA) timing, priorities and cooldowns from the binary | Audio/FX | S-247, S-709 | Eva update/play (~15 functions); today inferred (Eva.cpp has no RW citations) |
-| 13 | Water rendering (water shader, rivers, waves) | UI | S-035 | ZH W3DWater (~3k LOC) + WaterShader.FX; presentation, may beat retail |
+| 13 | Water rendering (water shader, rivers, waves) | UI | S-035 | standing water, rivers and shoreline waves are drawn with ports of retail watershader.fxo / riverwater.fxo; left: reflections, shadow filtering, the other PCA LODs, the depth LUT; presentation, may beat retail |
 | 14 | Unit collision / separation (retail collision manager) | Movement/pathing | S-780, S-781 | RotWK collision manager (~1k LOC); today a circle-overlap stand-in, units overlap inside and between hordes |
 | 15 | In-game chat and beacons (lane CHAT-1: ported; S-5150 / S-5151 list what is left) | Net/MP | S-287, S-1123 | ZH chat NetCommand + InGameChat UI (~500 LOC) + beacons (~300 LOC), RotWK Apt chat movie |
 | 16 | Campaign carry-over: the hero records and the WalkOnTemplate formation | Campaign | S-4903, S-852 | the objectives screen and the unit carry-over between missions are done (lanes CAMPUI-1, BFME2CAMP1); the hero records and the formation remain |
 | 17 | Map scripts: the remaining condition and action types; Lua event sources (OnDamaged, OnDestroyed ...) | Campaign | S-1180, S-1186, S-1190 | after lane SCRIPT-4: 3.2% of the condition and 5.3% of the action uses still do nothing (the skirmish AI base system and threat levels, the attack priority sets, the campaign carry-over units, the area guards and squad attack, the camera / options presentation actions) |
-| 18 | Economy bonuses: production / command-point / bounty modifiers, slaughterhouses, building upgrade footprints | Economy | S-921, S-1423 | small wiring for modifiers; slaughter contain ~1.5k LOC; GeometryUpgrade ~300 LOC + per-object geometry |
+| 18 | Economy bonuses: production / command-point / bounty modifiers, slaughterhouses, building upgrade footprints | Economy | S-253, S-921, S-1423 | done: the PRODUCTION modifier, the slaughter contains (S-6010), GeometryUpgrade footprints; left: the command point and bounty sums (S-253), ProductionSpeedBonus read by production (S-921), GeometryUpgrade's draw side and WallUpgradeUpdate (S-1423) |
 | 19 | Retail mod support: -mod switch and directory mods, the 2.02 profile, mod corpus gate | Mods | (PLAN rule 6) | -mod handler RW 0x7BADB9 / precedence flag 0xDEC490 / file open 0xA149A2; small code, large test surface |
 | 20 | Retail replays and saves: .BfME2Replay playback, replay CRC parity, retail save import | Saves/replays | S-725, S-5011 | replay player + retail CRC content (RW 0xA211DF + 0x63C809) + per-module retail xfer; large |
 
@@ -541,7 +543,7 @@ Columns: **Class**, **Done** (full / partial / stub / none), **Conf** (confidenc
 | Version / INI / executable compatibility checks at join | best guess | partial | medium | 2 | engine/src/GameNetwork/ProfileIdentity.cpp; engine/src/GameNetwork/LANAPI.cpp | Retail: INI checksum + exe CRC in LAN/game info (PLAN rule 5: RW 0x63C809 / 0x63C820 term unidentified) | S-725 | size: retail INI checksum + exe CRC: few functions, blocked by unidentified term | ProfileIdentity compares engine id, numeric mode and every archive MD5 at JOIN/START; retail checksums not computed.; OpenBFME-original identity check; stricter than retail.; depends: Cross-play gate 3 |
 | Multiplayer pause | best guess | full | high | 1 | engine/src/GameNetwork/Network.cpp (NETCOMMANDTYPE_PAUSE/RESUME) | RotWK refuses: GameLogic::setGamePaused RW 0x625AF1 returns in MP (isInMultiplayerGame RW 0x441B7C) | S-3901 |  | rw-text.asm 0x625AF1 calls 0x441B7C at 0x625B10 - consistent with S-3901.; OpenBFME-original; retail has no MP pause. |
 | In-game chat (allies / everyone) and beacons | RotWK 1:1 | partial | high | 4 | engine/src/GameNetwork/NetPacket.cpp (NETCOMMANDTYPE_CHAT 14); engine/src/GameLogic/BeaconCommands.cpp; engine/src/GameClient/BeaconClientUpdate.cpp; engine/src/GameClient/MessageStream/CommandXlat.cpp | RW 0x81F8D8 (chat / PLACE_BEACON cases), 0x8D3AF1 direct send, 0x77C634 MSG_PLACE_BEACON, 0x77B2C8 sell branch, 0x8CDCE9 BeaconClientUpdate | S-5150, S-5151, S-1123 | size: ~1.5k LOC | lane CHAT-1: chat over LAN and the relay as direct commands outside the lockstep (never hashed); beacons are simulation objects as in retail (Ctrl+B + click, 3 per player, Delete, allies' notice + EVA, minimap pulses, hidden for enemies); tools/net/chat1_godot.sh proves both with three clients. Not ported: disconnect-screen chat (S-1123), beacon captions (S-5151). |
-| LAN War of the Ring and LAN Load Game (multiplayer saves) | missing | none | high | 3 | engine/src/GameClient/GUI/AptScreens/AptLanLobby.cpp | AptLanLobby::OnLoadScreen("LanStrategic"), OnLoadGameBttn; list mode +0x304 | S-4753, S-4075 | size: WotR LAN flow + MP save/load: large (WotR M9 dependency) | S-4753 reports both buttons not ported.; depends: WotR, Saves |
+| LAN War of the Ring and LAN Load Game (multiplayer saves) | RotWK 1:1 | partial | high | 3 | engine/src/GameClient/GUI/AptScreens/AptLanLobby.cpp; engine/src/GameNetwork/StrategicSession.cpp | AptLanLobby::OnLoadScreen("LanStrategic"), OnLoadGameBttn; list mode +0x304 | S-4753, S-1339, S-1340 | size: LAN Load Game (an RTS game from a save) | WOTR2 milestone 8: LanLobby's War of the Ring toggle opens LanStrategic (S-1339), the war runs in the lockstep and its multiplayer save works (S-1340 closed); S-4753 open: LanLobby's Load Game (AptLanLobby::OnLoadGameBttn) still says loading a saved network game is not available; depends: WotR (on main), Saves |
 | Map transfer to players without the map | missing | none | high | 3 | engine/src/GameClient/GUI/Skirmish/SkirmishGameSetup.cpp (only the refusal text) | ZH FileTransfer.cpp / DownloadManager.cpp; RotWK GUI:CouldNotTransferMap in start check RW 0x8431B8 |  | size: ZH FileTransfer ~600 LOC + NETCOMMANDTYPE_FILE*/progress | grep finds no transfer code; start check refuses with GUI:PlayerNoMap / CouldNotTransferMap.; Players must already have identical archives (ProfileIdentity).; depends: Cross-play gate 4; custom maps in LAN/online |
 | Network packet / command encoding (retail wire format) | missing | none | high | 2 | engine/src/GameNetwork/NetPacket.cpp; engine/src/GameNetwork/Transport.cpp | RotWK NetCommandType switch RW 0x989449 and its writers; ZH NetPacket.cpp | S-721 | size: NetPacket writers/readers ~40 functions, ~3k LOC (ZH NetPacket.cpp ~5.9k) | S-721: our layout is OpenBFME's own (CRC-32, magic 0x4642, cumulative acks, 1200-byte fragments); retail encoding not reproduced.; Our own reliable UDP transport (best guess, OpenBFME-original) works OpenBFME-to-OpenBFME; 0 desyncs in MP-2 4-peer 30 min soaks.; depends: Cross-play gate 1; blocks all retail interop |
 | Retail logic CRC content (xfer CRC over game state) for replay/cross-play parity | missing | partial | medium | 2 | engine/src/Common/XferCRC.h; engine/src/Common/System/XferCRC.cpp | RW 0xA211DF XferCRC step; stored INI checksum extra term RW 0x63C809 / 0x63C820 unidentified | S-725 | size: GameLogic::getCRC over all snapshot blocks; needs every xfer to match retail | XferCRC step ported for saves (SAVE-4a); the MP CRC does not use it, and the CRC input sequence is not documented (PLAN rule 5).; Blocked by S-001/S-080 and many xfer gaps.; depends: Cross-play gate 7; retail replay CRC parity |
