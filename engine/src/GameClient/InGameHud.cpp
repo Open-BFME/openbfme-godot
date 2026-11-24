@@ -154,14 +154,18 @@ InGameHud::InGameHud(Config config)
 		PlayUnitVoiceForMessage(*m_voice, m_input->ui().selected(), msg);
 	});
 	// the logic's voice events (ProductionUpdate's VoiceCreated RW 0x8A2A48, ...): the made object alone is the "selection" (RW passes its drawable list)
-	AudioApi::installUnitVoiceHandler([this](int voiceEvent, std::uint32_t objectId, std::uint32_t producerId) {
+	AudioApi::installUnitVoiceHandler([this](const AudioApi::UnitVoiceParams &p) {
 		if (const Player *local = m_input->context().localPlayer())
 		{
 			m_voice->setLocalPlayerIndex(local->getPlayerIndex());
 		}
 		UnitVoiceResponse::Info info;
-		info.producer = (ObjectID)producerId;
-		m_voice->pickAndPlay({ (ObjectID)objectId }, voiceEvent, &info);
+		info.producer = (ObjectID)p.producerId;
+		info.powerTemplate = p.powerTemplate;
+		info.target = (ObjectID)p.targetId;
+		info.hasPosition = p.hasPosition;
+		info.position = Coord3D{ p.posX, p.posY, p.posZ };
+		m_voice->pickAndPlay({ (ObjectID)p.objectId }, p.voiceEvent, &info);
 	}, this);
 }
 
