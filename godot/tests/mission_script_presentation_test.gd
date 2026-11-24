@@ -98,7 +98,14 @@ func _assert_spotlight(game: Node) -> void:
 	_check(decal.x == marker.x and decal.y == marker.y) # no ShadowOffsetX / Y
 	_check(decal.texture == "EXSpotLight.tga")
 	_check(int(decal.style) == 0x800) # SHADOW_ADDITIVE_DECAL_DYNAMIC: added to the surface (sel_alpha_at)
-	_check(int(decal.color) == 0xFFFFFFFF) # white at ShadowOpacityPeak 255
+	# SHADOW_ADDITIVE_DECAL_DYNAMIC fades in: ShadowOpacityStart 0 to Peak 255 over FadeInTime 1000 ms (RW 0x7323CE), white throughout
+	_check((int(decal.color) & 0xFFFFFF) == 0xFFFFFF)
+	_check((int(decal.color) >> 24) < 255, "The marker's spotlight must still be fading in (alpha %d)" % (int(decal.color) >> 24))
+	for i in 8:
+		world.advance(0.2)
+		await process_frame
+	decal = _spotlight(world, marker.id)
+	_check(not decal.is_empty() and int(decal.color) == 0xFFFFFFFF, "The faded-in spotlight is white at Peak 255 (%s)" % str(decal))
 	var shot := OS.get_environment("SPOTLIGHT_TEST_SHOT")
 	if not shot.is_empty():
 		game._hud.camera_look_at(Vector2(waypoint.x, waypoint.y))
