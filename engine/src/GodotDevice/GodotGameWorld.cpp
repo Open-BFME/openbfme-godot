@@ -2498,6 +2498,7 @@ void GameWorld::advance(double delta)
 			}
 		}
 		refresh_streaks(false);
+		update_blob_shadows(); // lane BLOBSHADOW-1 (review): the blob layer covers the camera's ground footprint, and the camera moves while paused
 		refresh_shroud(false, timing::secondsToMs(delta)); // lane FOGFX-1: a pending fade goes on while paused (retail's is wall clock)
 		m_game->endClientWindow(); // RENDERWAIT-1: no frames are queued while paused
 		return;
