@@ -53,6 +53,7 @@
 
 class LiveGame;
 class Object;
+struct ParticleSysBoneInfo; // GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h (PORT-68)
 
 class LiveFX : public FXEventSink, public FXPlaybackWorld, public DrawableFXHost
 {
@@ -143,6 +144,8 @@ public:
 	const Stats &stats() const { return m_stats; }
 	// RW 0x4B337B, the single-frame test of a FireWhenSkipped FXEvent (mode: W3D_ANIM_MODE_*, direction +1 / -1)
 	static bool framePassed(int prev, int cur, int frame, int mode, int direction);
+	// PORT-68, RW 0x4C662D .. 0x4C663E: whether a ParticleSysBone entry's FXTrigger gate allows spawning on `d` (0 = NONE always allows)
+	static bool allowsParticleSysBoneFXTrigger(const Drawable &d, const ParticleSysBoneInfo &info);
 	// the stop lines of the live effects (S-680 .. S-686: the logic side's FXEventLog::stops() and this player's), for the report
 	static std::vector<std::string> stops();
 

@@ -171,6 +171,8 @@ public:
 	// test crash (stableqa1 cah retail, SIGSEGV after 43 assertions) with no code path of the lane running at all, while the same no-op virtual appended here
 	// leaves it green - the later slots' numbers must not move, whatever reads them
 	virtual void setDrawableOpacity(Object &obj, float opacity) { (void)obj; (void)opacity; }
+	// PORT-68: Object::setDrawableFXTrigger (RW 0x68B56A -> Drawable::setFXTrigger RW 0x44C465, Drawable + 0x360)
+	virtual void setDrawableFXTrigger(Object &obj, int fxTrigger) { (void)obj; (void)fxTrigger; }
 };
 
 class StateHasher;

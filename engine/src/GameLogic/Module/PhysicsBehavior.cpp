@@ -6,6 +6,8 @@
 #endif
 
 #include "GameLogic/Module/PhysicsBehavior.h"
+#include "Common/AsciiString.h"
+#include "GameLogic/Weapon.h"
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/GameCommon.h"
@@ -724,7 +726,6 @@ float ObjectKnockback::relativeAngle2D(const Object &obj, const Coord3D &point)
 // RW 0x692223 Object::doKnockback
 bool ObjectKnockback::apply(Object &obj, float angleDegrees, float power, float zFactor, const char *projectileType)
 {
-	(void)projectileType; // RW 0x6922E5 .. 0x692307: the index of NONE / CATAPULT_ROCK / TREBUCHET_ROCK (RW 0xDA08FC) goes to the drawable (+ 0x360): client
 	PhysicsBehavior *phys = PhysicsBehavior::find(obj); // Object + 0x264
 	if (!phys || phys->isStunned())
 	{
@@ -748,7 +749,26 @@ bool ObjectKnockback::apply(Object &obj, float angleDegrees, float power, float 
 	obj.setModelConditionState(physNames().flailing, true);          // + 0x118 bit 31 (RW 0x68B53C)
 	if (AIUpdateInterface *ai = obj.getAIUpdateInterface())
 	{
-		ai->wakeUpNow(); // AI vslot 0x264 (RW 0x662552)
+		ai->wakeUpNow(); // AI vslot 0x264 (RW 0x662552), RW 0x6922D3 .. 0x6922DF
+	}
+	// RW 0x6922E5 .. 0x692307: `edi` walks the three names of TheFXTriggerNames (RW 0xDA08FC, the `cmp edi, 3` at 0x6922FB) with
+	// AsciiString::compareNoCase (RW 0x406585); no match leaves `ebx` 0 (= NONE), a match moves the index into it, and RW 0x68B56A writes it to Drawable + 0x360
+	int fxTrigger = 0;
+	const int nameCount = 3;
+	if (projectileType)
+	{
+		for (int i = 0; i < nameCount; ++i)
+		{
+			if (AsciiStringUtil::compareNoCase(projectileType, TheFXTriggerNames[i]) == 0)
+			{
+				fxTrigger = i;
+				break;
+			}
+		}
+	}
+	if (ObjectClientHooks *client = obj.clientHooks())
+	{
+		client->setDrawableFXTrigger(obj, fxTrigger);
 	}
 	return true;
 }
@@ -800,6 +820,11 @@ float ObjectKnockback::shockwaveResistance(const Object &obj)
 // INFERENCE: the port's AI machine has no temporary state id apart from its current state (AIUpdateInterface::currentStateId); no ported state has id 0x2D.
 bool ObjectKnockback::shockWave(Object &obj, const DamageInfo &info)
 {
+	// RW 0x6968D5 .. 0x6968DE: clear the drawable's FXTrigger (+ 0x360) unconditionally at entry before any shockwave gate
+	if (ObjectClientHooks *client = obj.clientHooks())
+	{
+		client->setDrawableFXTrigger(obj, 0);
+	}
 	const DamageInfoInput &d = info.m_input;
 	if (!(d.m_shockWaveAmount > 0.0f) || !(d.m_shockWaveRadius > 0.0f))
 	{
@@ -915,6 +940,11 @@ bool ObjectKnockback::shockWave(Object &obj, const DamageInfo &info)
 	if (AIUpdateInterface *ai2 = obj.getAIUpdateInterface())
 	{
 		ai2->wakeUpNow(); // AI slot 0x264
+	}
+	// RW 0x696E39 .. 0x696E3E: push DamageInfo + 0x2C (d.m_fxTrigger) -> Object::setDrawableFXTrigger (RW 0x68B56A)
+	if (ObjectClientHooks *client = obj.clientHooks())
+	{
+		client->setDrawableFXTrigger(obj, d.m_fxTrigger);
 	}
 	return true;
 }

@@ -317,6 +317,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				d->setDrawableOpacity(ev.opacity);
 			}
 			break;
+		case ClientEvent::FX_TRIGGER: // PORT-68 (RW 0x68B56A -> RW 0x44C465)
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->setFXTrigger(ev.fxTrigger);
+			}
+			break;
 		case ClientEvent::SHOW_MODULE:
 			if (Drawable *d = findByObject(ev.object))
 			{
