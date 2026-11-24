@@ -205,11 +205,11 @@ std::vector<std::string> LiveFX::stops()
 				  "(RW 0x5E05AB -> donor BFME2 0x1E0E43 / 0x330A37 / 0x10C785), LightPulse (RW 0x5DFAA3 -> donor BFME2 0x4423C -> 0x6DF81 / 0x6DE3D) and "
 				  "CameraShakerVolume (RW 0x5DFE90 -> donor BFME2 0x65DAD -> 0x65B09) are presented by "
 				  "the client (GameClient/ClientEffects.h, the device's terrain decals, the object shaders' four dynamic lights); INFERENCE: the light pulse adds a "
-				  "linear-attenuation point light to the object shading (the D3D light's exact attenuation scale was not decoded), at most four pulses reach the "
-				  "shader at once, and the camera shaker's random fudge uses a private fixed-seed generator (WWMath::Random_Float's state is not reproduced). Not "
+				  "linear-attenuation point light to the object shading (the D3D light's exact attenuation scale was not decoded), at most four lights (pulses and "
+				  "W3DLightDraw lights, the nearest to the camera of those in view) reach the shader at once, and the camera shaker's random fudge uses a private fixed-seed generator (WWMath::Random_Float's state is not reproduced). Not "
 				  "presented: TintDrawable (RW 0x5E0108), AttachedModel (RW 0x5DFFA8), RayEffect (RW 0x5DF95D), CursorParticleSystem (RW 0x5E0441) and Laser "
 				  "(RW 0x5DFC2E) are noted as events (no retail FXList uses Laser, RayEffect or CursorParticleSystem; two use AttachedModel, seven TintDrawable); "
-				  "EvaEvent plays through TheEva (RW 0x5DD9EE, AudioApi::reportEva) and is noted only when no Eva is installed; W3DLightDraw is still not drawn (S-113)");
+				  "EvaEvent plays through TheEva (RW 0x5DD9EE, AudioApi::reportEva) and is noted only when no Eva is installed; W3DLightDraw's light is drawn since lane LIGHTDRAW-1 (S-113)");
 	// lane SPELL-4
 	out.push_back("[S-4642] BuffNugget buffs (GameClient/BuffDraw.h): BuffManager / BuffInstance / TBuff are ported (RW 0x671E56, 0x764483, 0x7641A2, 0x707FFF, "
 				  "0x4D3376, 0x4D12FA, 0x4D1417); INFERENCE: the expiry test and the TBuff following its drawable every frame come from the fields, the updater was "
