@@ -902,6 +902,11 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		{
 			swaps = floorWeatherSwaps(d.draws[p.module].data, m_streakWeather); // a map-placed building's floor (bib) on a snowy map
 		}
+		else if (p.kind == W3D_DRAWKIND_TREE && !p.textureName.empty())
+		{
+			// RW 0x4E8C1B / RW 0x4EC9B5: W3DShrubBuffer / W3DTreeBuffer keys tree types by (ModelName, TextureName) and applies TextureName
+			swaps.emplace_back("*", p.textureName);
+		}
 		const std::string key = AsciiStringUtil::lowered(p.modelName) + W3DInstancer::Texture_Swap_Suffix(swaps);
 		auto it = m_staticModels.find(key);
 		int64_t model;
