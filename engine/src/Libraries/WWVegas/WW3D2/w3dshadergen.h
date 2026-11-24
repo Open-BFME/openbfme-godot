@@ -85,6 +85,9 @@ struct W3DShaderKey
 	// GameClient/SelectionDecals.h). Set by the material factory for an opaque surface of a wall model (W3DMaterialFactory::Set_Selection_Decals); the
 	// generator ignores it for any other surface. The decal is laid over the lit colour as on the terrain, kept above the object shadows
 	bool SelectionDecals = false;
+	// Vegetation.fx (RW 0x4E6753, 0x4E699E, 0x4E9BD5; DONOR BFME2 Rva000E6D94AllocateBuffers.cpp): W3DTreeBuffer and W3DShrubBuffer shade both sides of
+	// foliage with abs(N.L) for the three directional lights, add no specular and ignore the VertexMaterial colours (vegetation.fxo vs_1_1 blobs 6 / 7)
+	bool Vegetation = false;
 
 	std::string Id() const;
 };

@@ -375,7 +375,8 @@ Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, cons
 		}
 		const bool playerColored=houseColors && d.sideIndex>=0 && m_drawables->sides[(size_t)d.sideIndex].hasColor;
 		const std::uint32_t playerColor=playerColored ? m_drawables->sides[(size_t)d.sideIndex].colorRGB : 0;
-		const std::string key = AsciiStringUtil::lowered(modelName)+(playerColored ? "#player&"+std::to_string(playerColor) : "");
+		const bool isTree = p.kind == W3D_DRAWKIND_TREE; // RW 0x4E6753 / 0x4E699E / 0x4E9BD5: trees and shrubs draw with Vegetation.fx
+		const std::string key = AsciiStringUtil::lowered(modelName)+(isTree ? "#veg" : "")+(playerColored ? "#player&"+std::to_string(playerColor) : "");
 		auto it = cache.find(key);
 		int64_t model;
 		if (it == cache.end())
@@ -383,7 +384,10 @@ Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, cons
 			if (playerColored) {
 			 PackedInt64Array colors;colors.push_back((int64_t)playerColor);
 			 model=target->add_model_colored(toGodot(modelName),1,colors);
-			} else model = target->add_model(toGodot(modelName));
+			} else {
+			 target->Set_Build_Vegetation(isTree);
+			 model = target->add_model(toGodot(modelName));
+			}
 			cache[key] = model;
 		}
 		else

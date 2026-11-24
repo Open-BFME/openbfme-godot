@@ -875,6 +875,16 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 		key.Fog = W3DHardwareFog::FOG_ENABLE; // lane RENDER-4: normalmapped.fxo outputs oFog (vs_2_0 blob 22); the opaque pass fogs toward the fog colour
 		}
 	}
+	if (Vegetation && !key.Fx && !key.SimpleFx)
+	{
+		// RW 0x4E6753 (W3DVegetationBufferBase::allocateBuffers), RW 0x4E699E, RW 0x4E9BD5; DONOR BFME2 Rva000E6D94AllocateBuffers.cpp:
+		// trees and shrubs draw with Vegetation.fx, which has no VertexMaterial colour parameters and no specular
+		key.Vegetation = true;
+		diffuse = Color(1, 1, 1, 1);
+		ambientMat = Color(1, 1, 1, 1);
+		emissive = Color(0, 0, 0, 1);
+		specColor = Color(0, 0, 0, 1);
+	}
 
 	// stop S-5015: the ModelConditionState's `Texture = A B` pairs of the model being built (the SNOW state's KBHall.tga -> KBHall_snow.tga of 159 faction
 	// buildings): every texture this surface names A is loaded as B, before the house colour lookup reads it. INFERENCE: retail's swap routine was not read
