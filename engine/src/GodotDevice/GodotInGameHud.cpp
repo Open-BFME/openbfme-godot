@@ -3503,6 +3503,10 @@ Array InGameHudNode::get_command_buttons() const
 			e["cost"] = b.cost;
 			e["queued"] = b.queued;
 			e["production_count"] = b.productionCount; // lane OWNERFIX-3: the count the window shows (RW 0x729D9A)
+			e["border_type"] = (int64_t)b.borderType; // lane LOCAL-12 (RW 0x75CBA5)
+			e["draw_border"] = b.drawBorder;          // lane LOCAL-12 (RW 0x71C4F4 / 0x4A579C)
+			e["border_color"] = (int64_t)b.borderColor; // lane LOCAL-12 (RW 0x71C62F / 0x7206D5)
+			e["radial"] = b.button ? b.button->m_radial : false;
 			e["auto_ability"] = b.autoAbility; // lane AUTOCAST-1: the logic's auto button is this one
 			e["glow"] = d->hud->palantir() && d->hud->palantir()->autoAbilityOverlayShown(b.slot, arc); // the content's SetAutoAbilityOverlayState("_show") went out
 			// r2: the casts of the button's AutoAbilityBehavior (its power's, else the first: the glow's module), the last one's power and target

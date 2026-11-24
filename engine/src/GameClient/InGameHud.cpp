@@ -76,6 +76,7 @@ InGameHud::InGameHud(Config config)
 	m_environment.gameText = m_config.gameText;
 	m_input = std::make_unique<HudInput>(m_config.game.logic(), &m_config.game.ai(), m_config.view, m_config.game.commands(), m_config.mouse, m_config.metaMap);
 	m_input->context().commands = &m_config.world.commands();
+	m_input->context().schemes = &m_config.world.schemes();
 	m_input->context().formations = &m_config.world.formations();
 	// lane SPELLRC-1: a right click (not a drag) ends the spell book power waiting for its target, in the GUI command translator as RotWK's does (RW 0x83D7AD);
 	// the right press itself is the world's (the camera's RMB scroll, RW 0x83DB83 is reached only by the click)

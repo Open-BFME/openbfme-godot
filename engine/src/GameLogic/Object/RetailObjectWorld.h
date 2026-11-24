@@ -26,6 +26,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Upgrade.h"
 #include "GameClient/ControlBarCommands.h"
+#include "GameClient/ControlBarScheme.h"
 #include "GameClient/LinearCampaign.h"
 #include "GameEngineDevice/W3DDevice/GameClient/GlowEffect.h"
 #include "GameLogic/AttributeModifiers.h"
@@ -150,6 +151,8 @@ public:
 	const CreateAHeroSystem &setupCreateAHeroSystem() const { return *m_setupCreateAHero; }
 	// lane MAPRESET-1 (tests): the INI environment the map.ini blocks are parsed with (applyMapIni's INI), and the FX stores the INI load filled
 	INIEnvironment &iniEnvironment() { return m_s->m_env; }
+	const ControlBarSchemeStore &schemes() const { return m_s->m_schemes; }
+	ControlBarSchemeStore &schemes() { return m_s->m_schemes; }
 	const FXListStore &fxLists() const { return *m_s->m_recorder.fxLists; }
 	const FXParticleSystem::FXParticleSystemTemplateStore *fxParticleSystems() const { return m_s->m_recorder.fxParticleSystems.get(); }
 
@@ -208,6 +211,7 @@ private:
 		SubsystemLegend m_legend;
 		LocomotorStore m_locomotors;
 		CommandStore m_commands;
+		ControlBarSchemeStore m_schemes;
 		ProductionSettings m_productionSettings;
 		UpgradeTypeTable m_upgradeTypes;
 		UpgradeCenter m_upgrades; // UPGRADE-1
