@@ -918,16 +918,17 @@ int64_t W3DInstancer::add_model_colored(const String &model_name, int64_t kind, 
 	return id;
 }
 
-std::string W3DInstancer::Texture_Swap_Suffix(const std::vector<std::pair<std::string, std::string>> &swaps)
+std::string W3DInstancer::Texture_Swap_Suffix(const std::vector<TextureSwap> &swaps)
 {
 	if (swaps.empty())
 	{
 		return std::string();
 	}
 	std::string suffix = "#tex";
-	for (const std::pair<std::string, std::string> &swap : swaps)
+	for (const TextureSwap &swap : swaps)
 	{
 		suffix += "&" + AsciiStringUtil::lowered(swap.first) + "=" + AsciiStringUtil::lowered(swap.second);
+		for (const auto &excluded : swap.excludedSubObjects) suffix += "!" + AsciiStringUtil::lowered(excluded);
 	}
 	return suffix;
 }
@@ -957,7 +958,7 @@ int64_t W3DInstancer::add_model(const String &model_name)
 		return build_model(model_name);
 	}
 	// stop S-5015: the swapped model's meshes are cached under their own name (after a colour set's suffix: add_model_colored sets that first)
-	std::vector<std::pair<std::string, std::string>> swaps;
+	std::vector<TextureSwap> swaps;
 	swaps.swap(PendingSwaps);
 	const std::string savedSuffix = BuildSuffix;
 	BuildSuffix += Texture_Swap_Suffix(swaps);

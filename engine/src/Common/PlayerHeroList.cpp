@@ -67,6 +67,21 @@ void PlayerHeroList::addPurchase(const ThingTemplate &tt)
 	m_records.push_back(recordFromTemplate(tt));
 }
 
+// RW 0x0078138B: erase the first entry whose template name matches tt.getName() (AsciiString::compare RW 0x004065AA)
+bool PlayerHeroList::removePurchase(const ThingTemplate &tt)
+{
+	const std::string &name = tt.getName();
+	for (auto it = m_records.begin(); it != m_records.end(); ++it)
+	{
+		if (it->templateName == name)
+		{
+			m_records.erase(it);
+			return true;
+		}
+	}
+	return false;
+}
+
 int PlayerHeroList::addRecord(const HeroRecord &r)
 {
 	m_records.push_back(r);

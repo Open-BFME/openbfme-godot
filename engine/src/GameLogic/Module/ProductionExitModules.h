@@ -59,6 +59,8 @@ public:
 	}
 	const Coord3D *getRallyPoint() const override { return m_rallyPointExists ? &m_rallyPoint : nullptr; }
 	bool getNaturalRallyPoint(Coord3D *out, bool offset) const override;
+	// RW 0x008A9CBC: primary vtable slot 13 (shared by DefaultProductionExitUpdate and SupplyCenterProductionExitUpdate)
+	bool getUnitCreatePoint(Coord3D *out) const;
 	bool getExitPosition(Coord3D *out, float *angle) const override
 	{
 		*out = Coord3D();

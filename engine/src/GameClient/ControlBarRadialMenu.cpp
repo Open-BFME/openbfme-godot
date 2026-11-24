@@ -290,7 +290,7 @@ bool ControlBarRadialMenu::mouseButton(bool left, bool down, int x, int y, Contr
 		{
 			m_pushed = slot;
 			++m_presses;
-			bar.pressButton(slot, false); // ON_MOUSE_DOWN: the press is the command (ControlBar::processCommandUI)
+			bar.pressButton(slot, false, shift); // ON_MOUSE_DOWN: the press is the command (ControlBar::processCommandUI); PORT-426: RW 0x940BB3
 		}
 	}
 	else

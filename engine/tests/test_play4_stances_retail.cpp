@@ -19,6 +19,7 @@
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/SimMath.h"
 #include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 
@@ -174,6 +175,7 @@ struct Chase
 	bool attackedAfterFaceObject = false; // the parent machine left the guard for a plain attack (RW 0x66BD33) after it
 	float foeDistAtAttack = -1.0f;  // the 3D centre distance to the nearest of the enemy horde and its members at that attack (RW 0x7006D7, distance type 1)
 	float rangeAtAttack = -1.0f;    // the mood scan's range then (RW 0x6FF412(obj, 3))
+	float visionAtAttack = -1.0f;   // lane VISIONDEF-1: the horde's vision range then (RW 0x68E43B; it follows the ground reference, Object + 0x1C4)
 };
 
 // a Gondor soldier horde in `stance`, in a real skirmish start (the map revealed, UseShroud No), next to a Mordor horde that walks away from it: how far the
@@ -248,6 +250,7 @@ Chase runChase(starttest::Shared *st, int stance)
 				}
 			}
 			out.rangeAtAttack = AIGuardMachine::getAdjustedVisionRange(*unit);
+			out.visionAtAttack = AIUpdateInterface::objectVisionRangeOf(*unit);
 		}
 	};
 	for (int i = 0; i < 15; ++i)
@@ -393,7 +396,10 @@ TEST_CASE("play4 stances retail: a fleeing enemy is chased out of the guarded sp
 	CHECK(hold.sawFaceObject);          // the FACE_OBJECT emotion at contact
 	CHECK(hold.attackedAfterFaceObject); // its mood scan found the attacker
 	CHECK(hold.foeDistAtAttack <= hold.rangeAtAttack); // tolerance: the property, the find is within RotWK's reach centre to centre (where in it is the simulation's)
-	CHECK(hold.rangeAtAttack == hold.guardRange);
+	// lane VISIONDEF-1: the scan's range is RW 0x6FF412's: the bounding circle plus the vision range of that moment (RW 0x68E43B, the stance's VISION -90%
+	// in it). The vision range carries the height bonus 1 + clamp((z - ground reference) * VisionBonusPercentPerFoot), and the reference (Object + 0x1C4)
+	// is sampled again on every new pathfind cell (RW 0x69264D), so it is not the guarded spot's range (72.2206 at the attack, 72.2375 at the spot)
+	CHECK(hold.rangeAtAttack == SimMath::addf32(hold.radius, hold.visionAtAttack));
 	CHECK_FALSE(hold.sawReturn);
 	CHECK(hold.lastState == (unsigned)AI_ATTACK_OBJECT);
 	// stop S-5148: an idle stanced unit is not guarded again by the idle state's failure (Aggressive's horde idles and scans)
