@@ -122,7 +122,7 @@ rebuilt in OpenBFME as a named feature, off unless that mod is loaded (`Common/M
 |---|---|
 | Edain Unchained 4.4.3 `game.dat` (5c31f503...) | the `edain-unchained.*` features below |
 | Patch 2.02 / 2.02 Delayfix `lotrbfme2ep1.exe` before 9.8.5 | nothing to do: install checks and EA's frame pacing, no game rule |
-| Patch 2.02 9.8.6 `lotrbfme2ep1.exe` (fc32e4c4...) | `edain-unchained.commandset-limit` and `edain-unchained.observer-command-range` (the same patches as Edain's) and `patch-202.hold-ground-keeps-move`; the rest is not rebuilt yet, see below |
+| Patch 2.02 9.8.6 `lotrbfme2ep1.exe` (fc32e4c4...) | `edain-unchained.commandset-limit` and `edain-unchained.observer-command-range` (the same patches as Edain's), `patch-202.hold-ground-keeps-move` and `patch-202.building-limit-counts-phantoms`; the rest is not rebuilt yet, see below |
 | Edain Völker 1.7 `game.dat` | nothing to do for the game rules: frame pacing and desync reporting |
 | RJ-RotWK launcher and its `file.dat` | nothing: a launcher, not the game |
 
@@ -142,12 +142,12 @@ weather (SAND, DESERT). The hero bar's 32 slots are inert (Edain keeps the retai
 Windows/DirectX fixes the port does not need.
 
 Patch 2.02 9.8.6 starts with its features on: Edain's two above and `hold-ground-keeps-move` (choosing Hold Ground no longer stops a
-unit that is walking; an idle one is still idled, as before). The game names what is still missing (stop S-5304); it plays differently
-from the original 2.02 there:
+unit that is walking; an idle one is still idled, as before) and `building-limit-counts-phantoms` (a building a builder is still walking
+to counts toward its limit, so a second builder cannot be sent to build one past it). The game names what is still missing (stop
+S-5304); it plays differently from the original 2.02 there:
 
-- Game rules: the building limit is checked when placing a building, units leave a container
-  together on *Evacuate*, and up to 5120 upgrades (OpenBFME holds 2048).
-- Interface and replays: selecting every building of a kind, chat and muting in replays, replay pause, the map search, hotkeys and
+- Game rules: units leave a container together on *Evacuate*, and up to 5120 upgrades (OpenBFME holds 2048).
+- Interface and replays: selecting every building of a kind and giving orders to all of them, chat and muting in replays, replay pause, the map search, hotkeys and
   text shortcuts, the camera zoom reset, and the new settings (resolutions, 30 / 60 FPS, the Delay Fix switch).
 - War of the Ring with 8 players, online, and without a host for land transfer.
 

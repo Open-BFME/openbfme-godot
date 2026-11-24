@@ -5,6 +5,7 @@
 
 #include "Common/AsciiString.h"
 #include "Common/GameCommon.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/NumericState.h"
 #include "GameLogic/SimMath.h"
 #include "Common/Player.h"
@@ -540,7 +541,15 @@ CanMakeType BuildAssistant::canMakeUnit(Object &builder, const ThingTemplate *wh
 	const int maxOfType = what ? maxSimultaneousOfType(*what) : 0;
 	if (what && maxOfType != 0)
 	{
-		// RW 0x794054 countObjectsByThingTemplate + 0x79406E the player's queued units of the type (callback RW 0x793D12)
+		// RW 0x794054 countObjectsByThingTemplate + 0x79406E the player's queued units of the type (callback RW 0x793D12). The count is called with
+		// ignoreDead 1 (RW 0x79404A -> RW 0x6ABAF7 -> RW 0x7A1714 -> RW 0x7A0440): an effectively dead object (Object + 0x458 bit 0, RW 0x7A047A) is
+		// not counted, so neither is a dozer's phantom structure while its builder walks to the site (RW 0x88D0D8)
+		// lane MODS-3: patch-202.building-limit-counts-phantoms: Patch 2.02 9.8.6's .bldcap replaces the callback (RW 0x79406F pushes 0xF21000): after
+		// RW 0x793D12 it also counts an effectively dead object with PENDING_CONSTRUCTION and PHANTOM_STRUCTURE (+ 0x9E bit 7, + 0x9F bit 0: status
+		// 87 / 88) of the type (RW 0x73D5C2), so a second builder can no longer be sent to build past the limit
+		static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
+		static const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+		const bool countPhantoms = ModEngineFeatures::has(ModEngineFeature::Patch202BuildingLimitCountsPhantoms);
 		int count = 0, queued = 0;
 		for (const Object *o = logic.getFirstObject(); o; o = o->getNextObject())
 		{
@@ -548,13 +557,19 @@ CanMakeType BuildAssistant::canMakeUnit(Object &builder, const ThingTemplate *wh
 			{
 				continue;
 			}
-			if (isEquivalentTo(what, o->getTemplate()))
+			const bool ofType = isEquivalentTo(what, o->getTemplate());
+			if (ofType && !o->isEffectivelyDead())
 			{
 				++count;
 			}
 			if (ProductionUpdateInterface *pu = o->getProductionUpdate())
 			{
 				queued += pu->countUnitTypeInQueue(what);
+			}
+			if (countPhantoms && ofType && o->isEffectivelyDead() && pending >= 0 && phantom >= 0 && o->testStatus((unsigned)pending) &&
+				o->testStatus((unsigned)phantom))
+			{
+				++queued; // 0xF21042
 			}
 		}
 		if (count >= maxOfType || count + queued >= maxOfType)

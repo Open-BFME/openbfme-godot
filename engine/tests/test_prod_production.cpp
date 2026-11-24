@@ -5,6 +5,7 @@
 #include "doctest.h"
 #include "ProdTestUtil.h"
 
+#include "Common/ModEngineFeatures.h"
 #include "Common/PlayerHeroList.h"
 #include "GameClient/CommandButtonHelp.h"
 #include "GameClient/ControlBar.h"
@@ -422,6 +423,62 @@ TEST_CASE("production: a full queue, too little money and too few command points
 	CHECK(BuildAssistant::canMakeUnit(*f.barracks, soldier, -1) == CANMAKE_UNKNOWN_7);
 	setUsage(*f.alice(), f.economy().commandPointLimit(*f.alice()) - 4);
 	CHECK(BuildAssistant::canMakeUnit(*f.barracks, soldier, -1) == CANMAKE_OK);
+}
+
+TEST_CASE("MODS-3: patch-202.building-limit-counts-phantoms: MaxSimultaneousOfType counts a dozer's phantom structure only with Patch 2.02 9.8.6 (.bldcap); "
+          "retail skips every effectively dead object (RW 0x7A047A)")
+{
+	struct Restore
+	{
+		~Restore() { ModEngineFeatures::reset(); }
+	};
+	for (const bool patch202 : { false, true })
+	{
+		CAPTURE(patch202);
+		Restore restore;
+		std::string error;
+		if (patch202)
+		{
+			REQUIRE_MESSAGE(ModEngineFeatures::activate({ "fc32e4c4142b5c607b90972eaf448400" }, &error), error);
+		}
+		CHECK(ModEngineFeatures::has(ModEngineFeature::Patch202BuildingLimitCountsPhantoms) == patch202);
+
+		ProdWorld f;
+		f.load("Object LimitedTower\n  BuildCost = 100\n  BuildTime = 10.0\n  MaxSimultaneousOfType = 1\n  KindOf = STRUCTURE SELECTABLE\nEnd\n"
+		       "Object TowerBuilder\n  KindOf = SELECTABLE INFANTRY DOZER\n  CommandSet = TowerBuilderSet\n  Behavior = AIUpdateInterface ModuleTag_AI\n  End\nEnd\n"
+		       "CommandButton Command_BuildTower\n  Command = DOZER_CONSTRUCT\n  Object = LimitedTower\nEnd\n"
+		       "CommandSet TowerBuilderSet\n  1 = Command_BuildTower\nEnd\n");
+		Object *builder = f.make("TowerBuilder", f.teamOf("Alice"));
+		REQUIRE(builder != nullptr);
+		const ThingTemplate *tower = f.w.get("LimitedTower");
+		REQUIRE(BuildAssistant::maxSimultaneousOfType(*tower) == 1);
+		REQUIRE(BuildAssistant::canMakeUnit(*builder, tower, -1) == CANMAKE_OK);
+
+		const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
+		const int phantom = ObjectTemplateInfoBuilder::objectStatusIndex("PHANTOM_STRUCTURE");
+		REQUIRE(pending == 87);
+		REQUIRE(phantom == 88);
+		Object *site = f.make("LimitedTower", f.teamOf("Alice"));
+		REQUIRE(site != nullptr);
+
+		// a dozer's phantom (Construction::constructByDozer, RW 0x88D272 / 0x88D0D8): both statuses, effectively dead
+		site->setStatus((unsigned)pending, true);
+		site->setStatus((unsigned)phantom, true);
+		site->friend_setEffectivelyDead(true);
+		CHECK(BuildAssistant::canMakeUnit(*builder, tower, -1) == (patch202 ? CANMAKE_MAXED_OUT_FOR_PLAYER : CANMAKE_OK));
+
+		// an effectively dead tower that is no phantom (dying): neither counts it
+		site->setStatus((unsigned)pending, false);
+		site->setStatus((unsigned)phantom, false);
+		CHECK(BuildAssistant::canMakeUnit(*builder, tower, -1) == CANMAKE_OK);
+		site->setStatus((unsigned)phantom, true); // one of the two statuses is not enough for .bldcap
+		CHECK(BuildAssistant::canMakeUnit(*builder, tower, -1) == CANMAKE_OK);
+
+		// the placed site (in the world, not dead): both count it
+		site->setStatus((unsigned)phantom, false);
+		site->friend_setEffectivelyDead(false);
+		CHECK(BuildAssistant::canMakeUnit(*builder, tower, -1) == CANMAKE_MAXED_OUT_FOR_PLAYER);
+	}
 }
 
 TEST_CASE("production: the command point rule is the economy's (one model): the limit includes the upgrade records and the live accounting counts a unit once")
