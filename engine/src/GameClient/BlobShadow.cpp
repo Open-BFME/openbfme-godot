@@ -176,6 +176,10 @@ bool resolveDecal(const ThingTemplate *object, const W3DModelDrawModuleData *mod
 		}
 		out.overrideLOD = out.overrideLOD || s.overrideLODVisibility;
 		out.opacityPeak = state->shadowOpacityPeak;
+		out.opacityStart = state->shadowOpacityStart;
+		out.opacityEnd = state->shadowOpacityEnd;
+		out.fadeInMs = state->shadowOpacityFadeInTime;
+		out.fadeOutMs = state->shadowOpacityFadeOutTime;
 		return true;
 	}
 	if (!object)
@@ -197,6 +201,10 @@ bool resolveDecal(const ThingTemplate *object, const W3DModelDrawModuleData *mod
 	out.offsetX = numberField(*object, "ShadowOffsetX", 0.0f);
 	out.offsetY = numberField(*object, "ShadowOffsetY", 0.0f);
 	out.opacityPeak = (unsigned)numberField(*object, "ShadowOpacityPeak", 255.0f);
+	out.opacityStart = (unsigned)numberField(*object, "ShadowOpacityStart", 0.0f);
+	out.opacityEnd = (unsigned)numberField(*object, "ShadowOpacityEnd", 0.0f);
+	out.fadeInMs = numberField(*object, "ShadowOpacityFadeInTime", 0.0f);
+	out.fadeOutMs = numberField(*object, "ShadowOpacityFadeOutTime", 0.0f);
 	return true;
 }
 
@@ -215,6 +223,81 @@ bool decal(const DecalSpec &spec, float x, float y, float z, float angle, Select
 	out.angle = angle;
 	out.position = DecalShadowCentre(Coord3D{ x, y, z }, spec.offsetX, spec.offsetY, angle);
 	out.drawZ = z;
+	return true;
+}
+
+bool isDynamic(int type)
+{
+	// RW 0x4B1BC6: the shadow type is exactly one of the three
+	return type == 0x400 || type == 0x800 || type == 0x10000;
+}
+
+namespace
+{
+unsigned msToFrames(float ms)
+{
+	// RW 0x4C4F74 .. 0x4C4F89: ms * 0.03 (RW 0xD9F624), _ftol (truncated)
+	const float frames = ms * 0.03f;
+	return frames > 0.0f ? (unsigned)frames : 0u;
+}
+
+unsigned ramp(unsigned from, unsigned to, unsigned now, unsigned a, unsigned b)
+{
+	// RW 0x50B90E .. 0x50B972: from + (now - a) / (b - a) * (to - from), in doubles, rounded up (RW 0xBD0588), stored as an integer
+	const double f = (double)(now - a) / (double)(b - a);
+	return (unsigned)std::ceil((double)from + f * ((double)to - (double)from));
+}
+} // namespace
+
+DecalFade fadeIn(const DecalSpec &spec, unsigned now)
+{
+	DecalFade f;
+	f.t0 = now;
+	f.t1 = now + msToFrames(spec.fadeInMs);
+	f.start = spec.opacityStart;
+	f.peak = spec.opacityPeak;
+	f.endOpacity = spec.opacityEnd;
+	f.fadeOutFrames = msToFrames(spec.fadeOutMs);
+	return f;
+}
+
+DecalFade fadeOut(const DecalFade &fade, unsigned now)
+{
+	DecalFade f = fade;
+	f.t0 = now;
+	f.t1 = now;
+	f.hold = now;
+	f.end = now + fade.fadeOutFrames;
+	f.life = now + fade.fadeOutFrames;
+	return f;
+}
+
+bool opacityAt(const DecalFade &f, unsigned now, unsigned &opacity)
+{
+	if (f.life <= now)
+	{
+		return false;
+	}
+	if (now < f.t0)
+	{
+		opacity = 0;
+	}
+	else if (now < f.t1)
+	{
+		opacity = ramp(f.start, f.peak, now, f.t0, f.t1);
+	}
+	else if (now < f.hold)
+	{
+		opacity = f.peak;
+	}
+	else if (now < f.end)
+	{
+		opacity = ramp(f.peak, f.endOpacity, now, f.hold, f.end);
+	}
+	else
+	{
+		opacity = f.endOpacity;
+	}
 	return true;
 }
 } // namespace BlobShadow

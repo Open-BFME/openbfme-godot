@@ -19,7 +19,8 @@ TEST_CASE("drawdecal1: an alpha / additive decal shadow takes its style, texture
 {
 	objtest::World w;
 	REQUIRE(w.load("Object Eye\n Shadow = SHADOW_ADDITIVE_DECAL_DYNAMIC\n ShadowTexture = MUSauronEye\n ShadowSizeX = 400\n ShadowSizeY = 300\n"
-	               " ShadowOffsetX = 10\n ShadowOverrideLODVisibility = Yes\nEnd\n"
+	               " ShadowOffsetX = 10\n ShadowOverrideLODVisibility = Yes\n ShadowOpacityStart = 0\n ShadowOpacityFadeInTime = 1000\n ShadowOpacityPeak = 200\n"
+	               " ShadowOpacityFadeOutTime = 500\n ShadowOpacityEnd = 10\nEnd\n"
 	               "Object Lamp\n Shadow = SHADOW_ADDITIVE_DECAL\n ShadowTexture = LULamp1Shdw\n ShadowSizeX = 120\n ShadowSizeY = 120\n ShadowMaxHeight = 120\nEnd\n"
 	               "Object Soldier\n Shadow = SHADOW_DECAL\n ShadowSizeX = 19\n ShadowSizeY = 21\nEnd\n"
 	               "Object Barracks\n Shadow = SHADOW_VOLUME\nEnd\n")
@@ -32,7 +33,11 @@ TEST_CASE("drawdecal1: an alpha / additive decal shadow takes its style, texture
 	CHECK(s.sizeY == 300.0f);
 	CHECK(s.offsetX == 10.0f);
 	CHECK(s.maxHeight == 20.0f); // the constructor's default (RW 0x740102 ..)
-	CHECK(s.opacityPeak == 0xFFu);
+	CHECK(s.opacityPeak == 200u);
+	CHECK(s.opacityStart == 0u);
+	CHECK(s.fadeInMs == 1000.0f);
+	CHECK(s.fadeOutMs == 500.0f);
+	CHECK(s.opacityEnd == 10u);
 	CHECK(s.overrideLOD);
 	// ShadowOverrideLODVisibility keeps it at ShadowLOD Off / High / UltraHigh (RW 0x50BF7A); the lamp's goes with UseShadowDecals
 	CHECK(BlobShadow::drawnAtLOD(s, false));
@@ -98,6 +103,57 @@ TEST_CASE("drawdecal1: the decal is the placement ghost's: centre moved by the o
 	s.sizeY = 100.0f;
 	s.type = 0;
 	CHECK_FALSE(BlobShadow::decal(s, 500.0f, 600.0f, 30.0f, 0.0f, d));
+}
+
+TEST_CASE("drawdecal1: a _DYNAMIC decal fades in from Start to Peak, and when it goes it fades from Peak to End and ends (RW 0x7323CE / 0x50B8AD / 0x508B40)")
+{
+	CHECK(BlobShadow::isDynamic(0x400));
+	CHECK(BlobShadow::isDynamic(0x800));
+	CHECK(BlobShadow::isDynamic(0x10000));
+	CHECK_FALSE(BlobShadow::isDynamic(0x40));
+	CHECK_FALSE(BlobShadow::isDynamic(0x20));
+
+	// the crows' rows: Start 0, FadeInTime 1000, Peak 255, FadeOutTime 1000, End 0 (30 frames each way)
+	BlobShadow::DecalSpec s;
+	s.type = 0x800;
+	s.opacityStart = 0;
+	s.opacityPeak = 255;
+	s.opacityEnd = 0;
+	s.fadeInMs = 1000.0f;
+	s.fadeOutMs = 1000.0f;
+	const BlobShadow::DecalFade in = BlobShadow::fadeIn(s, 100);
+	CHECK(in.t0 == 100u);
+	CHECK(in.t1 == 130u); // 1000 ms * 0.03, truncated
+	CHECK(in.fadeOutFrames == 30u);
+	unsigned o = 999;
+	REQUIRE(BlobShadow::opacityAt(in, 99, o));
+	CHECK(o == 0u); // before t0
+	REQUIRE(BlobShadow::opacityAt(in, 100, o));
+	CHECK(o == 0u); // Start
+	REQUIRE(BlobShadow::opacityAt(in, 115, o));
+	CHECK(o == 128u); // 127.5 rounded up
+	REQUIRE(BlobShadow::opacityAt(in, 130, o));
+	CHECK(o == 255u); // Peak from t1 on, held without end
+	REQUIRE(BlobShadow::opacityAt(in, 100000, o));
+	CHECK(o == 255u);
+
+	// released at 140: straight to Peak, then down to End over the 30 frames, and gone at 170
+	const BlobShadow::DecalFade out = BlobShadow::fadeOut(in, 140);
+	REQUIRE(BlobShadow::opacityAt(out, 140, o));
+	CHECK(o == 255u);
+	REQUIRE(BlobShadow::opacityAt(out, 155, o));
+	CHECK(o == 128u); // 255 - 127.5, rounded up
+	REQUIRE(BlobShadow::opacityAt(out, 169, o));
+	CHECK(o == 9u); // 255 / 30 = 8.5, rounded up
+	CHECK_FALSE(BlobShadow::opacityAt(out, 170, o));
+
+	// no FadeInTime: Peak at once; no FadeOutTime: gone at once
+	s.fadeInMs = 0.0f;
+	s.fadeOutMs = 0.0f;
+	const BlobShadow::DecalFade quick = BlobShadow::fadeIn(s, 10);
+	REQUIRE(BlobShadow::opacityAt(quick, 10, o));
+	CHECK(o == 255u);
+	CHECK_FALSE(BlobShadow::opacityAt(BlobShadow::fadeOut(quick, 20), 20, o));
 }
 
 namespace

@@ -82,12 +82,42 @@ struct DecalSpec : Spec
 {
 	int type = 0;                ///< the decal style bits (type & kDecalStyles)
 	unsigned opacityPeak = 0xFF; ///< ShadowOpacityPeak: the diffuse's alpha (DecalShadowColor)
+	// ShadowOpacityStart / FadeInTime / FadeOutTime / End (the condition info's constructor: Start and End 0, RW 0x4C30A8 / 0x4C308E): a _DYNAMIC
+	// decal's fade (DecalFade)
+	unsigned opacityStart = 0, opacityEnd = 0;
+	float fadeInMs = 0.0f, fadeOutMs = 0.0f;
+	bool operator==(const DecalSpec &o) const
+	{
+		return texture == o.texture && sizeX == o.sizeX && sizeY == o.sizeY && offsetX == o.offsetX && offsetY == o.offsetY && maxHeight == o.maxHeight
+			&& overrideLOD == o.overrideLOD && type == o.type && opacityPeak == o.opacityPeak && opacityStart == o.opacityStart && opacityEnd == o.opacityEnd
+			&& fadeInMs == o.fadeInMs && fadeOutMs == o.fadeOutMs;
+	}
 };
 // The drawable entry's alpha / additive decal shadow, from its model state's shadow when the state names one, else from the template's fields;
 // false when it has none (another type, ShadowForceDisable, no template)
 bool resolveDecal(const ThingTemplate *object, const W3DModelDrawModuleData *module, const ModelConditionInfo *state, DecalSpec &out);
 // The decal of `spec` for a drawable at (x, y, z) facing `angle` (the shadow turns with its drawable, + 0x30 = 1, RW 0x4C4F53), as the placement
 // ghost's: centre DecalShadowCentre, white at ShadowOpacityPeak (DecalShadowColor). False with a zero size (rva0010C841 draws nothing; no retail
-// row has an alpha or additive decal without its size, so the model's box is not taken here). INFERENCE (S-5032): the _DYNAMIC fade is not run
+// row has an alpha or additive decal without its size, so the model's box is not taken here). The colour's alpha is Peak; a _DYNAMIC decal's follows its DecalFade
 bool decal(const DecalSpec &spec, float x, float y, float z, float angle, SelectionDecal &out);
+
+// A _DYNAMIC decal's (0x400 / 0x800 / 0x10000, RW 0x4B1BC6) opacity plan, in client frames (TheGameClient's frame, 30 a second), as the shadow keeps it
+// (Shadow + 0x38 .. + 0x54, set by RW 0x7323CE): from `t0` the opacity goes from `start` to `peak` until `t1`, holds `peak` until `hold`, goes to
+// `endOpacity` until `end`, then holds that; the shadow lives until `life` (~0u: no limit). Times are unsigned as retail compares them.
+bool isDynamic(int type);
+struct DecalFade
+{
+	unsigned t0 = 0, t1 = 0, hold = ~0u, end = ~0u, life = ~0u;
+	unsigned start = 0, peak = 0xFF, endOpacity = 0;
+	unsigned fadeOutFrames = 0; ///< the planned fade-out's length (Shadow + 0x50 while `hold` is open)
+};
+// The model draw's shadow setup (RW 0x4C4F5A .. 0x4C4FBC): setOpacity(Start), then the plan t0 = now, t1 = now + FadeInTime * 0.03 (the ms in frames,
+// truncated), no hold end, no life limit; FadeOutTime * 0.03 and End kept for the fade-out
+DecalFade fadeIn(const DecalSpec &spec, unsigned now);
+// The shadow's release while it lives (RW 0x508B40 .. 0x508B6F): planned again from now: no fade-in (straight to Peak), Peak held 0 frames, then down
+// to End over the fade-out's frames, and the shadow ends with it (a zero FadeOutTime ends it at once)
+DecalFade fadeOut(const DecalFade &fade, unsigned now);
+// RW 0x50B8C9 .. 0x50B9F9 (the projected manager's frame, before the projection): false once `life` is reached (the shadow goes, RW 0x5FFFBF); else
+// the opacity: 0 before t0, then the two ramps (Start + (now - t0) / (t1 - t0) * (Peak - Start), rounded up) and holds
+bool opacityAt(const DecalFade &fade, unsigned now, unsigned &opacity);
 } // namespace BlobShadow
