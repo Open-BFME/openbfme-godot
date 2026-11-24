@@ -2270,14 +2270,33 @@ TEST_CASE("stableqa1: Evil Erebor's porters marching on a team path in formation
 	OPENBFME_REQUIRE_START(s);
 	campaigntest::Mission m;
 	m.loadCampaignMission(*s, "EVIL_CAMPAIGN", 6);
-	m.step(900);
-	int marching = 0;
-	for (Object *o = m.logic().getFirstObject(); o; o = o->getNextObject())
+	const auto countMarching = [&]() {
+		int n = 0;
+		for (Object *o = m.logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			const AIUpdateInterface *ai = o->getAIUpdateInterface();
+			const AIStateMachine *sm = ai ? ai->stateMachineOrNull() : nullptr;
+			n += sm && dynamic_cast<const AIFollowWaypointPathState *>(sm->currentState()) && ai->formationId() != 0 ? 1 : 0;
+		}
+		return n;
+	};
+	// lane VISIONDEF-1: the refugees run ("Should fugees run?": SKIRMISH_PLAYER_HAS_UNITS_IN_AREA PlyrMordor, "Fog reveal Dale AREA") once the player's army
+	// reaches Dale. Before the lane the player's two starting catapults went there on their own at frame 171: with the port's old height bonus (no ground
+	// reference: z * VisionBonusPercentPerFoot, up to +300%) they saw the Men of Dale and chased them there. With RotWK's sight they stay guarding, as the player's army
+	// does until it is ordered; so a troll of the player's walks into Dale at frame 150, as a player sends it
+	m.step(150);
+	const Coord3D dale = m.centreOf("Fog reveal Dale AREA");
+	REQUIRE(ScriptConditions::pointInTrigger(*m.engine().findTrigger("Fog reveal Dale AREA"), dale.x, dale.y)); // tolerance: a precondition (the centre is inside)
+	Object *troll = nullptr;
+	for (Object *o = m.logic().getFirstObject(); o && !troll; o = o->getNextObject())
 	{
-		const AIUpdateInterface *ai = o->getAIUpdateInterface();
-		const AIStateMachine *sm = ai ? ai->stateMachineOrNull() : nullptr;
-		marching += sm && dynamic_cast<const AIFollowWaypointPathState *>(sm->currentState()) && ai->formationId() != 0 ? 1 : 0;
+		troll = o->getControllingPlayer() && o->getControllingPlayer()->getPlayerName() == "PlyrMordor" && o->getTemplate()->getName() == "MordorMountainTroll" ? o : nullptr;
 	}
+	REQUIRE(troll != nullptr);
+	m.place(*troll, dale);
+	m.step(750);
+	const int marching = countMarching();
+	MESSAGE("marching at frame " << m.logic().getFrame() << ": " << marching);
 	REQUIRE(marching > 0); // tolerance: a precondition (the scene: units on a team path in formation at frame 900)
 	std::vector<std::uint8_t> bytes;
 	std::string error;

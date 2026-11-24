@@ -658,3 +658,12 @@ Drawable::PresentedLook Drawable::presentedLook(const LogicSnapshot *presented, 
 	look.fogLook = look.fogLook && !look.hidden;
 	return look;
 }
+
+void Drawable::upgradeTexture(const TextureSwap &swap, bool enabled)
+{
+	for (auto &entry : m_entries)
+	{
+		if (entry.draw) entry.draw->upgradeTexture(swap, enabled);
+	}
+	++m_changeCount;
+}

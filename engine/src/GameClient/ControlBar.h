@@ -135,7 +135,9 @@ public:
 
 	// ---- input ----
 	// ZH ControlBar::processCommandUI: the press of the button in `slot`. Returns false when the slot has no usable button (counted, reported through ui messages).
-	bool pressButton(int slot, bool inPalantir);
+	// PORT-426: `shift` is Keyboard::isShift (RW 0x63F122, called at RW 0x940BB3). RW 0x940BC2..0x940BE2 turns it into the batch flag of
+	// MSG_QUEUE_UNIT_CREATE (RW 0x940C3E); the right press has carried the same state since lane HUD-6 (RW 0x940CD0).
+	bool pressButton(int slot, bool inPalantir, bool shift = false);
 	// lane CAMPUI-1: the stance toggle's SetStance (RW 0x96F53C): MSG_CHANGE_STANCE with `stance` (a stance item of the Palantir's radial, a SET_STANCE button)
 	bool sendChangeStance(int stance, const char *site = "ControlBar:SET_STANCE");
 	// right press on a build button: cancels one queued unit, or all with Shift and no MaxSimultaneousOfType (RW 0x940CD0); on a REVIVE button the hero record by

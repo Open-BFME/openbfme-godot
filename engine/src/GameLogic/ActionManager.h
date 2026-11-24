@@ -66,6 +66,8 @@ namespace ActionManager
 bool canDoSpecialPowerAtLocation(Object &obj, const CommandButton &button, const Coord3D &loc);
 // lane MODCOMPAT-AI: RW 0x75CF21 with no target object and no location (TEAM_PARTIAL_USE_COMMANDBUTTON, RW 0x7C7D95, source 1)
 bool canUseCommandButton(Object &obj, const CommandButton &button);
+// RW 0x75CF21 with target != null and loc == null (PartitionFilterValidCommandButtonTarget RW 0x6611FD, NAMED_USE_COMMANDBUTTON_ON_NEAREST_KINDOF RW 0x7BE6EE)
+bool canUseCommandButtonAtObject(Object &obj, const CommandButton &button, Object &target, CommandSourceType source);
 // RW 0x82DFB7(obj, loc, 0, power, 0, options, 0); lane SPELL-4: `unported` (when given) is set when the answer no came from a per-type test this file does
 // not port (S-1874), not from a test that was run
 bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialPowerTemplate *power, unsigned options, bool *unported = nullptr);
@@ -106,5 +108,7 @@ struct Stats
 	std::array<unsigned long long, 0xA0> unportedObjectTypeTests{};  ///< by power type
 };
 Stats &stats();
+// a FIRE_WEAPON button's unported readiness (CommandButton::isReady RW 0x75CC3E, NAMED_USE_COMMANDBUTTON_ON_NEAREST_KINDOF): counted and S-1871 noted
+void noteFireWeaponButton(Object &obj);
 std::vector<std::string> stopLines();
 } // namespace ActionManager

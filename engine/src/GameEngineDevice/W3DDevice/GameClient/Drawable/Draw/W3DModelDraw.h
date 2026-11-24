@@ -37,6 +37,7 @@
 //     Lua is not executed here (stop S-091).
 
 #pragma once
+#include "Common/TextureSwap.h"
 
 #include "Common/INI.h"
 #include "Common/Module.h"
@@ -184,7 +185,7 @@ struct ModelConditionInfo
 	std::vector<std::string> modelNames; ///< Model = NAME [ExtraMesh Yes]; a plain Model replaces the list, ExtraMesh Yes appends (RW 0x4C21EE)
 	std::string skeleton;           ///< lower-cased
 	std::string modelAnimationPrefix;
-	std::vector<std::pair<std::string, std::string>> textures; ///< Texture = A B
+	std::vector<TextureSwap> textures; ///< Texture = A B
 	std::string portraitImageName;
 	std::string buttonImageName;
 	std::string overrideTooltip;
