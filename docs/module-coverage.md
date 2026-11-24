@@ -64,9 +64,27 @@ The live-skirmish column above stays lane MOD-4's measurement (its QA-1 runs wer
 `unported_modules` count for the class is 0. The registry table `engine/tests/test_module_coverage.cpp` writes pins
 ported 225 / base AI 4 / parsed only 13 / missing 87.
 
+### Totals on main at be270dc1 (2026-11-24)
+
+The per-class Status column below is brought up to the registry table `engine/tests/test_module_coverage.cpp` writes on this
+tree (its pins: ported 183, base AI 6, parsed only 13, missing 127 of the binary's 329 classes), with the generator's own
+rules; the template counts are the census's, unchanged. 34 of the 245 classes retail data uses had a stale status:
+the siege set (SiegeAIUpdate, SiegeDockingBehavior, SiegeDeploySpecialPower, SiegeDeployHordeSpecialPower,
+StopSpecialPower), the wall portals (DynamicPortalBehaviour, FakePathfindPortalBehaviour), the gates (GateOpenAndCloseBehavior,
+AIGateUpdate), the Demolisher deploy (DeployStyleAIUpdate, ToggleDeploySpecialAbilityUpdate), the slaughter and production
+hordes, GeometryUpgrade, the crates and pickups, the lairs' creep modules, AnimationSoundClientBehavior and
+LargeGroupAudioUpdate among them. SpawnUnitBehavior is parsed only (S-207).
+
+| Status | Classes | Templates using them (sum) |
+|---|---:|---:|
+| ported | 188 | 25792 |
+| base AI | 2 | 38 |
+| parsed only | 1 | 4 |
+| missing | 54 | 583 |
+
 ## Live skirmishes: objects carrying an unported module (lane MOD-4)
 
-The live report's `unported_modules` (objects alive at the end of the run) of eight QA-1 runs (`tools/qa/qa_matrix.py`: each faction as a scripted human against one Medium computer on a 2-player map for 8 game minutes, and a Hard 2 v 2 AI game on Tournament Udun for 12 minutes, seeds 4100 .. 4106 / 4200), before / after lane MOD-4. LargeGroupAudioUpdate is AUDIO's; the creeps the lairs now spawn bring modules that had no live object before (GrabPassengerSpecialPower, AutoPickUpUpdate, ClickReactionBehavior, BoredUpdate).
+The live report's `unported_modules` (objects alive at the end of the run) of eight QA-1 runs (`tools/qa/qa_matrix.py`: each faction as a scripted human against one Medium computer on a 2-player map for 8 game minutes, and a Hard 2 v 2 AI game on Tournament Udun for 12 minutes, seeds 4100 .. 4106 / 4200), before / after lane MOD-4. LargeGroupAudioUpdate is AUDIO's; the creeps the lairs now spawn bring modules that had no live object before (GrabPassengerSpecialPower, AutoPickUpUpdate, ClickReactionBehavior, BoredUpdate). This is a historical measurement: on main at be270dc1 every class in it is ported except GiveUpgradeUpdate, EvacuateDamage, SpellRechargeModifierUpgrade and DamageFieldUpdate (missing) and SpawnUnitBehavior (parsed only).
 
 | Module | aivai-udun | angmar | dwarves | elves | isengard | men | mordor | wild | Sum before | Sum after |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -116,10 +134,10 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 6 | StructureCollapseUpdate | Behavior | 726 | 665 | ported |
 | 7 | SquishCollide | Behavior | 584 | 375 | ported |
 | 8 | ProductionUpdate | Behavior | 546 | 396 | ported |
-| 9 | AnimationSoundClientBehavior | ClientBehavior | 466 | 303 | missing |
+| 9 | AnimationSoundClientBehavior | ClientBehavior | 466 | 303 | ported |
 | 10 | StructureBody | Body | 416 | 365 | ported |
 | 11 | GettingBuiltBehavior | Behavior | 412 | 350 | ported |
-| 12 | LargeGroupAudioUpdate | Behavior | 409 | 286 | missing |
+| 12 | LargeGroupAudioUpdate | Behavior | 409 | 286 | ported |
 | 13 | DestroyDie | Behavior | 402 | 381 | ported |
 | 14 | ImmortalBody | Body | 394 | 228 | ported |
 | 15 | SpecialPowerModule | Behavior | 370 | 595 | ported |
@@ -155,7 +173,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 45 | HordeContain | Behavior | 141 | 121 | ported |
 | 46 | ArmorUpgrade | Behavior | 123 | 89 | ported |
 | 47 | AutoHealBehavior | Behavior | 123 | 110 | ported |
-| 48 | PickupStuffUpdate | Behavior | 123 | 59 | missing |
+| 48 | PickupStuffUpdate | Behavior | 123 | 59 | ported |
 | 49 | WeaponFireSpecialAbilityUpdate | Behavior | 122 | 150 | ported |
 | 50 | CommandSetUpgrade | Behavior | 117 | 311 | ported |
 | 51 | FXListDie | Behavior | 107 | 90 | ported |
@@ -170,7 +188,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 60 | CastleBehavior | Behavior | 80 | 69 | ported |
 | 61 | W3DPropDraw | Draw | 74 | 74 | ported |
 | 62 | W3DTruckDraw | Draw | 68 | 35 | ported |
-| 63 | GeometryUpgrade | Behavior | 64 | 116 | missing |
+| 63 | GeometryUpgrade | Behavior | 64 | 116 | ported |
 | 64 | FireWeaponWhenDeadBehavior | Behavior | 61 | 63 | ported |
 | 65 | InvisibilityUpdate | Behavior | 61 | 43 | ported |
 | 66 | DualWeaponBehavior | Behavior | 59 | 40 | ported |
@@ -187,40 +205,40 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 77 | SlavedUpdate | Behavior | 39 | 30 | ported |
 | 78 | AnimalAIUpdate | Behavior | 37 | 22 | base AI |
 | 79 | W3DLightDraw | Draw | 37 | 37 | missing |
-| 80 | GateOpenAndCloseBehavior | Behavior | 36 | 32 | missing |
+| 80 | GateOpenAndCloseBehavior | Behavior | 36 | 32 | ported |
 | 81 | ToggleMountedSpecialAbilityUpdate | Behavior | 35 | 31 | ported |
-| 82 | SiegeDockingBehavior | Behavior | 33 | 33 | missing |
+| 82 | SiegeDockingBehavior | Behavior | 33 | 33 | ported |
 | 83 | W3DStreakDraw | Draw | 33 | 41 | missing |
-| 84 | CitadelSlaughterHordeContain | Behavior | 30 | 28 | missing |
+| 84 | CitadelSlaughterHordeContain | Behavior | 30 | 28 | ported |
 | 85 | ObjectCreationUpgrade | Behavior | 29 | 65 | ported |
 | 86 | WorkerAIUpdate | Behavior | 29 | 19 | ported |
 | 87 | DeletionUpdate | Behavior | 28 | 28 | ported |
 | 88 | RadiateFearUpdate | Behavior | 28 | 14 | ported |
 | 89 | HordeNotifyTargetsOfImminentProbableCrushingUpdate | Behavior | 27 | 20 | ported |
 | 90 | ModelConditionSoundSelectorClientBehavior | ClientBehavior | 25 | 13 | ported |
-| 91 | SlaveWatcherBehavior | Behavior | 25 | 19 | missing |
+| 91 | SlaveWatcherBehavior | Behavior | 25 | 19 | ported |
 | 92 | SpawnBehavior | Behavior | 25 | 17 | ported |
 | 93 | StealthDetectorUpdate | Behavior | 25 | 18 | ported |
 | 94 | AimWeaponBehavior | Behavior | 23 | 12 | missing |
-| 95 | CommandButtonHuntUpdate | Behavior | 23 | 12 | missing |
+| 95 | CommandButtonHuntUpdate | Behavior | 23 | 12 | ported |
 | 96 | EvacuateDamage | Behavior | 23 | 19 | missing |
 | 97 | HordeGarrisonContain | Behavior | 23 | 18 | ported |
 | 98 | TransportContain | Behavior | 23 | 12 | ported |
 | 99 | CostModifierUpgrade | Behavior | 22 | 19 | ported |
 | 100 | W3DBuffDraw | Draw | 22 | 22 | missing |
-| 101 | AIGateUpdate | Behavior | 21 | 18 | missing |
+| 101 | AIGateUpdate | Behavior | 21 | 18 | ported |
 | 102 | DoCommandUpgrade | Behavior | 21 | 13 | ported |
-| 103 | DynamicPortalBehaviour | Behavior | 21 | 17 | missing |
-| 104 | FakePathfindPortalBehaviour | Behavior | 21 | 18 | missing |
+| 103 | DynamicPortalBehaviour | Behavior | 21 | 17 | ported |
+| 104 | FakePathfindPortalBehaviour | Behavior | 21 | 18 | ported |
 | 105 | GiveUpgradeUpdate | Behavior | 21 | 39 | missing |
 | 106 | HorseHordeContain | Behavior | 21 | 21 | ported |
 | 107 | EvaAnnounceClientCreate | ClientUpdate | 20 | 10 | missing |
 | 108 | DelayedDeathBody | Body | 19 | 14 | ported |
-| 109 | RebuildHoleExposeDie | Behavior | 18 | 14 | missing |
+| 109 | RebuildHoleExposeDie | Behavior | 18 | 14 | ported |
 | 110 | StealthUpdate | Behavior | 18 | 16 | ported |
 | 111 | LargeGroupBonusUpdate | Behavior | 17 | 7 | ported |
 | 112 | PassiveAreaEffectBehavior | Behavior | 17 | 15 | ported |
-| 113 | RebuildHoleBehavior | Behavior | 17 | 2 | missing |
+| 113 | RebuildHoleBehavior | Behavior | 17 | 2 | ported |
 | 114 | ReplaceSelfUpgrade | Behavior | 17 | 69 | ported |
 | 115 | RubbleRiseUpdate | Behavior | 17 | 13 | missing |
 | 116 | WallHubBehavior | Behavior | 17 | 23 | ported |
@@ -230,30 +248,30 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 120 | LevelGrantSpecialPower | Behavior | 14 | 13 | ported |
 | 121 | ModelConditionSpecialAbilityUpdate | Behavior | 14 | 10 | ported |
 | 122 | PlayerHealSpecialPower | Behavior | 14 | 10 | ported |
-| 123 | AudioLoopUpgrade | Behavior | 13 | 29 | missing |
+| 123 | AudioLoopUpgrade | Behavior | 13 | 29 | ported |
 | 124 | DozerAIUpdate | Behavior | 13 | 8 | ported |
 | 125 | HordeTransportContain | Behavior | 13 | 8 | ported |
 | 126 | ShipSlowDeathBehavior | Behavior | 12 | 10 | missing |
 | 127 | W3DSailModelDraw | Draw | 12 | 11 | ported |
-| 128 | BloodthirstyUpdate | Behavior | 11 | 5 | missing |
+| 128 | BloodthirstyUpdate | Behavior | 11 | 5 | ported |
 | 129 | CastleUpgrade | Behavior | 11 | 24 | ported |
-| 130 | ClickReactionBehavior | Behavior | 11 | 6 | missing |
+| 130 | ClickReactionBehavior | Behavior | 11 | 6 | ported |
 | 131 | GiantBirdAIUpdate | Behavior | 11 | 5 | ported (lane FLY-1) |
 | 132 | RunOffMapBehavior | Behavior | 11 | 11 | missing |
-| 133 | SiegeDeployHordeSpecialPower | Behavior | 11 | 7 | missing |
+| 133 | SiegeDeployHordeSpecialPower | Behavior | 11 | 7 | ported |
 | 134 | TerrainResourceClientBehavior | ClientBehavior | 11 | 8 | missing |
 | 135 | BuildableHeroListUpgrade | Behavior | 10 | 2 | ported |
 | 136 | ActivateModuleSpecialPower | Behavior | 9 | 14 | ported |
 | 137 | ArrowStormUpdate | Behavior | 9 | 6 | ported |
-| 138 | AutoPickUpUpdate | Behavior | 9 | 9 | missing |
+| 138 | AutoPickUpUpdate | Behavior | 9 | 9 | ported |
 | 139 | WeaponModeSpecialPowerUpdate | Behavior | 9 | 9 | ported |
 | 140 | DominateEnemySpecialPower | Behavior | 8 | 11 | ported |
 | 141 | ExperienceLevelCreate | Behavior | 8 | 6 | ported |
-| 142 | GrabPassengerSpecialPower | Behavior | 8 | 4 | missing |
+| 142 | GrabPassengerSpecialPower | Behavior | 8 | 4 | ported |
 | 143 | TeleportSpecialAbilityUpdate | Behavior | 8 | 6 | ported |
 | 144 | UpgradeSoundSelectorClientBehavior | ClientBehavior | 8 | 4 | ported |
-| 145 | AttachUpdate | Behavior | 7 | 7 | missing |
-| 146 | BoredUpdate | Behavior | 7 | 3 | missing |
+| 145 | AttachUpdate | Behavior | 7 | 7 | ported |
+| 146 | BoredUpdate | Behavior | 7 | 3 | ported |
 | 147 | CurseSpecialPower | Behavior | 7 | 6 | ported |
 | 148 | UntamedAllegianceSpecialPower | Behavior | 7 | 2 | ported |
 | 149 | W3DQuadrupedDraw | Draw | 7 | 3 | ported |
@@ -288,7 +306,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 178 | RemoveUpgradeUpgrade | Behavior | 4 | 365 | ported |
 | 179 | RousingSpeechUpdate | Behavior | 4 | 3 | ported |
 | 180 | SiegeEngineContain | Behavior | 4 | 4 | ported |
-| 181 | SpawnUnitBehavior | Behavior | 4 | 3 | missing |
+| 181 | SpawnUnitBehavior | Behavior | 4 | 3 | parsed only |
 | 182 | SpecialEnemySenseUpdate | Behavior | 4 | 2 | missing |
 | 183 | SupplyCenterCreate | Behavior | 4 | 1 | ported |
 | 184 | SupplyCenterDockUpdate | Behavior | 4 | 1 | ported |
@@ -304,10 +322,10 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 194 | ToppleUpdate | Behavior | 3 | 3 | missing |
 | 195 | W3DLaserDraw | Draw | 3 | 3 | missing |
 | 196 | AODHordeContain | Behavior | 2 | 2 | missing |
-| 197 | AllowBannerSpawnUpgrade | Behavior | 2 | 2 | missing |
+| 197 | AllowBannerSpawnUpgrade | Behavior | 2 | 2 | ported |
 | 198 | CivilianSpawnCollide | Behavior | 2 | 2 | missing |
 | 199 | DeflectSpecialPower | Behavior | 2 | 1 | missing |
-| 200 | DeployStyleAIUpdate | Behavior | 2 | 1 | base AI |
+| 200 | DeployStyleAIUpdate | Behavior | 2 | 1 | ported |
 | 201 | DetachableRiderBody | Body | 2 | 2 | missing |
 | 202 | DetachableRiderUpdate | Behavior | 2 | 2 | missing |
 | 203 | GarrisonContain | Behavior | 2 | 2 | ported |
@@ -315,24 +333,24 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 205 | LocomotorSetUpgrade | Behavior | 2 | 1 | missing |
 | 206 | ManTheWallsSpecialPower | Behavior | 2 | 2 | missing |
 | 207 | PoisonedBehavior | Behavior | 2 | 2 | missing |
-| 208 | ProductionQueueHordeContain | Behavior | 2 | 2 | missing |
+| 208 | ProductionQueueHordeContain | Behavior | 2 | 2 | ported |
 | 209 | ReplaceObjectUpdate | Behavior | 2 | 2 | missing |
-| 210 | SiegeAIUpdate | Behavior | 2 | 2 | base AI |
-| 211 | SiegeDeploySpecialPower | Behavior | 2 | 2 | missing |
-| 212 | SlaughterHordeContain | Behavior | 2 | 1 | missing |
+| 210 | SiegeAIUpdate | Behavior | 2 | 2 | ported |
+| 211 | SiegeDeploySpecialPower | Behavior | 2 | 2 | ported |
+| 212 | SlaughterHordeContain | Behavior | 2 | 1 | ported |
 | 213 | SpecialDisguiseUpdate | Behavior | 2 | 1 | ported |
 | 214 | SpecialPowerTimerRefreshSpecialPower | Behavior | 2 | 1 | ported |
-| 215 | StopSpecialPower | Behavior | 2 | 2 | missing |
+| 215 | StopSpecialPower | Behavior | 2 | 2 | ported |
 | 216 | StoreObjectsSpecialPower | Behavior | 2 | 2 | missing |
 | 217 | SwayClientUpdate | ClientUpdate | 2 | 2 | missing |
 | 218 | TeleportToCasterSpecialPower | Behavior | 2 | 3 | missing |
-| 219 | ToggleDeploySpecialAbilityUpdate | Behavior | 2 | 1 | missing |
+| 219 | ToggleDeploySpecialAbilityUpdate | Behavior | 2 | 1 | ported |
 | 220 | AttributeModifierPoolUpdate | Behavior | 1 | 1 | ported |
 | 221 | BaseUpgrade | Behavior | 1 | 2 | missing |
 | 222 | BeaconClientUpdate | ClientUpdate | 1 | 1 | ported |
 | 223 | BridgeBehavior | Behavior | 1 | 1 | missing |
 | 224 | CivilianSpawnUpdate | Behavior | 1 | 1 | missing |
-| 225 | CritterEmitterUpdate | Behavior | 1 | 1 | missing |
+| 225 | CritterEmitterUpdate | Behavior | 1 | 1 | ported |
 | 226 | DamageFieldUpdate | Behavior | 1 | 1 | missing |
 | 227 | DamageFilteredCreateObjectDie | Behavior | 1 | 2 | ported |
 | 228 | DelayedLuaEventUpdate | Behavior | 1 | 1 | missing |
@@ -343,12 +361,12 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 233 | HordeWorkerAIUpdate | Behavior | 1 | 1 | base AI |
 | 234 | PartTheHeavensUpdate | Behavior | 1 | 1 | missing |
 | 235 | ProjectileStreamUpdate | Behavior | 1 | 1 | missing |
-| 236 | SalvageCrateCollide | Behavior | 1 | 1 | parsed only |
+| 236 | SalvageCrateCollide | Behavior | 1 | 1 | ported |
 | 237 | ShareExperienceBehavior | Behavior | 1 | 1 | ported |
 | 238 | SpellRechargeModifierUpgrade | Behavior | 1 | 1 | missing |
 | 239 | SplitHordeSpecialPower | Behavior | 1 | 1 | missing |
 | 240 | StrafeAreaUpdate | Behavior | 1 | 1 | missing |
-| 241 | SummonReplacementSpecialAbilityUpdate | Behavior | 1 | 4 | missing |
+| 241 | SummonReplacementSpecialAbilityUpdate | Behavior | 1 | 4 | ported |
 | 242 | TemporarilyDefectUpdate | Behavior | 1 | 1 | ported |
 | 243 | W3DDebrisDraw | Draw | 1 | 1 | missing |
 | 244 | W3DProjectileStreamDraw | Draw | 1 | 1 | missing |
