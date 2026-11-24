@@ -1015,16 +1015,18 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// Mordor's defeat at 3109
 			// lane VISIONDEF-1 (measured on the lane's tree; see above): a new table from the first window on; the game stays open at 9000
 			// merge queue q59 (measured once on the merged tree; see above): the same table up to the 4000 window; the game stays open at 9000
+			// merge queue q62 (measured once on the merged tree and at each merge point; #346 moves it, #348 and #349 keep it): the same table up to the
+			// 5000 window; the game stays open at 9000
 			CHECK(run.progress ==
 		"frame 1000: [0 attacks 1 built 91u/7s destroyed 34u/1s] [1 attacks 1 built 79u/7s destroyed 20u/1s]\n"
 		"frame 2000: [0 attacks 4 built 248u/10s destroyed 178u/1s] [1 attacks 3 built 245u/10s destroyed 139u/2s]\n"
 		"frame 3000: [0 attacks 5 built 372u/13s destroyed 307u/3s] [1 attacks 6 built 395u/13s destroyed 253u/2s]\n"
 		"frame 4000: [0 attacks 6 built 542u/17s destroyed 434u/4s] [1 attacks 9 built 533u/14s destroyed 388u/3s]\n"
 		"frame 5000: [0 attacks 7 built 633u/19s destroyed 581u/5s] [1 attacks 10 built 650u/17s destroyed 543u/4s]\n"
-		"frame 6000: [0 attacks 10 built 736u/23s destroyed 659u/5s] [1 attacks 11 built 720u/21s destroyed 617u/5s]\n"
-		"frame 7000: [0 attacks 11 built 806u/27s destroyed 791u/8s] [1 attacks 13 built 870u/24s destroyed 667u/6s]\n"
-		"frame 8000: [0 attacks 11 built 864u/27s destroyed 941u/11s] [1 attacks 16 built 1011u/26s destroyed 791u/6s]\n"
-		"frame 9000: [0 attacks 13 built 968u/27s destroyed 998u/12s] [1 attacks 17 built 1070u/27s destroyed 933u/6s]\n");
+		"frame 6000: [0 attacks 10 built 736u/24s destroyed 659u/5s] [1 attacks 11 built 720u/21s destroyed 613u/5s]\n"
+		"frame 7000: [0 attacks 10 built 785u/26s destroyed 739u/8s] [1 attacks 13 built 824u/24s destroyed 664u/5s]\n"
+		"frame 8000: [0 attacks 12 built 805u/30s destroyed 881u/9s] [1 attacks 15 built 924u/25s destroyed 729u/8s]\n"
+		"frame 9000: [0 attacks 17 built 934u/30s destroyed 958u/9s] [1 attacks 17 built 1014u/25s destroyed 891u/16s]\n");
 		}
 	}
 }

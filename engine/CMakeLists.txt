@@ -346,6 +346,8 @@ include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elve
 include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
 include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-objects test RW 0x796D37 (OPENBFME_BUILDCLEAR1_TESTS)
 include(cmake/Bldgdebris1.cmake) # BLDGDEBRIS-1: the DamageCreationList debris and the siege side damage of ActiveBody (OPENBFME_BLDGDEBRIS1_TESTS)
+include(cmake/Port294.cmake)    # PORT-294: ObjectCreationUpgrade's own mux slots — wouldUpgrade, postUpgradeCheck, isPermanent (OPENBFME_PORT294_TESTS)
+include(cmake/Port198.cmake) # PORT-198: the SpawnBehavior order slots and Player::onUnitCreated (OPENBFME_PORT198_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -748,6 +750,7 @@ if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
     ${OPENBFME_PORT426_TESTS}
+    tests/test_local_98.cpp
     ${OPENBFME_WIN1_TESTS}
     ${OPENBFME_DEP2_TESTS}
     ${OPENBFME_SMOOTH_TESTS}
@@ -930,6 +933,8 @@ add_executable(openbfme_tests
     ${OPENBFME_BUILDCLEAR1_TESTS}
     ${OPENBFME_BLDGDEBRIS1_TESTS}
     ${OPENBFME_PORT302_TESTS}
+    ${OPENBFME_PORT294_TESTS}
+    ${OPENBFME_PORT198_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp

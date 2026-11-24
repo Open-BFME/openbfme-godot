@@ -755,7 +755,9 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// point (ThreatFinderUpdate replaces the unported shell on the map objects that carry it: their module state and update schedule change); #311, #312, #314, #315, #319 and #324 keep it
 	// pin: lane VISIONDEF-1 (goals and positions unchanged; measured on the lane's tree): 0x75092A38 -> 0x5DD478DD: the state hash's own layout (the shroud records
 	// no longer carry the vision ground reference; the object's own + 0x1C4 is hashed once set)
-	CHECK(a.hashes.back() == 0x5DD478DDU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// pin: merge queue q62 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x5DD478DD -> 0xDB28DAAF at #346's
+	// merge point (ObjectCreationUpgrade's own postUpgradeCheck runs the removal on modules that never ran: their hashed wait frame changes); #348 and #349 keep it
+	CHECK(a.hashes.back() == 0xDB28DAAFU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);
