@@ -1,6 +1,6 @@
 // OpenBFME unit tests (lane OBJSOUND-1, stop S-707): the object sounds of a damage state change (ActiveBody::attemptDamage RW 0x8C4422 .. 0x8C44C2:
 // SoundOnDamaged / SoundOnReallyDamaged) on synthetic data, the retail templates' rows against the retail audio table, and the binary facts the port
-// relies on (RW_GAME_DAT), among them that RotWK never plays SoundPromotedVeteran / Elite / Hero.
+// relies on (RW_GAME_DAT), among them that the caller found for SoundPromotedVeteran / Elite / Hero is unreferenced.
 
 #include "doctest.h"
 
@@ -145,6 +145,11 @@ TEST_CASE("object sounds: damageStateSound reads SoundOnDamaged / SoundOnReallyD
 	CHECK(ActiveBody::damageStateSound(probe, BODY_DAMAGED) == "ProbeHurt");
 	CHECK(ActiveBody::damageStateSound(probe, BODY_REALLYDAMAGED) == "ProbeDying"); // the +SOUND: prefix is dropped (RW 0x73AC14)
 	CHECK(ActiveBody::damageStateSound(probe, BODY_RUBBLE).empty());               // RW 0x8C4460: only states 1 and 2 have a row
+	// the retail case counts SoundPromoted* rows through findField and finds none: a set row is found that way
+	const FieldValue *promotedRow = probe.findField("SoundPromotedVeteran");
+	REQUIRE(promotedRow != nullptr);
+	REQUIRE(std::get_if<RawTokens>(promotedRow) != nullptr);
+	CHECK(std::get_if<RawTokens>(promotedRow)->tokens.front() == "ProbeVeteran");
 	const ThingTemplate &silent = *w.w.get("SilentProbe");
 	CHECK(ActiveBody::damageStateSound(silent, BODY_DAMAGED).empty());       // NoSound
 	CHECK(ActiveBody::damageStateSound(silent, BODY_REALLYDAMAGED).empty()); // never set
@@ -301,7 +306,7 @@ TEST_CASE("object sounds retail: the damage rows name retail audio events, and n
 			}
 		}
 	}
-	std::printf("object sounds retail: %zu templates with SoundOnDamaged, %zu with SoundOnReallyDamaged (%zu either), %zu SoundPromoted* rows (never played), "
+	std::printf("object sounds retail: %zu templates with SoundOnDamaged, %zu with SoundOnReallyDamaged (%zu either), %zu SoundPromoted* rows (not ported), "
 				"%zu selector overrides, %zu unknown events\n",
 		damaged, reallyDamaged, either, promoted, selectorOverrides, unknown.size());
 	for (const auto &kv : eventTypes)
@@ -332,7 +337,7 @@ TEST_CASE("object sounds retail: the damage rows name retail audio events, and n
 	CHECK(selectorOverrides == 0);   // the port reads the template row (ActiveBody::damageStateSound)
 }
 
-TEST_CASE("object sounds binary facts: the damage rows' call sites, and SoundPromoted* only reachable from an unreferenced function (RW_GAME_DAT)")
+TEST_CASE("object sounds binary facts: the damage rows' call sites, and the caller found for SoundPromoted* is unreferenced (RW_GAME_DAT)")
 {
 	const PeImage *pe = PeImage::fromEnvironment();
 	if (!pe)
@@ -358,7 +363,7 @@ TEST_CASE("object sounds binary facts: the damage rows' call sites, and SoundPro
 	CHECK(pe->hex(0x8C268F, 5) == "e890fcffff"); // call RW 0x8C2324
 	CHECK(pe->hex(0x8C26B2, 5) == "e854fcffff"); // call RW 0x8C230B
 	CHECK(pe->hex(0x8C26D5, 5) == "e818fcffff"); // call RW 0x8C22F2
-	// its one caller: Object + 0x25C -> vslot 0x30 in RW 0x6957B9 (ZH Object::onVeterancyLevelChanged), which nothing calls, jumps to or points at
+	// the caller found: Object + 0x25C -> vslot 0x30 in RW 0x6957B9 (ZH Object::onVeterancyLevelChanged), without a direct call, jump or pointer to it
 	CHECK(pe->hex(0x6957FD, 6) == "ff7508ff5030");
 	const std::uint32_t textStart = 0x401000, textSize = 0x7CF000;
 	std::vector<std::uint8_t> text;

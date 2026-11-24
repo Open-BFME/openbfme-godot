@@ -1066,7 +1066,7 @@ std::vector<std::string> LiveGameAudio::acceptanceStops()
 		"[S-707] object sounds not ported: SoundCreated, SoundEnter / Exit, SoundStealthOn / Off, SoundImpact, "
 		"SoundCrushing, SoundFallingFromPlane, SoundAmbientBattle (the death, impact and FireFX sounds are FX list nuggets: FX-2's lane). Lane OBJSOUND-1: "
 		"SoundOnDamaged / ReallyDamaged at a hit's damage state change (ActiveBody::attemptDamage RW 0x8C4422, the template row without the drawable's "
-		"selectors RW 0x676A8A); SoundPromoted* is never played by RotWK (its one caller RW 0x6957B9 is unreferenced). Done in AUDIO-2 "
+		"selectors RW 0x676A8A); SoundPromoted* is not ported: no live caller found (RW 0x6957B9 is unreferenced) and no retail template sets it. Done in AUDIO-2 "
 		"part 2: the weapon FireSound (RW 0x8E3411), SoundMoveStart / Loop (S-712), VoiceFullyCreated at construction completion (RW 0x857D6C .. 0x857DBA: "
 		"GettingBuiltBehavior::checkCompletion posts it right before m_completedOnce = true, guarded by !m_completedOnce && frame >= 5; retail's +0x33 is "
 		"m_completedOnce), LargeGroupAudio (S-248)",
