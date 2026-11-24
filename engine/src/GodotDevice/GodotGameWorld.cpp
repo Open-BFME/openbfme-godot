@@ -444,6 +444,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_static_method("GameWorld", D_METHOD("set_texture_reduction", "reduction"), &GameWorld::set_texture_reduction); // lane OPTS-2
 	ClassDB::bind_static_method("GameWorld", D_METHOD("set_shadow_decals", "decals", "volumes"), &GameWorld::set_shadow_decals); // lane BLOBSHADOW-1
 	ClassDB::bind_method(D_METHOD("get_blob_report"), &GameWorld::get_blob_report);
+	ClassDB::bind_method(D_METHOD("get_decal_shadows"), &GameWorld::get_decal_shadows); // lane DRAWDECAL-1
 	ClassDB::bind_static_method("GameWorld", D_METHOD("get_texture_reduction"), &GameWorld::get_texture_reduction);
 	ClassDB::bind_method(D_METHOD("order_attack", "ids", "target"), &GameWorld::order_attack);
 }
@@ -1658,11 +1659,6 @@ void GameWorld::remove_view(uint32_t drawableId)
 	W3DInstancer *dyn = instancerOf(m_dynamicId);
 	for (EntryView &e : m_views[drawableId].entries)
 	{
-		if (auto *decal = e.shadowDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(e.shadowDecalId))) : nullptr)
-		{
-			decal->set_visible(false);
-			decal->queue_free();
-		}
 		if (e.instance >= 0 && dyn)
 		{
 			dyn->remove_instance(e.instance);
@@ -1735,11 +1731,6 @@ bool GameWorld::view_is_local(size_t id, const W3DInstancer &dyn, const LogicSna
 	{
 		const DrawEntry &e = entries[k];
 		const EntryView &ev = v.entries[k];
-		const ModelConditionInfo *state = e.draw ? e.draw->currentModelState() : nullptr;
-		if (ev.shadowDecalId || (state && state->hasShadow && (state->shadow.type == 0x40 || state->shadow.type == 0x800)))
-		{
-			return false; // Godot decal lifecycle/resource access belongs to the main thread.
-		}
 		if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
 		{
 			if (ev.instance >= 0 && !(e.frontTireBones.empty() && e.rearTireBones.empty()) && !(ev.tireChanges == e.tireChanges && ev.tireInstance == ev.instance))
@@ -1847,59 +1838,6 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 	{
 		DrawEntry &e = entries[k];
 		EntryView &ev = v.entries[k];
-		// BFME2 W3DShadowManagerAddShadow routes 0x40 / 0x800 to projected
-		// shadows; W3DProjectedShadowManagerFlushDecals uses the additive preset.
-		// Device inference (S-3304): Godot emission projects the texture onto terrain.
-		// Exact retail ShadowOpacity* timing and projected-shadow blend parity remain open.
-		Decal *shadow = ev.shadowDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(ev.shadowDecalId))) : nullptr;
-		const ModelConditionInfo *state = e.draw ? e.draw->currentModelState() : nullptr;
-		const ModelShadowInfo *info = state && state->hasShadow ? &state->shadow : nullptr;
-		const auto *modelData = dynamic_cast<const W3DModelDrawModuleData *>(e.data);
-		const bool additive = info && (info->type == 0x40 || info->type == 0x800) && !info->texture.empty() &&
-			info->sizeX > 0.0f && info->sizeY > 0.0f && (!modelData || !modelData->m_shadowForceDisable);
-		if (additive && !fogHidden && !e.moduleHidden && !e.conditionHidden && d->drawOpacity() > 0.0f)
-		{
-			const std::string file = info->texture.find('.') == std::string::npos ? info->texture + ".tga" : info->texture;
-			if (ev.shadowDecalTexture != file)
-			{
-				Ref<W3DModelBuilder> loader;
-				loader.instantiate();
-				const Ref<Texture2D> texture = loader->load_texture(m_fs, toGodot(file));
-				if (texture.is_valid())
-				{
-					if (!shadow)
-					{
-						shadow = memnew(Decal);
-						shadow->set_name(String("DrawableAdditiveDecal_") + String::num_int64(id) + "_" + String::num_int64(k));
-						add_child(shadow);
-						ev.shadowDecalId = shadow->get_instance_id();
-						shadow->set_meta("object_id", (int64_t)d->getObjectID());
-						shadow->set_cull_mask(1u << 19); // GodotMapTerrain only
-						shadow->set_albedo_mix(0.0f);
-						shadow->set_upper_fade(0.0f);
-						shadow->set_lower_fade(0.0f);
-						shadow->set_meta("acceptance_stop", "[S-3304] additive drawable decals: projection/blend and ShadowOpacity timing are unverified");
-					}
-					shadow->set_texture(Decal::TEXTURE_EMISSION, texture);
-					shadow->set_meta("shadow_texture", toGodot(file));
-				}
-				else
-				{
-					if (shadow) shadow->set_texture(Decal::TEXTURE_EMISSION, Ref<Texture2D>());
-					UtilityFunctions::push_error(String("Drawable additive decal: ") + String(Variant(loader->get_report())));
-				}
-				ev.shadowDecalTexture = file; // a missing texture is reported once per state, never retried every frame
-			}
-			if (shadow)
-			{
-				// Match the existing placement decal's SAGE -> Godot ground projection.
-				shadow->set_position(Vector3(SimMath::addf32(shownAt.x, info->offsetX), shownAt.z, -SimMath::addf32(shownAt.y, info->offsetY))); // the audited file's float rule
-				shadow->set_size(Vector3(info->sizeX, 200.0f, info->sizeY));
-				shadow->set_emission_energy(1.0f);
-				shadow->set_visible(shadow->get_texture(Decal::TEXTURE_EMISSION).is_valid());
-			}
-		}
-		else if (shadow) shadow->set_visible(false);
 		// RENDER-2: a structure being built moves along its own Z by the draw's construction offset (RW 0x4B686D)
 		Transform3D entryXf = xf;
 		if (e.constructionOffsetZ != 0.0f)

@@ -40,6 +40,29 @@ Dictionary GameWorld::get_blob_report() const
 	return d;
 }
 
+Array GameWorld::get_decal_shadows() const
+{
+	// lane DRAWDECAL-1: this frame's drawable decal shadows as the HUD's grid gets them (SAGE coordinates)
+	Array out;
+	for (const SelectionDecal &s : m_decalShadows)
+	{
+		Dictionary e;
+		e["object"] = (int64_t)s.object;
+		e["drawable"] = (int64_t)s.drawable;
+		e["x"] = s.position.x;
+		e["y"] = s.position.y;
+		e["z"] = s.position.z;
+		e["size"] = s.size;
+		e["size_y"] = s.sizeY;
+		e["angle"] = s.angle;
+		e["texture"] = String(s.texture.c_str());
+		e["style"] = (int64_t)s.style;
+		e["color"] = (int64_t)s.color;
+		out.push_back(e);
+	}
+	return out;
+}
+
 namespace
 {
 bool isNoneModel(const std::string &name)
@@ -277,6 +300,7 @@ void GameWorld::update_decal_shadows()
 				&& BlobShadow::decal(spec, p.x, p.y, p.z, d->getOrientation(), decal))
 			{
 				decal.drawable = (unsigned)id;
+				decal.object = d->getObjectID();
 				m_decalShadows.push_back(std::move(decal));
 			}
 			break;

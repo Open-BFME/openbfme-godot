@@ -580,6 +580,7 @@ public:
 	Dictionary get_blob_report() const;
 	// lane DRAWDECAL-1: this frame's drawable decal shadows (alpha / additive), for the HUD's selection decal grid
 	const std::vector<SelectionDecal> &decal_shadows() const { return m_decalShadows; }
+	Array get_decal_shadows() const; ///< the same for scripts: object, drawable, x, y, z, size, size_y, angle, texture, style, color
 	// a select message and an attack-object message (MSG_DO_ATTACK_OBJECT) for the objects `ids` on `target`, through the lockstep command path. { ok, error, player, objects }
 	Dictionary order_attack(const Array &ids, int64_t target);
 
@@ -748,8 +749,6 @@ private:
 	std::vector<MapCacheEntry> m_mapCache;           ///< maps\\mapcache.ini, read by setup()
 	struct EntryView
 	{
-		uint64_t shadowDecalId = 0;
-		std::string shadowDecalTexture;
 		int64_t instance = -1;
 		std::string model;              ///< the lower-case model the instance shows ("" none)
 		std::string rawModel, rawLowered; ///< lane PERF-1: the last model name as the draw gave it and its lower-case form (lowered once per change)
