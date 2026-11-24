@@ -595,21 +595,42 @@ void FXPlayer::updateLightPulseUniforms()
 	// the shader's lights are view-space (the object shaders light in view space); the camera is the one the next frame draws
 	Transform3D view;
 	bool haveView = false;
+	Coord3D eye{ 0.0f, 0.0f, 0.0f };
+	std::vector<Plane> frustum;
 	if (Viewport *vp = get_viewport())
 	{
 		if (Camera3D *c = vp->get_camera_3d())
 		{
 			view = c->get_global_transform().affine_inverse();
 			haveView = true;
+			const Vector3 e = c->get_global_position();
+			eye = Coord3D{ (float)e.x, (float)-e.z, (float)e.y }; // Godot -> SAGE
+			const TypedArray<Plane> planes = c->get_frustum();
+			for (int64_t k = 0; k < planes.size(); ++k)
+			{
+				frustum.push_back(planes[k]);
+			}
 		}
 	}
-	size_t used = 0;
-	for (const LightPulseFx &l : m_playback->lightPulses().lights())
-	{
-		if (!l.enabled || used >= 4)
+	// lane LIGHTDRAW-1: the pulses and the W3DLightDraw lights share the four slots: those whose sphere meets the camera's frustum, nearest to the camera
+	// first (LightPulsePool::select, INFERENCE S-687: retail picks per object)
+	auto visible = [&frustum](const Coord3D &p, float range) {
+		const Vector3 g = toGodotSpace(p);
+		for (const Plane &pl : frustum)
 		{
-			continue;
+			if (pl.distance_to(g) > range)
+			{
+				return false;
+			}
 		}
+		return true;
+	};
+	const std::vector<const LightPulseFx *> chosen = m_playback->lightPulses().select(eye, 4, visible);
+	m_lightsShown = chosen.size();
+	size_t used = 0;
+	for (const LightPulseFx *lp : chosen)
+	{
+		const LightPulseFx &l = *lp;
 		const Vector3 world = toGodotSpace(l.position);
 		const Vector3 pos = haveView ? view.xform(world) : world;
 		const RGBColor c = l.colorNow();

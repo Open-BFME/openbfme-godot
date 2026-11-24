@@ -40,6 +40,7 @@
 #include "GameClient/FXList.h"
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 // One terrain scorch (BaseHeightMapRenderObjClass's entry; DONOR BFME2 0x67EA3).
@@ -88,6 +89,9 @@ struct LightPulseFx
 	std::uint32_t currentIncrease = 0, currentDecrease = 0;
 	float targetEnd = 0.0f;
 	RGBColor targetColor{ 0.0f, 0.0f, 0.0f };
+	// LightClass::Intensity (light + 0xD0): W3DLightDraw writes it every draw (RW 0x4CF479); the light environment multiplies the diffuse and the ambient by
+	// it (DONOR BFME2 lightenvironment.cpp Init_From_Point_Or_Spot_Light). A pulse keeps the new light's 1.
+	float intensity = 1.0f;
 	bool enabled = false;
 	// DONOR BFME2 0x6DE3D On_Frame_Update: one client frame; returns false when the light expired on this frame
 	bool step();
@@ -114,7 +118,26 @@ public:
 	size_t enabledCount() const; // the lights still lit (expired ones stay in the pool as reusable slots)
 	void clear();
 
+	// lane LIGHTDRAW-1: the lights W3DLightDraw holds for its drawable's lifetime (RW 0x4CF16B: RTS3DScene::getADynamicLight + Add_Ref; released by the
+	// destructor). They are kept apart from the pulses: a pulse never takes one (retail's pool can hand a hidden draw's disabled light to a pulse, S-113)
+	// and there is no cap (retail's pool grows). A handle stays valid until releaseDrawLight or clear(); generation() changes on clear().
+	size_t acquireDrawLight();
+	void releaseDrawLight(size_t handle);
+	LightPulseFx &drawLight(size_t handle) { return m_drawLights[handle]; }
+	const std::vector<LightPulseFx> &drawLights() const { return m_drawLights; } // released slots are disabled
+	size_t drawLightCount() const { return m_drawLights.size() - m_freeDrawLights.size(); }
+	std::uint64_t generation() const { return m_generation; }
+
+	// lane LIGHTDRAW-1: the lights the object shaders get (they have four slots): the enabled pulses and draw lights whose sphere (position, range())
+	// `visible` accepts, nearest to `eye` first (pulses before draw lights on a tie, then pool order), at most `max`. INFERENCE (S-687): retail picks per
+	// object (RTS3DScene::renderOneObject: every enabled dynamic light whose sphere meets the object's, the four strongest of those and the scene lights by
+	// LightEnvironmentClass::Add_Light); one set for the whole frame is what four global shader slots allow.
+	std::vector<const LightPulseFx *> select(const Coord3D &eye, size_t max, const std::function<bool(const Coord3D &, float)> &visible) const;
+
 private:
 	std::vector<LightPulseFx> m_lights;
+	std::vector<LightPulseFx> m_drawLights;
+	std::vector<size_t> m_freeDrawLights;
+	std::uint64_t m_generation = 0;
 	unsigned long long m_additions = 0, m_refusedRange = 0, m_overflow = 0;
 };

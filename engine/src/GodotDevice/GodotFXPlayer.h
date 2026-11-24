@@ -83,6 +83,7 @@ public:
 	// effect state. Called by step_once; a viewer that plays a list without stepping calls it itself.
 	void updateClientEffects();
 	void updateLightPulseUniforms(); // lane FEAT-BLDFX-1: the active pulses as the object shaders' four dynamic lights
+	size_t lightsShown() const { return m_lightsShown; } // lane LIGHTDRAW-1: the lights the last update handed to the shaders (0 .. 4)
 	const ScorchBuffer &scorches() const;
 	int64_t decalCount() const; // int64_t: godot-cpp has no size_t binding on macOS (unsigned long)
 	int64_t scorchCount() const { return (int64_t)scorches().entries().size(); }
@@ -118,6 +119,7 @@ protected:
 	void _notification(int what);
 
 private:
+	size_t m_lightsShown = 0;
 	struct Batch
 	{
 		MeshInstance3D *meshNode = nullptr;

@@ -98,7 +98,9 @@ float LightPulseFx::range() const
 
 RGBColor LightPulseFx::colorNow() const
 {
-	return RGBColor{ targetColor.red * m_scale, targetColor.green * m_scale, targetColor.blue * m_scale };
+	// the decay scale (On_Frame_Update) times the light's Intensity (lane LIGHTDRAW-1; DONOR BFME2 Init_From_Point_Or_Spot_Light: Diffuse *= Get_Intensity())
+	const float k = m_scale * intensity;
+	return RGBColor{ targetColor.red * k, targetColor.green * k, targetColor.blue * k };
 }
 
 bool LightPulseFx::step()
@@ -186,4 +188,66 @@ size_t LightPulsePool::enabledCount() const
 void LightPulsePool::clear()
 {
 	m_lights.clear();
+	m_drawLights.clear();
+	m_freeDrawLights.clear();
+	++m_generation;
+}
+
+size_t LightPulsePool::acquireDrawLight()
+{
+	size_t handle;
+	if (!m_freeDrawLights.empty())
+	{
+		handle = m_freeDrawLights.back();
+		m_freeDrawLights.pop_back();
+	}
+	else
+	{
+		handle = m_drawLights.size();
+		m_drawLights.emplace_back();
+	}
+	m_drawLights[handle] = LightPulseFx();
+	return handle;
+}
+
+void LightPulsePool::releaseDrawLight(size_t handle)
+{
+	if (handle >= m_drawLights.size() || std::find(m_freeDrawLights.begin(), m_freeDrawLights.end(), handle) != m_freeDrawLights.end())
+	{
+		return;
+	}
+	m_drawLights[handle].enabled = false; // RW 0x4CF5B6 -> the destructor's setEnabled(false), then Release_Ref
+	m_freeDrawLights.push_back(handle);
+}
+
+std::vector<const LightPulseFx *> LightPulsePool::select(const Coord3D &eye, size_t max, const std::function<bool(const Coord3D &, float)> &visible) const
+{
+	struct Candidate
+	{
+		float d2;
+		size_t order;
+		const LightPulseFx *light;
+	};
+	std::vector<Candidate> c;
+	size_t order = 0;
+	for (const std::vector<LightPulseFx> *list : { &m_lights, &m_drawLights })
+	{
+		for (const LightPulseFx &l : *list)
+		{
+			++order;
+			if (!l.enabled || (visible && !visible(l.position, l.range())))
+			{
+				continue;
+			}
+			const float dx = l.position.x - eye.x, dy = l.position.y - eye.y, dz = l.position.z - eye.z;
+			c.push_back(Candidate{ dx * dx + dy * dy + dz * dz, order, &l });
+		}
+	}
+	std::sort(c.begin(), c.end(), [](const Candidate &a, const Candidate &b) { return a.d2 != b.d2 ? a.d2 < b.d2 : a.order < b.order; });
+	std::vector<const LightPulseFx *> out;
+	for (size_t i = 0; i < c.size() && i < max; ++i)
+	{
+		out.push_back(c[i].light);
+	}
+	return out;
 }
