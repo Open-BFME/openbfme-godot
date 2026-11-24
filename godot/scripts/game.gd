@@ -5475,7 +5475,7 @@ func _perf_frame(delta: float) -> void:
 	var t: Dictionary = _world.get_frame_timings() if _world.has_method("get_frame_timings") else {}
 	if _perf and _perf_times.back() > 50.0: # lane PERF-1 r2: a long frame and what the C++ side of it spent
 		print("GAME HITCH %.1f ms at logic frame %d: %s" % [_perf_times.back(), _world.get_presented_frame(), JSON.stringify(t)])
-	for k in ["logic_ms", "sync_ms", "streak_ms", "dyn_pose_ms", "dyn_upload_ms", "main_cpu_ms"]:
+	for k in ["logic_ms", "sync_ms", "streak_ms", "light_draw_ms", "light_draws", "lights_shown", "dyn_pose_ms", "dyn_upload_ms", "main_cpu_ms"]:
 		if not _perf_parts.has(k):
 			_perf_parts[k] = 0.0
 		_perf_parts[k] += t.get(k, 0.0)
