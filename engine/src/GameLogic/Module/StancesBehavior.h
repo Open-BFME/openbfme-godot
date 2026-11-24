@@ -16,7 +16,7 @@
 //   * setStance (RW 0x8620DD, new): equal to the current: false. The horde interface (contain slot 0x7C): when the current stance is Porcupine and the contain is a
 //     porcupine formation (slot 0xF0, RW 0x872BB8: data + 0x238) that can toggle (slot 0x5C, RW 0x8700AC), it toggles back (slot 0x60, RW 0x86C7F6; the swap
 //     itself sets Battle, RW 0x87629F) and the interface is looked up again. New HoldGround: the AI's idle command from the player (AI + 0x20, RW 0x5E821A(0):
-//     command 5, ZH AICMD_IDLE). Without a StanceTemplate name, or a template of that name (RW 0x83585B): false. The current entry's AttributeModifier and the new
+//     command 5, ZH AICMD_IDLE); lane MODS-3: under patch-202.hold-ground-keeps-move only when the AI is idle and not waiting for a path. Without a StanceTemplate name, or a template of that name (RW 0x83585B): false. The current entry's AttributeModifier and the new
 //     one's differ: Object::removeAttributeModifier(current) (RW 0x68F259) when set, Object::addAttributeModifier(new, -1) (RW 0x68F1A8) when set. The horde gets
 //     the new entry's MeleeBehavior (slot 0x260, RW 0x86C40D: that data, else the contain's own MeleeBehavior, else Swarm). Then the stance is stored; when the old
 //     stance was 0 or its class (RW 0x861D8E: Aggressive 2; HoldGround, Porcupine, HoldGroundMoving 3; else 1) differs from the new one's: the listeners are told

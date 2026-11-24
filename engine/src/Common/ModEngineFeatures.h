@@ -41,6 +41,8 @@ enum class ModEngineFeature
 	EdainUnchainedUpgradeDescription,  // an owned upgrade's help keeps its description, the purchased text below it (.upgdsc)
 	EdainUnchainedObserverCommandRange, // an observer may page the command ranges (PUSH / POP_VISIBLE_COMMAND_RANGE) (.obscmd)
 	EdainUnchainedProductionSplit,     // the PRODUCTION_MONEY / _UNIT / _UPGRADE / _CONSTRUCTION attribute modifiers (.prodsp)
+	// Patch 2.02 9.8.6 (its lotrbfme2ep1.exe: the Ennorath team's sections; 2.02 Patch Notes.txt names the changes)
+	Patch202HoldGroundKeepsMove,       // setStance(HoldGround) idles the AI only when it is idle and not waiting for a path (.stancem)
 	Count
 };
 

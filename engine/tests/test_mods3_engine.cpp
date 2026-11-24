@@ -39,7 +39,7 @@ TEST_CASE("MODS-3: a known modified game binary turns its profile's features on;
 	CHECK(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobarKindOf));
 	CHECK(ModEngineFeatures::activeProfiles() == std::vector<std::string>{ "Edain Unchained 4.4.3 game.dat" });
 	const std::vector<std::string> ids = ModEngineFeatures::identityFeatures();
-	REQUIRE(ids.size() == (size_t)ModEngineFeature::Count);
+	REQUIRE(ids.size() == 22); // every edain-unchained.* feature (the patch-202.* ones are Patch 2.02's)
 	CHECK(ids.front() == "mod-engine:edain-unchained.herobar-kindof");
 
 	// Patch 2.02's game binary: known, nothing to re-implement for the simulation (its changes are install checks and frame pacing)
@@ -54,19 +54,19 @@ TEST_CASE("MODS-3: a known modified game binary turns its profile's features on;
 	CHECK_FALSE(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobarKindOf));
 }
 
-TEST_CASE("MODS-3: Patch 2.02 9.8.6's game binary turns on Edain's commandset-limit and observer-command-range only, and names what is missing")
+TEST_CASE("MODS-3: Patch 2.02 9.8.6's game binary turns on Edain's commandset-limit and observer-command-range and its hold-ground-keeps-move, and names what is missing")
 {
 	Retail guard;
 	std::string error;
 	REQUIRE_MESSAGE(ModEngineFeatures::activate({ "fc32e4c4142b5c607b90972eaf448400" }, &error), error);
 	CHECK(ModEngineFeatures::activeProfiles() == std::vector<std::string>{ "Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary)" });
-	CHECK(ModEngineFeatures::identityFeatures() ==
-		std::vector<std::string>{ "mod-engine:edain-unchained.commandset-limit", "mod-engine:edain-unchained.observer-command-range" });
+	CHECK(ModEngineFeatures::identityFeatures() == std::vector<std::string>{ "mod-engine:edain-unchained.commandset-limit",
+													"mod-engine:edain-unchained.observer-command-range", "mod-engine:patch-202.hold-ground-keeps-move" });
 	CHECK(CommandSet::slotCapacity() == 64);
 	CHECK_FALSE(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobarKindOf));
 	const std::vector<std::string> stops = ModEngineFeatures::stopLines();
 	REQUIRE(stops.size() == 1);
-	CHECK(stops[0].rfind("S-5304: Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary): not yet re-implemented, game rules: Hold Ground", 0) == 0);
+	CHECK(stops[0].rfind("S-5304: Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary): not yet re-implemented, game rules: the building limit", 0) == 0);
 	// its reworked settings menu needs the binary's .optui: the install mount leaves the mod's apt/Options.big out
 	const std::vector<ModEngineFeatures::LeftOutArchive> left = ModEngineFeatures::leftOutArchives();
 	REQUIRE(left.size() == 1);
