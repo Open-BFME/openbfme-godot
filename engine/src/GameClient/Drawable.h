@@ -256,6 +256,10 @@ public:
 	// port's renderer reads shadowsEnabled() for each module's instance)
 	void setShadowsEnabled(bool on) { m_shadowsEnabled = on; }
 	bool shadowsEnabled() const { return m_shadowsEnabled; }
+	// PORT-68 (RW 0x44C465 / 0x4B1CB0): Drawable + 0x360 FXTrigger index (TheFXTriggerNames: 0 NONE, 1 CATAPULT_ROCK, 2 TREBUCHET_ROCK),
+	// set by ObjectKnockback::shockWave (RW 0x6968D7 / 0x696E3E) and ObjectKnockback::apply (RW 0x692307) through RW 0x68B56A.
+	void setFXTrigger(int fxTrigger) { m_fxTrigger = fxTrigger; }
+	int getFXTrigger() const { return m_fxTrigger; }
 	const ObjectSnapshot *syncedRecord(const LogicSnapshot &snapshot, bool &found) const
 	{
 		found = m_syncSnapshot == &snapshot && m_syncFrame == snapshot.frame;
@@ -334,6 +338,7 @@ private:
 	std::vector<std::unique_ptr<DrawableModule>> m_clientModules;
 	bool m_clientHidden = false; ///< lane CHAT-1
 	bool m_shadowsEnabled = true; ///< RW Drawable +0x114 bit 2 (TOP20 #24)
+	int m_fxTrigger = 0;          ///< PORT-68: Drawable + 0x360 FXTrigger index (RW 0x44C465 / 0x4B1CB0)
 	bool m_phantomLook = false;  ///< lane FBSIM-1: drawn as a dozer's phantom structure (0.4 opacity)
 	Fade m_fade; ///< lane PROJ-2
 	StealthLook::State m_stealth;            ///< lane STEALTHLOOK-1: RW Drawable +0xB4 .. +0xD4, +0x164, +0x358, +0x43E
