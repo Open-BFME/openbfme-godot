@@ -186,7 +186,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 76 | AutoDepositUpdate | Behavior | 39 | 37 | ported |
 | 77 | SlavedUpdate | Behavior | 39 | 30 | ported |
 | 78 | AnimalAIUpdate | Behavior | 37 | 22 | base AI |
-| 79 | W3DLightDraw | Draw | 37 | 37 | missing |
+| 79 | W3DLightDraw | Draw | 37 | 37 | parsed only |
 | 80 | GateOpenAndCloseBehavior | Behavior | 36 | 32 | missing |
 | 81 | ToggleMountedSpecialAbilityUpdate | Behavior | 35 | 31 | ported |
 | 82 | SiegeDockingBehavior | Behavior | 33 | 33 | missing |

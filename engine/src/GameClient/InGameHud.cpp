@@ -192,6 +192,7 @@ InGameHud::~InGameHud()
 	}
 	m_config.game.drawables().setHeroAttackedHandler(nullptr);
 	m_config.game.drawables().setHeroFlashHandler(nullptr);
+	m_config.game.drawables().setDeselectLocalHandler(nullptr);
 	m_heroSelect.reset();
 	// the screen before the window manager it registered on
 	m_ownedPalantir.reset();
@@ -312,6 +313,17 @@ bool InGameHud::boot(std::string *error)
 	m_heroSelect = std::make_unique<InGameHeroSelect>(m_input->context(), builderCycleTimeoutMs);
 	m_config.game.drawables().setHeroAttackedHandler([this](ObjectID id) { m_heroSelect->onHeroAttacked(id); });
 	m_config.game.drawables().setHeroFlashHandler([this](const std::string &name, int frames) { m_heroSelect->flashHeroButton(name, frames); });
+	// lane POSTERNPLOT-1, RW 0x85834C .. 0x858389: the local player's object leaves the selection (the message, then TheInGameUI's deselectDrawable)
+	m_config.game.drawables().setDeselectLocalHandler([this](ObjectID id, int ownerIndex) {
+		HudContext &ctx = m_input->context();
+		const Player *local = ctx.localPlayer();
+		if (!local || ownerIndex < 0 || local->getPlayerIndex() != ownerIndex)
+		{
+			return;
+		}
+		ctx.stream.append(MSG_REMOVE_FROM_SELECTED_GROUP).appendObjectID(id);
+		ctx.ui.deselectObject(id);
+	});
 	m_palantirRef->setHeroSelectHandler([this](const std::string &clipPath, bool loaded) {
 		if (!loaded)
 		{

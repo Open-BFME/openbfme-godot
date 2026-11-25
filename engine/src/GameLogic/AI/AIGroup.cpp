@@ -592,7 +592,7 @@ void AIGroup::groupAttackMoveToPosition(const Coord3D &pos, int maxShots, Comman
 	}
 }
 
-// ---- stop S-1301: RW 0x77005F, the group's speed matching (read from the RotWK binary; the BFME2 decomp's AIGroup_cohereMoveSpeed.cpp,
+// ---- stop S-1301: RW 0x77005F, the group's speed matching (read from the RotWK binary; the BFME2 decomp's AIGroup.cpp AIGroup::cohereMoveSpeed,
 // retail 0x0036DF92, is the one-pass ancestor without the leader bands) ----
 namespace
 {

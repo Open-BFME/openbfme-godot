@@ -570,7 +570,7 @@ void DevastateSpecialPower::doSpecialPowerAtLocation(const Coord3D &loc, unsigne
 	// RW 0x8CC87D .. 0x8CC8A7: min(TreeValueTotalCap, total) through _ftol2 is deposited with the player's ScoreKeeper (RW 0x7B18B8(amount, + 0x3DC, 1))
 	const float paid = d->m_treeValueTotalCap > total ? total : d->m_treeValueTotalCap;
 	player->depositMoney(SimMath::ftol2Low32((double)paid), true);
-	// RW 0x8CC8BB .. 0x8CC8DD (lane DECOMP-1; BFME2 decomp attempt 0x004c82e5.cpp, tier B): a FireWeapon the store knows is TheWeaponStore->createAndFireTempWeapon
+	// RW 0x8CC8BB .. 0x8CC8DD (lane DECOMP-1; BFME2 decomp DevastateSpecialPowerDoSpecialPowerAtLocation.cpp, tier B): a FireWeapon the store knows is TheWeaponStore->createAndFireTempWeapon
 	// (weapon, object, target) (RW 0x6CF530)
 	if (!d->m_fireWeapon.empty() && TheWeaponStore)
 	{
