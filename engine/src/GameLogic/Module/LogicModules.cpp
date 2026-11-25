@@ -62,6 +62,7 @@
 #include "GameLogic/Module/ThreatFinderUpdate.h" // PORT 17 (issue #73)
 #include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/BoredUpdate.h"
+#include "GameLogic/Module/LocomotorSetUpgrade.h"
 
 #include <stdexcept>
 
@@ -99,6 +100,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	ProjectileModules::registerAll(modules); // lane PROJ-1: BezierProjectileBehavior
 	StructureModules::registerAll(modules); // lane COMBAT-2: StructureBody, InactiveBody, StructureCollapseUpdate
 	UpgradeModuleClasses::registerAll(modules); // lane UPGRADE-1: the upgrade module classes
+	LocomotorSetUpgrade::registerClass(modules); // MODGAP-2: KillLocomotorUpgrade / upgraded locomotor set (RW 0x8B80D3 / 0x8B80F6)
 	ObjectCreationUpgrade::registerClass(modules); // lane FACT-A: the object an upgrade makes (the Crystal Moat)
 	ReplaceSelfUpgrade::registerClass(modules);    // lane FACT-A: the wall segment's gates, towers and hubs
 	AttributeModifierPool::registerClass(modules); // lane XP-1: AttributeModifierPoolUpdate (every object's attribute modifier pool)
