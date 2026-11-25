@@ -369,6 +369,20 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 		pending.pop_back();
 		addTemplate(entry.first, entry.second);
 	}
+	// The initial models above were built plain; every player colour also needs its live key for the first spawn / first state.
+	// The local colour is built in the load pass below; the other players' colours are queued, and the wave loop does not cap
+	// coloured jobs below.
+	for (const std::string &model : models)
+	{
+		for (const HouseColorParams &color : colors)
+		{
+			const PrewarmJob job{ model, {}, color };
+			if (remainingSeen.insert(prewarmJobKey(job.model, job.swaps, job.color)).second)
+			{
+				remaining.push_back(job);
+			}
+		}
+	}
 	CameraSettings camera;
 	std::string cameraError;
 	if (m_fs.is_valid() && m_fs->archive_fs() && CameraSettings::load(*m_fs->archive_fs(), camera, &cameraError))
@@ -427,7 +441,9 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 	const size_t waveLimit = prewarm::waveLimit(std::getenv("OPENBFME_PREWARM_WAVES_MAX"), remaining.size());
 	for (const PrewarmJob &job : remaining)
 	{
-		if (m_prewarmQueue.size() >= waveLimit)
+		// Coloured variants are the ordinary player-owned units / buildings; warm every one of them, not just the first
+		// waveLimit plain states. A limit on those would leave the other players' models for the first live spawn.
+		if (job.color.kind <= 0 && m_prewarmQueue.size() >= waveLimit)
 		{
 			break;
 		}
