@@ -124,7 +124,7 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 		return (rubble >= 0 && state.conditions.test(rubble)) || (die >= 0 && state.conditions.test(die)) || (death >= 0 && state.conditions.test(death))
 			|| (postCollapse >= 0 && state.conditions.test(postCollapse)) || (constructing >= 0 && state.conditions.test(constructing));
 	};
-	auto addRemaining = [&](const std::string &name, const std::vector<std::pair<std::string, std::string>> &swaps) {
+	auto addRemaining = [&](const std::string &name, const std::vector<TextureSwap> &swaps) {
 		if (!name.empty() && AsciiStringUtil::compareNoCase(name, "None") != 0)
 		{
 			const std::string model = AsciiStringUtil::lowered(name);

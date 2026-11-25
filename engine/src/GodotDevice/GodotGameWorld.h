@@ -26,6 +26,7 @@
 #include "GameClient/ShroudFade.h" // lane FOGFX-1: m_shroudFade
 #include "GameClient/CommandLogLoad.h" // lane SAVE-2: m_saveLoad (complete for the unique_ptr)
 #include "Common/System/SaveGame/SaveGameFile.h"
+#include "Common/TextureSwap.h"
 #include "GameClient/ScriptCameraDirector.h"
 #include "GameClient/ClientPoolPolicy.h" // lane PERF-CLIENT: m_clientPool
 #include "GameClient/LiveGame.h"
@@ -819,7 +820,7 @@ private:
 	struct PrewarmJob
 	{
 		std::string model; // lower-cased W3D name
-		std::vector<std::pair<std::string, std::string>> swaps; // a ModelConditionState's `Texture = A B` (empty: the plain model)
+		std::vector<TextureSwap> swaps; // a ModelConditionState's `Texture = A B` (empty: the plain model)
 	};
 	std::vector<PrewarmJob> m_prewarmQueue;
 	size_t m_prewarmCursor = 0;
