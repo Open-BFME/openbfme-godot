@@ -45,6 +45,7 @@
 #include <string>
 
 class ArchiveFileSystem;
+class INI;
 
 // RadiusDecalTemplate (RW 0x732888 defaults, RW 0xC24278 fields)
 struct RadiusDecalTemplate
@@ -61,6 +62,9 @@ struct RadiusDecalTemplate
 	float rotationsPerMinute = 0.0f;   // + 0x2C
 	float spiralAcceleration = 0.0f;   // + 0x30
 };
+
+void parseRadiusDecalTemplate(INI *ini, void *instance, void *store, const void *userData); // RW 0x7327BC / BFME2 0x330E5D
+
 
 // lane OWNERFIX-2: InGameUI.ini's resource claim fields (rows RW 0xC12860 .. 0xC12890): TerrainResourceClaimDecal (RW 0x69C374: parseAsciiString, handed to
 // the claim feedback holder InGameUI + 0x58C, RW 0x8EC442), PlaceTerrainResourceClaimantDecal (parseAsciiString RW 0x42EE5E, + 0x574),
