@@ -2178,11 +2178,11 @@ void W3DInstancer::write_buffers()
 			{
 				const Instance &inst = Instances[(size_t)id];
 				const Instance &src = pose_source(inst);
-				// S-029 counts the members, drawn or culled. The warm-up forces an opaque fade to 1 only for an opaque mesh without
-				// the placement ghost's AlphaOverride and with full instance opacity; every other partial fade is still dithered
-				// during the warm-up and must stay in the count.
+				// S-029 counts the members, drawn or culled. The warm-up forces an opaque fade to 1 only for an opaque mesh with
+				// full instance opacity; a normal instance's partial fade is still dithered and stays in the count. The placement
+				// ghost's AlphaOverride is an alpha blend, not a dither, so it is excluded.
 				const bool forcedOpaque = d.Mesh->HasOpaque && fade_warmup_active() && !AlphaOverride && inst.Opacity >= 0.999f;
-				if (d.Mesh->HasOpaque && !forcedOpaque && src.Pose.PivotFade[(size_t)bone] * inst.Opacity < 0.999f) ++d.Dithered;
+				if (d.Mesh->HasOpaque && !AlphaOverride && !forcedOpaque && src.Pose.PivotFade[(size_t)bone] * inst.Opacity < 0.999f) ++d.Dithered;
 			}
 			pack_draw(m, d); // lane GPUPERF-2: the buffer, the MultiMeshes' boxes and the shadow batch
 			visible += (int)d.Packed.size();
