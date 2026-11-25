@@ -299,6 +299,12 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 	{
 		addModel(camera.moveHintName); // the in-game UI's move hint (retail SCMoveHint)
 	}
+	else if (m_fs.is_valid() && m_fs->archive_fs())
+	{
+		const String error = cameraError.empty() ? String("CameraSettings::load failed") : toGodot(cameraError);
+		timings["camera_error"] = error;
+		UtilityFunctions::push_warning("GAME model preload camera settings: ", error);
+	}
 	for (const std::string &model : models)
 	{
 		if (m_dynamicModels.count(model))

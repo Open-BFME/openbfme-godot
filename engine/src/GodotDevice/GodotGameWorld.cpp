@@ -1394,8 +1394,6 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		}
 	}
 	dyn->set_house_colors_enabled(m_houseColors);
-	// S-029 (1): no pivot-fade dither for the first two seconds of a game (the black dither pixels are conspicuous on snowy maps)
-	begin_fade_warmup();
 	dyn->set_playing(false); // time only enters through set_instance_pose
 	dyn->set_pose_culling(m_perf3Client); // PiP supplies an additional frustum when a second camera sees the live objects.
 	dyn->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the same frusta decide what is drawn
@@ -1404,6 +1402,9 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	// loading screen covers the map; their meshes, textures and materials are then cached for the first spawn or first placement. Its own
 	// timing is outside static_layer_ms, so the load report's total does not count it twice.
 	prewarm_match_models(*dyn, timings);
+	// S-029 (1): no pivot-fade dither for the first two seconds of a game (the black dither pixels are conspicuous on snowy maps).
+	// Start it after the synchronous prewarm: a slow load must not consume the first played frames' warm-up.
+	begin_fade_warmup();
 
 	t0 = nowMs();
 	refresh_shroud(true);
