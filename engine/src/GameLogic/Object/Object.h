@@ -69,6 +69,7 @@ class ExperienceTracker;
 class GameLogic;
 class ObjectClientHooks;
 class ObjectWeapons;
+class FiringTrackerHelper;
 struct DamageInfo;
 class Team;
 class TeamPrototype;
@@ -330,7 +331,15 @@ public:
 		bool inside = false;
 	};
 	static constexpr int MAX_TRIGGERS_IN = 7;
-	void updateTriggerAreaFlags();
+	// `pathCellChanged`: the AI's pathfinder updatePos of this transform change took a new position cell (RW 0x6926F6 -> 0x8E26B7 answered 1)
+	void updateTriggerAreaFlags(bool pathCellChanged);
+	// lane VISIONDEF-1: RW + 0x1C4 (BFME2 1.06 + 0x1C4, ObjectSetTriggerAreaFlagsForChangeInPosition.cpp m_averageGroundHeight), the ground reference of
+	// the vision height bonus (getVisionRange RW 0x68E43B / getShroudClearingRange RW 0x68E4E2: 1 + clamp((z - it) * VisionBonusPercentPerFoot)). The
+	// constructor clears it (RW 0x699A77); the first position change sets it to the object's own z while it is still 0 (reactToTransformChange RW
+	// 0x6935EC, BFME2 0x692D49); RW 0x69264D (BFME2 0x691EB1) samples the ring of VisionBonusTestSegments ground heights again only when the pathfinder
+	// gave the unit a new position cell. An object without an AI keeps the z of its first move
+	float visionGroundReference() const { return m_visionGroundRef; }
+	void updateVisionGroundReference();
 	// lane CASTLEAREA-1: RW 0x68B9E9 (from PolygonTrigger removal, RW 0x6263AF): every entry of `trigger` is cleared (no exit is reported), then RW 0x68B98E keeps
 	// the entries still inside with their entered / exited flags cleared
 	void removeTriggerEntries(int trigger);
@@ -426,6 +435,8 @@ public:
 	// ---- modules ----------------------------------------------------------------------------------------------------------
 	const std::vector<std::unique_ptr<BehaviorModule>> &modules() const { return m_modules; }
 	size_t helperCount() const { return m_helperCount; }
+	// RW Object + 0x248: the FiringTrackerHelper (null when the template cannot have a weapon); lane FIRINGTRACKER-1
+	FiringTrackerHelper *firingTrackerHelper() const { return m_firingTrackerHelper; }
 	BodyModuleInterface *getBodyModule() const { return m_body; }
 	ContainModuleInterface *getContain() const { return m_contain; }
 	AIUpdateInterface *getAIUpdateInterface() const { return m_ai; }
@@ -628,6 +639,7 @@ private:
 	mutable std::unique_ptr<OwnGeometryCache> m_ownGeometry;
 	UnsignedInt m_enteredOrExitedFrame = 0;      ///< RW + 0x414
 	std::int32_t m_triggerCellX = 0, m_triggerCellY = 0; ///< RW + 0x418 / + 0x41C (the integer position of the last check)
+	float m_visionGroundRef = 0.0f;                      ///< RW + 0x1C4 (lane VISIONDEF-1, see visionGroundReference)
 
 	std::vector<std::unique_ptr<BehaviorModule>> m_modules; ///< helpers first, then the template's behaviors
 	std::vector<CollideModuleInterface *> m_collideModules; ///< lane UBER-2B: m_modules' collide interfaces, in order (rebuilt by buildModules / friend_replaceModule)
@@ -639,6 +651,7 @@ private:
 	bool m_moduleLookupsCached = false; ///< m_moduleCachesBuilt until ~Object starts deleting the modules
 	void rebuildCollideModules();
 	size_t m_helperCount = 0;
+	FiringTrackerHelper *m_firingTrackerHelper = nullptr; ///< RW + 0x248, owned by m_modules
 	BodyModuleInterface *m_body = nullptr;
 	ContainModuleInterface *m_contain = nullptr;
 	AIUpdateInterface *m_ai = nullptr;

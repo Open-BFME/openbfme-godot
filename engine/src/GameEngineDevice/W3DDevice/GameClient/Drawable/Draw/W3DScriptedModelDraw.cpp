@@ -1300,8 +1300,22 @@ void W3DScriptedModelDraw::poseView(W3DDrawPoseView &v) const
 	v.blendPercentage = blending ? 1.0f - m_blendCountdown / m_blendInitial : 0.0f;
 	v.hiddenSubObjects = m_model ? &m_hiddenSubObjects : &noHidden;
 	v.hiddenGeneration = m_hiddenGeneration;
-	static const std::vector<std::pair<std::string, std::string>> noSwaps;
-	v.textureSwaps = m_curModelInfo ? &m_curModelInfo->textures : &noSwaps; // stop S-5015: a SNOW state's look is often its texture swap alone
+	static const std::vector<TextureSwap> noSwaps;
+	if (m_upgradeTextures.empty())
+	{
+		v.textureSwaps = m_curModelInfo ? &m_curModelInfo->textures : &noSwaps;
+	}
+	else
+	{
+		if (m_textureDirty || m_textureState != m_curModelInfo)
+		{
+			m_effectiveTextures = m_upgradeTextures;
+			if (m_curModelInfo) m_effectiveTextures.insert(m_effectiveTextures.end(), m_curModelInfo->textures.begin(), m_curModelInfo->textures.end());
+			m_textureState = m_curModelInfo;
+			m_textureDirty = false;
+		}
+		v.textureSwaps = &m_effectiveTextures;
+	} // stop S-5015: a SNOW state's look is often its texture swap alone
 	v.glow = m_data.m_glowEnabled ? (m_data.m_glowEmissive ? 2 : 1) : 0; // RW 0x4C518B / 0x47A94F (BFME2 W3DHordeModelDrawSetModelState): the module data's GlowEnabled (+ 0x128) calls the render object's vslot 0x1CC(1) and GlowEmissive (+ 0x129) its vslot 0x1D4; GlowEmissive only counts with GlowEnabled
 }
 
@@ -1507,4 +1521,17 @@ int W3DHordeModelDraw::randomStartFrame(int frames)
 {
 	const int v = W3DScriptedModelDraw::randomStartFrame(frames);
 	return (v * m_lod.randomStartFramePercent) / 100;
+}
+
+void W3DScriptedModelDraw::upgradeTexture(const TextureSwap &swap, bool enabled)
+{
+	m_textureDirty = true;
+	for (auto it = m_upgradeTextures.begin(); it != m_upgradeTextures.end(); ++it)
+	{
+		if (AsciiStringUtil::compareNoCase(it->first, swap.first) != 0) continue;
+		if (enabled) *it = swap;
+		else if (AsciiStringUtil::compareNoCase(it->second, swap.second) == 0) m_upgradeTextures.erase(it);
+		return;
+	}
+	if (enabled) m_upgradeTextures.push_back(swap);
 }

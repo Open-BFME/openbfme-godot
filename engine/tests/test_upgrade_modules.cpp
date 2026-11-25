@@ -7,6 +7,7 @@
 #include "EconTestUtil.h"
 
 #include "Common/Player.h"
+#include "GameClient/ClientEvents.h"
 #include "Common/Upgrade.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/GameLogic.h"
@@ -56,6 +57,9 @@ const char *kObjects =
 	"    TriggeredBy = Upgrade_B\n"
 	"    ConflictsWith = Upgrade_Level3\n"
 	"    ShowSubObjects = Banner\n"
+	"    UpgradeTexture = EUlorienwarrior.tga 0 EULorWarHA.tga\n"
+	"    ExcludeSubobjects = Forged_Blade\n"
+	"    RecolorHouse = Yes\n"
 	"  End\n"
 	"  Behavior = RemoveUpgradeUpgrade ModuleTag_Remove\n"
 	"    TriggeredBy = Upgrade_Hat2\n"
@@ -254,4 +258,28 @@ TEST_CASE("upgrade modules: two identical runs give the same state hash; the S-4
 		}
 	}
 	CHECK(hashes[0] == hashes[1]);
+}
+
+TEST_CASE("upgrade modules: heavy armor publishes texture swaps with weapon exclusions")
+{
+ econtest::Fx f(kObjects);
+ ClientEventRecorder recorder(*f.logic);
+ f.logic->setClientHooks(&recorder);
+ Object *o = f.make("Upgradable", f.teamOf("Alice"));
+ recorder.take(false);
+ o->giveUpgrade(up("Upgrade_B"));
+ auto events = recorder.take(false);
+ int swaps = 0;
+ for (const auto &event : events)
+ {
+  if (event.kind != ClientEvent::UPGRADE_TEXTURE) continue;
+  ++swaps;
+  CHECK(event.on);
+  CHECK(event.textureSwap.first == "EUlorienwarrior.tga");
+  CHECK(event.textureSwap.second == "EULorWarHA.tga");
+  CHECK(event.textureSwap.excludes("EULorWar.FORGED_BLADE"));
+  CHECK_FALSE(event.textureSwap.excludes("EULorWar.BODY"));
+ }
+ CHECK(swaps == 1);
+ f.logic->setClientHooks(nullptr);
 }

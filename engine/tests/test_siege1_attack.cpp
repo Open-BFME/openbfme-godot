@@ -99,7 +99,8 @@ TEST_CASE("siege1 attack retail: Gondor's trebuchet hits a Helm's Deep wall from
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): 5587.55957 -> 5607.5376
 	// pin: merge queue q41 (DECOMPFIX-1104B: AIMAIM-1's aim, RW 0x75232F, with BUMP-1's give-way rules and STARTRANGE-1's start range; measured once on the merged tree and at its merge point, NECRODIE-1 keeps it): 5607.5376 -> 5538.26074
 	// pin: merge queue q42 (#220's wall-top and ramp goals on top of q41's DECOMPFIX-1104B; measured once on the merged tree and at each merge point, #216 keeps the archive's value, CASTLEATK-1 and #225 keep #220's): 5538.26074 -> 5578.68506
-	CHECK(r.healthAfter == 5578.68506f); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 5596.86768 -> 5547.61523
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): 5578.68506 -> 5527.08496
+	CHECK(r.healthAfter == 5527.08496f); // with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): 5596.86768 -> 5547.61523
 }
 
 TEST_CASE("siege1 attack retail: Grond breaks Minas Tirith's gate with its ram (PRIMARY MordorGrondRam, OnlyAgainst BLOCKING_GATE): one blow")
@@ -172,14 +173,16 @@ TEST_CASE("siege1 attack retail: a mumak and the Dwarven demolisher break Helm's
 	// with the optimiser's layer rule (RW 0x766532): the mumak's graze 3999.25, the demolisher's first damage 239, death 305; with the arc's segment count at x87 precision control 24 (RW 0x765E00; measured twice on the lane's tree): the graze
 	// 3997, the demolisher's first damage 243, death 309
 	// merge queue q37 (measured once on the merged tree): the mumak's graze 3997 -> 3997.75
-	CHECK(m.firstHit == 134);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): the mumak's first damage 134 -> 142
+	CHECK(m.firstHit == 142);
 	// merge queue q38 (LOCODIST-1's retail locomotor distance to the goal, RW 0x664127, moves the AI defender and the random stream; measured once on the merged tree and at each merge point, #172 keeps it): the mumak's graze 3997.75 -> 3997
 	// pin: #207 (ClassifyWall's edge pass RW 0x936686 .. 0x936811: the wall tops' rims refuse every locomotor, the closest height layer RW 0x9362A3, every ramp stamped again newest first RW 0x935BFF; routes and the random stream move at Helm's Deep), measured once on the merged tree and at each merge point (#211, QPATH-1, SIEGEFALL-1 and TOPPLE-1 keep it): the mumak's graze 3997 -> 3997.75
 	// pin: #220 (a goal in a ramp or wall-top cell is searched on its own layer, RW 0x6FD2B2 -> 0x680A75 and validMovementPosition RW 0x6EA52E .. 0x6EA547; the corridor's +1000 on every ground-grid layer RW 0x6F9DC7 / 0x76550F), measured once on the merged tree with #207 and #211: the AI defender and the random stream move with the wall-top and ramp goals: the mumak's graze 3997.75 -> 3998.5
 	// pin: merge queue q42 (#220's wall-top and ramp goals on top of q41's DECOMPFIX-1104B; measured once on the merged tree and at each merge point, #216 keeps the archive's value, CASTLEATK-1 and #225 keep #220's): the mumak's graze 3997.75 (#220 alone: 3998.5) -> 3997.75
 	CHECK(m.healthAfterFirst == 3997.75f);
 	// merge queue q33 (#133's straight production exits move the scene's computer players; measured at each merge point): death 423 -> 407
-	CHECK(m.deathFrame == 366);
+	// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: every unit's sight, its targets and the AI's moves change; measured on the lane's tree): death 366 -> 372
+	CHECK(m.deathFrame == 372);
 	const AttackResult d = siegeAttack(*s, kHelmsDeep, "Main Gate", "DwarvenDemolisher", false, 250.0f, 600, true);
 	print("DwarvenDemolisher", d);
 	CHECK(d.slotAtHit == 1); // DwarvenBatteringRamGate

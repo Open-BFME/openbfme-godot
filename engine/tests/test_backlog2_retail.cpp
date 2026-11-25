@@ -753,7 +753,14 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// MinDistFromEdgeOfMapForBuild in GameLogicSettings::crc; the 0x97DB949B above was measured without #294); #297 is client only
 	// pin: merge queue q55 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0xB240D889 -> 0x75092A38 at #313's merge
 	// point (ThreatFinderUpdate replaces the unported shell on the map objects that carry it: their module state and update schedule change); #311, #312, #314, #315, #319 and #324 keep it
-	CHECK(a.hashes.back() == 0x75092A38U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// pin: lane VISIONDEF-1 (goals and positions unchanged; measured on the lane's tree): 0x75092A38 -> 0x5DD478DD: the state hash's own layout (the shroud records
+	// no longer carry the vision ground reference; the object's own + 0x1C4 is hashed once set)
+	// pin: merge queue q62 (measured once on the merged tree and at each merge point; goals and positions unchanged): 0x5DD478DD -> 0xDB28DAAF at #346's
+	// merge point (ObjectCreationUpgrade's own postUpgradeCheck runs the removal on modules that never ran: their hashed wait frame changes); #348 and #349 keep it
+	// pin: lane FIRINGTRACKER-1 (goals and positions unchanged; measured on the lane's tree): 0xDB28DAAF -> 0xB556326A: the state hash's own layout (the
+	// FiringTracker's horde id and loop-sound stop frame, and the FiringTrackerHelper's update schedule)
+	// pin: merge queue q64 (measured once on the merged tree and at each merge point: #334's builders turn to face the site before they build or repair, RW 0x88DD3E / 0x88DA7A, so every AI build starts a few frames later and the AI game moves; #341 keeps it, FIRINGTRACKER-1 alone keeps its own lane values); goals and positions unchanged: 0xB556326A -> 0x1F56DD09 (0xDB28DAAF -> 0xC61ADFC9 at #334's merge point)
+	CHECK(a.hashes.back() == 0x1F56DD09U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);
