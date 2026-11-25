@@ -19,6 +19,7 @@
 
 #include "Common/GameCommon.h"
 #include "Common/INIException.h"
+#include "Common/LightPointSystem.h"
 #include "Common/Player.h"
 #include "Common/PlayerScience.h"
 #include "Common/SpecialPower.h"
@@ -1278,7 +1279,7 @@ void SpecialAbilityUpdate::startPreparation()
 	}
 	if (SpecialPowerModule *spm = mySpecialPowerModule())
 	{
-		spm->triggerFromUpdate(); // RW 0x853E30: the power module's vslot 0x38 (RW 0x897D25 -> 0x897987(null))
+		spm->triggerFromUpdate(); // RW 0x853E4A: the power module's vslot 0x38 (RW 0x897D25 -> 0x897987(null))
 	}
 	aiIdleFromAI();
 	obj->setStatus(kStatusUsingAbility, true);  // RW 0x68D440(USING_ABILITY | SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING, 1)
@@ -1362,7 +1363,16 @@ void SpecialAbilityUpdate::triggerAbilityEffect()
 			p->science().addSkillPoints((float)skill, false); // RW 0x782AA4(points, 0)
 		}
 	}
-	// RW 0x853F9C: the light points (no manager in a skirmish, S-531); RW 0x853FC0: TriggerSound / ActiveLoopSound (client)
+	// PORT-113, RW 0x853FA5 .. 0x853FCB: with TheLightPointSystem (RW 0xDE8C04; retail always has one) and an owner, the owner pays the
+	// LightPointCost of the data's special power template (data + 0x38, its final override + 0x30) through RW 0x6AA91D
+	if (TheLightPointSystem && m_data->m_specialPowerTemplate)
+	{
+		if (Player *p = obj->getControllingPlayer())
+		{
+			p->spendLightPoints(m_data->m_specialPowerTemplate->getFinalOverride()->m_lightPointCost);
+		}
+	}
+	// RW 0x853FC0: TriggerSound / ActiveLoopSound (client)
 	const SpecialPowerTemplate *t = m_data->m_specialPowerTemplate;
 	const int type = t ? t->m_type : 0;
 	if (type == 0x80 || type == 0x8F)

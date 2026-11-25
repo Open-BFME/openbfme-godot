@@ -129,6 +129,7 @@ enum ConditionType
 	TEAM_THREAT_LEVEL = 116,
 	PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_COMPLETELY_BUILT = 188,
 	PLAYER_HAS_CREDITS = 26,
+	PLAYER_COMPARE_LIGHT_POINTS = 124, // PORT-113
 	NAMED_OWNED_BY_PLAYER = 30,
 	MULTIPLAYER_ALLIED_VICTORY = 44,
 	MULTIPLAYER_ALLIED_DEFEAT = 45,
@@ -1246,6 +1247,17 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 			});
 		}
 		return compare(param(c, 1).intValue, count, param(c, 2).intValue);
+	}
+	case PLAYER_COMPARE_LIGHT_POINTS:
+	{
+		// PORT-113: type 124 (jump table RW 0x7ED414 -> RW 0x7ECD4B) -> RW 0x7E5B56 (players, comparison, amount): the light points
+		// (Player RW 0x6AA8F4) of every player of the parameter, summed (RW 0x7E5B8B), then (total op amount), false for an unknown comparison
+		std::int32_t total = 0;
+		for (Player *p : players(engine, param(c, 0).stringValue))
+		{
+			total = (std::int32_t)((std::uint32_t)total + (std::uint32_t)p->getLightPoints());
+		}
+		return compare(param(c, 1).intValue, total, param(c, 2).intValue);
 	}
 	case PLAYER_HAS_CREDITS: // RW 0x7E4B36: the money of every player of the parameter, summed, then (amount op total)
 	{

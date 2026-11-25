@@ -727,9 +727,11 @@ void SpecialPowerModule::triggerSpecialPower(const Coord3D *loc, const Object *)
 		}
 	}
 	Player *player = obj->getControllingPlayer();
-	if (player && t && t->m_lightPointCost != 0)
+	if (player && t)
 	{
-		++m_unported; // RW 0x6AA91D: Player + 0x33C -= LightPointCost (the light point system is not ported, S-531)
+		// PORT-113, RW 0x897A41 .. 0x897A5E: the owner pays the LightPointCost of the template's final override (RW 0x6AA91D: the points drop,
+		// never below 0). Unlike SpecialAbilityUpdate's trigger (RW 0x853FA5) this one does not test TheLightPointSystem.
+		player->spendLightPoints(t->getFinalOverride()->m_lightPointCost);
 	}
 	// lane HERO-1: SetModelCondition (`ModelConditionState:<name>`, RW 0x869F22: unknown -1) with SetModelConditionTime > 0: the special model condition for
 	// _ftol(LOGICFRAMES_PER_SECOND * time) frames (fild [0xD9F608]; fmul; RW 0x68B581), and with DisableDuringAnimDuration DISABLED_HELD until then (RW 0x6907F1(3))
@@ -1294,6 +1296,11 @@ bool SpecialPowerModules::canUseSpecialPower(const Object &obj, const SpecialPow
 		{
 			return false;
 		}
+	}
+	// PORT-113, RW 0x7B1DFD .. 0x7B1E0E: the owner's light point test (RW 0x6AA8FB) between the sciences and the statuses
+	if (p && !p->hasLightPointsForSpecialPower(t))
+	{
+		return false;
 	}
 	for (unsigned w = 0; w < 4; ++w) // RW 0x75CDC4: any PreventActivationConditions status on the object
 	{

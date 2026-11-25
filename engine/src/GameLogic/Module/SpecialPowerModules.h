@@ -185,7 +185,7 @@ protected:
 	// module's initiate) and, unless UpdateModuleStartsAttack, the trigger. `loc` null: doSpecialPower (the object's own position)
 	bool baseDo(const Coord3D *loc, const Object *target, unsigned options);
 	// RW 0x897987 (lane SPELL-2): the script / EVA notices (counted), the view object (counted, S-920), the recharge unless UpdateModuleStartsAttack,
-	// OnTriggerRechargeSpecialPower, the light point cost (S-531), SetModelCondition (lane HERO-1), TriggerFX, then either TheGlobalWeatherSystem
+	// OnTriggerRechargeSpecialPower, the light point cost (PORT-113, RW 0x897A5E), SetModelCondition (lane HERO-1), TriggerFX, then either TheGlobalWeatherSystem
 	// (AttributeModifierWeatherBased: the map-wide modifier, ChangeWeather) or the attribute modifier scan around `loc` (RW 0x8977BF)
 	void triggerSpecialPower(const Coord3D *loc, const Object *target);
 	// RW 0x8977BF: the victim tests (IGNORED_IN_GUI, self, AffectGood / AffectEvil, AffectAllies) then vslot 0x34 for each
@@ -294,7 +294,8 @@ void registerAll(ModuleFactory &modules);
 // RW 0x68C26D Object::getSpecialPowerModule: the first behavior module whose special power template is `t` (null for none)
 SpecialPowerModuleInterface *findModule(const Object &obj, const SpecialPowerTemplate *t);
 // RW 0x7B1D79 SpecialPowerStore::canUseSpecialPower: the module exists and its requirements are met, the player owns one of the template's
-// RequiredSciences (RW 0x6AC22F, an empty list passes), the light point test (RW 0x6AA8FB: no manager in a skirmish, S-531) and none of the
+// RequiredSciences (RW 0x6AC22F, an empty list passes), the light point test (PORT-113, RW 0x7B1E07 -> 0x6AA8FB: a power no light point level names
+// passes, a named one needs the player's points to reach its LightPointCost) and none of the
 // PreventActivationConditions statuses is on the object (RW 0x75CDC4)
 bool canUseSpecialPower(const Object &obj, const SpecialPowerTemplate *t);
 // RW 0x68E754 / 0x68E7AC / ... Object::doSpecialPower*: nothing while the object is disabled; unless forced, canUseSpecialPower; then the
