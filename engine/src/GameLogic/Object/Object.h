@@ -282,7 +282,7 @@ public:
 	// the template's KindOf by the binary's own name table (-1 when the name is not in it); for callers that do not hold a bit number
 	bool isKindOfName(const char *name) const;
 	DisabledMaskType getDisabledMask() const { return m_disabled; }
-	// RW 0x6907F1 setDisabledUntil (lane DECOMP-1; BFME2 decomp attempt 0x00290114.cpp, tier B edited, read in RotWK): nothing when untilFrame <= now; a new
+	// RW 0x6907F1 setDisabledUntil (lane DECOMP-1; BFME2 decomp ObjectScriptStatus.cpp, tier B edited, read in RotWK): nothing when untilFrame <= now; a new
 	// expiry: a type other than HELD that was not set pauses every special power countdown (RW 0x68B961(1): module slot 0x20 -> slot 0x24), the expiry and the bit
 	// are stored, USER_PARALYZED / USER_FROZEN set model condition PARALYZED (529, + 0x14C bit 17) when clear (and notify, RW 0x68B53C); the contain's rider
 	// (slot 0x120) gets the same. The audio of EMP / UNMANNED / UNDERPOWERED and the drawable's tint are the client's; the radar / energy edge RW 0x68BF75 has no

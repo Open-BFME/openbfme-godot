@@ -39,7 +39,7 @@ const char *waypointPathStopLine()
 	return "[S-1189] AI waypoint paths (RW 0xC28F90 states 2 .. 5): a team's formation offsets are ported (lane BACKLOG-8: RW 0x94FCBA through RW 0x771E7D "
 		   "and the state's group offset); a team without a formation keeps no offset from its group's centre, the AI group of a skirmish team's arrival test "
 		   "keeps no group id or membership (lane AIDATA-1 ported the test), the SHIP water path (state 0x49) and the mood switch to attack-follow (RW 0x755A35) are not ported (lane WARG-1 ported the attack-follow states 0x22 / 0x23 "
-		   "without the AI crate and AI + 0x3C7); the internal move is the port's AIMoveToState";
+		   "without the AI crate); the internal move is the port's AIMoveToState";
 }
 
 AIFollowWaypointPathState::AIFollowWaypointPathState(AIStateMachine &m, bool asTeam, bool exact)
@@ -600,7 +600,8 @@ StateReturnType AIAttackFollowWaypointPathState::update()
 	if (Object *victim = self.getNextMoodTarget(!retarget, false)) // RW 0x755E3F: RW 0x66844A
 	{
 		m_attackMachine->setGoalObject(victim->getID()); // vslot 0x38
-		m_attackMachine->setState(AI_ATTACK_OBJECT);     // 10 (AI + 0x3C7 = 1 is not ported, S-1189)
+		m_attackMachine->setState(AI_ATTACK_OBJECT);     // 10
+		self.setVictimAutoAcquired();                    // lane APPROACHGIVEUP-1: RW 0x755E77, AI + 0x3C7 = 1
 		return STATE_CONTINUE;
 	}
 	if (repath)
