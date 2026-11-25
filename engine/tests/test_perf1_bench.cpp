@@ -477,6 +477,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // the battle first, then a 2-player AI game (Mordor and Isengard: before the S-1080 fix it created their units' keys first and changed every later AI
 // game), then the 4-player skirmish, which must hash as the first game of a fresh process did, frame for frame. A change that alters the
 // simulation on purpose re-measures the files (and says why); an optimisation never does.
+// pin: lane FIRINGTRACKER-1 re-measured all three (OPENBFME_PERF1_REGEN=1 on its tree, a Boat box): the FiringTracker's horde id and loop-sound stop frame
+// and the FiringTrackerHelper's update schedule are hashed (from frame 0), and a weapon without ContinuousFireCoast keeps its shot count (PER_ATTACK
+// pre-attack delays on the first shot only, RW 0x68C54E -> 0x8E2E12).
 // Lane TARGET-1 re-measured both (OPENBFME_PERF1_REGEN=1 on its tree): RotWK's mood scan and target search change which enemy every unit picks and when
 // it looks, and the new AI state and AIData rows are hashed. Community #73 (the formations centred on their hordes, RW 0x86C4EA) and #74 (the destination
 // adjustment spiralling around the cell, RW 0x6FA2A4) re-measured both on the merged tree (OPENBFME_PERF1_REGEN=1); #73 alone differs from these from frame 0

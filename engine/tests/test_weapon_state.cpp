@@ -782,13 +782,36 @@ struct TrackerHost : FiringTrackerHost
 	std::uint32_t frame = 0;
 	Coord3D pos{};
 	std::uint32_t mask = 0;
+	unsigned conditions = 0; ///< FIRE_CONDITION_* (model conditions 115 / 116 / 117)
 	int reloads = 0;
+	int voices = 0;
+	int wakes = 0;
+	std::uint32_t lastSleep = 0;
 	std::uint32_t currentFrame() override { return frame; }
 	Coord3D ownerPosition() override { return pos; }
 	std::uint32_t weaponBonusConditionMask() override { return mask; }
 	void setWeaponBonusConditionMask(std::uint32_t m) override { mask = m; }
 	void reloadAllWeapons() override { ++reloads; }
+	void clearAndSetFireConditions(unsigned clear, unsigned set) override { conditions = (conditions & ~clear) | set; }
+	bool victimHordeID(unsigned victimID, unsigned &hordeID) override
+	{
+		if (victimID != 77)
+		{
+			return false;
+		}
+		hordeID = 700; // victim 77 is a member of horde 700
+		return true;
+	}
+	void postSpeedUpVoice() override { ++voices; }
+	void setWakeFrame(std::uint32_t sleep) override
+	{
+		++wakes;
+		lastSleep = sleep;
+	}
 };
+constexpr unsigned kSlow = FiringTrackerHost::FIRE_CONDITION_SLOW;
+constexpr unsigned kMean = FiringTrackerHost::FIRE_CONDITION_MEAN;
+constexpr unsigned kFast = FiringTrackerHost::FIRE_CONDITION_FAST;
 }
 
 TEST_CASE("FiringTracker: continuous fire speeds up past ContinuousFireOne / Two and resets; AutoReloadWhenIdle reloads once idle")
@@ -809,44 +832,159 @@ TEST_CASE("FiringTracker: continuous fire speeds up past ContinuousFireOne / Two
 		host.frame = (std::uint32_t)shot;
 		tracker.shotFired(host, weapon, 5, Coord3D{ 1, 2, 3 }, false);
 		CHECK(tracker.shotCount() == shot);
+		CHECK(host.lastSleep == 1u); // RW 0x8E2E52: a timer is set
 		if (shot <= 2)
 		{
 			CHECK(host.mask == 0u);
+			CHECK(host.conditions == 0u);
 		}
 		else if (shot <= 4)
 		{
 			CHECK(host.mask == mean); // count > One
+			CHECK(host.conditions == kMean);
 		}
 		else
 		{
 			CHECK(host.mask == fast); // count > Two
+			CHECK(host.conditions == kFast);
 		}
 	}
+	CHECK(host.voices == 1); // the MEAN -> FAST step only
+	CHECK(host.wakes == 6);
 	CHECK(tracker.getShotsAtTarget(true, 5, Coord3D{}) == 6);
 	CHECK(tracker.getShotsAtTarget(true, 6, Coord3D{}) == 0);
 	CHECK(tracker.getShotsAtTarget(false, 0, Coord3D{ 1, 2, 3 }) == 0); // the last shot was at an object
 	CHECK(tracker.autoReloadDeadline() == 6 + 5);
 	CHECK(tracker.coastEnd() == 3 + 5);
-	// a position shot switches the mode and restarts the count
+	CHECK(tracker.lastShotFrame() == 6u);
+	// a position shot switches the mode, restarts the count and forgets the victim (RW 0x8E330C .. 0x8E3316)
 	host.frame = 7;
 	host.mask = 0;
+	host.conditions = 0;
 	tracker.shotFired(host, weapon, 0, Coord3D{ 9, 9, 9 }, false);
 	CHECK(tracker.shotCount() == 1);
+	CHECK(tracker.victimID() == 0u);
 	CHECK(tracker.getShotsAtTarget(false, 0, Coord3D{ 9, 9, 9 }) == 1);
-	// the owner standing still after the coast window: update() resets the continuous fire and reloads when idle
+	// the owner standing still after the coast window: update reloads when idle, then the coast cools down (RotWK order: reload before the coast)
 	host.pos = tracker.lastOwnerPosition();
 	host.frame = 100;
 	host.mask = fast;
+	host.conditions = kFast;
 	const std::uint32_t sleep = tracker.update(host);
-	CHECK(host.mask == 0u);
 	CHECK(host.reloads == 1);
 	CHECK(tracker.autoReloadDeadline() == 0);
-	CHECK(sleep == 0x3FFFFFFFu);
-	// a moving owner hard-resets
-	host.pos = Coord3D{ 50, 50, 50 };
-	tracker.update(host);
+	CHECK(host.mask == 0u);
+	CHECK(host.conditions == kSlow); // soft: FAST -> SLOW, the cooldown frame kept
+	CHECK(tracker.coastEnd() == 105u);
+	CHECK(sleep == 5u); // RW 0xD9F608
+	// 5 frames on (now == the cooldown frame): not past it; one later: the soft cool down without a bonus is the hard one
+	host.frame = 105;
+	CHECK(tracker.update(host) == 1u);
+	CHECK(host.conditions == kSlow);
+	host.frame = 106;
+	CHECK(tracker.update(host) == 5u);
+	CHECK(host.conditions == 0u);
+	CHECK(tracker.coastEnd() == 0u);
+	// now nothing is pending: the next wake (the cleared last position reads as a move) hard-resets and sleeps forever
+	CHECK(tracker.update(host) == 0x3FFFFFFFu);
 	CHECK(tracker.shotCount() == 0);
 	(void)wh;
+}
+
+TEST_CASE("FiringTracker (FIRINGTRACKER-1): the coast is tested for 0; a hard reset then a new victim restarts at 1; idle frames keep the count")
+{
+	StateWorld w;
+	const WeaponTemplate *noCoast = w.make("  ContinuousFireOne = 2\n  ContinuousFireTwo = 4\n  DelayBetweenShots = 200\n");
+	CHECK(noCoast->m_continuousFireCoastFrames == 0);
+	Weapon weapon(noCoast, 0, 0);
+	TrackerHost host;
+	FiringTracker tracker;
+	// a coast-0 weapon: no timer is set, the helper sleeps forever and idle frames keep the count (before: a reset every frame)
+	host.frame = 10;
+	tracker.shotFired(host, weapon, 5, Coord3D{}, false);
+	CHECK(host.lastSleep == 0x3FFFFFFFu);
+	host.frame = 40;
+	tracker.shotFired(host, weapon, 5, Coord3D{}, false);
+	CHECK(tracker.shotCount() == 2);
+	// an update (another wake) without a move and with no coast set does not cool down (RW 0x8E3146: the zero test)
+	host.pos = tracker.lastOwnerPosition();
+	CHECK(tracker.update(host) == 0x3FFFFFFFu);
+	CHECK(tracker.shotCount() == 2);
+	CHECK(tracker.coastEnd() == 0u);
+
+	// a hard reset (the owner moved), then within 5 frames a shot at a new victim: the count restarts at 1 (before: a bogus 5-frame coast counted on)
+	const WeaponTemplate *coast = w.make("  ContinuousFireOne = 2\n  ContinuousFireTwo = 4\n  ContinuousFireCoast = 1000\n  DelayBetweenShots = 200\n");
+	Weapon bow(coast, 0, 0);
+	bow.setWhenWeCanFireAgain(50);
+	FiringTracker t2;
+	TrackerHost h2;
+	h2.frame = 50;
+	t2.shotFired(h2, bow, 5, Coord3D{}, false);
+	t2.shotFired(h2, bow, 5, Coord3D{}, false);
+	CHECK(t2.shotCount() == 2);
+	h2.pos = Coord3D{ 30, 0, 0 };
+	h2.frame = 51;
+	t2.update(h2);
+	CHECK(t2.shotCount() == 0);
+	CHECK(t2.coastEnd() == 0u);
+	h2.frame = 53;
+	t2.shotFired(h2, bow, 6, Coord3D{}, false);
+	CHECK(t2.shotCount() == 1);
+	// within the coast a new victim counts on
+	h2.frame = 54;
+	t2.shotFired(h2, bow, 7, Coord3D{}, false);
+	CHECK(t2.shotCount() == 2);
+	// a switch to object mode forgets the position (RW 0x8E3352 .. 0x8E3366)
+	t2.shotFired(h2, bow, 0, Coord3D{ 4, 4, 4 }, false);
+	t2.shotFired(h2, bow, 7, Coord3D{}, false);
+	CHECK(t2.shotCount() == 1);
+	CHECK(t2.getShotsAtTarget(false, 0, Coord3D{ 4, 4, 4 }) == 0);
+	// a HORDE_MEMBER victim records its horde (+ 0x38)
+	t2.shotFired(h2, bow, 77, Coord3D{}, false);
+	CHECK(t2.auxiliaryID() == 700u);
+	t2.shotFired(h2, bow, 7, Coord3D{}, false);
+	CHECK(t2.auxiliaryID() == 700u); // only a horde member's shot writes it
+	// a forced reset records the last shot frame and position, cools down hard and does not wake
+	const int wakes = h2.wakes;
+	h2.frame = 60;
+	t2.shotFired(h2, bow, 7, Coord3D{}, true);
+	CHECK(t2.lastShotFrame() == 60u);
+	CHECK(t2.shotCount() == 0);
+	CHECK(h2.wakes == wakes);
+}
+
+TEST_CASE("FiringTracker (FIRINGTRACKER-1): ContinuousFireOne = Two = 0 gives MEAN, then FAST, then SLOW after the coast")
+{
+	StateWorld w;
+	const WeaponTemplate *t = w.make("  ContinuousFireOne = 0\n  ContinuousFireTwo = 0\n  ContinuousFireCoast = 1000\n  DelayBetweenShots = 200\n  FireSoundLoopTime = 500\n");
+	Weapon bow(t, 0, 0);
+	TrackerHost host;
+	FiringTracker tracker;
+	host.frame = 1;
+	bow.setWhenWeCanFireAgain(7);
+	tracker.shotFired(host, bow, 5, Coord3D{}, false);
+	CHECK(host.conditions == kMean);
+	CHECK(tracker.fireSoundEnd() == 1u + t->m_fireSoundLoopTime);
+	host.frame = 7;
+	bow.setWhenWeCanFireAgain(13);
+	tracker.shotFired(host, bow, 5, Coord3D{}, false);
+	CHECK(host.conditions == kFast);
+	CHECK(host.voices == 1);
+	host.frame = 13;
+	tracker.shotFired(host, bow, 5, Coord3D{}, false);
+	CHECK(host.conditions == kFast); // FAST stays
+	CHECK(tracker.coastEnd() == 13u + 5u);
+	host.pos = tracker.lastOwnerPosition();
+	for (host.frame = 14; host.frame <= 18; ++host.frame)
+	{
+		CHECK(tracker.update(host) == 1u);
+		CHECK(host.conditions == kFast);
+	}
+	CHECK(tracker.update(host) == 5u); // frame 19 > 18
+	CHECK(host.conditions == kSlow);
+	host.frame = 25;
+	CHECK(tracker.update(host) == 5u); // 25 > 24: the second cool down clears SLOW
+	CHECK(host.conditions == 0u);
 }
 
 TEST_CASE("AI wait decisions: HoldAfterFiringDelay / IdleAfterFiringDelay and the status condition table")
