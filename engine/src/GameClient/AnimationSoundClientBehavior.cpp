@@ -9,6 +9,7 @@
 #include "GameClient/BeaconClientUpdate.h"
 #include "GameClient/ClientBehaviorModules.h"
 #include "GameClient/SoundSelectorClientBehavior.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDebrisDraw.h"
 
 #include "Common/AsciiString.h"
 #include "Common/Audio/AudioEventRTS.h"
@@ -658,4 +659,5 @@ void ClientBehaviorModules::registerAll(ModuleFactory &modules)
 	AnimationSoundClientBehavior::registerClass(modules);
 	SoundSelectorClientBehavior::registerClasses(modules); // lane DECOMP-2: the three sound selectors (S-701)
 	BeaconClientUpdate::registerClass(modules);            // lane CHAT-1: the multiplayer beacon's minimap pulse
+	W3DDebrisDraw::registerClass(modules);                 // both editions: RW 0x00464B15, the flying debris pieces
 }
