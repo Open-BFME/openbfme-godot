@@ -1,12 +1,14 @@
 // OpenBFME unit tests (lane OBJSOUND-1, stop S-707): the object sounds of a damage state change (ActiveBody::attemptDamage RW 0x8C4422 .. 0x8C44C2:
 // SoundOnDamaged / SoundOnReallyDamaged) on synthetic data, the retail templates' rows against the retail audio table, and the binary facts the port
-// relies on (RW_GAME_DAT), among them that the caller found for SoundPromotedVeteran / Elite / Hero is unreferenced.
+// relies on (RW_GAME_DAT), among them that the caller found for SoundPromotedVeteran / Elite / Hero is unreferenced. Lane OBJSOUND-2: SoundCrushing (RW 0x69324A),
+// SoundImpact / SoundImpactCyclonic (RW 0x696974 / 0x696962) and SoundCreated (RW 0x8A2970).
 
 #include "doctest.h"
 
 #include "CombatTestUtil.h"
 #include "HudTestUtil.h"
 #include "IniTestUtil.h"
+#include "ProdTestUtil.h"
 #include "PeImage.h"
 #include "RetailTestMount.h"
 
@@ -17,9 +19,15 @@
 #include "Common/Audio/SimulatedAudioDevice.h"
 #include "GameClient/SoundSelectorClientBehavior.h"
 #include "GameLogic/Module/ActiveBody.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
+#include "GameLogic/Module/SquishCollide.h"
+#include "GameLogic/Construction.h"
+#include "GameLogic/ContainParseHooks.h"
+#include "GameLogic/ObjectSounds.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -70,7 +78,12 @@ const char kAudio[] =
 	"AmbientStream DefaultAmbientStream\n  Filename = NoFilename\n  Volume = 100\n  Type = DEFAULT\n  MinRange = 100\n  MaxRange = 1000\n  SubmixSlider = ambient\nEnd\n"
 	"AudioEvent ProbeHurt\n  Sounds = probe\n  Limit = 0\nEnd\n"
 	"AudioEvent ProbeDying\n  Sounds = probe\n  Limit = 0\nEnd\n"
-	"AudioEvent ProbeVeteran\n  Sounds = probe\n  Limit = 0\nEnd\n";
+	"AudioEvent ProbeVeteran\n  Sounds = probe\n  Limit = 0\nEnd\n"
+	"AudioEvent ProbeCrush\n  Sounds = probe\n  Limit = 0\nEnd\n"
+	"AudioEvent ProbeHordeCrush\n  Sounds = probe\n  Limit = 0\nEnd\n"
+	"AudioEvent ProbeImpact\n  Sounds = probe\n  Limit = 0\nEnd\n"
+	"AudioEvent ProbeCyclone\n  Sounds = probe\n  Limit = 0\nEnd\n"
+	"AudioEvent ProbeCreated\n  Sounds = probe\n  Limit = 0\nEnd\n";
 
 // the shapes of the retail rows: a plain event, the +SOUND: form (RW 0x73AC14), NoSound, a template without the rows
 const char kProbes[] =
@@ -87,6 +100,68 @@ const char kProbes[] =
 	"  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 100\n    MaxHealthDamaged = 75\n    MaxHealthReallyDamaged = 50\n  End\n"
 	"  SoundOnDamaged = NoSound\n"
 	"  Geometry = CYLINDER\n  GeometryMajorRadius = 10\n  GeometryHeight = 10\n"
+	"End\n";
+
+// lane OBJSOUND-2: a crusher, a horde of crushers with a row of its own, a victim; things a shock wave throws (one of them shockwave-proof, one without the rows)
+const char kCrushProbes[] =
+	"Object CrushRider\n"
+	"  KindOf = CAVALRY SELECTABLE\n"
+	"  SoundCrushing = ProbeCrush\n"
+	"  Geometry = CYLINDER\n  GeometryMajorRadius = 8\n  GeometryHeight = 10\n"
+	"  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 100\n  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n  End\n"
+	"  LocomotorSet\n    Locomotor = WalkerLoco\n    Condition = SET_NORMAL\n    Speed = 50\n  End\n"
+	"End\n"
+	"Object CrushHorde\n"
+	"  KindOf = HORDE LARGE_RECTANGLE_PATHFIND SELECTABLE CAN_ATTACK\n"
+	"  SoundCrushing = ProbeHordeCrush\n"
+	"  Geometry = BOX\n  GeometryMajorRadius = 30\n  GeometryMinorRadius = 45\n  GeometryHeight = 20\n"
+	"  Body = ImmortalBody ModuleTag_Body\n    MaxHealth = 1\n  End\n"
+	"  Behavior = HordeAIUpdate ModuleTag_AI\n  End\n"
+	"  Behavior = HordeContain ModuleTag_Contain\n"
+	"    RankInfo = RankNumber:1 UnitType:CrushRider Position:X:50 Y:0 Position:X:50 Y:20\n"
+	"    InitialPayload = CrushRider 2\n"
+	"  End\n"
+	"  LocomotorSet\n    Locomotor = HordeLoco\n    Condition = SET_NORMAL\n    Speed = 50\n  End\n"
+	"End\n";
+const char kShockProbes[] =
+	"Object ThrownProbe\n"
+	"  KindOf = INFANTRY SELECTABLE\n"
+	"  SoundImpact = ProbeImpact\n"
+	"  SoundImpactCyclonic = ProbeCyclone\n"
+	"  Geometry = CYLINDER\n  GeometryMajorRadius = 8\n  GeometryHeight = 10\n"
+	"  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 100\n  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n  End\n"
+	"  Behavior = PhysicsBehavior ModuleTag_Physics\n  End\n"
+	"End\n"
+	"Object ProofProbe\n"
+	"  KindOf = MONSTER SELECTABLE\n"
+	"  ShockwaveResistance = 100\n"
+	"  SoundImpact = ProbeImpact\n"
+	"  Geometry = CYLINDER\n  GeometryMajorRadius = 8\n  GeometryHeight = 10\n"
+	"  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 100\n  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n  End\n"
+	"  Behavior = PhysicsBehavior ModuleTag_Physics\n  End\n"
+	"End\n"
+	"Object NoPhysicsProbe\n"
+	"  KindOf = INFANTRY SELECTABLE\n"
+	"  SoundImpact = ProbeImpact\n"
+	"  Geometry = CYLINDER\n  GeometryMajorRadius = 8\n  GeometryHeight = 10\n"
+	"  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 100\n  End\n"
+	"End\n";
+
+const char kSelectorProbes[] =
+	"Object SelectorProbe\n"
+	"  KindOf = INFANTRY SELECTABLE\n"
+	"  SoundImpact = ProbeImpact\n"
+	"  Geometry = CYLINDER\n  GeometryMajorRadius = 8\n  GeometryHeight = 10\n"
+	"  Body = ActiveBody ModuleTag_Body\n    MaxHealth = 100\n  End\n"
+	"  ClientBehavior = ModelConditionSoundSelectorClientBehavior ModuleTag_Sounds\n"
+	"    SoundState = MOUNTED\n"
+	"      SoundImpact = ProbeCyclone\n"
+	"      SoundCrushing = ProbeCrush\n"
+	"    End\n"
+	"  End\n"
 	"End\n";
 
 // an installed AudioManager whose request log shows what the logic asked for
@@ -134,6 +209,29 @@ DamageInfo hit(float amount, int type)
 	d.m_input.m_amount = amount;
 	d.m_input.m_damageType = type;
 	return d;
+}
+
+// a 0-damage hit that carries a shock wave (RamPower's shape, RW 0x8BFF08)
+DamageInfo shock(float amount, float radius, float cyclonicFactor)
+{
+	DamageInfo d = hit(0.0f, DAMAGE_CRUSH);
+	d.m_input.m_shockWaveVector = Coord3D{ 1.0f, 0.0f, 0.0f };
+	d.m_input.m_shockWaveAmount = amount;
+	d.m_input.m_shockWaveRadius = radius;
+	d.m_input.m_shockWaveTaperOff = 1.0f;
+	d.m_input.m_shockWaveZMult = 1.0f;
+	d.m_input.m_cyclonicFactor = cyclonicFactor;
+	return d;
+}
+
+size_t countEvent(const std::vector<AudioLogEntry> &requests, const char *event)
+{
+	size_t n = 0;
+	for (const AudioLogEntry &e : requests)
+	{
+		n += e.event == event ? 1 : 0;
+	}
+	return n;
 }
 } // namespace
 
@@ -225,6 +323,344 @@ TEST_CASE("object sounds: a hit straight from PRISTINE to REALLYDAMAGED plays on
 	s->attemptDamage(cut);
 	CHECK(s->getBodyModule()->getDamageState() == BODY_DAMAGED);
 	CHECK(r.requests().empty());
+}
+
+TEST_CASE("object sounds: a crush plays the crusher's SoundCrushing at the crusher, a horde member's own and then its horde's (RW 0x693231 .. 0x6932B8)")
+{
+	SoundRig r;
+	CombatWorld w(kCrushProbes);
+	REQUIRE(w.w.load(kProbes, INI_LOAD_OVERWRITE, "probes.ini").empty());
+	Object *rider = w.unit("CrushRider", 'A', 200, 300);
+	Object *victim = w.unit("SilentProbe", 'B', 300, 300);
+	REQUIRE(rider != nullptr);
+	REQUIRE(victim != nullptr);
+	const int alice = w.playerOf('A')->getPlayerIndex();
+	r.requests();
+	ObjectCrush::onCrush(*rider, *victim);
+	std::vector<AudioLogEntry> req = r.requests();
+	REQUIRE(req.size() == 1);
+	CHECK(req[0].event == "ProbeCrush");
+	CHECK(req[0].objectId == rider->getID());
+	CHECK(req[0].player == alice);
+
+	// a crusher without the row is silent
+	ObjectCrush::onCrush(*victim, *rider);
+	CHECK(r.requests().empty());
+
+	Object *horde = w.unit("CrushHorde", 'A', 600, 300);
+	REQUIRE(horde != nullptr);
+	w.frames(2);
+	Object *member = nullptr;
+	for (Object *o = w.logic->getFirstObject(); o; o = o->getNextObject())
+	{
+		if (!member && o->getContainedBy() == horde)
+		{
+			member = o;
+		}
+	}
+	REQUIRE(member != nullptr);
+	r.requests();
+	ObjectCrush::onCrush(*member, *victim);
+	req = r.requests();
+	REQUIRE(req.size() == 2);
+	CHECK(req[0].event == "ProbeCrush");
+	CHECK(req[0].objectId == member->getID());
+	CHECK(req[1].event == "ProbeHordeCrush");
+	CHECK(req[1].objectId == horde->getID());
+	CHECK(req[1].player == alice);
+
+	// RW 0x693222: a dead victim plays nothing
+	DamageInfo kill = hit(1000.0f, DAMAGE_SLASH);
+	victim->attemptDamage(kill);
+	REQUIRE(victim->isEffectivelyDead());
+	r.requests();
+	ObjectCrush::onCrush(*rider, *victim);
+	CHECK(r.requests().empty());
+}
+
+TEST_CASE("object sounds: a shock wave hit plays SoundImpact, a cyclonic one SoundImpactCyclonic, unless the object is stunned (RW 0x696947 .. 0x6969F1)")
+{
+	SoundRig r;
+	CombatWorld w(kShockProbes);
+	Object *o = w.unit("ThrownProbe", 'B', 400, 300);
+	REQUIRE(o != nullptr);
+	PhysicsBehavior *phys = PhysicsBehavior::find(*o);
+	REQUIRE(phys != nullptr);
+	const int bob = w.playerOf('B')->getPlayerIndex();
+	r.requests();
+
+	DamageInfo none = shock(0.0f, 10.0f, 0.0f); // RW 0x6968F3: no amount
+	ObjectKnockback::shockWave(*o, none);
+	DamageInfo noRadius = shock(10.0f, 0.0f, 0.0f); // RW 0x696901: no radius
+	ObjectKnockback::shockWave(*o, noRadius);
+	CHECK(r.requests().empty());
+
+	DamageInfo first = shock(10.0f, 10.0f, 0.0f);
+	ObjectKnockback::shockWave(*o, first);
+	std::vector<AudioLogEntry> req = r.requests();
+	REQUIRE(req.size() == 1);
+	CHECK(req[0].event == "ProbeImpact");
+	CHECK(req[0].objectId == o->getID());
+	CHECK(req[0].player == bob);
+	REQUIRE(phys->isStunned()); // the hit stunned it
+
+	DamageInfo second = shock(10.0f, 10.0f, 0.0f); // RW 0x69693D: a stunned object takes no plain shock wave
+	ObjectKnockback::shockWave(*o, second);
+	DamageInfo third = shock(10.0f, 10.0f, 1.0f); // RW 0x696951: a cyclonic one throws it, silently
+	ObjectKnockback::shockWave(*o, third);
+	CHECK(r.requests().empty());
+
+	Object *c = w.unit("ThrownProbe", 'A', 600, 300);
+	REQUIRE(c != nullptr);
+	r.requests();
+	DamageInfo cyclone = shock(10.0f, 10.0f, 1.0f);
+	ObjectKnockback::shockWave(*c, cyclone);
+	req = r.requests();
+	REQUIRE(req.size() == 1);
+	CHECK(req[0].event == "ProbeCyclone");
+	CHECK(req[0].objectId == c->getID());
+
+	// the sound comes before the resistance test (RW 0x696A18): a shockwave-proof object plays it and stays
+	Object *proof = w.unit("ProofProbe", 'A', 700, 300);
+	REQUIRE(proof != nullptr);
+	r.requests();
+	DamageInfo resisted = shock(10.0f, 10.0f, 0.0f);
+	ObjectKnockback::shockWave(*proof, resisted);
+	CHECK(countEvent(r.requests(), "ProbeImpact") == 1);
+	CHECK_FALSE(PhysicsBehavior::find(*proof)->isStunned());
+
+	Object *still = w.unit("NoPhysicsProbe", 'A', 800, 300); // RW 0x696933: nothing without a PhysicsBehavior
+	REQUIRE(still != nullptr);
+	r.requests();
+	DamageInfo ignored = shock(10.0f, 10.0f, 0.0f);
+	ObjectKnockback::shockWave(*still, ignored);
+	CHECK(r.requests().empty());
+}
+
+TEST_CASE("object sounds: the row is the sound selectors' before the template's (RW 0x676A8A): a model condition's")
+{
+	SoundRig r;
+	struct HookScope // the selector rows are checked against the audio table at parse
+	{
+		std::function<bool(const std::string &)> saved = TheContainParseHooks().audioEventExists;
+		HookScope()
+		{
+			TheContainParseHooks().audioEventExists = [](const std::string &) { return true; };
+		}
+		~HookScope() { TheContainParseHooks().audioEventExists = saved; }
+	} hook;
+	CombatWorld w;
+	SoundSelectorClientBehavior::registerClasses(w.w.modules);
+	const std::string err = w.w.load(kSelectorProbes, INI_LOAD_OVERWRITE, "selectors.ini");
+	REQUIRE_MESSAGE(err.empty(), err);
+	Object *o = w.unit("SelectorProbe", 'B', 400, 300);
+	REQUIRE(o != nullptr);
+	CHECK(ObjectSounds::objectRow(*o, "SoundImpact") == "ProbeImpact"); // the template's
+	CHECK(ObjectSounds::objectRow(*o, "SoundCrushing").empty());        // set nowhere
+	const int mounted = Construction::modelConditionIndex("MOUNTED");
+	o->setModelConditionState(mounted, true);
+	CHECK(ObjectSounds::objectRow(*o, "SoundImpact") == "ProbeCyclone"); // the SoundState's
+	CHECK(ObjectSounds::objectRow(*o, "SoundCrushing") == "ProbeCrush");
+	r.requests();
+	ObjectSounds::playRow(*o, "SoundImpact");
+	std::vector<AudioLogEntry> req = r.requests();
+	REQUIRE(req.size() == 1);
+	CHECK(req[0].event == "ProbeCyclone");
+	CHECK(req[0].objectId == o->getID());
+	o->setModelConditionState(mounted, false);
+	CHECK(ObjectSounds::objectRow(*o, "SoundImpact") == "ProbeImpact");
+}
+
+TEST_CASE("object sounds: a produced unit plays SoundCreated at itself for the producer's player (RW 0x8A2970 .. 0x8A29D6)")
+{
+	SoundRig r;
+	prodtest::ProdWorld f;
+	std::string objects = prodtest::kBarracksObjects;
+	const std::string soldierKind = "  CommandPoints = 4\n";
+	const size_t at = objects.find(soldierKind);
+	REQUIRE(at != std::string::npos);
+	objects.insert(at, "  SoundCreated = ProbeCreated\n");
+	f.load(objects);
+	f.load(prodtest::kBarracksCommands);
+	Object *barracks = f.make("Barracks", f.teamOf("Alice"));
+	REQUIRE(barracks != nullptr);
+	const Coord3D pos{ 1000.0f, 2000.0f, 0.0f };
+	barracks->setPosition(&pos);
+	ProductionUpdateInterface *pu = f.pu(barracks);
+	REQUIRE(pu != nullptr);
+	REQUIRE(pu->queueCreateUnit(f.w.get("Soldier"), -1, pu->requestUniqueUnitID(), -1, false, std::string(), false));
+	r.requests();
+	std::vector<AudioLogEntry> created;
+	const Object *soldier = nullptr;
+	for (int i = 0; i < 80; ++i)
+	{
+		f.frames(1);
+		for (AudioLogEntry &e : r.requests())
+		{
+			if (e.event == "ProbeCreated")
+			{
+				created.push_back(std::move(e));
+			}
+		}
+	}
+	for (const Object *o = f.logic->getFirstObject(); o; o = o->getNextObject())
+	{
+		soldier = o->getTemplate()->getName() == "Soldier" ? o : soldier;
+	}
+	REQUIRE(soldier != nullptr);
+	REQUIRE(created.size() == 1);
+	CHECK(created[0].objectId == soldier->getID());
+	CHECK(created[0].player == f.alice()->getPlayerIndex());
+	// an object made any other way plays none: ProductionUpdate is the row's one reader (RW 0x8A0885's one caller)
+	REQUIRE(f.make("Soldier", f.teamOf("Alice")) != nullptr);
+	CHECK(countEvent(r.requests(), "ProbeCreated") == 0);
+}
+
+TEST_CASE("object sounds retail: the crush, impact and created rows name retail audio events; the rows that stay unported are set by no template (S-707)")
+{
+	if (!hudtest::haveWorld("object sounds rows retail"))
+	{
+		return;
+	}
+	hudtest::SharedWorld &s = hudtest::shared();
+	const AudioIniState &audio = s.world->audio();
+	const char *const ported[] = { "SoundCrushing", "SoundImpact", "SoundImpactCyclonic", "SoundCreated" };
+	const char *const open[] = { "SoundEnter", "SoundExit", "SoundStealthOn", "SoundStealthOff", "SoundFallingFromPlane", "SoundAmbientBattle" };
+	std::map<std::string, size_t> count;
+	std::map<std::string, size_t> events; // row=event
+	std::vector<std::string> unknown, createdBy;
+	std::map<std::string, size_t> overrides; // template: row=event, the selector entries that set a ported row
+	size_t randomOverrides = 0;
+	std::vector<int> rowIndices;
+	for (const char *row : ported)
+	{
+		rowIndices.push_back(SoundSelector::rowIndex(row));
+	}
+	CHECK(rowIndices == std::vector<int>{ 55, 53, 54, 44 });
+	for (const ThingTemplate *tt : s.world->things().templates())
+	{
+		for (const char *row : ported)
+		{
+			const std::string e = ObjectSounds::templateRow(*tt, row);
+			if (e.empty())
+			{
+				continue;
+			}
+			++count[row];
+			++events[std::string(row) + "=" + e];
+			if (!audio.infos.find(e))
+			{
+				unknown.push_back(tt->getName() + "=" + e);
+			}
+			if (std::string(row) == "SoundCreated")
+			{
+				createdBy.push_back(tt->getName());
+			}
+		}
+		for (const char *row : open)
+		{
+			count[row] += ObjectSounds::templateRow(*tt, row).empty() ? 0 : 1;
+		}
+		for (const ThingTemplate::Nugget &n : tt->getFinalOverride()->clientBehaviorModules().nuggets())
+		{
+			const ModuleData *data = n.data.get();
+			auto sets = [&](const SoundSelector::SoundSet &set, bool random) {
+				for (int row : rowIndices)
+				{
+					const std::string &e = set.rows[(size_t)row].sound;
+					if (e.empty())
+					{
+						continue;
+					}
+					randomOverrides += random ? 1 : 0;
+					++overrides[tt->getName() + ": " + SoundSelector::rowName(row) + "=" + e];
+					if (!audio.infos.find(e))
+					{
+						unknown.push_back(tt->getName() + "=" + e);
+					}
+				}
+			};
+			if (const auto *mc = dynamic_cast<const ModelConditionSoundSelectorClientBehaviorModuleData *>(data))
+			{
+				for (const auto &e : mc->m_entries)
+				{
+					sets(e.sounds, false);
+				}
+			}
+			else if (const auto *up = dynamic_cast<const UpgradeSoundSelectorClientBehaviorModuleData *>(data))
+			{
+				for (const auto &e : up->m_entries)
+				{
+					sets(e.sounds, false);
+				}
+			}
+			else if (const auto *rnd = dynamic_cast<const RandomSoundSelectorClientBehaviorModuleData *>(data))
+			{
+				sets(rnd->m_sounds, true);
+			}
+		}
+	}
+	for (const auto &kv : overrides)
+	{
+		std::printf("  selector %s x%zu\n", kv.first.c_str(), kv.second);
+	}
+	for (const auto &kv : count)
+	{
+		std::printf("object sounds rows retail: %s %zu\n", kv.first.c_str(), kv.second);
+	}
+	for (const auto &kv : events)
+	{
+		std::printf("  %s %zu\n", kv.first.c_str(), kv.second);
+	}
+	for (const char *row : open)
+	{
+		INFO(row);
+		CHECK(count[row] == 0);
+	}
+	CHECK(unknown.empty());
+	CHECK(randomOverrides == 0); // ObjectSounds::objectRow does not ask the random selectors
+	// Create-a-Hero names its SoundImpact in the selectors only (one SoundUpgrade per class and subclass)
+	const std::map<std::string, size_t> expectedOverrides = { { "CreateAHero: SoundImpact=ImpactHorse", 17 }, { "CreateAHeroMounted: SoundImpact=ImpactHorse", 17 },
+		{ "GondorFaramir: SoundImpact=ImpactHorse", 1 }, { "GondorFaramirCavalry: SoundImpact=ImpactHorse", 1 } };
+	CHECK(overrides == expectedOverrides);
+	CHECK(count["SoundImpactCyclonic"] == 0);
+	CHECK(createdBy == std::vector<std::string>{ "EyeOfSauron" }); // made by SUPERWEAPON_SpawnEyeOfSauron, not by a ProductionUpdate
+	CHECK(count["SoundCrushing"] == 16); // RotWK 2.01
+	CHECK(count["SoundImpact"] == 404);
+}
+
+TEST_CASE("object sounds binary facts: the crush, impact and created rows' call sites (RW_GAME_DAT)")
+{
+	const PeImage *pe = PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("object sounds rows binary facts (RW_GAME_DAT unset)");
+		return;
+	}
+	CHECK(pe->hex(0x8A0885, 14) == "558bec518365fc006a2cff7508e8"); // SoundCreated (44)
+	CHECK(pe->hex(0x68FFBD, 14) == "558bec518365fc006a35ff7508e8"); // SoundImpact (53)
+	CHECK(pe->hex(0x68FFD6, 14) == "558bec518365fc006a36ff7508e8"); // SoundImpactCyclonic (54)
+	CHECK(pe->hex(0x68FFEF, 14) == "558bec518365fc006a37ff7508e8"); // SoundCrushing (55)
+	// onCrush: the victim's dead bit; SoundCrushing; TheAudio vslot 0x64; the member's call on its horde comes after it
+	CHECK(pe->hex(0x693222, 7) == "f6875804000001");
+	CHECK(pe->hex(0x69324A, 5) == "e8a0cdffff"); // call RW 0x68FFEF
+	CHECK(pe->hex(0x69328F, 3) == "ff5064");
+	CHECK(pe->hex(0x6932B8, 5) == "e850ffffff"); // call RW 0x69320D
+	// the shock wave handler: al = the PhysicsBehavior's + 0x5C (stunned) skips the sound; the cyclonic and the plain row; the resistance test after it
+	CHECK(pe->hex(0x69692A, 3) == "8a415c");
+	CHECK(pe->hex(0x69694F, 8) == "84c00f85bc000000");
+	CHECK(pe->hex(0x696962, 5) == "e86f96ffff"); // call RW 0x68FFD6
+	CHECK(pe->hex(0x696974, 5) == "e84496ffff"); // call RW 0x68FFBD
+	CHECK(pe->hex(0x6969F1, 3) == "ff5064");
+	CHECK(pe->hex(0x696A18, 5) == "e84d77ffff"); // call RW 0x68E16A
+	// ProductionUpdate::update: module + 0x110 = the new object's id; SoundCreated; setObjectID(that); the producer's player's + 0x54 into the event's + 0x6C
+	CHECK(pe->hex(0x8A2796, 6) == "898610010000");
+	CHECK(pe->hex(0x8A2970, 5) == "e810dfffff"); // call RW 0x8A0885
+	CHECK(pe->hex(0x8A29A0, 6) == "ffb610010000");
+	CHECK(pe->hex(0x8A29B9, 3) == "ff7054");
+	CHECK(pe->hex(0x8A29C2, 5) == "e81ac3dcff"); // call RW 0x66ECE1
+	CHECK(pe->hex(0x66ECE1, 8) == "8b44240489416cc2");
+	CHECK(pe->hex(0x8A29D6, 3) == "ff5064");
 }
 
 TEST_CASE("object sounds retail: the damage rows name retail audio events, and no sound selector overrides them (S-707)")
@@ -334,7 +770,7 @@ TEST_CASE("object sounds retail: the damage rows name retail audio events, and n
 	CHECK(either == 1069);
 	CHECK(promoted == 0);
 	CHECK(unknown.empty());          // retail validates a sound row at parse time (RW 0x73AC45 "Invalid Sound")
-	CHECK(selectorOverrides == 0);   // the port reads the template row (ActiveBody::damageStateSound)
+	CHECK(selectorOverrides == 0);   // the template row is what plays (ActiveBody::damageStateSound; the hit asks the selectors first, ObjectSounds)
 }
 
 TEST_CASE("object sounds binary facts: the damage rows' call sites, and the caller found for SoundPromoted* is unreferenced (RW_GAME_DAT)")
