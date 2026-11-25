@@ -1697,7 +1697,8 @@ bool ObjectWeapons::fireCurrentWeapon(Object *victim, const Coord3D *pos)
 	// The object-target overload RW 0x69200A differs: it ignores privateFireWeapon's answer and releases only when IdleAfterFiringDelay (template
 	// + 0x78) is -1 (`cmp [eax+0x78], -1; jnz` at RW 0x692090, release at RW 0x69209A). The port keeps its earlier rule there (reloaded or
 	// -1), so only position targets change here; dropping `reloaded` from the object path is a follow-up.
-	if (victim ? (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu) : reloaded)
+	// RW 0x6920AD .. 0x69212B: release is gated only by privateFireWeapon's reloaded answer (RW 0x692122).
+	if (reloaded)
 	{
 		releaseWeaponLock(LOCKED_TEMPORARILY);
 	}

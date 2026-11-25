@@ -122,7 +122,8 @@ public:
 		MADE_GENERIC = 1,
 		MADE_MELEE = 2,
 		MADE_HORDE_MELEE = 3,
-		MADE_HORDE_RANGED = 4
+		MADE_HORDE_RANGED = 4,
+		MADE_CHARGE = 5 // RW kind 8 (RW 0x74D02A), AIAttackCharge.h
 	};
 
 private:
