@@ -182,13 +182,13 @@ TEST_CASE("stealth load: saving mid-transition does not flip m_disguised early o
 	stA->xfer(savedMid);
 	const std::vector<std::uint8_t> midBytes = savedMid.data();
 
-	// Continue uninterrupted for 1 more frame
-	uninterrupted.frames(1);
+	// Continue uninterrupted for 1 update
+	stA->update();
 	REQUIRE_FALSE(stA->disguiseShown());
 	StateHasher hUninterrupted;
 	stA->crc(hUninterrupted);
 
-	// Load into a second world and step 1 frame: presentation restore must not flip m_disguised or drift crc
+	// Load into a second world and run 1 update: presentation restore must not flip m_disguised or drift crc
 	combattest::CombatWorld loaded;
 	REQUIRE(loaded.w.load(kSlowDisguiseIni).empty());
 	SpyClientHooksLoad hooks;
@@ -203,7 +203,7 @@ TEST_CASE("stealth load: saving mid-transition does not flip m_disguised early o
 		XferLoad r(midBytes);
 		stB->xfer(r);
 	}
-	loaded.frames(1);
+	stB->update();
 	CHECK_FALSE(stB->disguiseShown());
 	CHECK(hooks.replaces.empty());
 	StateHasher hLoaded;
