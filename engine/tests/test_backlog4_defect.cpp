@@ -511,6 +511,7 @@ TEST_CASE("backlog4 defect r1: the dynamic stops are reported when met: a kept a
 	const std::string kContain = "[S-1222] a defecting container's contain vslot 0x108 (not HordeContain) is not read";
 	REQUIRE_FALSE(reported(*f.logic, kContain));
 	transport->defect(hero, false);
-	CHECK(reported(*f.logic, kContain));
-	CHECK(rider->getControllingPlayer() == f.player("Bob")); // what the stop says: the passenger keeps its side
+	// PORT-332 (RW 0x00866267): TransportContain::onObjectDefected now propagates defection to its passengers.
+	CHECK_FALSE(reported(*f.logic, kContain));
+	CHECK(rider->getControllingPlayer() == f.player("Alice"));
 }
