@@ -353,8 +353,10 @@ TEST_CASE("LOCAL-94 IS_NUM_OF_UNITS_BELONGING_TO_PLAYER_NEAR_EVA_EVENT_LAST_PLAY
 	CHECK_FALSE(evalCond("CampDestroyed", 3, 1)); // 0 >= 1 is false
 	CHECK(evalCond("CampDestroyed", 2, 0));       // 0 == 0 is true
 
-	// Report CampDestroyed at (200, 200, 0) and step Eva so it plays
+	// Record CampDestroyed at (200, 200, 0) in deterministic logic state (for simulation Condition 187)
+	// and also in client Eva (for the MusicScripts client-side check below)
 	const Coord3D evaPos{ 200.0f, 200.0f, 0.0f };
+	fx.logic->scriptEngine().recordEvaEventLocation("CampDestroyed", evaPos);
 	REQUIRE(eva.reportEventByName("CampDestroyed", &evaPos, 100.0));
 	device.setTime(200.0);
 	audioMgr.update(200.0);

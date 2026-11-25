@@ -2108,10 +2108,9 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		// {STRUCTURE, INERT, HORDE} RW 0x66158D) and PartitionFilterPlayerAffiliation (vtable RW 0xC36030, allow RW 0x6610B0: controlling
 		// player in mask); compares the count with param(4).intValue by param(3).intValue.
 		int count = 0;
-		Eva *eva = AudioApi::currentEva();
-		const int evIndex = eva ? eva->findEvent(param(c, 2).stringValue) : -1;
+		// Logic-side EVA event position recorded deterministically by the simulation (avoids reading client-side AudioApi::currentEva()).
 		Coord3D pos{};
-		if (evIndex != -1 && eva->lastPlayedPosition(evIndex, &pos))
+		if (engine.lastEvaEventLocation(param(c, 2).stringValue, &pos))
 		{
 			const std::uint32_t mask = playerMaskOf(engine, param(c, 0).stringValue);
 			if (mask != 0)

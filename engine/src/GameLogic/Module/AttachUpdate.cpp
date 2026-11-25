@@ -21,6 +21,7 @@
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/SimMath.h"
 #include "Common/PlayerTemplate.h"
 
@@ -239,6 +240,10 @@ void AttachUpdate::tryAttach()
 		if (!attach->empty())
 		{
 			AudioApi::reportEva(*attach, parent->getPosition());
+			if (const Coord3D *p = parent->getPosition())
+			{
+				obj->logic().scriptEngine().recordEvaEventLocation(*attach, *p);
+			}
 		}
 	}
 }
@@ -261,6 +266,10 @@ UpdateSleepTime AttachUpdate::update()
 		if (!m_diedEva.empty())
 		{
 			AudioApi::reportEva(m_diedEva, obj->getPosition());
+			if (const Coord3D *p = obj->getPosition())
+			{
+				obj->logic().scriptEngine().recordEvaEventLocation(m_diedEva, *p);
+			}
 		}
 		obj->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x895453
 		return UPDATE_SLEEP_FOREVER;

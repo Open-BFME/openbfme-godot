@@ -403,6 +403,9 @@ public:
 	// LOCAL-94: PLAYER_LOST_OBJECT_TYPE per-player object counts (RW + 0x1A264) & skirmish enemy
 	int getObjectCount(int playerIndex, const std::string &typeName) const;          // RW 0x605DB0 (DONOR BFME2 0x00206255)
 	void setObjectCount(int playerIndex, const std::string &typeName, int newCount); // RW 0x607822 (DONOR BFME2 0x00207DF4)
+	// LOCAL-94: deterministic logic-side last-played EVA event positions for Condition 187 (avoids reading client-side AudioApi::currentEva)
+	void recordEvaEventLocation(const std::string &eventName, const Coord3D &pos);
+	bool lastEvaEventLocation(const std::string &eventName, Coord3D *outPos) const;
 	Player *getSkirmishEnemyPlayer();                                                // RW 0x758AB1 (DONOR BFME2 0x00357900)
 
 	// lane SCRIPT-3: HAS_FINISHED_AUDIO's list (RW ScriptEngine + 0x1A35C, a list of { name key, end frame }, appended at the end, RW 0x759903)
@@ -538,6 +541,7 @@ private:
 	std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers> m_triggeredSpecialPowers; ///< lane BACKLOG4: RW + 0x1A368
 	std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers> m_completedUpgrades;      ///< lane MODCOMPAT-AI: RW + 0x1A458
 	std::array<std::map<std::uint32_t, std::int32_t>, kSpecialPowerListPlayers> m_objectCounts;        ///< LOCAL-94: RW + 0x1A264
+	std::map<std::uint32_t, Coord3D> m_lastEvaEventPositions;                                          ///< LOCAL-94: logic-side EVA event positions (hashed & saved)
 	std::uint32_t m_conditionTeam = 0; ///< lane SCRIPT-3: RW + 0x1A218 while a sequential action runs (the record's team): "<This Team>" (not state)
 	Team *m_thisTeam = nullptr;        ///< lane CAMP-1H: RW + 0x1A210 while a team script runs (not state: set and restored inside one call)
 	// lane CAMP-1H: the generic scripts of a prototype (RW 0x7A1759: looked up once by name in the prototype owner's side and DUPLICATED, RW 0x7B7F2B: the copy

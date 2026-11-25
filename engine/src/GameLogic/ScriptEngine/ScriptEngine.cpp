@@ -159,6 +159,7 @@ void ScriptEngine::reset()
 	{
 		m.clear();
 	}
+	m_lastEvaEventPositions.clear(); // LOCAL-94: logic-side EVA event positions
 	m_genericScripts.clear(); // lane CAMP-1H
 	m_thisTeam = nullptr;
 	m_stats = Stats();
@@ -2336,6 +2337,18 @@ void ScriptEngine::crc(StateHasher &h) const
 			}
 		}
 	}
+	if (!m_lastEvaEventPositions.empty()) // LOCAL-94: logic-side EVA positions for Condition 187
+	{
+		h.addU32(0x5B7u);
+		h.addU32((std::uint32_t)m_lastEvaEventPositions.size());
+		for (const auto &kv : m_lastEvaEventPositions)
+		{
+			h.addU32(kv.first);
+			h.addFloat(kv.second.x);
+			h.addFloat(kv.second.y);
+			h.addFloat(kv.second.z);
+		}
+	}
 }
 
 // RW 0x7BC3A0 (MAP_REVEAL_AT_WAYPOINT) / 0x7C0BCF (MAP_REVEAL_IN_TRIGGER): look, then unlook at once. RW 0x7BD4C1 / 0x7BD4F3 (the permanent
@@ -2517,6 +2530,33 @@ void ScriptEngine::setObjectCount(int playerIndex, const std::string &typeName, 
 		return;
 	}
 	m_objectCounts[(size_t)playerIndex][specialPowerNameCrc(typeName)] = newCount;
+}
+
+void ScriptEngine::recordEvaEventLocation(const std::string &eventName, const Coord3D &pos)
+{
+	if (eventName.empty())
+	{
+		return;
+	}
+	m_lastEvaEventPositions[specialPowerNameCrc(eventName)] = pos;
+}
+
+bool ScriptEngine::lastEvaEventLocation(const std::string &eventName, Coord3D *outPos) const
+{
+	if (eventName.empty())
+	{
+		return false;
+	}
+	const auto it = m_lastEvaEventPositions.find(specialPowerNameCrc(eventName));
+	if (it == m_lastEvaEventPositions.end())
+	{
+		return false;
+	}
+	if (outPos)
+	{
+		*outPos = it->second;
+	}
+	return true;
 }
 
 // RW 0x758AB1 (DONOR BFME2 0x00357900, ScriptEngine::getSkirmishEnemyPlayer): m_currentPlayer's getCurrentEnemy (RW 0x6AA5F5 ->
