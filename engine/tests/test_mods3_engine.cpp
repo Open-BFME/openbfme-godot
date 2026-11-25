@@ -66,7 +66,15 @@ TEST_CASE("MODS-3: Patch 2.02 9.8.6's game binary turns on Edain's commandset-li
 	CHECK_FALSE(ModEngineFeatures::has(ModEngineFeature::EdainUnchainedHerobarKindOf));
 	const std::vector<std::string> stops = ModEngineFeatures::stopLines();
 	REQUIRE(stops.size() == 1);
-	CHECK(stops[0].rfind("S-5304: Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary): not yet re-implemented, game rules: the building limit", 0) == 0);
+	CHECK(stops[0] ==
+		"S-5304: Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary): "
+		"not yet re-implemented, game rules: the building limit check of placement (.bldcap, .bldlvl, .bldext: by the patch notes), units leaving a container together on Evacuate (.padsel: by the patch "
+		"notes), the upgrade limit 5120 (.upg5k: OpenBFME holds 2048 upgrades, S-5303); interface and replays: select every building of a "
+		"kind (.bldgrp), chat in replays and muting a player (.rpchat, .chatmut), replay pause (.rppause), the map search (.mapfind), hotkeys "
+		"and text shortcuts (.hotkeys, .keydef, .keycmd, .txtclip), the camera zoom reset (.camfix), the settings menu's resolutions, 30 / 60 "
+		"FPS and Delay Fix switch (.optui, .optfix, .ressort, .fpsvar, .fpsdraw, .fxrate, .dlyfix), War of the Ring with 8 players, online "
+		"and without a host for land transfer (.wotrui, .wotrobs, .wtrview, .wtrdisp, .lobfac), a 500 ms throttle (.spstore); the mod's "
+		"settings menu (apt/Options.big) is left out for the original game's");
 	// its reworked settings menu needs the binary's .optui: the install mount leaves the mod's apt/Options.big out
 	const std::vector<ModEngineFeatures::LeftOutArchive> left = ModEngineFeatures::leftOutArchives();
 	REQUIRE(left.size() == 1);
