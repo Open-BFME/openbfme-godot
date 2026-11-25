@@ -1959,7 +1959,7 @@ void GiantBirdAIUpdate::faceTowards(const Coord3D &pos, CommandSourceType source
 	wakeUpNow(); // INFERENCE: RW 0x76AB4E does not wake the AI; the port's commands do (startCommand)
 }
 
-// AI vslot 0x84 (RW 0x76D659; BFME2 decomp GiantBirdAIUpdatePrivateFollowPathAppend.cpp, tier B edited): the loop flag cleared; following a path (0x3F6) with
+// AI vslot 0x84 (RW 0x76D659; BFME2 decomp GiantBirdAIUpdate.cpp privateFollowPathAppend, tier B edited): the loop flag cleared; following a path (0x3F6) with
 // points left: the point is appended (RW 0x75536B); else a new path: in a flight state (0x3E9 .. 0x400 but the attack states 0x3ED / 0x3F4) from the machine's
 // goal position through the point, otherwise the point alone, through vslot 0x78 with no ignored obstacle
 void GiantBirdAIUpdate::privateFollowPathAppend(const Coord3D &pos, CommandSourceType source)

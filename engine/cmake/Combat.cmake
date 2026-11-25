@@ -39,6 +39,7 @@ set(OPENBFME_COMBAT_TESTS
     tests/test_combat_horde.cpp
     tests/test_archer_spread.cpp
     tests/test_archer_spread_retail.cpp
+    tests/test_firingtracker1_retail.cpp
     tests/test_hud_combat_retail.cpp
     tests/test_hud_combat_input.cpp
     tests/test_combat_hash.cpp

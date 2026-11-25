@@ -45,6 +45,10 @@ public:
 	// relies on it: a PHASE_FINAL module must not write what ObjectWeapons::computeWeaponStatusConditions reads (its object's statuses, its
 	// weapons' timers and ammo); the scheduler keeps the serial order whenever an awake module of the final list is not such a helper
 	virtual ObjectWeapons *weaponStatusWeapons() const { return nullptr; }
+	// lane FIRINGTRACKER-1: the FiringTrackerHelper (PHASE_FINAL). Its update writes only its own object (the CONTINUOUS_FIRE_* bonus bits and model
+	// conditions, and the AutoReloadWhenIdle reload), so the scheduler keeps the pooled pass when it is awake; the pass recomputes a WeaponStatusHelper
+	// entry whose object's tracker already ran in the pass (ObjectWeapons::firingTrackerRanOn)
+	virtual bool isFiringTrackerHelper() const { return false; }
 
 	// ---- the scheduler's fields (friend_ functions: for GameLogic only) --------------------------------------------------
 	UnsignedInt friend_getNextCallFrame() const { return m_nextCallFrame; }
