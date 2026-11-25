@@ -49,6 +49,8 @@ class ModuleFactory;
 // the interface other modules ask a horde through (ZH names it HordeContainInterface)
 class Team;
 
+class UpgradeTemplate;
+
 class HordeContainInterface
 {
 public:
@@ -166,6 +168,8 @@ public:
 	// VisionSide with them when they are above 0. Declared LAST so no earlier slot of the interface moves.
 	virtual float getVisionRearOverride() const = 0;
 	virtual float getVisionSideOverride() const = 0;
+	virtual bool affectedByUpgrade(const UpgradeTemplate *upgrade) const = 0; // RW 0x86ECAB (slot 0xAC)
+	virtual void giveUpgrade(const UpgradeTemplate *upgrade, bool allMembers) = 0; // RW 0x871A90 (slot 0xB8)
 };
 
 class HordeContain : public UpdateModule, public ContainModuleInterface, public CreateModuleInterface, public HordeContainInterface
@@ -237,6 +241,8 @@ public:
 	void exitContainer(Object *container, int source) override;
 	void releaseMembersToward(Object *container, int source) override;
 	std::vector<ObjectID> membersEntering() const override { return std::vector<ObjectID>(m_garrisonEntering.begin(), m_garrisonEntering.end()); }
+	bool affectedByUpgrade(const UpgradeTemplate *upgrade) const override;
+	void giveUpgrade(const UpgradeTemplate *upgrade, bool allMembers) override;
 	void setMembersTeam(Team *team) override;
 	// lane GARRISON-3 (HordeGarrisonLink.cpp)
 	void recentreOnMembers(Object *about) override;
