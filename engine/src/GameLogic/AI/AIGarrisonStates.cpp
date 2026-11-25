@@ -286,12 +286,10 @@ public:
 		{
 			ai().world().noteStop(OpenContain::shipStop()); // lane SHIP-1: the boarding legs of RW 0x751A8A / 0x756452 are not ported (S-4160)
 		}
-		// NOT PORTED (S-1101, lane ENTERADJUST-1): RW 0x751AB6 clears adjustsDestination (+ 0x48) and only a SHIP's entry point is adjusted (RW 0x751AF0 .. 0x751B11),
-		// but retail's state is an AIMoveToState whose update (RW 0x755572, BFME2 decomp AIStatesDerivedOnExit.cpp:702) moves the goal to the container's position
-		// every frame (and leads a moving one) before the internal move (RW 0x748E46). The port's state keeps a fixed goal: unadjusted, an entry offset inside the
-		// footprint (WildMineShaft: EntryOffset Y:-10, radius 36) is never reached and the horde never enters (test_hud_tunnel_retail.cpp), so the port keeps the
-		// adjustment until RW 0x755572 is ported
-		m_move = std::make_unique<AIMoveToState>(ai().mover(), m_goal, true);
+		// RW 0x751AB6 clears adjustsDestination (+ 0x48); RW 0x755572 moves the goal to the container's position
+		// every frame. The port follows the container in update and leaves the goal unadjusted. The goblin/shaft
+		// query is the repro for the pathfinder review.
+		m_move = std::make_unique<AIMoveToState>(ai().mover(), m_goal, false);
 		return m_move->onEnter();
 	}
 
@@ -322,6 +320,9 @@ public:
 		{
 			return STATE_FAILURE;
 		}
+		// RW 0x755572 (non-ship): the goal follows the container's position every frame.
+		m_goal = *container->getPosition();
+		m_move->setGoal(m_goal);
 		const StateReturnType r = m_move->update();
 		if (otherPlayer && count > 0)
 		{
@@ -409,7 +410,12 @@ public:
 		// obstacle (RW 0x7516C8: RW 0x66831A, AI + 0x164), so the path may end inside its footprint; adjustsDestination (+ 0x48) is 0: the internal move goes to the
 		// entry position itself (the port adjusted it to a nearby free cell and kept the container as an obstacle). onExit clears the ignored obstacle
 		ai().mover().ignoreObstacle(container->getID());
-		// RW 0x7516CD .. 0x7516D7: the locomotor flag + 0x44 bit 1 (ZH setAllowInvalidPosition); the port's locomotor has no reader of it (S-1101)
+		// RW 0x7516CD .. 0x7516D7: the locomotor flag + 0x44 bit 1 (ZH setAllowInvalidPosition). The exact retail
+		// consumer is not located (S-1101); the flag is set/cleared as retail does, without the port-side reader.
+		if (Locomotor *loco = ai().curLocomotor())
+		{
+			loco->setAllowInvalidPosition(true);
+		}
 		m_move = std::make_unique<AIMoveToState>(ai().mover(), m_goal, false);
 		return m_move->onEnter();
 	}
@@ -494,6 +500,10 @@ public:
 			m_move.reset();
 		}
 		ai().mover().ignoreObstacle(PATHFIND_INVALID_ID); // RW 0x752B2D .. 0x752B31: ignoreObstacle(0) (lane ENTERADJUST-1), then the locomotor flag off
+		if (Locomotor *loco = ai().curLocomotor())
+		{
+			loco->setAllowInvalidPosition(false);
+		}
 		if (m_container != INVALID_ID)
 		{
 			if (Object *c = owner().logic().findObjectByID(m_container))
