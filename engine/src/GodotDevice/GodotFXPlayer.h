@@ -50,6 +50,8 @@ public:
 
 	// Loads the retail FX INI data from the mounted archives. { ok, errors, particle_systems, fx_lists }
 	Dictionary setup(const Ref<RetailFileSystem> &fs);
+	// C++ only: loads the retail FX INI data with the #define macro table captured before TheFXParticleSystemManager (SubsystemLoadReport::macrosBeforeFX).
+	Dictionary setupWithMacros(const Ref<RetailFileSystem> &fs, const INIMacroTable &macrosBeforeFX);
 	PackedStringArray list_particle_systems() const;
 	PackedStringArray list_fx_lists() const;
 
@@ -118,6 +120,7 @@ protected:
 	void _notification(int what);
 
 private:
+	Dictionary setupFrom(const Ref<RetailFileSystem> &fs, const INIMacroTable *macrosBeforeFX); // null: FXPlayback's own GameData macros
 	struct Batch
 	{
 		MeshInstance3D *meshNode = nullptr;

@@ -97,6 +97,9 @@ public:
 	// Defines the GameData macros, then loads Data\INI\FXParticleSystem.ini and Data\INI\FXList.ini (the files of the retail
 	// subsystem legend). Returns the errors (empty = success); nothing is silently skipped.
 	std::vector<std::string> loadRetailData();
+	// The same with the #define table retail's FX files see (SubsystemLoadReport::macrosBeforeFX of the game's object world) in place of the GameData
+	// macros: a mod may define the macros its FX use in any file loaded before them (the live game passes it)
+	std::vector<std::string> loadRetailData(const INIMacroTable &macrosBeforeFX);
 
 	// Loads INI text (FXParticleSystem / FXList blocks) as a file named `name` into the stores (tests, mods); returns the errors.
 	std::vector<std::string> loadIniText(const std::string &name, const std::string &text);
@@ -168,6 +171,8 @@ public:
 private:
 	class Environment;
 	class Services;
+
+	std::vector<std::string> loadRetailData(const INIMacroTable *macrosBeforeFX); // null: the GameData macros
 
 	ArchiveFileSystem &m_fs;
 	INIEnvironment m_iniEnv;

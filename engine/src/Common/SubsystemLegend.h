@@ -69,6 +69,11 @@ struct SubsystemLoadReport
 	std::vector<std::string> neverLoaded;        ///< legend entries RotWK code never requests (spec 3.5)
 	std::vector<std::string> skippedCinematics;  ///< InitFile entries skipped by IncludePathCinematics
 	std::vector<FileError> errors;
+	// the global #define table as TheFXParticleSystemManager's load begins (RunSubsystemIniLoad): what retail's FX files see. Everything loaded
+	// before them defines into it (Default\Water.ini with TheWritableGlobalData first, RW 0x63B02F), so a mod's Water.ini #include of its macro
+	// file reaches FXList.ini. FXPlayback reads the FX files again with it (GameClient/FXPlayback.h)
+	INIMacroTable macrosBeforeFX;
+	bool macrosBeforeFXTaken = false;
 };
 
 class SubsystemLegend

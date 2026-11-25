@@ -738,7 +738,21 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 				m_fxPlayer->set_name("LiveFX");
 				add_child(m_fxPlayer);
 			}
-			const Dictionary fx = m_fxPlayer->setup(fs);
+			// the FX files are read with the #define table retail's FX load sees (macros a mod defines in an earlier file, e.g. Water.ini #include);
+			// a world whose load never reached the FX subsystems is an error, never the GameData macros alone
+			Dictionary fx;
+			if (m_world && m_world->report().macrosBeforeFXTaken)
+			{
+				fx = m_fxPlayer->setupWithMacros(fs, m_world->report().macrosBeforeFX);
+			}
+			else if (m_world)
+			{
+				errors.push_back("FX: the object world's INI load did not reach TheFXParticleSystemManager (no FX macro table)");
+			}
+			else
+			{
+				fx = m_fxPlayer->setup(fs);
+			}
 			m_fxSetupErrors = fx.get("errors", Array());
 			for (int64_t i = 0; i < m_fxSetupErrors.size(); ++i)
 			{

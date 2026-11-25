@@ -167,6 +167,11 @@ void RunSubsystemIniLoad(SubsystemLegend &legend, INI &ini, const SubsystemLoadO
 	for (const SubsystemInitStep &step : RotwkSubsystemInitOrder())
 	{
 		inOrder.push_back(step.name);
+		if (step.name == std::string("TheFXParticleSystemManager"))
+		{
+			report.macrosBeforeFX = ini.environment().macros;
+			report.macrosBeforeFXTaken = true;
+		}
 		if (!legend.findEntry(step.name))
 		{
 			report.noLegendEntry.push_back(step.name);

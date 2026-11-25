@@ -1,6 +1,7 @@
 // OpenBFME. FX-2 tests: the logic's effect calls (GameLogic/FXEvents.h) - which events, at which frames, with which objects - on synthetic data
 // (combattest::CombatWorld), the state hash not touched by a sink, and the live effect player (GameClient/LiveFX) on a retail map: a trebuchet shelling a
 // orc pit plays its fire FX, the boulders' impact FX, the building's damage state FX and the fires of its damaged states, with no FXList the store lacks.
+#include "BigTestUtil.h"
 #include "CreepTestUtil.h"
 #include "doctest.h"
 #include "CombatTestUtil.h"
@@ -8,6 +9,7 @@
 
 #include "GameClient/FXPlayback.h"
 #include "GameClient/LiveFX.h"
+#include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/DamageFX.h"
 #include "GameLogic/FXEvents.h"
 
@@ -1253,4 +1255,35 @@ TEST_CASE("TOP20-24 slow death: ShadowWhenDead No switches the corpse's shadows 
 	CHECK(shadows[0].first == offId);
 	CHECK(shadows[0].second == false);
 	CHECK(onId != offId);
+}
+
+TEST_CASE("fx2: FXPlayback::loadRetailData(macrosBeforeFX) resolves macros defined before TheFXParticleSystemManager (RW 0x63B02F)")
+{
+	const std::string fxList = "FXList FX_ModFade\n"
+							   "  DynamicDecal\n"
+							   "    DecalName = EXModFade\n"
+							   "    OpacityFadeTimeOne = MOD_FADE_ONE\n"
+							   "  End\n"
+							   "End\n";
+	Win32BIGFileSystem fsys;
+	std::string error;
+	auto archive = fsys.openArchiveFromMemory("fx.big",
+		std::make_shared<const std::vector<std::uint8_t>>(bigtest::makeBig("BIGF", { { "data\\ini\\gamedata.ini", "" }, { "data\\ini\\fxparticlesystem.ini", "" },
+																					 { "data\\ini\\default\\fxlist.ini", "" }, { "data\\ini\\fxlist.ini", fxList } })),
+		&error);
+	REQUIRE_MESSAGE(archive, error);
+	fsys.mountArchive(std::move(archive), "fx.big", false);
+
+	// GameData.ini's macros alone (no game load): the macro is unknown, the block is an error
+	FXPlayback alone(fsys, RandomAlgorithm::RotWK_GameDat_LCG);
+	const std::vector<std::string> errors = alone.loadRetailData();
+	REQUIRE(errors.size() == 1u);
+	CHECK(errors[0].find("OpacityFadeTimeOne") != std::string::npos);
+
+	// the table as the game's load had it before the FX subsystems (SubsystemLoadReport::macrosBeforeFX)
+	INIMacroTable macros;
+	REQUIRE(macros.define("MOD_FADE_ONE", "1000", false));
+	FXPlayback live(fsys, RandomAlgorithm::RotWK_GameDat_LCG);
+	CHECK(live.loadRetailData(macros).empty());
+	CHECK(live.fxLists().findFXList("FX_ModFade") != nullptr);
 }
