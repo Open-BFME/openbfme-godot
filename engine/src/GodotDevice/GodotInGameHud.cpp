@@ -2036,6 +2036,12 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 	{
 		errors.push_back(toGodot(error));
 	}
+	else if (!error.empty())
+	{
+		// an optional key (TooltipDelayTime) fell back to its retail default; this is a warning, not a failed setup
+		UtilityFunctions::push_warning(toGodot(error));
+		error.clear();
+	}
 	d->metaEnv = std::make_unique<INIEnvironment>();
 	d->metaEnv->fileSystem = &afs;
 	d->meta.registerBlocks(*d->metaEnv);

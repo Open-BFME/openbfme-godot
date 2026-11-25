@@ -1018,7 +1018,16 @@ void ObjectImageUpgrade::xfer(Xfer &x)
 
 void TooltipUpgrade::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	// Version 2 is the ported UpgradeModule layout (the mux's executed flag). Version 1 is the block an OpenBFME build wrote while
+	// TooltipUpgrade was an unported shell (UnportedBehaviorModule::xfer: the module version and BehaviorModule's block, no mux);
+	// load it as that old shell so saves from before the port keep loading.
+	XferVersion version{ 1, 2 };
+	x.xferVersion(version);
+	if (version.current < 2)
+	{
+		xferBehaviorModule(x);
+		return;
+	}
 	UpgradeModule::xfer(x);
 	// lane HOVER-1: Object::xfer version 5 carries the exact labels; an older snapshot has none, and wouldUpgrade() refuses to
 	// run an already-executed upgrade. Rebuild only for the older snapshot: with two active TooltipUpgrades the live labels

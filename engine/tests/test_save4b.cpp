@@ -28,6 +28,8 @@
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/LogicModules.h"
 #include "GameLogic/Module/StructureModules.h"
+#include "GameLogic/Module/UnportedModule.h"
+#include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Module/UpdateModule.h"
 #include "GameLogic/Object/Contain/HordeContainCore.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -455,6 +457,29 @@ TEST_CASE("save4b: Object::xfer version 5 keeps the TooltipUpgrade labels the la
 	// the live labels belong to the last applied upgrade, not to the last module in the file
 	CHECK(back->tooltipDisplayName() == "LabelA");
 	CHECK(back->tooltipDescription() == "DescriptionA");
+}
+
+TEST_CASE("save4b: a TooltipUpgrade version 1 block (the old unported shell) still loads")
+{
+	S4World w(kTooltipObjects);
+	Object *unit = w.make("TipUnit", w.teamOf("Alice"));
+	REQUIRE(unit);
+	auto *tip = dynamic_cast<TooltipUpgrade *>(unit->findModule("TooltipUpgrade"));
+	REQUIRE(tip);
+	XferSave current;
+	tip->xfer(current);
+	REQUIRE_FALSE(current.data().empty());
+	CHECK(current.data().front() == 2); // the ported UpgradeModule layout
+	// the payload the old UnportedBehaviorModule wrote for the same tag: version 1 plus BehaviorModule, no UpgradeModule version or mux
+	XferSave oldSave;
+	UnportedBehaviorModule oldShell(unit, nullptr, 0);
+	oldShell.xfer(oldSave);
+	REQUIRE_FALSE(oldSave.data().empty());
+	CHECK(oldSave.data().front() == 1);
+	XferLoad load(oldSave.data());
+	CHECK_NOTHROW(tip->xfer(load));
+	CHECK(load.atEnd());
+	CHECK_FALSE(tip->isAlreadyUpgraded());
 }
 
 TEST_CASE("save4b subsystem blocks round-trip with non-default values: combat, the sell list, the delayed experience grants, invisibility, damage over "
