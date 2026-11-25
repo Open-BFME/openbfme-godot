@@ -163,7 +163,8 @@ include(cmake/Move.cmake) # OPENBFME_MOVE_SOURCES / OPENBFME_MOVE_TESTS (lane MO
 include(cmake/Hud.cmake) # OPENBFME_HUD_SOURCES / OPENBFME_HUD_TESTS (lane HUD-1)
 include(cmake/Start.cmake)      # OPENBFME_START_SOURCES / OPENBFME_START_TESTS (lane START-1)
 include(cmake/Build.cmake)      # BUILD-1: construction, castles, dozers (appends to OPENBFME_SIM_SOURCES; OPENBFME_BUILD_TEST_SOURCES)
-include(cmake/Combat.cmake)     # OPENBFME_COMBAT_SOURCES / OPENBFME_COMBAT_TESTS (lane COMBAT-1)
+include(cmake/Combat.cmake)
+include(cmake/FlingPassengerSpecialAbilityUpdate.cmake)     # OPENBFME_COMBAT_SOURCES / OPENBFME_COMBAT_TESTS (lane COMBAT-1)
 include(cmake/Structure.cmake)  # OPENBFME_STRUCTURE_SOURCES / OPENBFME_STRUCTURE_TESTS (lane COMBAT-2)
 include(cmake/Spell.cmake)      # OPENBFME_SPELL_SOURCES / OPENBFME_SPELL_TESTS (lane SPELL-1)
 include(cmake/Port43.cmake)     # PORT-43: GameData/PowerLimit -> GameLogic + 0x118 (issue #128; OPENBFME_PORT43_TESTS)
@@ -754,6 +755,7 @@ endif()
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
+      tests/test_modgap2_fling.cpp
     ${OPENBFME_PORT426_TESTS}
     tests/test_local_98.cpp
     ${OPENBFME_WIN1_TESTS}
