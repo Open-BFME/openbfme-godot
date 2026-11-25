@@ -19,11 +19,13 @@
 
 #include "doctest.h"
 #include "CombatTestUtil.h"
+#include "Horde2TestUtil.h"
 
 #include "Common/StateHash.h"
 #include "Common/Team.h"
 #include "Common/XferLoad.h"
 #include "GameLogic/AI/AIAttack.h"
+#include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -672,4 +674,28 @@ TEST_CASE("PORT-14 ranged horde: the victim dies, the horde goes idle (the inner
 	REQUIRE(w.byId(id) == nullptr);
 	w.frames(60);
 	CHECK(a->getAIUpdateInterface()->isIdle());
+}
+
+// Review of upstream PR 304 (MERGEQ-57 FireDrake check, RW 0x74F37D .. 0x74F3D5): when AIAttackMeleeSquishState's goal dies and
+// re-acquisition finds no nearby crushable enemy, update() must return STATE_SUCCESS so the crush ends instead of continuing m_move->update() on the dead goal's path.
+TEST_CASE("PORT-14 squish dead goal: AIAttackMeleeSquishState exits immediately when its goal dies with no nearby crushable enemy (RW 0x74F3D5)")
+{
+	CombatWorld w(horde2test::kCrushObjects);
+	REQUIRE(w.w.load(horde2test::kCrushWeapons, INI_LOAD_OVERWRITE, "weapon2.ini").empty());
+	w.combat().setAutoAcquireEnabled(false);
+	Object *rider = w.unit("Rider", 'A', 200, 300);
+	Object *first = w.unit("Footman", 'B', 320, 330);
+	w.frames(1);
+	AIUpdateInterface *ai = rider->getAIUpdateInterface();
+	REQUIRE(ai != nullptr);
+	ai->aiMoveToPosition(Coord3D{ 600.0f, 300.0f, 0.0f }, CMD_FROM_PLAYER);
+	w.runUntil([&] { return ObjectCrush::canCrush(*rider) && rider->getPosition()->x > 300.0f; }, 60);
+	REQUIRE(ObjectCrush::canCrush(*rider));
+	AIStateMachine m(*ai, "port14 squish");
+	m.defineState(MELEE_SQUISH, makeMeleeSquishState(m), MACHINE_DONE_SUCCESS, MACHINE_DONE_FAILURE);
+	m.setGoalObject(first->getID());
+	REQUIRE(m.setState(MELEE_SQUISH) == STATE_CONTINUE);
+	first->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+	REQUIRE(first->isEffectivelyDead());
+	CHECK(m.updateStateMachine() == STATE_SUCCESS);
 }

@@ -350,6 +350,7 @@ struct HordeSquishState : AIState
 		}
 		// RW 0x74F37D .. 0x74F3D5: the goal is destroyed, dead or fleeing off the map
 		h.setPathExtraDistance(0.0f);
+		bool reacquired = false;
 		if (m_reacquire && ObjectCrush::canCrush(self))
 		{
 			m_reacquire = false;
@@ -363,9 +364,12 @@ struct HordeSquishState : AIState
 					return STATE_FAILURE;
 				}
 				m_reacquire = true;
+				reacquired = true;
 			}
 		}
-		if (!m_move)
+		// RW 0x74F3D5: if re-acquisition did not pick a new crushable victim, end the squish (STATE_SUCCESS)
+		// instead of continuing m_move->update() on the dead goal's stale path.
+		if (!reacquired || !m_move)
 		{
 			return STATE_SUCCESS;
 		}
