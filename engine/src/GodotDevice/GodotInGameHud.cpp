@@ -44,6 +44,7 @@
 #include "GameClient/TacticalCamera.h"
 #include "GameClient/CameraAnimation.h"
 #include "GameClient/LiveFX.h"
+#include "GameClient/ObjectShadow.h"
 #include "GameClient/TacticalView.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
@@ -338,6 +339,7 @@ struct HudDevice : public AptNativeHook
 	int claimDecalsDrawn = 0;
 	int claimArcsDrawn = 0;
 	bool placeDecalDrawn = false;
+	const GameLODManager *gameLOD = nullptr; ///< lane LOCAL-14: the shell's detail levels (UseShadowDecals, addShadow's gate RW 0x50BF7B); null without a shell
 	std::vector<SelectionDecal> selExtras; ///< lane PLACEDECAL-1: this frame's other decals: the ghost's shadows, then the resource claims'
 	std::vector<SelectionDecal> selList;   ///< lane PLACEDECAL-1: the grid's decals when there are others: the shadows, the resource decals, the selection's
 	uint64_t selExtrasKey = 0;             ///< lane PLACEDECAL-1: what the last grid's other decals were (0: none)
@@ -1507,6 +1509,52 @@ void HudDevice::drawSelectionDecals()
 	{
 		ghost->appendShadowDecals(selExtras);
 	}
+	if (world && world->hud_game())
+	{
+		// lane LOCAL-14: live drawable decal shadows (RW 0x50DE6C / 0x50D92C: renderShadows m_decalList + 4)
+		// RW 0x50BF7B: TheGlobalData + 0x61, UseShadowDecals as the static level left it (RW 0x601C62 clears it when UseShadowMapping is set). Without an
+		// applied level, the level the renderer draws at, UltraHigh (INFERENCE S-2522, as the selection markers above); without GameLOD.ini, none
+		bool useShadowDecals = false;
+		if (gameLOD && gameLOD->staticLevel() != -1)
+		{
+			useShadowDecals = gameLOD->state().useShadowDecals;
+		}
+		else if (gameLOD && gameLOD->hasLevel(GameLODManager::findLevel("UltraHigh")))
+		{
+			const StaticGameLODInfo &u = gameLOD->level(GameLODManager::findLevel("UltraHigh"));
+			useShadowDecals = u.useShadowDecals && !u.useShadowMapping;
+		}
+		const DrawableManager &dm = world->hud_game()->drawables();
+		for (size_t id = 1; id < dm.slotCount(); ++id)
+		{
+			if (const Drawable *d = dm.find((DrawableID)id))
+			{
+				SelectionDecal sd;
+				auto fallbackSize = [d](float &sx, float &sy) {
+					for (const DrawEntry &e : d->entries())
+					{
+						if (e.kind == W3D_DRAWKIND_MODEL && e.draw && !e.moduleHidden && !e.conditionHidden)
+						{
+							if (const RenderObjPrototype *proto = e.draw->currentModel())
+							{
+								float ex = 0.0f, ey = 0.0f;
+								if (ObjectShadow::getModelBoundingBox(proto, ex, ey))
+								{
+									if (sx == 0.0f) sx = ex * 2.0f;
+									if (sy == 0.0f) sy = ey * -2.0f;
+									return;
+								}
+							}
+						}
+					}
+				};
+				if (ObjectShadow::buildDrawableDecalShadow(*d, sd, useShadowDecals, fallbackSize))
+				{
+					selExtras.push_back(std::move(sd));
+				}
+			}
+		}
+	}
 	const size_t shadows = selExtras.size();
 	const TerrainResourceDecalCounts appended = resources.appendDecals(resourceUi.claimDecal, resourceUi.placeDecal, selExtras);
 	// what the other decals are (the grid is built again when it changes: the ghost moves, a claim comes or goes, the mask changes)
@@ -2013,6 +2061,7 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		// RW 0x601C62: the static LOD level overrides ShowSelectedUnitMarker / UseSimpleMergeDecals with its DecalLOD. INFERENCE (S-2522): the level is the
 		// one the renderer draws at, UltraHigh (no level is applied to the renderer, S-2481); GameLOD.ini comes with the shell
 		const GameLODManager *lod = shellPlayer && shellPlayer->shell_object() ? shellPlayer->shell_object()->environment().gameLOD : nullptr;
+		d->gameLOD = lod;
 		const int ultraHigh = GameLODManager::findLevel("UltraHigh");
 		if (!lod || !lod->hasLevel(ultraHigh))
 		{

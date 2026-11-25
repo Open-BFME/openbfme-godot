@@ -173,15 +173,16 @@ TEST_CASE("heroring1: the grid carries an alpha decal after the merge decals: it
 	broken.pop_back(); // the merge decal alone
 	CHECK_FALSE(BuildSelectionDecalGrid(broken, &Atlas::rect, twoPasses(), g, &err));
 	// the notes of the decals after the broken merge decal reach the report too (the first build stops at it): a missing ring texture, an
-	// unsupported style; each note once. Lane ECOCIRCLE-2: 0x40 is an alpha decal now, so the multiplicative 0x01 stands in for an unsupported style
+	// unsupported style; each note once. Lane ECOCIRCLE-2 made 0x40 an alpha decal and LOCAL-14 the multiplicative 0x01 (RW 0x509A70), so RotWK's
+	// 0x10000 (blended otherwise, RW 0x509A1F; SelectionDecals.cpp still draws none) stands in for an unsupported style
 	std::vector<SelectionDecal> later = { member(0, 0, 0), hero(60, 0, 0, 0xFFFFFFFFu, "ringgone"), hero(-60, 0, 0, 0xFFFFFFFFu) };
 	later[0].texture = "mergegone";
-	later[2].style = 0x01u; // SHADOW_MUL_DECAL handled otherwise: not drawn
+	later[2].style = 0x10000u; // not drawn
 	REQUIRE(BuildSelectionDecalGrid(later, &Atlas::rect, twoPasses(), g, &err)); // nothing drawn (the grid is empty)
 	CHECK(SelectionDecalShaderMode(g) == 0);
 	CHECK(err.find("mergegone") != std::string::npos);
 	CHECK(err.find("ringgone") != std::string::npos);
-	CHECK(err.find("0x1") != std::string::npos);
+	CHECK(err.find("0x10000") != std::string::npos);
 	std::vector<SelectionDecal> before = { later[1], later[0] }; // the ring's note is already in the first build's: named once
 	REQUIRE(BuildSelectionDecalGrid(before, &Atlas::rect, twoPasses(), g, &err));
 	CHECK(err.find("ringgone") != std::string::npos);

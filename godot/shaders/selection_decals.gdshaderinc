@@ -155,9 +155,10 @@ vec4 sel_alpha_projected_at(vec3 w, bool wall, bool ground_overlays, vec3 surfac
 		}
 		int di = int(e.w < 0.0 ? -e.w - 1.0 : e.w) * 4;
 		vec4 rec1 = sel_texel(di + 1); // r, g, b, z
-		vec4 rec3 = sel_texel(di + 3); // the turn's cosine and sine, the y size, -1 terrain only / -2 terrain-only additive / -3 additive, wall too / the vertex mask's texel (lane PLACEDECAL-1)
+		vec4 rec3 = sel_texel(di + 3); // the turn's cosine and sine, the y size, -1 terrain only / -2 terrain-only additive / -3 additive, wall too / -4 terrain-only multiplicative / -5 multiplicative, wall too / the vertex mask's texel (lane PLACEDECAL-1, LOCAL-14)
 		bool additive = rec3.w == -2.0 || rec3.w == -3.0;
-		bool terrain_overlay = rec3.w != 0.0 && rec3.w != -3.0;
+		bool multiplicative = rec3.w == -4.0 || rec3.w == -5.0;
+		bool terrain_overlay = rec3.w != 0.0 && rec3.w != -3.0 && rec3.w != -5.0;
 		if (ground_overlays && terrain_overlay) {
 			// Claimable-vertex masks are still sampled in SAGE x/y below.
 		} else if (ground_overlays && !wall) {
@@ -173,13 +174,22 @@ vec4 sel_alpha_projected_at(vec3 w, bool wall, bool ground_overlays, vec3 surfac
 			continue;
 		}
 		vec4 s = sel_bilinear(sel_texel(di + 2), uv);
-		// an additive decal adds texel x colour x opacity, its texel alpha unused (RW 0x73228B: no diffuse alpha; SC_ADDITIVE ONE / ONE)
+		// an additive decal adds texel x colour x opacity, its texel alpha unused (RW 0x73228B: no diffuse alpha; SC_ADDITIVE ONE / ONE).
+		// lane LOCAL-14: a multiplicative decal multiplies texel x colour, modulated by opacity (RW 0x509A70: ZERO / SRC_COLOR)
 		float a = additive ? rec0.w / 255.0 : s.a * rec0.w / 255.0;
 		if (rec3.w > 0.0) {
 			a *= sel_mask_at(int(rec3.w), w.xy) / 255.0;
 		}
 		vec3 src = s.rgb * rec1.rgb / 255.0;
-		if (additive) {
+		if (multiplicative) {
+			float op = rec0.w / 255.0;
+			if (rec3.w > 0.0) {
+				op *= sel_mask_at(int(rec3.w), w.xy) / 255.0;
+			}
+			vec3 m = mix(vec3(1.0), src, op);
+			cur *= m;
+			keep *= dot(m, vec3(1.0 / 3.0));
+		} else if (additive) {
 			cur = clamp(cur + src * a, 0.0, 1.0); // ONE / ONE: the surface keeps its colour, clipped per draw
 		} else {
 			cur = clamp(cur * (1.0 - a) + src * a, 0.0, 1.0);

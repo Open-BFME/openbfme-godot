@@ -5,6 +5,7 @@ set(OPENBFME_UI4_CLIENT_SOURCES
     src/GameClient/Credits.cpp
     src/GameClient/InGameHeroSelect.cpp
     src/GameClient/SelectionDecals.cpp
+    src/GameClient/ObjectShadow.cpp
 )
 set(OPENBFME_UI4_GODOT_SOURCES
 )

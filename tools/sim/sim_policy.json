@@ -617,6 +617,10 @@
    "reason": "the Godot HUD node: camera, input events and drawing of the device layer"
   },
   {
+   "glob": "src/GameClient/ObjectShadow.cpp",
+   "reason": "client decal shadow resolver (SHADOW_DECAL presentation only)"
+  },
+  {
    "glob": "src/GameClient/ControlBar.cpp",
    "reason": "the control bar view model (button states, queue display, money): client user interface reading the logic; the messages a press builds are in ControlBarCommandProcessing.cpp (manifested)"
   },

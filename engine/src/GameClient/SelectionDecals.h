@@ -230,10 +230,12 @@ private:
 };
 
 // the decals of `decals` whose Style has SHADOW_MERGE_DECAL into `out` and, lane HERORING-1, the alpha decals (SHADOW_ALPHA_DECAL 0x20, SHADOW_ALPHA_DECAL_DYNAMIC
-// 0x400; lane ECOCIRCLE-2: and the additive SHADOW_ADDITIVE_DECAL 0x40 / SHADOW_ADDITIVE_DECAL_DYNAMIC 0x800, which sel_alpha_at adds to the surface);
+// 0x400; lane ECOCIRCLE-2: and the additive SHADOW_ADDITIVE_DECAL 0x40 / SHADOW_ADDITIVE_DECAL_DYNAMIC 0x800, which sel_alpha_at adds to the surface;
+// lane LOCAL-14: and multiplicative SHADOW_DECAL 0x1, which sel_alpha_at multiplies into the surface, RW 0x509A70);
 // `rect` answers a texture's atlas rectangle (false: not in the atlas, an error). False with `error` when a merge decal's texture is missing (as
 // ComposeMergeDecals); an alpha decal whose texture is missing, or a decal of another style, is left out with its error in `error` (true)
 // lane HERORING-1: the shaders' mode (sel_grid2.w): the merge decals' (0 none, 1 the two passes, 2 the simple pass), + 4 when there are alpha decals
+constexpr std::uint32_t kMultiplicativeStyle = 0x1u; // SHADOW_DECAL (RW 0x509A70: ShaderClass 0x00111853)
 int SelectionDecalShaderMode(const MergeDecalGrid &grid);
 bool BuildMergeDecalGrid(const std::vector<SelectionDecal> &decals, const std::function<bool(const std::string &, MergeDecalAtlasRect &)> &rect,
 	const SelectionDecalSettings &settings, MergeDecalGrid &out, std::string *error);
