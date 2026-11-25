@@ -205,6 +205,7 @@ include(cmake/Port13.cmake) # PORT-13: AIData/AttackMoveUsesFormations and the f
 include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the collide pickup (OPENBFME_PORT9_TESTS)
 include(cmake/Port7.cmake) # PORT-7: AnimalAIUpdate's enemy scan (OPENBFME_PORT7_TESTS)
 include(cmake/Port58.cmake) # PORT-58: SpecialAbilityUpdate/ApproachUntilMembersInRange (OPENBFME_PORT58_TESTS)
+include(cmake/Port217.cmake) # PORT-217: a builder turns to face the structure it builds or repairs (OPENBFME_PORT217_TESTS)
 include(cmake/Port10.cmake) # PORT-10: FlammableUpdate/RunToWater (issue #65; OPENBFME_PORT10_TESTS)
 include(cmake/Port307.cmake) # PORT-307: the gates' and the wall hubs' own functions (OPENBFME_PORT307_TESTS)
 include(cmake/Port17.cmake) # PORT-17: ThreatFinderUpdate + the threat-finder script action (issue #73; appends to OPENBFME_SIM_SOURCES; OPENBFME_PORT17_TESTS)
@@ -342,6 +343,7 @@ include(cmake/Decompfix1109.cmake) # DECOMPFIX-1109: FLEECHASE-1, ENTERADJUST-1,
 include(cmake/Port5.cmake)      # PORT-5: the bird's deferred ability target (OPENBFME_PORT5_TESTS)
 include(cmake/Port256.cmake)   # PORT-256: the weapon-switching powers (OPENBFME_PORT256_TESTS)
 include(cmake/Port426.cmake) # PORT-426: Shift on a production button queues five units (fork issue 426; OPENBFME_PORT426_TESTS)
+include(cmake/Port439.cmake)    # PORT-439: the script action FOCAL_LENGTH_CAMERA (the view's focal length; OPENBFME_PORT439_TESTS)
 include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elven wood grid (appends to OPENBFME_SIM_SOURCES; OPENBFME_TAINTAREA1_TESTS)
 include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
 include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-objects test RW 0x796D37 (OPENBFME_BUILDCLEAR1_TESTS)
@@ -519,6 +521,8 @@ target_sources(openbfme_core PRIVATE
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.cpp
+    src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.cpp # lane LOCAL-28 (object lights, both editions)
+    src/GameClient/DrawableLight.cpp # lane LOCAL-28: the drawable's light step and bone position (client only, excluded from the sim audit)
     src/GameClient/MapObjectDrawables.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.cpp)
 # ---- LUA-1 sources (Lua scripting: XML reader, event registry, engine, bindings) ----
@@ -760,6 +764,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PATH2_TESTS}
     ${OPENBFME_XP_TESTS}
     ${OPENBFME_FACTB_TESTS}
+    ${OPENBFME_PORT439_TESTS}
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_PORT166_TESTS}
     ${OPENBFME_PORT54_TESTS}
@@ -784,6 +789,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT9_TESTS}
     ${OPENBFME_PORT7_TESTS}
     ${OPENBFME_PORT58_TESTS}
+    ${OPENBFME_PORT217_TESTS}
     ${OPENBFME_PORT10_TESTS}
     ${OPENBFME_PORT17_TESTS}
     ${OPENBFME_PORT307_TESTS}
@@ -1006,6 +1012,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail.cpp
     tests/test_w3d_draw_runtime.cpp
     tests/test_w3d_draw_retail_units.cpp
+    # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
+    tests/test_local_28.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp
@@ -1036,6 +1044,7 @@ add_executable(openbfme_tests
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp
+    tests/test_lifetime_xfer.cpp
     tests/test_logic_players.cpp
     tests/test_logic_modules.cpp
     tests/test_logic_hash.cpp

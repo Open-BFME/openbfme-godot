@@ -137,6 +137,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // random draw, RW 0x8994BF, and its scan state in the object hash), from frame 0.
 // Lane MODCOMPAT-MOD1 re-measured the pin vector at BoredUpdate's commit (OPENBFME_UBER1_REGEN=1, a CI host): BoredUpdate (its constructor's logic random
 // draw, RW 0x899F1F, and its countdown in the object hash), from frame 0.
+// pin: lane FIRINGTRACKER-1 re-measured the pin vector (OPENBFME_UBER1_REGEN=1 on its tree, a Boat box): the FiringTracker's new fields and the
+// FiringTrackerHelper's update schedule in the object hash, from frame 0.
 // Lane WARG-1 re-measured the pin vector once on the lane's tree after the archive merge (OPENBFME_UBER1_REGEN=1, a CI host): FindClosestPath (RW
 // 0x6FB869) at computePath's fallback and the attack and melee approach paths, and the unclamped cells of RW 0x6E8CE6.
 // Lane PATH-REBUILD re-measured the pin vector (OPENBFME_UBER1_REGEN=1 on its tree): every found path is rebuilt from its optimised nodes (RW 0x767B0E)
@@ -157,6 +159,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // once (OPENBFME_UBER1_REGEN=1, Windows MSVC) on this tree with the other open ports merged.
 // pin: merge queue q63 (#355 ForceHordesToLowLOD): the battle's horde members carry the hashed status CREATE_DRAWABLE_WITH_LOW_DETAIL (bit 55) from
 // their creation. Re-measured once on the merged tree (OPENBFME_UBER1_REGEN=1); #350 keeps it, #358's merge point equals the merged tree's.
+// pin: merge queue q65 (APPROACHGIVEUP-1, RW 0x749D46, S-7162: the approach state hashes the owner's position at its start): the battle's vector moves
+// from its first approach. Re-measured once on the merged tree (OPENBFME_UBER1_REGEN=1) and at APPROACHGIVEUP-1's merge point (equal); POSTERNPLOT-1 keeps it.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {

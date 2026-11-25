@@ -675,6 +675,33 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
+	if (name == "TEAM_WANDER")
+	{
+		// RW 0x7CC3FF -> RW 0x7C955B (team, waypoint path): each member with an AI picks the closest waypoint on the path to its own
+		// position (stopping the loop at once if none), switches to LOCOMOTORSET_WANDER (3) and issues aiWander(way, CMD_FROM_SCRIPT)
+		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
+		if (!t || !terrain)
+		{
+			return true;
+		}
+		const std::string &pathName = param(a, 1).stringValue;
+		for (Object *o : ScriptConditions::members(*t))
+		{
+			AIUpdateInterface *ai = o->getAIUpdateInterface();
+			if (!ai)
+			{
+				continue;
+			}
+			const Waypoint *way = closestWaypointOnPath(*terrain, *o->getPosition(), pathName);
+			if (!way)
+			{
+				return true;
+			}
+			ai->chooseLocomotorSet(LOCOMOTORSET_WANDER);
+			ai->aiWander(way->id, CMD_FROM_SCRIPT);
+		}
+		return true;
+	}
 	if (name == "NAMED_FOLLOW_WAYPOINTS" || name == "NAMED_FOLLOW_WAYPOINTS_EXACT" || name == "NAMED_ATTACK_FOLLOW_WAYPOINTS")
 	{
 		// RW 0x7C9196 / 0x7C928D / 0x7C920F: the waypoint of the label closest to the unit, then AI command 6 / 0x32 / 0x10 (lane WARG-1: RW 0x754A3C with

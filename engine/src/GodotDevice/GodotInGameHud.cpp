@@ -1278,6 +1278,8 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("camera_animation_request", "action", "name"), &InGameHudNode::camera_animation_request); // lane CAMANIM-1
 	ClassDB::bind_method(D_METHOD("camera_animation_state"), &InGameHudNode::camera_animation_state);                  // lane CAMANIM-1
 	ClassDB::bind_method(D_METHOD("camera_set_clip_depth_multiplier", "m"), &InGameHudNode::camera_set_clip_depth_multiplier); // lane MODCOMPAT-AI
+	ClassDB::bind_method(D_METHOD("camera_set_focal_length", "focal_mm", "seconds", "ease_in", "ease_out"), &InGameHudNode::camera_set_focal_length); // lane PORT-439
+	ClassDB::bind_method(D_METHOD("camera_focal_degrees"), &InGameHudNode::camera_focal_degrees); // lane PORT-439
 	ClassDB::bind_method(D_METHOD("set_objectives_screen_open", "open"), &InGameHudNode::set_objectives_screen_open); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("flash_palantir_button", "slot", "seconds"), &InGameHudNode::flash_palantir_button); // lane CAMPUI-1
 	ClassDB::bind_method(D_METHOD("is_objectives_flag_flashing"), &InGameHudNode::is_objectives_flag_flashing); // lane CAMPUI-1
@@ -3982,6 +3984,21 @@ void InGameHudNode::camera_set_clip_depth_multiplier(double m)
 	{
 		d->cam->setClipDepthMultiplier((float)m); // RW 0x7CAFA5 case 0x14E: GlobalData + 0x950, read by setCameraTransform (RW 0x48B7B1)
 	}
+}
+
+// lane PORT-439: RW 0x7BB627(focal, seconds * 1000, easeIn * 1000, easeOut * 1000) -> TheTacticalView vslot 0xF0 (RW 0x48885E). Client state, no wait
+// for the logic worker (as camera_set_clip_depth_multiplier)
+void InGameHudNode::camera_set_focal_length(double focal_mm, double seconds, double ease_in, double ease_out)
+{
+	if (d->cam)
+	{
+		d->cam->setFocalLength((float)focal_mm, (int)((float)seconds * 1000.0f), (float)ease_in * 1000.0f, (float)ease_out * 1000.0f);
+	}
+}
+
+double InGameHudNode::camera_focal_degrees() const
+{
+	return d->cam ? (double)d->cam->horizontalFov() * 57.2957763671875 : 0.0; // RW 0x488888: View + 0x6C * the pooled 57.295776
 }
 
 void InGameHudNode::set_edge_scroll(bool on)

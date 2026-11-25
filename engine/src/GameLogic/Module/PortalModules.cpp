@@ -9,6 +9,8 @@
 
 #include "GameLogic/Module/PortalModules.h"
 
+#include "GameLogic/Construction.h"
+
 #include "Common/Xfer.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "Common/Player.h"
@@ -51,8 +53,9 @@ const char *const kStopWallBoundsMesh =
 	"[S-4854] DynamicPortalBehaviour (RW 0x864357): a WallBoundsMesh is set: the drawable's wall mesh change (RW 0x672F68) and the pathfinder's re-classification "
 	"are not ported (no retail module sets it)";
 const char *const kStopFoundation =
-	"[S-4855] DynamicPortalBehaviour (RW 0x864357 / 0x863D3A): the object's FoundationAIUpdate interface slot 2 (RW 0x8582DE, the castle upgrade's occupant, its "
-	"statuses and drawable calls) is not called";
+	"[S-4855] DynamicPortalBehaviour (RW 0x864357 / 0x863D3A): the object's FoundationAIUpdate interface slot 2 (RW 0x8582DE) runs (Construction::setFoundationOccupant), "
+	"but the object keeps no occupant: it has no CastleMemberBehavior (the port's home of the occupant, S-952) or it is a castle; no retail object reaches this "
+	"(GondorCastleUpgrade / RohanCastleUpgrade have one)";
 
 // RW 0x86441E: Index:<int> Type:<Walk | Climb | PreClimb>
 void parseWayPoint(INI *ini, void *, void *store, const void *)
@@ -458,7 +461,8 @@ void DynamicPortalBehaviour::onMapPlacement(const Dict *properties)
 
 void DynamicPortalBehaviour::foundationOccupant(bool set)
 {
-	// RW 0x8643CA .. 0x8643E5 / 0x863D56 .. 0x863D73: with an AI (+ 0x260), the FoundationAIUpdate interface's slot 2 (the object's id, or 0)
+	// RW 0x8643CA .. 0x8643E5 / 0x863D56 .. 0x863D73: with an AI (+ 0x260), the first FoundationAIUpdate interface (RW 0x68C3C3) gets the object's id (+ 0x74),
+	// or 0, through its slot 2 (vtable + 8: the this - 0x20 thunk into RW 0x8582DE). Lane POSTERNPLOT-1 (S-4855): ported
 	Object *obj = getObject();
 	if (!obj->getAIUpdateInterface())
 	{
@@ -468,8 +472,10 @@ void DynamicPortalBehaviour::foundationOccupant(bool set)
 	{
 		if (m->getFoundationAIUpdate())
 		{
-			(void)set;
-			obj->logic().noteStop(kStopFoundation);
+			if (!Construction::setFoundationOccupant(*obj, set ? obj->getID() : (ObjectID)INVALID_ID))
+			{
+				obj->logic().noteStop(kStopFoundation);
+			}
 			return;
 		}
 	}

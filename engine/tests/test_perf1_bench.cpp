@@ -477,6 +477,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // the battle first, then a 2-player AI game (Mordor and Isengard: before the S-1080 fix it created their units' keys first and changed every later AI
 // game), then the 4-player skirmish, which must hash as the first game of a fresh process did, frame for frame. A change that alters the
 // simulation on purpose re-measures the files (and says why); an optimisation never does.
+// pin: lane FIRINGTRACKER-1 re-measured all three (OPENBFME_PERF1_REGEN=1 on its tree, a Boat box): the FiringTracker's horde id and loop-sound stop frame
+// and the FiringTrackerHelper's update schedule are hashed (from frame 0), and a weapon without ContinuousFireCoast keeps its shot count (PER_ATTACK
+// pre-attack delays on the first shot only, RW 0x68C54E -> 0x8E2E12).
 // Lane TARGET-1 re-measured both (OPENBFME_PERF1_REGEN=1 on its tree): RotWK's mood scan and target search change which enemy every unit picks and when
 // it looks, and the new AI state and AIData rows are hashed. Community #73 (the formations centred on their hordes, RW 0x86C4EA) and #74 (the destination
 // adjustment spiralling around the cell, RW 0x6FA2A4) re-measured both on the merged tree (OPENBFME_PERF1_REGEN=1); #73 alone differs from these from frame 0
@@ -600,6 +603,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: merge queue q63 (#355 ForceHordesToLowLOD, AIData + 0xBB; retail aidata.ini sets it): every horde member is created with the hashed status
 // CREATE_DRAWABLE_WITH_LOW_DETAIL (bit 55, RW 0x86A151 / 0x86B282 / 0x8A25E4), so the big battle, the allied blob and the skirmish move from their first
 // horde. Measured once on the merged tree with OPENBFME_PERF1_REGEN=1 and at the merge points (#350 moves nothing; #358's equals the merged tree's).
+// pin: merge queue q65 (APPROACHGIVEUP-1, the attack approach's give-up, RW 0x749D46, S-7162: the approach state hashes the owner's position at
+// its start, RW state + 0x58, and the AIs' units give up fleeing or unreachable victims): the big battle and the skirmish move. Measured once on the merged
+// tree with OPENBFME_PERF1_REGEN=1 and at APPROACHGIVEUP-1's merge point (equal); POSTERNPLOT-1 keeps them.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

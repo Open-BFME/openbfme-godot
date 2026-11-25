@@ -82,6 +82,9 @@ LargeGroupAudioUpdate among them. SpawnUnitBehavior is parsed only (S-207).
 | parsed only | 1 | 4 |
 | missing | 54 | 583 |
 
+LOCAL-28 (#331, merged 2026-11-25) typed W3DLightDraw's data: parsed only +1 class / +37 templates, missing -1 / -37 (pins:
+parsed only 14, missing 126).
+
 ## Live skirmishes: objects carrying an unported module (lane MOD-4)
 
 The live report's `unported_modules` (objects alive at the end of the run) of eight QA-1 runs (`tools/qa/qa_matrix.py`: each faction as a scripted human against one Medium computer on a 2-player map for 8 game minutes, and a Hard 2 v 2 AI game on Tournament Udun for 12 minutes, seeds 4100 .. 4106 / 4200), before / after lane MOD-4. LargeGroupAudioUpdate is AUDIO's; the creeps the lairs now spawn bring modules that had no live object before (GrabPassengerSpecialPower, AutoPickUpUpdate, ClickReactionBehavior, BoredUpdate). This is a historical measurement: on main at be270dc1 every class in it is ported except GiveUpgradeUpdate, EvacuateDamage, SpellRechargeModifierUpgrade and DamageFieldUpdate (missing) and SpawnUnitBehavior (parsed only).
@@ -204,7 +207,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 76 | AutoDepositUpdate | Behavior | 39 | 37 | ported |
 | 77 | SlavedUpdate | Behavior | 39 | 30 | ported |
 | 78 | AnimalAIUpdate | Behavior | 37 | 22 | base AI |
-| 79 | W3DLightDraw | Draw | 37 | 37 | missing |
+| 79 | W3DLightDraw | Draw | 37 | 37 | parsed only |
 | 80 | GateOpenAndCloseBehavior | Behavior | 36 | 32 | ported |
 | 81 | ToggleMountedSpecialAbilityUpdate | Behavior | 35 | 31 | ported |
 | 82 | SiegeDockingBehavior | Behavior | 33 | 33 | ported |

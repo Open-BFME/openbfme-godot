@@ -87,6 +87,14 @@ void Drawable::reactToTransformChange(const Coord3D *oldPos, float oldAngle)
 	{
 		m->reactToTransformChange(oldPos, oldAngle); // lane AUDIO-4
 	}
+	// lane LOCAL-28: a light module follows its object (RW 0x4CEAC0 writes the light's position), an AttachToBoneInAnotherModule light through the bone
+	for (DrawEntry &e : m_entries)
+	{
+		if (e.lightDraw)
+		{
+			e.lightDraw->reactToTransformChange(oldPos, oldAngle);
+		}
+	}
 }
 
 void Drawable::friend_boundToObject()
@@ -189,6 +197,12 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 		{
 			e.hideIf = fl->m_hideIfModelConditions;
 		}
+		// lane LOCAL-28: W3DLightDraw draws no model but a light (RW 0x4CE750 / DONOR BFME2 0x4CEF80): its runtime keeps the light in the game's pool
+		if (const W3DLightDrawModuleData *ld = dynamic_cast<const W3DLightDrawModuleData *>(nugget.data.get()))
+		{
+			e.lightDraw = std::make_unique<W3DLightDraw>(this, ld);
+			e.animated = true; // the flicker / pulse steps every client frame (stepFlicker)
+		}
 	}
 	m_entries.push_back(std::move(e));
 }
@@ -197,7 +211,7 @@ bool Drawable::hasAnimatedEntry() const
 {
 	for (const DrawEntry &e : m_entries)
 	{
-		if (e.animated && e.draw)
+		if (e.animated && (e.draw || e.lightDraw))
 		{
 			return true;
 		}
@@ -282,6 +296,10 @@ bool Drawable::showModule(const std::string &name, bool visible, bool permanent)
 		if (e.tag == name)
 		{
 			e.moduleHidden = !visible;
+			if (e.lightDraw)
+			{
+				e.lightDraw->setEnabled(visible); // lane LOCAL-28: a hidden light module's light leaves the pool
+			}
 			++m_changeCount;
 			return true;
 		}
@@ -375,6 +393,11 @@ bool Drawable::advanceIsLocal() const
 		{
 			return false;
 		}
+		// lane LOCAL-28: a light step writes the game's shared light pool (ClientEffects.h: no lock), so such a drawable advances on this thread alone
+		if (e.lightDraw)
+		{
+			return false;
+		}
 	}
 	return true;
 }
@@ -391,6 +414,10 @@ void Drawable::advanceAnimationLocal(double elapsedMs)
 		{
 			advanceTires(e, elapsedMs);
 		}
+		if (e.lightDraw)
+		{
+			stepLightDraw(e, elapsedMs); // lane LOCAL-28 (DrawableLight.cpp)
+		}
 	}
 }
 
@@ -406,6 +433,10 @@ void Drawable::advanceAnimation(double elapsedMs)
 		if (e.isTruck || !e.truckChecked || e.truckData != e.data) // lane PERF-HD: the call only for a truck (or an entry not looked at yet)
 		{
 			advanceTires(e, elapsedMs);
+		}
+		if (e.lightDraw)
+		{
+			stepLightDraw(e, elapsedMs); // lane LOCAL-28 (DrawableLight.cpp)
 		}
 	}
 }
