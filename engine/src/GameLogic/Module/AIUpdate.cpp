@@ -850,6 +850,7 @@ UpdateSleepTime AIUpdateInterface::update()
 			if (Object *t = attackMoveTarget())
 			{
 				aiAttackObject(t, CMD_FROM_AI);
+				setVictimAutoAcquired(); // lane APPROACHGIVEUP-1: RW 0x7558AB (retail switches its own machine; the port's command cleared the flag first)
 			}
 		}
 	}
@@ -2352,6 +2353,10 @@ void AIUpdateInterface::crc(StateHasher &h) const
 	h.addU32(m_moveAwayRequesters[1]);
 	h.addBool(m_canPathThroughUnits);
 	h.addBool(m_attackMoveActive);
+	if (m_victimAutoAcquired) // lane APPROACHGIVEUP-1: RW AI + 0x3C7, hashed while set
+	{
+		h.addU32(0x3C7u);
+	}
 	if (m_attitude != 0) // lane SCRIPT-3: hashed once a script changed it
 	{
 		h.addI32(0x218 + m_attitude);

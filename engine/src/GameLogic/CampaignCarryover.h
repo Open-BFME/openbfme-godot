@@ -5,7 +5,7 @@
 // such object and its scripts name the one the campaign spawns (SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER "Glorfindel").
 //
 // TARGET FACTS (RotWK game.dat; the BFME2 decomp is the same code 0x8C7 higher, LinearCampaign/LinearCampaignAddCarryover.cpp 0x1EC63D,
-// reverse/attempts/0x001ecdb3.cpp beginCampaign, ArmyPlacer*.cpp, tier B same-shape):
+// LinearCampaignManager.cpp LinearCampaign::beginCampaign, ArmyPlacer*.cpp, tier B same-shape):
 //   * startCampaign RW 0x5EC63C(index, difficulty): a new LinearCampaign (ctor RW 0x5EB223: skill points + 0x10 = 0.0, sciences + 0x14 empty, the
 //     upgrade bits + 0x20 (0x480) clear, the bounty share + 0xB0 = 0.0, the records + 0xB4 / the used records + 0xC4 empty), then beginCampaign RW
 //     0x5EC4EC: one record (0xBC bytes, ctor RW 0x7803B6: experience + 8 = 0.0, upgrade mask + 0x10 clear, + 0xA4 zero) per CarryoverUnit, in INI order,
