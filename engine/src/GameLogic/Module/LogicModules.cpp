@@ -20,6 +20,7 @@
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Module/BannerCarrierUpdate.h"
 #include "GameLogic/Module/ExtraModules.h"
+#include "GameLogic/Module/EvacuateDamage.h"
 #include "GameLogic/Module/TransitionDamageFX.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Module/AreaScanModules.h"
@@ -130,6 +131,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	ObjectCreationUpgrade::registerClass(modules); // lane FACT-C: the delayed spawn / grant upgrade (spike moats, wall catapults, the Sanctum's readiness)
 	SpawnBehavior::registerClass(modules); // lane MOD-4: the lairs' spawns
 	TransitionDamageFXModule::registerClass(modules); // lane FX-4: the damage state transition effects (S-686)
+	EvacuateDamage::registerModule(modules); // a garrison leaves its building when one weapon hits it (RW 0x8BF12E)
 	SlavedUpdate::registerClass(modules); // lane MOD-4: the spawns' guard
 	// PORT 17 (issue #73): the map's named threat areas (RW 0x65A133); slot 45 RW 0x7EDECE, update RW 0x7EDDB6
 	ThreatFinderUpdate::registerModule(modules);
