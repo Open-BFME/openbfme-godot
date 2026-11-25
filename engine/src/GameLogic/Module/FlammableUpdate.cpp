@@ -599,7 +599,7 @@ void FlammableUpdate::crc(StateHasher &hasher) const
 	hasher.addBool(m_panicLocomotorWhileAflameActive);
 }
 
-// ---- FireSpreadUpdate ---------------------------------------------------------------------------------------------------------------
+// ---- FireSpreadUpdate (dtor RW 0x0088ECE2 / RW 0x0088EE2E, name RW 0x0088ECFB, getModuleNameKey RW 0x0088ED01; DONOR BFME2 0x0088ACCE / 0x0088ACE7 / 0x0088ACED / 0x0088AE1A) ----
 // RW 0x88EDDA
 FireSpreadUpdate::FireSpreadUpdate(Thing *thing, const FireSpreadUpdateModuleData *data)
 	: UpdateModule(thing, data)

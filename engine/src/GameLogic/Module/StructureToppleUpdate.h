@@ -14,6 +14,7 @@
 #pragma once
 
 #include "Common/INI.h"
+#include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Module/DieModule.h"
 #include "GameLogic/Module/MoneyEventModules.h"
 #include "GameLogic/Module/UpdateModule.h"
@@ -60,7 +61,7 @@ public:
 	std::uint32_t m_damageFXTypes = 0xFFFFFFFFu; ///< +0x4C (all types)
 	std::string m_toppleStartFX;                 ///< +0x50
 	std::string m_toppleDelayFX;                 ///< +0x54
-	std::string m_toppleFX;                      ///< +0x58 TopplingFX (no body of the module reads it)
+	std::string m_treeToppleFX;                      ///< +0x58 TopplingFX (no body of the module reads it)
 	std::string m_toppleDoneFX;                  ///< +0x5C
 	std::string m_crushingFX;                    ///< +0x60
 	std::string m_crushingWeaponName;            ///< +0x64
@@ -120,4 +121,87 @@ private:
 	unsigned m_nextBurstFrame = 0xFFFFFFFFu;            // +0x44 (-1)
 	Coord3D m_delayBurstLocation{ 0.0f, 0.0f, 0.0f };   // +0x48
 	float m_buildingHeight = 0.0f;                      // +0x54 (the geometry's max height above the position, set by the ctor; not saved)
+};
+
+// ToppleUpdate (both editions): trees, shrubs and props that topple away from a crusher or force (PTree_cine, PTree_cine2, OptGrass02).
+// TARGET RotWK 2.01:
+//   * module data: factory RW 0x0064EDA0 (DONOR BFME2 0x0064F0B8), ctor RW 0x008AB849 (DONOR BFME2 0x008A8173), dtor RW 0x008ABA7D / scalar deleting dtor
+//     RW 0x008ABA61 (DONOR BFME2 0x008A83A7 / 0x008A838B), buildFieldParse RW 0x008AB8C6 (DONOR BFME2 0x008A81F0, table RW 0xC6A490);
+//   * runtime: factory RW 0x0064ED68 (DONOR BFME2 0x0064F080), ctor RW 0x008AB8D7 (DONOR BFME2 0x008A8201), dtor RW 0x008AB767 / scalar deleting dtor
+//     RW 0x008AB974 (DONOR BFME2 0x008A8091 / 0x008A829E), name getter RW 0x008AB787 (DONOR BFME2 0x008A80B1), getModuleNameKey RW 0x008AB804 (DONOR
+//     BFME2 0x008A812E), isAbleToBeToppled RW 0x008AB7FB (DONOR BFME2 0x008A8125), angleClosestTo RW 0x008AB78D (DONOR BFME2 0x008A80B7), toppleKillObject
+//     RW 0x008AB990 (DONOR BFME2 0x008A82BA), onCollide RW 0x008AB9CB (DONOR BFME2 0x008A82F5), applyTopplingForce RW 0x008ABAAD (DONOR BFME2 0x008A83D7),
+//     xfer RW 0x008ABDBD (DONOR BFME2 0x008A86E7), update RW 0x008ABE65 (DONOR BFME2 0x008A878F); Object::topple RW 0x0068D58C (DONOR BFME2 0x0068CEBC).
+enum ToppleStateType
+{
+	TOPPLE_UPRIGHT = 0,
+	TOPPLE_FALLING = 1,
+	TOPPLE_DOWN = 2
+};
+
+enum ToppleOptionFlags : unsigned
+{
+	TOPPLE_OPTIONS_NONE = 0,
+	TOPPLE_OPTIONS_NO_BOUNCE = 1, // RW 0x8AC235: bit 0 skips bounce
+	TOPPLE_OPTIONS_NO_FX = 2      // RW 0x8AC2A3: bit 1 suppresses BounceFX
+};
+
+class ToppleUpdateModuleData : public ModuleData
+{
+public:
+	std::string m_treeToppleFX;                 ///< +0x08 (RW 0x73A302)
+	std::string m_bounceFX;                 ///< +0x0C (RW 0x73A302)
+	std::string m_stumpName;                ///< +0x10 (RW 0x42EE5E)
+	float m_initialVelocityPercent = 0.2f;  ///< +0x14 (RW 0xBDAD78)
+	float m_initialAccelPercent = 0.01f;    ///< +0x18 (RW 0xBE5600)
+	float m_bounceVelocityPercent = 0.2f;   ///< +0x1C (RW 0xBDAD78)
+	float m_minimumToppleSpeed = 0.5f;      ///< +0x20 (RW 0xBD869C)
+	bool m_killWhenToppled = true;          ///< +0x24 KillWhenFinishedToppling
+	bool m_killWhenStartToppled = false;    ///< +0x25 KillWhenStartToppling
+	bool m_killStumpWhenToppled = false;    ///< +0x26 KillStumpWhenToppled
+	bool m_toppleLeftOrRightOnly = false;   ///< +0x27 ToppleLeftOrRightOnly
+	bool m_reorientToppledRubble = false;   ///< +0x28 ReorientToppledRubble
+	static void buildFieldParse(MultiIniFieldParse &p); ///< RW 0x008AB8C6
+};
+
+class ToppleUpdate : public UpdateModule, public CollideModuleInterface
+{
+public:
+	OBFME_MODULE_XFER(ToppleUpdate)
+	ToppleUpdate(Thing *thing, const ToppleUpdateModuleData *data); ///< RW 0x008AB8D7
+	CollideModuleInterface *getCollide() override { return this; }
+	bool wouldLikeToCollideWith(const Object &) const override { return false; } ///< RW 0x007FEAC1
+	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override; ///< RW 0x008AB9CB
+	UpdateSleepTime update() override; ///< RW 0x008ABE65
+	void crc(StateHasher &hasher) const override;
+
+	bool isAbleToBeToppled() const { return m_toppleState == TOPPLE_UPRIGHT; } ///< RW 0x008AB7FB
+	void applyTopplingForce(const Coord3D *toppleDirection, float toppleSpeed, unsigned options); ///< RW 0x008ABAAD
+
+	const ToppleUpdateModuleData *data() const { return m_data; }
+	ToppleStateType state() const { return m_toppleState; }
+	float angularVelocity() const { return m_angularVelocity; }
+	float angularAcceleration() const { return m_angularAcceleration; }
+	const Coord3D &toppleDirection() const { return m_toppleDirection; }
+	float angularAccumulation() const { return m_angularAccumulation; }
+	float angleDeltaX() const { return m_angleDeltaX; }
+	int numAngleDeltaX() const { return m_numAngleDeltaX; }
+	bool doBounceFX() const { return m_doBounceFX; }
+	unsigned options() const { return m_options; }
+	ObjectID stumpID() const { return m_stumpID; }
+	float bounceVelocityDecay() const { return m_bounceVelocityDecay; }
+
+private:
+	const ToppleUpdateModuleData *m_data;
+	float m_angularVelocity = 0.0f;                   // RW +0x24
+	float m_angularAcceleration = 0.0f;               // +0x28
+	Coord3D m_toppleDirection{ 0.0f, 0.0f, 0.0f };    // +0x2C
+	ToppleStateType m_toppleState = TOPPLE_UPRIGHT;   // +0x38
+	float m_angularAccumulation = 0.0f;               // +0x3C
+	float m_angleDeltaX = 0.0f;                       // +0x40
+	int m_numAngleDeltaX = 0;                         // +0x44
+	bool m_doBounceFX = false;                        // +0x48
+	unsigned m_options = 0;                           // +0x4C
+	ObjectID m_stumpID = INVALID_ID;                  // +0x50
+	float m_bounceVelocityDecay = 0.0f;               // +0x54
 };

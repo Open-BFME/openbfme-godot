@@ -52,7 +52,8 @@
 //     the script event 11; the sound stops (client); status AFLAME and model condition AFLAME cleared; the panic locomotor ends (RW 0x8900F0 .. 0x890119: only
 //     when PanicLocomotorWhileAflame and the module's + 0x4C flag and an AI: RW vslot 0x238(0), LOCOMOTORSET_NORMAL; the flag is then cleared; the AI + 0x3C9
 //     flag is write-only in RotWK 2.01 and is not carried); the body's slot 0x2C.
-//   * FireSpreadUpdate (create RW 0x64CB6E, constructor RW 0x88EDDA, update vtable RW 0xC627AC; table RW 0xC62828: OCLEmbers (+8), MinSpreadDelay (+0xC),
+//   * FireSpreadUpdate (create RW 0x64CB6E, constructor RW 0x88EDDA, dtor RW 0x0088ECE2 / scalar deleting dtor RW 0x0088EE2E, name getter RW 0x0088ECFB,
+//     getModuleNameKey RW 0x0088ED01, DONOR BFME2 0x0088ACCE / 0x0088ACE7 / 0x0088ACED / 0x0088AE1A; update vtable RW 0xC627AC; table RW 0xC62828: OCLEmbers (+8), MinSpreadDelay (+0xC),
 //     MaxSpreadDelay (+0x10), SpreadTryRange (+0x14)). Sleeps forever from the constructor; startFireSpreading (RW 0x88EFA9, called by the ignition): when
 //     the object is AFLAME the update sleeps calcNextSpreadDelay (RW 0x88EE4A: GameLogicRandomValue(Min, Max) FireSpreadUpdate.cpp line 0x98, at least 1).
 //     update RW 0x88EE6E: not AFLAME: sleep forever. The OCLEmbers list runs (RW 0x5F0126, the object as primary); with a SpreadTryRange: the closest object

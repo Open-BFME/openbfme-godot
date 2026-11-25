@@ -9,6 +9,10 @@
 
 #include "Common/AsciiString.h"
 #include "Common/StateHash.h"
+#include "Common/Thing/ThingFactory.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Locomotor.h"
+#include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -116,7 +120,7 @@ const FieldParse kStructureToppleParse[] = {
 	{ "StructuralIntegrity", INI::parseReal, nullptr, ST_OFF(m_structuralIntegrity) },
 	{ "StructuralDecay", INI::parseReal, nullptr, ST_OFF(m_structuralDecay) },
 	{ "DamageFXTypes", parseDamageFXTypes, nullptr, ST_OFF(m_damageFXTypes) },                        // RW 0x73A5C9
-	{ "TopplingFX", parseFXName, nullptr, ST_OFF(m_toppleFX) },                                       // RW 0x73A302
+	{ "TopplingFX", parseFXName, nullptr, ST_OFF(m_treeToppleFX) },                                       // RW 0x73A302
 	{ "ToppleDelayFX", parseFXName, nullptr, ST_OFF(m_toppleDelayFX) },
 	{ "ToppleStartFX", parseFXName, nullptr, ST_OFF(m_toppleStartFX) },
 	{ "ToppleDoneFX", parseFXName, nullptr, ST_OFF(m_toppleDoneFX) },
@@ -597,4 +601,339 @@ void StructureToppleUpdate::xfer(Xfer &x)
 	x.xferReal(&m_lastCrushedLocation);
 	x.xferUnsignedInt(&m_nextBurstFrame);
 	SnapshotXfer::coord3D(x, m_delayBurstLocation);
+}
+
+// ---- ToppleUpdate (RW 0x0064ED68 / RW 0x0064EDA0 / RW 0x008AB767 .. RW 0x008ABE65; DONOR BFME2 ToppleUpdate.cpp) -----------------------------------------
+namespace
+{
+const float kTopplePi = 3.14159274f;           // RW 0xBDD388
+const float kToppleNegPi = -3.14159274f;       // RW 0xBDD390
+const float kToppleTwoPi = 6.28318548f;        // RW 0xBDD38C
+const float kToppleHalfPi = 1.57079637f;       // RW 0xBD89D0
+const float kToppleAngularLimit = 1.52170897f; // RW 0xC6A298 (PI/2 - PI/64)
+const float kToppleMinBounceVel = 0.05f;       // RW 0xBDD760
+const float kToppleBounceDecayStep = 0.025f;   // RW 0xC67BB4
+const float kToppleBounceLimit = 0.01f;        // RW 0xBE5600
+const float kToppleBounceSoundLimit = 0.03f;   // RW 0xBDC540
+const float kToppleKillDamage = 999999.0f;     // RW 0xC6A294
+
+#define TU_OFF(member) (int)offsetof(ToppleUpdateModuleData, member)
+// RW 0xC6A490 (buildFieldParse RW 0x008AB8C6, DONOR BFME2 0x008A81F0)
+const FieldParse kToppleParse[] = {
+	{ "ToppleFX", parseFXName, nullptr, TU_OFF(m_treeToppleFX) },                                       // RW 0x73A302
+	{ "BounceFX", parseFXName, nullptr, TU_OFF(m_bounceFX) },                                       // RW 0x73A302
+	{ "StumpName", INI::parseAsciiString, nullptr, TU_OFF(m_stumpName) },                           // RW 0x42EE5E
+	{ "KillWhenStartToppling", INI::parseBool, nullptr, TU_OFF(m_killWhenStartToppled) },           // RW 0x42E558
+	{ "KillWhenFinishedToppling", INI::parseBool, nullptr, TU_OFF(m_killWhenToppled) },             // RW 0x42E558
+	{ "KillStumpWhenToppled", INI::parseBool, nullptr, TU_OFF(m_killStumpWhenToppled) },             // RW 0x42E558
+	{ "ToppleLeftOrRightOnly", INI::parseBool, nullptr, TU_OFF(m_toppleLeftOrRightOnly) },          // RW 0x42E558
+	{ "ReorientToppledRubble", INI::parseBool, nullptr, TU_OFF(m_reorientToppledRubble) },          // RW 0x42E558
+	{ "InitialVelocityPercent", INI::parsePercentToReal, nullptr, TU_OFF(m_initialVelocityPercent) }, // RW 0x42EEFA
+	{ "InitialAccelPercent", INI::parsePercentToReal, nullptr, TU_OFF(m_initialAccelPercent) },       // RW 0x42EEFA
+	{ "BounceVelocityPercent", INI::parsePercentToReal, nullptr, TU_OFF(m_bounceVelocityPercent) },   // RW 0x42EEFA
+	{ "MinimumToppleSpeed", INI::parsePositiveNonZeroReal, nullptr, TU_OFF(m_minimumToppleSpeed) },   // RW 0x42ED1C
+	{ nullptr, nullptr, nullptr, 0 }
+};
+#undef TU_OFF
+
+// RW 0x00644FD0: SSE angle normalisation into (-pi, pi]
+float toppleNormalizeAngle(float a)
+{
+	while (a > kTopplePi)
+	{
+		a = SimMath::subf32(a, kToppleTwoPi);
+	}
+	while (kToppleNegPi >= a)
+	{
+		a = SimMath::addf32(a, kToppleTwoPi);
+	}
+	return a;
+}
+
+// RW 0x008AB78D (DONOR BFME2 0x008A80B7): picks the candidate angle (a1 or a2) closer to desired
+float angleClosestTo(float a1, float a2, float desired)
+{
+	a1 = toppleNormalizeAngle(a1);
+	a2 = toppleNormalizeAngle(a2);
+	const float diff1 = toppleNormalizeAngle(SimMath::pc24Sub(desired, a1));
+	const float diff2 = toppleNormalizeAngle(SimMath::pc24Sub(desired, a2));
+	const float absDiff2 = SimMath::fstpDword(SimMath::absD((double)diff2));
+	const double absDiff1 = SimMath::absD((double)diff1);
+	return (double)absDiff2 > absDiff1 ? a1 : a2;
+}
+
+// RW 0x00403175 Coord3D::normalize
+void normalizeCoord3D(Coord3D &v)
+{
+	const float len = SimMath::fstpDword(SimMath::sqrtPC24((double)SimMath::sumSquares3(v.x, v.y, v.z)));
+	if (len != 0.0f)
+	{
+		const float inv = SimMath::divf32(1.0f, len);
+		v.x = SimMath::mulf32(v.x, inv);
+		v.y = SimMath::mulf32(v.y, inv);
+		v.z = SimMath::mulf32(v.z, inv);
+	}
+}
+
+// RW 0x0068B34C: current locomotor speed per logic frame when > 0, else 0
+float currentLocomotorSpeed(const Object &o)
+{
+	AIUpdateInterface *ai = o.getAIUpdateInterface();
+	const Locomotor *loco = ai ? ai->curLocomotor() : nullptr;
+	return loco && loco->speed() > 0.0f ? loco->speed() : 0.0f;
+}
+
+// RW 0x008AB990 (DONOR BFME2 0x008A82BA): 999999.0f DAMAGE_UNRESISTABLE (8) with DEATH_TOPPLED (6)
+void toppleKillObject(Object &obj)
+{
+	DamageInfo info;
+	info.m_input.m_sourceID = INVALID_ID;
+	info.m_input.m_damageType = DAMAGE_UNRESISTABLE;
+	info.m_input.m_deathType = DEATH_TOPPLED;
+	info.m_input.m_amount = kToppleKillDamage;
+	obj.attemptDamage(info);
+}
+
+void doToppleObjFX(Object &obj, const char *site, const std::string &fxList)
+{
+	if (!hasFX(fxList))
+	{
+		return;
+	}
+	GameLogic &logic = obj.logic();
+	logic.fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, site, logic.getFrame(), fxList, obj));
+}
+} // namespace
+
+// RW 0x008AB8C6 (DONOR BFME2 0x008A81F0; data ctor RW 0x008AB849, dtor RW 0x008ABA7D / RW 0x008ABA61, factory RW 0x0064EDA0)
+void ToppleUpdateModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	p.add(kToppleParse);
+}
+
+// RW 0x008AB8D7 (DONOR BFME2 0x008A8201; factory RW 0x0064ED68, dtor RW 0x008AB767 / RW 0x008AB974, name RW 0x008AB787, key RW 0x008AB804)
+ToppleUpdate::ToppleUpdate(Thing *thing, const ToppleUpdateModuleData *data)
+	: UpdateModule(thing, data)
+	, m_data(data)
+{
+	setWakeFrame(getObject(), UPDATE_SLEEP_FOREVER);
+}
+
+// RW 0x008AB9CB (DONOR BFME2 0x008A82F5 Rva004A82F5Topple.cpp)
+void ToppleUpdate::onCollide(Object *other, const Coord3D *, const Coord3D *)
+{
+	if (!other)
+	{
+		return;
+	}
+	Object *self = getObject();
+	if (ObjectCrush::crusherLevel(*other) <= ObjectCrush::crushableLevel(*self))
+	{
+		return;
+	}
+	Coord3D delta{
+		SimMath::subf32(self->getPosition()->x, other->getPosition()->x),
+		SimMath::subf32(self->getPosition()->y, other->getPosition()->y),
+		0.0f
+	};
+	float speed = currentLocomotorSpeed(*other);
+	if (speed == 0.0f)
+	{
+		if (const Object *container = other->getContainedBy()) // RW 0x8ABA38: other + 0x27C
+		{
+			speed = currentLocomotorSpeed(*container);
+		}
+	}
+	self->topple(&delta, speed, TOPPLE_OPTIONS_NONE);
+}
+
+// RW 0x008ABAAD (DONOR BFME2 0x008A83D7)
+void ToppleUpdate::applyTopplingForce(const Coord3D *toppleDirection, float toppleSpeed, unsigned options)
+{
+	Object *self = getObject();
+	if (self->isEffectivelyDead())
+	{
+		return;
+	}
+	if (m_data->m_minimumToppleSpeed > toppleSpeed)
+	{
+		toppleSpeed = m_data->m_minimumToppleSpeed;
+	}
+	setWakeFrame(self, UPDATE_SLEEP_NONE);
+	if (m_data->m_killWhenStartToppled)
+	{
+		setWakeFrame(self, UPDATE_SLEEP_FOREVER);
+		self->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+		return;
+	}
+	m_toppleDirection = toppleDirection ? *toppleDirection : Coord3D{ 0.0f, 0.0f, 0.0f };
+	normalizeCoord3D(m_toppleDirection);
+	// RW 0x8ABB3E: ScriptEngine::adjustToppleDirection (RW 0x758E47, set by NAMED_SET_TOPPLE_DIRECTION, action 230, S-345 / S-1180)
+	m_angularVelocity = SimMath::mulf32(m_data->m_initialVelocityPercent, toppleSpeed);
+	m_angularAcceleration = SimMath::mulf32(m_data->m_initialAccelPercent, toppleSpeed);
+	m_toppleState = TOPPLE_FALLING;
+	m_options = options;
+	// RW 0x8ABB78 .. 0x8ABBC4: stops SwayClientUpdate on the drawable (client-side)
+	const float currentAngle = toppleNormalizeAngle(self->getOrientation());
+	float toppleAngle = toppleNormalizeAngle(SimMath::fstpDword(SimMath::atan2d(m_toppleDirection.y, m_toppleDirection.x)));
+	if (m_data->m_toppleLeftOrRightOnly)
+	{
+		toppleAngle = angleClosestTo(SimMath::addf32(currentAngle, kToppleHalfPi), SimMath::subf32(currentAngle, kToppleHalfPi), toppleAngle);
+		m_toppleDirection.x = SimMath::cosf32(toppleAngle);
+		m_toppleDirection.y = SimMath::sinf32(toppleAngle);
+		if (AIWorld *ai = self->logic().aiWorld())
+		{
+			ai->removeObjectFromPathfindMap(*self); // RW 0x6E85FB
+		}
+	}
+	const float desiredAngle = angleClosestTo(SimMath::addf32(toppleAngle, kToppleHalfPi), SimMath::subf32(toppleAngle, kToppleHalfPi), currentAngle);
+	const double twoVel = SimMath::pc24AddW((double)m_angularVelocity, (double)m_angularVelocity);
+	const float ratio = SimMath::fstpDword(SimMath::floorD(SimMath::pc24DivW((double)kToppleAngularLimit, twoVel)));
+	int count = SimMath::fistp32((double)ratio);
+	if (count < 1)
+	{
+		count = 1;
+	}
+	m_numAngleDeltaX = count;
+	m_angleDeltaX = SimMath::divf32(SimMath::subf32(desiredAngle, currentAngle), SimMath::sseFromInt32(m_numAngleDeltaX));
+	self->setModelConditionState(CombatNames::modelCondition("TOPPLED"), true); // RW 0x8ABCEF: bit 0
+	doToppleObjFX(*self, "ToppleUpdate ToppleFX", m_data->m_treeToppleFX);
+	if (!m_data->m_stumpName.empty())
+	{
+		GameLogic &logic = self->logic();
+		const ThingTemplate *tmpl = logic.things().findTemplate(m_data->m_stumpName); // RW 0x6D1305
+		if (Object *stump = tmpl ? logic.newObject(tmpl, nullptr, ObjectStatusMaskType{}) : nullptr) // RW 0x6D165E
+		{
+			stump->setPosition(self->getPosition());       // RW 0x70C201
+			stump->setOrientation(self->getOrientation()); // RW 0x70C31E
+			m_stumpID = stump->getID();
+			// RW 0x8ABD89 .. 0x8ABDA7: when the owner's drawable has +0x262 bit 0 set (burned tint), sets model condition BURNED (bit 80) on the stump.
+			// INFERENCE: on the logic side without a drawable, read from the owner's BURNED model condition / status.
+			const int burnedCond = CombatNames::modelCondition("BURNED");
+			const int burnedStatus = CombatNames::status("BURNED");
+			if ((burnedCond >= 0 && self->testModelCondition(burnedCond)) || (burnedStatus >= 0 && self->testStatus((unsigned)burnedStatus)))
+			{
+				stump->setModelConditionState(burnedCond, true);
+			}
+		}
+	}
+}
+
+// RW 0x008ABE65 (DONOR BFME2 0x008A878F)
+UpdateSleepTime ToppleUpdate::update()
+{
+	if (m_toppleState == TOPPLE_UPRIGHT || m_toppleState == TOPPLE_DOWN)
+	{
+		return UPDATE_SLEEP_FOREVER;
+	}
+	Object *self = getObject();
+	if (m_numAngleDeltaX != 0)
+	{
+		float basis[9];
+		std::memcpy(basis, self->getBasis(), sizeof(basis));
+		preRotateZ(basis, m_angleDeltaX);
+		const Coord3D pos = *self->getPosition();
+		self->Thing::setTransform(&pos, basis); // RW 0x70BA76
+		--m_numAngleDeltaX;
+	}
+	float curVelToUse = m_angularVelocity;
+	if (SimMath::addf32(m_angularAccumulation, curVelToUse) > kToppleAngularLimit)
+	{
+		curVelToUse = SimMath::subf32(kToppleAngularLimit, m_angularAccumulation);
+	}
+	{
+		float basis[9];
+		std::memcpy(basis, self->getBasis(), sizeof(basis));
+		preRotateX(basis, SimMath::pc24Mul(SimMath::subf32(0.0f, curVelToUse), m_toppleDirection.y));
+		preRotateY(basis, SimMath::pc24Mul(curVelToUse, m_toppleDirection.x));
+		const Coord3D pos = *self->getPosition();
+		self->Thing::setTransform(&pos, basis); // RW 0x70BA76
+	}
+	m_angularAccumulation = SimMath::addf32(m_angularAccumulation, curVelToUse);
+	if (m_angularAccumulation >= kToppleAngularLimit && m_angularVelocity > 0.0f)
+	{
+		const float bounceVel = SimMath::subf32(m_data->m_bounceVelocityPercent, m_bounceVelocityDecay);
+		const float bounceToUse = kToppleMinBounceVel > bounceVel ? kToppleMinBounceVel : bounceVel;
+		m_angularVelocity = SimMath::subf32(0.0f, SimMath::mulf32(bounceToUse, m_angularVelocity));
+		m_bounceVelocityDecay = SimMath::addf32(m_bounceVelocityDecay, kToppleBounceDecayStep);
+		const double absVel = SimMath::absD((double)m_angularVelocity);
+		if ((m_options & TOPPLE_OPTIONS_NO_BOUNCE) != 0 || (double)kToppleBounceLimit > absVel)
+		{
+			m_angularVelocity = 0.0f;
+			m_toppleState = TOPPLE_DOWN;
+			if (m_data->m_killWhenToppled)
+			{
+				toppleKillObject(*self); // RW 0x8AB990
+				if (m_data->m_reorientToppledRubble)
+				{
+					const float h = ObjectGeometry::maxHeightAbovePosition(self->geometryShapes()); // RW 0xAD1920
+					const float *b = self->getBasis();
+					const Coord3D *p = self->getPosition();
+					const Coord3D newPos{
+						SimMath::addf32(SimMath::mulf32(b[2], h), p->x),
+						SimMath::addf32(SimMath::mulf32(b[5], h), p->y),
+						SimMath::addf32(SimMath::mulf32(b[8], h), p->z)
+					};
+					self->setPosition(&newPos);       // RW 0x70C201
+					self->setOrientation(self->getOrientation()); // RW 0x70C31E
+				}
+			}
+			if (m_data->m_killStumpWhenToppled)
+			{
+				if (Object *stump = self->logic().findObjectByID(m_stumpID))
+				{
+					toppleKillObject(*stump); // RW 0x8AB990
+				}
+			}
+		}
+		else if (absVel >= (double)kToppleBounceSoundLimit && (m_options & TOPPLE_OPTIONS_NO_FX) == 0)
+		{
+			doToppleObjFX(*self, "ToppleUpdate BounceFX", m_data->m_bounceFX);
+		}
+	}
+	else
+	{
+		m_angularVelocity = SimMath::addf32(m_angularVelocity, m_angularAcceleration);
+	}
+	if (ObjectClientHooks *client = self->clientHooks())
+	{
+		client->setShadowsEnabled(*self, false); // RW 0x672D28(0)
+	}
+	return UPDATE_SLEEP_NONE;
+}
+
+void ToppleUpdate::crc(StateHasher &h) const
+{
+	UpdateModule::crc(h);
+	h.addFloat(m_angularVelocity);
+	h.addFloat(m_angularAcceleration);
+	h.addFloat(m_toppleDirection.x);
+	h.addFloat(m_toppleDirection.y);
+	h.addFloat(m_toppleDirection.z);
+	h.addI32((int)m_toppleState);
+	h.addFloat(m_angularAccumulation);
+	h.addFloat(m_angleDeltaX);
+	h.addI32(m_numAngleDeltaX);
+	h.addBool(m_doBounceFX);
+	h.addU32(m_options);
+	h.addU32((std::uint32_t)m_stumpID);
+	h.addFloat(m_bounceVelocityDecay);
+}
+
+// RW 0x008ABDBD (DONOR BFME2 0x008A86E7)
+void ToppleUpdate::xfer(Xfer &x)
+{
+	xferUpdateModule(x);
+	SnapshotXfer::version(x, 1, 1);
+	x.xferReal(&m_angularVelocity);
+	x.xferReal(&m_angularAcceleration);
+	SnapshotXfer::coord3D(x, m_toppleDirection);
+	SnapshotXfer::enumIn(x, m_toppleState, TOPPLE_UPRIGHT, TOPPLE_DOWN, "a ToppleUpdate's state");
+	x.xferReal(&m_angularAccumulation);
+	x.xferReal(&m_angleDeltaX);
+	x.xferInt(&m_numAngleDeltaX);
+	x.xferBool(&m_doBounceFX);
+	x.xferUnsignedInt(&m_options);
+	x.xferObjectID(&m_stumpID);
+	x.xferReal(&m_bounceVelocityDecay);
 }

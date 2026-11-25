@@ -107,7 +107,7 @@ class PassiveAreaEffectBehavior : public UpdateModule
 {
 public:
 	OBFME_MODULE_XFER(PassiveAreaEffectBehavior) // lane SAVE-4b
-	PassiveAreaEffectBehavior(Thing *thing, const PassiveAreaEffectBehaviorModuleData *data); ///< RW 0x887CF3
+	PassiveAreaEffectBehavior(Thing *thing, const PassiveAreaEffectBehaviorModuleData *data); ///< RW 0x887CF3 (dtor RW 0x00887DAE / RW 0x00887EC8, name RW 0x00887D63, key RW 0x00887D69, xfer RW 0x00887EE4; DONOR BFME2 0x008846D6 / 0x008846DC / 0x00884721 / 0x0088483B / 0x00884857)
 	UpdateSleepTime update() override;                                                        ///< RW 0x887DF7
 	void crc(StateHasher &h) const override;
 	const std::list<ObjectID> &targets() const { return m_targets; }

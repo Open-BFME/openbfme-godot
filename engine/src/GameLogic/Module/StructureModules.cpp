@@ -185,6 +185,9 @@ void StructureModules::registerAll(ModuleFactory &modules)
 	// lane TOPPLE-1: RW 0xC69680 table, runtime RW 0x8A8BB4 (GameLogic/Module/StructureToppleUpdate.h)
 	modules.bindTypedData<StructureToppleUpdateModuleData>("StructureToppleUpdate", MODULETYPE_BEHAVIOR);
 	bindRuntime<StructureToppleUpdate, StructureToppleUpdateModuleData>(modules, "StructureToppleUpdate");
+	// RW 0x0064ED68 / RW 0x0064EDA0 / RW 0xC6A490 table, runtime RW 0x008AB8D7 (GameLogic/Module/StructureToppleUpdate.h)
+	modules.bindTypedData<ToppleUpdateModuleData>("ToppleUpdate", MODULETYPE_BEHAVIOR);
+	bindRuntime<ToppleUpdate, ToppleUpdateModuleData>(modules, "ToppleUpdate");
 }
 
 // ---- StructureBody ------------------------------------------------------------------------------------------------------------------
