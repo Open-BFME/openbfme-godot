@@ -143,6 +143,10 @@ public:
 	bool camera_animation_request(const String &action, const String &name);
 	Dictionary camera_animation_state() const; ///< { active, name, time (client frames), animations (the map's count) }
 	void camera_set_clip_depth_multiplier(double m); // lane MODCOMPAT-AI: SET_CAMERA_CLIP_DEPTH_MULTIPLIER (GlobalData + 0x950)
+	// lane PORT-439: FOCAL_LENGTH_CAMERA (script action 389): the view's own camera animation, RW 0x7BB627 -> vslot 0xF0 = View::setFocalLength
+	// RW 0x48885E(focal mm, seconds * 1000, ease-in * 1000, ease-out * 1000); the step runs in the client frame (TacticalCamera::update, RW 0x48A953)
+	void camera_set_focal_length(double focal_mm, double seconds, double ease_in, double ease_out);
+	double camera_focal_degrees() const; // View + 0x6C in degrees (RW 0x488888's + 0x23C form): what the animation is at now
 	// lane CAMPUI-1: the objectives screen's state for the Palantir's flag and a script's FLASH_*_BUTTON (slot 0 spell store, 1 objectives, 2 planning mode)
 	void set_objectives_screen_open(bool open);
 	void flash_palantir_button(int slot, int seconds);

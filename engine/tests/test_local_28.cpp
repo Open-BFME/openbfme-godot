@@ -38,6 +38,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/ClientEffects.h"
 #include "GameClient/Drawable.h"
+#include "GameClient/FXLightCull.h"
 #include "GameClient/FXPlayback.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawServices.h"
@@ -444,4 +445,43 @@ TEST_CASE("LOCAL-28: neighbouring behaviour (transient pulses from bldfx1 and dr
 		}
 	}
 	CHECK(foundLight);
+}
+
+// #331 port fit: the light pulses' view cull (RW 0x0046FCF9, Spheres_Intersect; GodotFXPlayer::updateLightPulseUniforms -> fxSphereVisible). The planes
+// are built the way Godot's Camera3D::get_frustum gives them (normals pointing out of the frustum, distance = n . p - d): a camera at the origin
+// looking down -Z with a 90 degree field of view, near 1, far 100. A light in view is drawn; the port's first version culled it (it tested
+// distance < -radius, the inward-normal convention).
+TEST_CASE("LOCAL-28: a light pulse in the camera's view is drawn, one outside it is culled (Godot's outward frustum planes)")
+{
+	const float h = std::sqrt(0.5f);
+	auto frustum = [h](float zs) {
+		// zs = -1: looking down -Z; zs = +1: the mirrored camera looking down +Z
+		return std::vector<FXCullPlane>{
+			{ 0.0f, 0.0f, -zs, -1.0f },  // near (z = zs * 1)
+			{ 0.0f, 0.0f, zs, 100.0f },  // far (z = zs * 100)
+			{ -h, 0.0f, -zs * h, 0.0f }, // left
+			{ h, 0.0f, -zs * h, 0.0f },  // right
+			{ 0.0f, h, -zs * h, 0.0f },  // top
+			{ 0.0f, -h, -zs * h, 0.0f }, // bottom
+		};
+	};
+	const std::vector<FXCullPlane> main = frustum(-1.0f);
+
+	CHECK(fxSphereVisible(main, 0.0f, 0.0f, -10.0f, 5.0f));   // straight ahead: drawn
+	CHECK(fxSphereVisible(main, 3.0f, -2.0f, -50.0f, 1.0f));  // well inside: drawn
+	CHECK(fxSphereVisible(main, -12.0f, 0.0f, -10.0f, 5.0f)); // centre just outside the left plane, the sphere reaches in: drawn
+	CHECK_FALSE(fxSphereVisible(main, -30.0f, 0.0f, -10.0f, 5.0f)); // far left: culled
+	CHECK_FALSE(fxSphereVisible(main, 0.0f, 0.0f, 20.0f, 5.0f));    // behind the camera: culled
+	CHECK_FALSE(fxSphereVisible(main, 0.0f, 0.0f, -120.0f, 5.0f));  // past the far plane: culled
+	CHECK(fxSphereVisible({}, 0.0f, 0.0f, 20.0f, 5.0f));            // no camera: nothing is culled
+
+	// the extra frustum (set_extra_pose_frustum, planes 6..11): inside either frustum is drawn
+	std::vector<FXCullPlane> both = main;
+	for (const FXCullPlane &pl : frustum(1.0f))
+	{
+		both.push_back(pl);
+	}
+	CHECK(fxSphereVisible(both, 0.0f, 0.0f, 20.0f, 5.0f));  // behind the main camera, in front of the extra one
+	CHECK(fxSphereVisible(both, 0.0f, 0.0f, -10.0f, 5.0f)); // in the main view
+	CHECK_FALSE(fxSphereVisible(both, 0.0f, 200.0f, 0.0f, 5.0f));
 }

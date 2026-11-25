@@ -7,7 +7,7 @@
 //    Rva0095B260 Get_Fade (default 1.0).
 //  * BFME2: a second per-node array of 24 byte rows (five polymorphic channels + visibility) filled
 //    from W3D_CHUNK_COMPRESSED_ANIMATION_MOTION_CHANNEL (0x284); when it exists Get_Visibility and
-//    the Has_* queries read it instead of the classic array (HCompressedAnimGetters.cpp).
+//    the Has_* queries read it instead of the classic array (the decomp's hcanim.cpp, HCompressedAnimClass::Has_*).
 //
 // Which array an animation uses is decided by the loader at retail 0x005901B0, which is not
 // decompiled. The corpus fixes the rule: header Version 0x1 is always classic (0x282 channels,

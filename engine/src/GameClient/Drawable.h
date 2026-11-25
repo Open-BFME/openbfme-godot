@@ -193,6 +193,7 @@ public:
 	bool advanceIsLocal() const;
 	void advanceAnimationLocal(double elapsedMs); ///< advanceAnimation without the host's chunk name (nothing it runs reports through the host)
 	void advanceTires(DrawEntry &e, double elapsedMs); ///< lane COMBAT-4: W3DTruckDraw's tire spin (RW 0x4CBFFB)
+	void stepLightDraw(DrawEntry &e, double elapsedMs); ///< lane LOCAL-28: the W3DLightDraw entry's flicker / pulse step (DrawableLight.cpp)
 
 	// RW 0x6789B4 Drawable::showModule: the draw module whose tag is `name` (exact, case sensitive) takes the request (true: a module exists; the
 	// module-first rule: no fall through to a sub object of the same name) and its entry is hidden / shown (DrawEntry::moduleHidden).

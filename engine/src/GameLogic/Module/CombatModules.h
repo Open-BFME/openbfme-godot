@@ -244,7 +244,7 @@ public:
 class ClearanceTestingSlowDeathBehavior : public SlowDeathBehavior
 {
 public:
-	OBFME_MODULE_XFER(ClearanceTestingSlowDeathBehavior) // SlowDeathBehavior's state (BFME2 ClearanceTestingSlowDeathBehavior_xfer.cpp adds none)
+	OBFME_MODULE_XFER(ClearanceTestingSlowDeathBehavior) // SlowDeathBehavior's state (BFME2 ClearanceTestingSlowDeathBehavior.cpp's xfer adds none)
 	ClearanceTestingSlowDeathBehavior(Thing *thing, const ClearanceTestingSlowDeathBehaviorModuleData *data);
 	// RW 0x887191 (BFME2 0x883F19, tier A)
 	bool canBeginSlowDeath() override;

@@ -6,6 +6,7 @@
 
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GameClient/FXLightCull.h"
 #include "GameClient/ParticleTexture.h"
 #include "Libraries/WWVegas/WW3D2/fxshadergen.h"
 
@@ -605,7 +606,11 @@ void FXPlayer::updateLightPulseUniforms()
 			haveView = true;
 		}
 	}
-	const std::vector<Plane> planes = cullPlanes();
+	std::vector<FXCullPlane> planes;
+	for (const Plane &pl : cullPlanes())
+	{
+		planes.push_back({ (float)pl.normal.x, (float)pl.normal.y, (float)pl.normal.z, (float)pl.d });
+	}
 
 	struct CandidateLight
 	{
@@ -633,17 +638,8 @@ void FXPlayer::updateLightPulseUniforms()
 		}
 		const Vector3 world = toGodotSpace(l.position);
 
-		// RW 0x0046FCF9 (RTS3DScene::renderOneObject): cull against view frustum (Spheres_Intersect)
-		bool culled = false;
-		for (const Plane &pl : planes)
-		{
-			if (pl.distance_to(world) < -range)
-			{
-				culled = true;
-				break;
-			}
-		}
-		if (culled)
+		// RW 0x0046FCF9 (RTS3DScene::renderOneObject): cull against view frustum (Spheres_Intersect); Godot's frustum normals point out (fxSphereVisible)
+		if (!fxSphereVisible(planes, (float)world.x, (float)world.y, (float)world.z, range))
 		{
 			continue;
 		}

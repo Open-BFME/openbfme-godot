@@ -13,7 +13,7 @@
 //     value (SCORCH_MARKS_IN_TEXTURE 9, SCORCH_PER_ROW 3) and the vertex colour terrain ambient + 0.5 * diffuse * the terrain light
 //     scale (TARGET RW 0x4670E1, TerrainLightScale.h; the donor body is BaseHeightMapRenderObjClass_updateScorches.cpp).
 //   * DynamicDecal -> TARGET RW 0x5E05AB / 0x5DFBEC (DynamicDecalFXNugget::doFXPos) -> TheProjectedShadowManager::addDecal,
-//     DONOR BFME2 0x1E0E43 (DynamicDecalFXNuggetDoFXPos.cpp): a projected decal with the opacity envelope of the donor's 0x330A37
+//     DONOR BFME2 0x1E0E43 (EvaEventFXNugget.cpp DynamicDecalFXNugget::doFXPos): a projected decal with the opacity envelope of the donor's 0x330A37
 //     and the per-frame update 0x10C785 (delay, fade one, peak hold, fade two, lifetime), the colour RGBColor::getAsInt and the
 //     texture as written.
 //   * LightPulse -> TARGET RW 0x5DFAA3 / 0x5DFAE4 (LightPulseFXNugget) -> TheDisplay vslot 0xBC (createLightPulse),

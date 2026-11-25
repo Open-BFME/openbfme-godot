@@ -412,8 +412,9 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// Merge queue q38 (measured once on the merged tree and at each merge point; #172 keeps it): with LOCODIST-1 a GIANT_BIRD locomotor's distance
 				// to the goal is 0 (RW 0x664127), so Drogoth, on his own, strikes the horde once (825 health, 11 of 20 killed); the fell beasts stay passive
 				CHECK(own.shots == (drogoth ? 1u : 0u));
-				CHECK(own.lost == (drogoth ? 825.0f : 0.0f));
-				CHECK(own.membersKilled == (drogoth ? 11u : 0u));
+				// pin: merge queue q64 (measured once on the merged tree and at each merge point: #334's builders turn to face the site before they build or repair, RW 0x88DD3E / 0x88DA7A, so every AI build starts a few frames later and the AI game moves; #341 keeps it, FIRINGTRACKER-1 alone keeps its own lane values): Drogoth on his own takes 975 health, 13 of 20 killed (825, 11)
+				CHECK(own.lost == (drogoth ? 975.0f : 0.0f));
+				CHECK(own.membersKilled == (drogoth ? 13u : 0u));
 				// lane BACKLOG4: 3 strikes (4 before): the hero's creation uses the teleport form (RW 0x7814CF: RW 0x696E63(pos, 0)), which idles the new
 				// hero's AI and wakes it; the fight's damage and kills are unchanged (measured with and without that call)
 				// lane STEALTHFLY1: 2 strikes (3 before): recruited from the fortress, Drogoth leaves along its production exit path in the bird's own follow
@@ -437,9 +438,11 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// merge queue q55 (measured at each merge point, from #319's on): the giant bird's swoop takes its victim's contact point through getBestContactPoint
 				// mode 1 (RW 0x76B6FF .. 0x76B721): the Witch-king's 6 strikes take 1500 health and kill 19 of 20 (1350, 17 before); the others are unchanged
 				const bool witchKing = hero == "MordorWitchKingOnFellBeast";
-				CHECK(ord.shots == (drogoth ? 3u : witchKing ? 6u : 5u));
-				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1500.0f : 1425.0f));
-				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 19u : 19u));
+				// pin: merge queue q64 (as above): ordered, Drogoth 4 strikes (3); Khamul and Morgomir 5 strikes, 1500 health, 20 of 20 killed (1425, 19); the
+				// Witch-king 6 strikes, 1350 health, 17 killed (1500, 19)
+				CHECK(ord.shots == (drogoth ? 4u : witchKing ? 6u : 5u));
+				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1350.0f : 1500.0f));
+				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 17u : 20u));
 				continue;
 			}
 			CHECK(own.walked > 600.0f);
@@ -642,8 +645,11 @@ TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, or
 	// of his mace (the first took 525, 1500 outside the run, nothing in a crush run), 20 killed, nearest 9.03435, with CRUSHER_LEVEL -1 4 swings taking 1500
 	// from 9.12575; the Mouth of Sauron 10 shots, 10 killed (225 in the crush run), 7 swings (75 / 525), nearest 8.26407, with CRUSHER_LEVEL -1 5 swings
 	// taking 375 from 47.8748. The duels, the hit sizes and the blocking are unchanged. Engine pins, not retail values.
-	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 4u, 20u, 0.0f, { 800.0f, 112.0f }, 4u, 525.0f, 1500.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 4u, 1500.0f, 9.12575f, 9.03435f },
-			 Case{ "FactionMordor", "MordorMouthOfSauron", 10u, 10u, 225.0f, { 640.0f, 320.0f }, 7u, 75.0f, 525.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 5u, 375.0f, 47.8748f, 8.26407f } })
+	// pin: merge queue q64 (measured once on the merged tree and at each merge point: #334's builders turn to face the site before they build or repair, RW 0x88DD3E / 0x88DA7A, so every AI build starts a few frames later and the AI game moves; #341 keeps it, FIRINGTRACKER-1 alone keeps its own lane values): the Witch-king 7 shots, 4 swings of his mace (the first took 375, 1200 outside the run, 225 in a crush run), 19 killed, nearest 2.50206,
+	// with CRUSHER_LEVEL -1 4 swings taking 1425 from 12.1546; the Mouth of Sauron 8 shots, 8 killed (150 in the crush run), 6 swings (75 / 450), nearest 4.55715,
+	// with CRUSHER_LEVEL -1 4 swings taking 300 from 35.8996. The duels, the hit sizes and the blocking are unchanged. Engine pins, not retail values.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 7u, 19u, 225.0f, { 800.0f, 112.0f }, 4u, 375.0f, 1200.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 4u, 1425.0f, 12.1546f, 2.50206f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 8u, 8u, 150.0f, { 640.0f, 320.0f }, 6u, 75.0f, 450.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 4u, 300.0f, 35.8996f, 4.55715f } })
 	{
 		INFO(std::string(c.hero));
 		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);
