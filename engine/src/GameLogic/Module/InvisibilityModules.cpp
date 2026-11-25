@@ -1049,7 +1049,17 @@ UpdateSleepTime StealthUpdate::update()
 	Object *obj = getObject();
 	if (m_xferRestoreDisguise) // RW 0x007779ED .. 0x00777A2F (DONOR BFME2 0x003756A8): restore disguise drawable after load
 	{
-		swapDisguise(); // RW 0x00776F03 (clears m_xferRestoreDisguise at RW 0x007772FB)
+		m_xferRestoreDisguise = false; // RW 0x007772FB
+		// Rebuild only the presentation drawable here: calling swapDisguise() would also mutate hashed logic state
+		// (m_disguised) early if saved mid-transition before the halfway swap (RW 0x777606).
+		if (m_disguised && m_disguiseTemplate)
+		{
+			if (ObjectClientHooks *client = obj->clientHooks())
+			{
+				const Player *as = obj->logic().players().getNthPlayer(m_disguisePlayer);
+				client->replaceDrawable(*obj, m_disguiseTemplate, as && as->hasTeamColor(), as ? as->getPlayerColor() : 0u);
+			}
+		}
 	}
 	if (of(*obj) != this) // RW 0x777A30 .. 0x777A90: only the object's StealthUpdate runs
 	{
@@ -1227,8 +1237,8 @@ void StealthUpdate::xfer(Xfer &x)
 	{
 		checkLoadedUpgradeMask(m_requiredUpgrades, "a stealth update's required upgrades");
 		checkLoadedUpgradeMask(m_forbiddenUpgrades, "a stealth update's forbidden upgrades");
-		// RW 0x00776E23 (StealthUpdate::loadPostProcess, DONOR BFME2 0x00374AE8): arm +0x47 when loaded with a disguise template (+0x3C).
-		m_xferRestoreDisguise = (m_disguiseTemplate != nullptr);
+		// RW 0x00776E23 (StealthUpdate::loadPostProcess, DONOR BFME2 0x00374AE8): arm +0x47 when loaded with an active disguise (+0x3C / +0x46).
+		m_xferRestoreDisguise = (m_disguiseTemplate != nullptr && m_disguised);
 	}
 	x.xferBool(&m_active);
 }

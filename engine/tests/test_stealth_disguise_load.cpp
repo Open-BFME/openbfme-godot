@@ -10,6 +10,7 @@
 #include "CombatTestUtil.h"
 
 #include "Common/GameEdition.h"
+#include "Common/StateHasher.h"
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/GameLogic.h"
@@ -147,4 +148,66 @@ TEST_CASE("stealth load: StealthUpdate restores disguise drawable once on first 
 		CHECK(hooks.replaces.size() == 1);
 		loaded.logic->setClientHooks(nullptr);
 	}
+}
+
+TEST_CASE("stealth load: saving mid-transition does not flip m_disguised early or drift state hashes")
+{
+	const char *kSlowDisguiseIni =
+		"Object TestSlowSpyLoad\n KindOf = INFANTRY SELECTABLE\n"
+		" Body = ActiveBody BodyTag\n MaxHealth = 100\n End\n"
+		" Behavior = AIUpdateInterface AITag\n End\n"
+		" Behavior = StealthUpdate StealthTag\n"
+		"  StealthDelay = 0\n"
+		"  DisguisesAsTeam = Yes\n"
+		"  DisguiseTransitionTime = 2000\n"
+		"  StartsActive = Yes\n"
+		" End\nEnd\n"
+		"Object TestSlowEnemyLoad\n KindOf = INFANTRY SELECTABLE\n"
+		" Body = ActiveBody BodyTag\n MaxHealth = 100\n End\n"
+		" Behavior = AIUpdateInterface AITag\n End\nEnd\n";
+
+	combattest::CombatWorld uninterrupted;
+	REQUIRE(uninterrupted.w.load(kSlowDisguiseIni).empty());
+	Object *spyA = uninterrupted.unit("TestSlowSpyLoad", 'A', 300, 300);
+	Object *enemyA = uninterrupted.unit("TestSlowEnemyLoad", 'B', 500, 300);
+	StealthUpdate *stA = StealthUpdate::of(*spyA);
+	REQUIRE(stA != nullptr);
+
+	stA->disguiseAsObject(enemyA);
+	uninterrupted.frames(1);
+	REQUIRE(stA->disguiseTemplate() == enemyA->getTemplate());
+	REQUIRE_FALSE(stA->disguiseShown()); // still in the first half of the 2-second transition
+
+	XferSave savedMid;
+	stA->xfer(savedMid);
+	const std::vector<std::uint8_t> midBytes = savedMid.data();
+
+	// Continue uninterrupted for 1 more frame
+	uninterrupted.frames(1);
+	REQUIRE_FALSE(stA->disguiseShown());
+	StateHasher hUninterrupted;
+	stA->crc(hUninterrupted);
+
+	// Load into a second world and step 1 frame: presentation restore must not flip m_disguised or drift crc
+	combattest::CombatWorld loaded;
+	REQUIRE(loaded.w.load(kSlowDisguiseIni).empty());
+	SpyClientHooksLoad hooks;
+	loaded.logic->setClientHooks(&hooks);
+	Object *spyB = loaded.unit("TestSlowSpyLoad", 'A', 300, 300);
+	Object *enemyB = loaded.unit("TestSlowEnemyLoad", 'B', 500, 300);
+	REQUIRE(enemyB != nullptr);
+	StealthUpdate *stB = StealthUpdate::of(*spyB);
+	REQUIRE(stB != nullptr);
+	loaded.frames(1);
+	{
+		XferLoad r(midBytes);
+		stB->xfer(r);
+	}
+	loaded.frames(1);
+	CHECK_FALSE(stB->disguiseShown());
+	CHECK(hooks.replaces.empty());
+	StateHasher hLoaded;
+	stB->crc(hLoaded);
+	CHECK(hLoaded.value() == hUninterrupted.value());
+	loaded.logic->setClientHooks(nullptr);
 }
