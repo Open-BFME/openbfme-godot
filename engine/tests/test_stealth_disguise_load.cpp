@@ -10,7 +10,7 @@
 #include "CombatTestUtil.h"
 
 #include "Common/GameEdition.h"
-#include "Common/StateHash.h"
+#include "Common/GameState.h"
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/GameLogic.h"
@@ -170,6 +170,9 @@ TEST_CASE("stealth load: saving mid-transition does not flip m_disguised early o
 	REQUIRE(uninterrupted.w.load(kSlowDisguiseIni).empty());
 	Object *spyA = uninterrupted.unit("TestSlowSpyLoad", 'A', 300, 300);
 	Object *enemyA = uninterrupted.unit("TestSlowEnemyLoad", 'B', 500, 300);
+	REQUIRE(spyA != nullptr);
+	REQUIRE(enemyA != nullptr);
+	const ObjectID spyId = spyA->getID();
 	StealthUpdate *stA = StealthUpdate::of(*spyA);
 	REQUIRE(stA != nullptr);
 
@@ -178,36 +181,29 @@ TEST_CASE("stealth load: saving mid-transition does not flip m_disguised early o
 	REQUIRE(stA->disguiseTemplate() == enemyA->getTemplate());
 	REQUIRE_FALSE(stA->disguiseShown()); // still in the first half of the 2-second transition
 
-	XferSave savedMid;
-	stA->xfer(savedMid);
-	const std::vector<std::uint8_t> midBytes = savedMid.data();
+	std::vector<std::uint8_t> snapshot;
+	std::string error;
+	REQUIRE_MESSAGE(uninterrupted.logic->gameState().saveSnapshot(uninterrupted.logic->stateHashSectionNames(), snapshot, &error), error);
 
-	// Continue uninterrupted for 1 update
-	stA->update();
+	// Continue uninterrupted for 1 frame mid-transition
+	uninterrupted.frames(1);
 	REQUIRE_FALSE(stA->disguiseShown());
-	StateHasher hUninterrupted;
-	stA->crc(hUninterrupted);
+	const std::uint32_t hashMid = uninterrupted.hash();
 
-	// Load into a second world and run 1 update: presentation restore must not flip m_disguised or drift crc
+	// Load into a second world and advance 1 frame: post-load restore must not flip m_disguised early or drift state hashes
 	combattest::CombatWorld loaded;
 	REQUIRE(loaded.w.load(kSlowDisguiseIni).empty());
 	SpyClientHooksLoad hooks;
 	loaded.logic->setClientHooks(&hooks);
-	Object *spyB = loaded.unit("TestSlowSpyLoad", 'A', 300, 300);
-	Object *enemyB = loaded.unit("TestSlowEnemyLoad", 'B', 500, 300);
-	REQUIRE(enemyB != nullptr);
+	REQUIRE_MESSAGE(loaded.logic->gameState().loadSnapshot(loaded.logic->stateHashSectionNames(), snapshot, &error), error);
+	Object *spyB = loaded.byId(spyId);
+	REQUIRE(spyB != nullptr);
 	StealthUpdate *stB = StealthUpdate::of(*spyB);
 	REQUIRE(stB != nullptr);
+
 	loaded.frames(1);
-	{
-		XferLoad r(midBytes);
-		stB->xfer(r);
-	}
-	stB->update();
 	CHECK_FALSE(stB->disguiseShown());
 	CHECK(hooks.replaces.empty());
-	StateHasher hLoaded;
-	stB->crc(hLoaded);
-	CHECK(hLoaded.value() == hUninterrupted.value());
+	CHECK(loaded.hash() == hashMid);
 	loaded.logic->setClientHooks(nullptr);
 }
