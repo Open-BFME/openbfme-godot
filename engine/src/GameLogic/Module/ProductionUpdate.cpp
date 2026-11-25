@@ -39,6 +39,7 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectFilter.h"
+#include "GameLogic/ObjectSounds.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 
@@ -1385,7 +1386,10 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 				}
 			}
 			newObj->updateUpgradeModules();
-			// RW 0x8A294D .. 0x8A29EC: voice / EVA events (audio), the player's unit created hook, then CreateModule::onBuildComplete on every create module
+			// lane OBJSOUND-2 (S-707), RW 0x8A2970 .. 0x8A29D6: the new object's SoundCreated (row 44, RW 0x8A0885) attached to it (module + 0x110, set at RW 0x8A2796),
+			// owned by the producer's controlling player (RW 0x8A29B4 .. 0x8A29C2: player + 0x54 into the event's + 0x6C)
+			ObjectSounds::playRow(*newObj, "SoundCreated", getObject()->getControllingPlayer());
+			// RW 0x8A29D9 .. 0x8A29EC: the player's unit created hook, then CreateModule::onBuildComplete on every create module
 			for (const std::unique_ptr<BehaviorModule> &m : newObj->modules())
 			{
 				if (CreateModuleInterface *create = m->getCreate())

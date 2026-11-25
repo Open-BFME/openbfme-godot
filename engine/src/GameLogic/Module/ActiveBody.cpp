@@ -31,6 +31,7 @@
 #include "GameLogic/Weapon.h"
 #include "Common/AsciiString.h"
 #include "Common/Audio/AudioRequests.h"
+#include "GameLogic/ObjectSounds.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Object/Object.h"
@@ -742,11 +743,9 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 			// (setObjectID RW 0x6DA6A7) added to TheAudio (vslot 0x64). attemptHealing (RW 0x8C3131) plays none: these rows have no other caller.
 			// Fire-and-forget client audio; the owner is the object's controlling player as retail's RW 0x6DB566 resolves it for an object event
 			// (the manager's shouldPlayLocally RW 0x4533A9 and its shroud test decide who hears it)
-			const std::string sound = damageStateSound(*static_cast<const ThingTemplate *>(obj.getTemplate()), m_curDamageState);
-			if (!sound.empty())
+			if (const char *row = damageStateRow(m_curDamageState))
 			{
-				const Player *owner = obj.getControllingPlayer();
-				AudioApi::playSoundForObject(sound, obj.getID(), owner ? owner->getPlayerIndex() : -1);
+				ObjectSounds::playRow(obj, row); // lane OBJSOUND-2: the drawable's sound selectors first (RW 0x676A8A), then the template
 			}
 		}
 		// (18) death: health <= 0 and the hit took health
@@ -871,28 +870,18 @@ void ActiveBody::setMaxHealth(float newMax, int changeType)
 }
 
 // lane OBJSOUND-1 (S-707): RW 0x8C22C0 / 0x8C22D9 read rows 45 / 46 of the drawable's audio table through RW 0x676A8A, which asks the drawable's sound
-// selectors first and then the template (RW 0x645A89). The port reads the template row: no retail template has a selector entry that sets either row
-// (test_object_sounds.cpp counts them), so the answer is the template's for retail data (the selectors are client state, S-701). A sound row's value went
-// through RW 0x73AB45 at parse time: "NoSound" is none, a "+SOUND:" prefix is dropped (RW 0x73AC14)
+// selectors first and then the template (RW 0x645A89), as ObjectSounds::playRow does for the hit. damageStateSound is the template's half alone: no retail
+// template has a selector entry that sets either row (test_object_sounds.cpp counts them). A sound row's value went through RW 0x73AB45 at parse time:
+// "NoSound" is none, a "+SOUND:" prefix is dropped (RW 0x73AC14)
+const char *ActiveBody::damageStateRow(BodyDamageType state)
+{
+	return state == BODY_DAMAGED ? "SoundOnDamaged" : state == BODY_REALLYDAMAGED ? "SoundOnReallyDamaged" : nullptr;
+}
+
 std::string ActiveBody::damageStateSound(const ThingTemplate &tt, BodyDamageType state)
 {
-	const char *row = state == BODY_DAMAGED ? "SoundOnDamaged" : state == BODY_REALLYDAMAGED ? "SoundOnReallyDamaged" : nullptr;
-	if (!row)
-	{
-		return std::string();
-	}
-	const FieldValue *f = tt.getFinalOverride()->findField(row);
-	const RawTokens *raw = f ? std::get_if<RawTokens>(f) : nullptr;
-	if (!raw || raw->tokens.empty() || AsciiStringUtil::compareNoCase(raw->tokens.front(), "NoSound") == 0)
-	{
-		return std::string();
-	}
-	const std::string &token = raw->tokens.front();
-	if (token.size() >= 7 && AsciiStringUtil::compareNoCase(token.substr(0, 7), "+SOUND:") == 0)
-	{
-		return token.substr(7);
-	}
-	return token;
+	const char *row = damageStateRow(state);
+	return row ? ObjectSounds::templateRow(tt, row) : std::string();
 }
 
 // lane FX-4: the loops RW 0x8C4395 (attemptDamage) / RW 0x8C3139 (attemptHealing) run over the object's modules in list order: each module's DAMAGE

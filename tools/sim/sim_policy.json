@@ -581,6 +581,10 @@
    "reason": "AUDIO-2, the unit voice picker: client presentation (reads the selection and the logic, plays through AudioApi / Eva); its recently-said memory is client state keyed by object id, it writes no logic state"
   },
   {
+   "glob": "src/GameClient/ObjectSounds.cpp",
+   "reason": "OBJSOUND-2, the object sounds the logic posts (S-707): the row lookup through the sound selectors and the template and the request to AudioApi; client presentation, reads the logic objects, writes no logic state, draws no random number"
+  },
+  {
    "glob": "src/GameClient/TacticalView.cpp",
    "reason": "the tactical view's projection and ray maths (client camera state: a click's ground point is chosen by the clicking peer and travels as message data)"
   },

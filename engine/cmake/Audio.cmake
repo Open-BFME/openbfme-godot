@@ -25,6 +25,8 @@ set(OPENBFME_AUDIO_SOURCES
     src/GameClient/Eva.cpp
     # AUDIO-2: the unit voice picker (RW 0x8DEDBB), the in-game audio of a live game
     src/GameClient/UnitVoiceResponse.cpp
+    # OBJSOUND-2 (S-707): the object sounds the logic posts
+    src/GameClient/ObjectSounds.cpp
     src/GameClient/LiveGameAudio.cpp
     src/GameClient/MusicScripts.cpp)
 

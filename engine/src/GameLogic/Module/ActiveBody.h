@@ -156,6 +156,7 @@ public:
 	// lane OBJSOUND-1 (S-707): the sound attemptDamage plays for a hit that changed the damage state to `state` (RW 0x8C4436 .. 0x8C4480): DAMAGED the
 	// template's SoundOnDamaged (RW 0x8C22C0, row 45), REALLY_DAMAGED its SoundOnReallyDamaged (RW 0x8C22D9, row 46), any other state none; "" = none
 	static std::string damageStateSound(const ThingTemplate &tt, BodyDamageType state);
+	static const char *damageStateRow(BodyDamageType state); ///< its row, null for a state without one
 
 protected:
 	// the DamageInfo attemptDamage is processing (RW passes it down to internalChangeHealth, RW 0x8C553F / 0x8C5828 read and change it); null outside a hit
