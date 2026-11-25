@@ -31,6 +31,7 @@
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Module/StructureModules.h"
+#include "GameLogic/Module/FadeAndDieOrnamentUpdate.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ObjectGeometry.h"
@@ -505,9 +506,12 @@ void ObjectCreationList::doStuffToObj(GameLogic &logic, const OCLNugget &n, Obje
 		const float k = mulf32(n.velocityScale, n.dispositionIntensity);
 		fling(*obj, Coord3D{ mulf32(dir.x, k), mulf32(dir.y, k), mulf32(k, dir.z) });
 	}
-	if ((d & OCLNugget::FADE_AND_DIE_ORNAMENT) && obj->findModule("FadeAndDieOrnamentUpdate"))
+	if (d & OCLNugget::FADE_AND_DIE_ORNAMENT)
 	{
-		unported(logic, m_unportedUses, "FADE_AND_DIE_ORNAMENT (FadeAndDieOrnamentUpdate RW 0x7A76CF)");
+		if (auto *ornament = dynamic_cast<FadeAndDieOrnamentUpdate *>(obj->findModule("FadeAndDieOrnamentUpdate")))
+		{
+			ornament->setParent(source); // RW 0x005F2287 -> RW 0x007A76CF
+		}
 	}
 	if (d & OCLNugget::ON_GROUND_ALIGNED)
 	{
