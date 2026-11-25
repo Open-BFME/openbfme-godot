@@ -648,7 +648,9 @@ StateReturnType AIIdleState::update()
 	{
 		if (Object *target = self.getNextMoodTarget(true, true))
 		{
-			if (self.aiAttackObject(target, CMD_FROM_AI))
+			const bool attacked = self.aiAttackObject(target, CMD_FROM_AI);
+			self.setVictimAutoAcquired(); // lane APPROACHGIVEUP-1: RW 0x755539, after the command (which clears it) whether or not it ran
+			if (attacked)
 			{
 				return STATE_CONTINUE; // the machine changed state: the new state runs next
 			}

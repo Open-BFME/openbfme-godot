@@ -100,6 +100,9 @@ public:
 	// lane SUMMON-1: RW vt[0x58] with its second argument 0 (ActiveBody RW 0x8C47DE; InactiveBody's slot is the empty RW 0x8851E4), the ObjectCreationList's
 	// initial health (RW 0x5F1E98): `percent` of the revive reference, a percent above 100 scaling the max health first
 	virtual void setInitialHealthPercent(float percent) { (void)percent; }
+	// Retail 2.01: InactiveBody's body table 0xC718C8 has `ret 4` in slots 0x34/0x38
+	// and returns zero ArmorSetFlags from slot 0x3C (RW 0x8C1AC3), so an armor upgrade cannot add a condition.
+	virtual bool ignoresArmorSetFlagChanges() const { return false; }
 };
 
 // ZH ContainModuleInterface (the membership part). The members are Objects; the list keeps insertion order.

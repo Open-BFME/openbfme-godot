@@ -62,6 +62,7 @@
 #include "GameClient/Drawable.h"
 #include "GameLogic/Module/SMCHelper.h"
 #include "GameLogic/Module/WeaponStatusHelper.h"
+#include "GameLogic/Module/FiringTrackerHelper.h"
 #include "GameLogic/Module/UpdateModule.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/AttributeModifiers.h"
@@ -373,7 +374,11 @@ void Object::buildModules()
 		// PROJ-2: the WeaponStatusHelper acts (the weapon model conditions, PHASE_FINAL, GameLogic/Module/WeaponStatusHelper.h)
 		m_modules.push_back(std::make_unique<WeaponStatusHelper>(this));
 		++m_helperCount;
-		helper("FiringTrackerHelper", "ModuleTag_FiringTrackerHelper");
+		// FIRINGTRACKER-1: the FiringTrackerHelper acts (the tracker's update, PHASE_FINAL, GameLogic/Module/FiringTrackerHelper.h); RW 0x8E2EB2, Object + 0x248
+		auto ft = std::make_unique<FiringTrackerHelper>(this);
+		m_firingTrackerHelper = ft.get();
+		m_modules.push_back(std::move(ft));
+		++m_helperCount;
 	}
 	// ---- the behaviors, in template list order (RW 0x69A32F - 0x69A4AC) -----------------------------------------------------
 	ModuleFactory &factory = m_logic.modules();
@@ -2052,6 +2057,13 @@ void Object::setArmorSetFlag(int bit, bool on)
 	{
 		throw std::logic_error("Object::setArmorSetFlag: bit out of range");
 	}
+	// Retail 2.01 writes an armor-set condition through the body: ArmorUpgrade calls body
+	// slot 0x34 / 0x38 (RW 0x8B761E, call at RW 0x8B76A5). InactiveBody's slots are the
+	// `ret 4` stub RW 0x9F3A3C and slot 0x3C returns zero flags (RW 0x8C1AC3).
+	if (getBodyModule() && getBodyModule()->ignoresArmorSetFlagChanges())
+	{
+		return;
+	}
 	if (on)
 	{
 		m_armorSetFlags |= (1u << bit);
@@ -3036,6 +3048,12 @@ void Object::xfer(Xfer &x)
 	x.xferBool(&m_effectivelyDead);
 	SnapshotXfer::maskWithin(x, m_armorSetFlags, SnapshotXfer::lowBits(SnapshotXfer::nameCount(TheArmorSetNames)), "an object's armor set flags",
 		"the " + std::to_string(SnapshotXfer::nameCount(TheArmorSetNames)) + " armor set conditions");
+	if (!saving && m_armorSetFlags != 0 && getBodyModule() && getBodyModule()->ignoresArmorSetFlagChanges())
+	{
+		// #347 review: InactiveBody's flags read zero in retail (RW 0x8C1AC3) and setArmorSetFlag no longer writes them, so a save from before that guard
+		// that carries an upgraded InactiveBody's flag loads clean instead of keeping a flag nothing can clear
+		m_armorSetFlags = 0;
+	}
 	SnapshotXfer::maskWithin(x, m_weaponBonusMask, SnapshotXfer::lowBits(WEAPONBONUS_CONDITION_COUNT), "an object's weapon bonus conditions",
 		"the " + std::to_string(WEAPONBONUS_CONDITION_COUNT) + " conditions");
 	x.xferBool(&m_recordedValid);

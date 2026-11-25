@@ -140,12 +140,15 @@ public:
 	// RW 0x697403 / 0x697800, read at RW 0x79402B); the port passes it as this argument. Retail (every other caller) passes false
 	virtual bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
 								 bool ignoreCommandPoints) = 0;
+	virtual bool isUnitInQueue(ProductionID productionID) const = 0;     // slot 9, RW 0x008A03C1
 	virtual void cancelUnitCreate(ProductionID productionID) = 0;        // slot 10, RW 0x8A13EE
+	virtual void cancelUnitCreateByTemplate(const ThingTemplate *unitType, bool immediate) = 0; // slot 13, RW 0x008A30A0
 	virtual void setEntryHordeTarget(ProductionID productionID, ObjectID hordeTarget) = 0; // slot 14, RW 0x8A03A0 (DONOR BFME2 0x0049CC15)
 	virtual void cancelUnitCreateByType(const ThingTemplate *type, bool all) = 0; // slot 5, RW 0x8A0428
 	virtual int countUnitTypeInQueue(const ThingTemplate *type) const = 0; // slot 7, RW 0x8A056C (type 1 entries only)
 	virtual bool isSecondaryQueue() const = 0;                           // slot 30, RW 0x8A06E2
 	virtual int getProductionCount() const = 0;                          // slot 17
+	virtual int countValue30InQueue(int value30) const = 0;              // slot 19, RW 0x008A0625
 	virtual const ProductionEntry *firstProduction() const = 0;          // slot 21
 	virtual const ProductionEntry *nextProduction(const ProductionEntry *e) const = 0; // slot 22
 	virtual void setHoldDoorOpen(int door, bool hold) = 0;               // slot 23, RW 0x8A0D8A
@@ -189,12 +192,15 @@ public:
 	using ProductionUpdateInterface::queueCreateUnit;
 	bool queueCreateUnit(const ThingTemplate *unitType, int buildIndex, ProductionID productionID, int value30, bool batch, const std::string &name, bool flag44,
 						 bool ignoreCommandPoints) override;
+	bool isUnitInQueue(ProductionID productionID) const override;
 	void cancelUnitCreate(ProductionID productionID) override;
+	void cancelUnitCreateByTemplate(const ThingTemplate *unitType, bool immediate) override;
 	void setEntryHordeTarget(ProductionID productionID, ObjectID hordeTarget) override; // slot 14, RW 0x8A03A0
 	void cancelUnitCreateByType(const ThingTemplate *type, bool all) override;
 	int countUnitTypeInQueue(const ThingTemplate *type) const override;
 	bool isSecondaryQueue() const override { return m_data->m_secondaryQueue; }
-	int getProductionCount() const override { return (int)m_queue.size(); }
+	int getProductionCount() const override { return (int)m_queue.size(); } // slot 17, RW 0x009F9F37
+	int countValue30InQueue(int value30) const override; // slot 19, RW 0x008A0625
 	const ProductionEntry *firstProduction() const override { return m_queue.empty() ? nullptr : m_queue.front().get(); }
 	const ProductionEntry *nextProduction(const ProductionEntry *e) const override;
 	void setHoldDoorOpen(int door, bool hold) override;
@@ -257,4 +263,5 @@ private:
 	bool m_cancellingAll = false;                          ///< RW +0x11D
 	bool m_factoryDisabled = false;                        ///< RW +0x13C
 	unsigned m_heroCountdown = 0;                          ///< RW +0x128 (lane HERO-1: frames between two revives, RW 0x8A2C1E)
+	std::vector<std::string> m_pendingCancelTemplates;     ///< RW +0x130 (slot 13 RW 0x008A30A0, drained by RW 0x008A1B52)
 };
