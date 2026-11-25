@@ -984,3 +984,35 @@ void HordeContain::xfer(Xfer &x)
 	SnapshotXfer::checkRange(m_wallIdlePasses, 0, 4, "a horde's wall scaling idle passes"); // checkWallScalingDone: the fifth idle pass ends the scaling and resets it
 	x.xferReal(&m_scalingReach);
 }
+
+
+// RW 0x86ECAB (HordeContainInterface slot 0xAC): any contained or entering member affected by the upgrade answers true.
+bool HordeContain::affectedByUpgrade(const UpgradeTemplate *upgrade) const
+{
+	if (!upgrade) return false;
+	for (const Object *member : m_members)
+	{
+		if (member && member->affectedByUpgrade(upgrade)) return true;
+	}
+	GameLogic &logic = getObject()->logic();
+	for (const ObjectID id : m_garrisonEntering)
+	{
+		const Object *member = logic.findObjectByID(id);
+		if (member && member->affectedByUpgrade(upgrade)) return true;
+	}
+	return false;
+}
+
+// RW 0x871A90 (HordeContainInterface slot 0xB8): grant the upgrade to the horde and eligible members.
+void HordeContain::giveUpgrade(const UpgradeTemplate *upgrade, bool allMembers)
+{
+	Object *self = getObject();
+	if (!self || !upgrade) return;
+	self->giveUpgrade(upgrade);
+	for (Object *member : m_members)
+	{
+		if (!member) continue;
+		if (!allMembers && !member->affectedByUpgrade(upgrade)) continue;
+		member->giveUpgrade(upgrade);
+	}
+}

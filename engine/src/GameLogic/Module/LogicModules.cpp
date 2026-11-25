@@ -58,6 +58,7 @@
 #include "GameLogic/Module/ProductionQueueHordeContain.h"
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
 #include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/Module/GiveUpgradeUpdate.h"
 #include "GameLogic/Module/PickupStuffUpdate.h"
 #include "GameLogic/Module/ThreatFinderUpdate.h" // PORT 17 (issue #73)
 #include "GameLogic/Module/AutoPickUpUpdate.h"
@@ -138,5 +139,6 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	BoredUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: an idle troll clubs a troll friend (S-7161)
 	LargeGroupAudioUpdate::registerClass(modules); // lane AUDIO-4: the logic half of the large group battle sounds
 	ClientBehaviorModules::registerAll(modules); // lane AUDIO-4: the footsteps (a ClientBehavior: the drawables make it, GameClient/)
-	SiegeModules::registerAll(modules); // lane SIEGE-1: SiegeDockingBehavior, SiegeDeploySpecialPower, StopSpecialPower, SiegeAIUpdate (after the AI classes)
+	SiegeModules::registerAll(modules);
+	GiveUpgradeUpdate::registerClass(modules); // lane SIEGE-1: SiegeDockingBehavior, SiegeDeploySpecialPower, StopSpecialPower, SiegeAIUpdate (after the AI classes)
 }
