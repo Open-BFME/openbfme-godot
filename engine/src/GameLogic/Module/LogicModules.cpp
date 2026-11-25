@@ -62,6 +62,8 @@
 #include "GameLogic/Module/ThreatFinderUpdate.h" // PORT 17 (issue #73)
 #include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/BoredUpdate.h"
+#include "GameLogic/Module/StoreObjectsSpecialPower.h"
+#include "GameLogic/Module/TeleportToCasterSpecialPower.h"
 
 #include <stdexcept>
 
@@ -110,6 +112,8 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	SpecialPowerModules::registerAll(modules); // lane SPELL-1: the SpecialPowerModule / PlayerHealSpecialPower data, PlayerHealSpecialPower's heal
 	HeroModules::registerAll(modules); // lane HERO-1: RespawnUpdate, BuildableHeroListUpgrade
 	SpecialAbilityModules::registerAll(modules); // lane HERO-1: the SpecialAbilityUpdate family
+	StoreObjectsSpecialPower::registerClass(modules); // MODGAP-2: store unit list for teleport (RW 0x8D1EA7)
+	TeleportToCasterSpecialPower::registerClass(modules); // MODGAP-2: teleport stored or nearby allies (RW 0x8D1AEB)
 	ExtraModules::registerAll(modules); // lane MODULES-1: the remaining behaviour modules the base game uses
 	GateModules::registerAll(modules); // lane HUD-5: GateOpenAndCloseBehavior, AIGateUpdate
 	PortalModules::registerAll(modules); // lane WALL-2: DynamicPortalBehaviour, FakePathfindPortalBehaviour
