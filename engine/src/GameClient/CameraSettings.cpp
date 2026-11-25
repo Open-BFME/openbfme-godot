@@ -90,6 +90,13 @@ void parseShowObjectHealth(INI *ini, void *instance, void *, const void *)
 	State *st = static_cast<State *>(instance);
 	INI::parseBool(ini, nullptr, &st->values.showObjectHealth, nullptr);
 }
+// lane HOVER-2: DebugAI (see CameraSettings.h)
+void parseDebugAI(INI *ini, void *instance, void *, const void *)
+{
+	State *st = static_cast<State *>(instance);
+	INI::parseBool(ini, nullptr, &st->values.debugAI, nullptr);
+	st->values.haveDebugAI = true;
+}
 // lane FX-4: the camera shake's GameData fields (CameraSettings.h): user data 0 .. 5 = the intensities by shake type, 6 MaxShakeIntensity, 7 MaxShakeRange
 void parseShake(INI *ini, void *instance, void *, const void *userData)
 {
@@ -209,6 +216,7 @@ FieldParse kFields[] = {
 	{ "MoveHintName", parseMoveHintName, nullptr, 0 },
 	{ "DownwindAngle", parseDownwindAngle, nullptr, 0 },
 	{ "ShowObjectHealth", parseShowObjectHealth, nullptr, 0 },
+	{ "DebugAI", parseDebugAI, nullptr, 0 },                                         // RW + 0x9B8 (row RW 0xC000E0)
 	{ "ShowSelectedUnitMarker", parseShowSelectedUnitMarker, nullptr, 0 },         // RW + 0x9A5
 	{ "UseSimpleHordeDecals", parseUseSimpleHordeDecals, nullptr, 0 },             // RW + 0x9A6
 	{ "UseSimpleMergeDecals", parseUseSimpleMergeDecals, nullptr, 0 },             // RW + 0x9A7

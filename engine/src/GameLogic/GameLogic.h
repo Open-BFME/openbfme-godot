@@ -171,6 +171,10 @@ public:
 	// test crash (stableqa1 cah retail, SIGSEGV after 43 assertions) with no code path of the lane running at all, while the same no-op virtual appended here
 	// leaves it green - the later slots' numbers must not move, whatever reads them
 	virtual void setDrawableOpacity(Object &obj, float opacity) { (void)obj; (void)opacity; }
+	// lane POSTERNPLOT-1, RW 0x85834C .. 0x858389 (FoundationAIUpdate slot 2 on a WALL_UPGRADE foundation): when the object's controlling player is the local
+	// player, the client appends MSG_REMOVE_FROM_SELECTED_GROUP (0x3ED) with its id and deselects its drawable (TheInGameUI vslot 0x10C). Appended at the
+	// end of the interface (see setDrawableOpacity)
+	virtual void deselectLocal(Object &obj) { (void)obj; }
 };
 
 class StateHasher;
@@ -247,6 +251,18 @@ struct GameLogicSettings
 	float meleeApproachDist = 60.0f;
 	float castleSiegeStandBackDistance = 100.0f;
 	bool hordesWaitForHordes = true;
+	// AIData ForceHordesToLowLOD (row RW 0xC1CE70, parseBool RW 0x42E558, AIData + 0xBB; ctor RW 0x6FFBEF -> RW 0x6FFDA5: true):
+	// sets OBJECT_STATUS_CREATE_DRAWABLE_WITH_LOW_DETAIL (bit 55) on produced units (RW 0x8A1B9F -> 0x8A25E4) and horde payloads / upgrade
+	// creation triggers (RW 0x86A104 -> 0x86A151, RW 0x86B169 -> 0x86B282; excluding HERO and MONSTER templates).
+	bool forceHordesToLowLOD = true;
+	// AIData low-LOD trees (rows RW 0xC1CF50 UseLowLODTrees + 0xD8 parseBool, RW 0xC1CF70..0xC1CF90 LowLodTreeName / NoGrab /
+	// NoHarvest + 0xDC/+0xE0/+0xE4 parseAsciiString, RW 0xC1CFA0 LowLodTreeScale + 0xE8 parseReal; ctor RW 0x6FFBEF -> RW 0x6FFE0C..0x6FFE4A:
+	// false, "", "", "", 0.55f from RW 0xBDAE10). Read by RW 0x62DCE4 (MapObjectCreation::build) when staticLODLevel <= 0. Presentation only: not in crc.
+	bool useLowLODTrees = false;
+	std::string lowLodTreeName;
+	std::string lowLodTreeNameNoGrab;
+	std::string lowLodTreeNameNoHarvest;
+	float lowLodTreeScale = 0.55f;
 	// RW 0x70153B: an `AttackPriority <name>` block of AIData (def 0x14 bytes, ctor RW 0x701323: Default 1). A repeated name re-parses the same def (its
 	// targets cleared, Default kept unless the block sets it); a new one is pushed at the list head. `Target = <template> <int>` (RW 0x7013C2) lines in
 	// file order (RW inserts each at the front of its list: TARGET 0x7004B4; the store applies them back to front)

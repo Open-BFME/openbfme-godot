@@ -14,4 +14,5 @@ set(OPENBFME_WALL2_TESTS
     tests/test_wall2_raised.cpp
     tests/test_wall2_fortress.cpp
     tests/test_walls_snapshot.cpp
+    tests/test_posternplot1.cpp
 )

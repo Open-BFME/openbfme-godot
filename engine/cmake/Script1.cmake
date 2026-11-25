@@ -34,6 +34,7 @@ set(OPENBFME_SCRIPT1_TESTS
     tests/test_script2_angmar.cpp
     tests/test_script2_client.cpp
     tests/test_script3.cpp
+    tests/test_local_57.cpp
     tests/test_script3_mission.cpp
     tests/test_script4.cpp
     tests/test_teamevents1.cpp
