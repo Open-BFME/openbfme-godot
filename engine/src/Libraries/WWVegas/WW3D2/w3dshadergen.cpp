@@ -127,6 +127,7 @@ std::string W3DShaderKey::Id() const
 	if (AlphaOverride) id += "_ao"; // lane BUILD-5 r3
 	if (OcclusionPass) id += "_occl" + std::to_string(OcclusionPass); // lane OCCLUDE-1
 	if (SelectionDecals) id += "_sel"; // lane SELWALL-1
+	if (Vegetation) id += "_veg";
 	return id;
 }
 
@@ -521,10 +522,18 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t\tvec3 ssum = vec3(0.0);");
 		line("\t\tfor (int i = 0; i < 3; i++) {");
 		line("\t\t\tfloat ndl = dot(wn, ld[i]);");
-		line("\t\t\tfloat ndh = dot(wn, normalize(vv + ld[i]));");
-		line("\t\t\tdsum += lc[i] * max(ndl, 0.0);");
-		// D3D9 lit clamps the power to [-127.9961, 127.9961]
-		line("\t\t\tssum += lc[i] * ((ndl > 0.0 && ndh > 0.0) ? pow(ndh, clamp(w3d_shininess, " + fmt(-W3D_LIT_POWER_LIMIT) + ", " + fmt(W3D_LIT_POWER_LIMIT) + ")) : 0.0);");
+		if (k.Vegetation)
+		{
+			// vegetation.fxo vs_1_1 blobs 6 / 7 (RW 0x4E6753 W3DVegetationBufferBase::allocateBuffers): abs(N.L) for directional lights 0..2, no specular
+			line("\t\t\tdsum += lc[i] * abs(ndl);");
+		}
+		else
+		{
+			line("\t\t\tfloat ndh = dot(wn, normalize(vv + ld[i]));");
+			line("\t\t\tdsum += lc[i] * max(ndl, 0.0);");
+			// D3D9 lit clamps the power to [-127.9961, 127.9961]
+			line("\t\t\tssum += lc[i] * ((ndl > 0.0 && ndh > 0.0) ? pow(ndh, clamp(w3d_shininess, " + fmt(-W3D_LIT_POWER_LIMIT) + ", " + fmt(W3D_LIT_POWER_LIMIT) + ")) : 0.0);");
+		}
 		line("\t\t}");
 		// lane FEAT-BLDFX-1: the dynamic light pool's contribution (DONOR BFME2 0x4423C), added to the directional sum like a retail scene light
 		line("\t\tdsum += w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm);");
@@ -532,8 +541,18 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t\tdsum += w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm);");
 		line("\t\tdsum += w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm);");
 		line(k.HasDCG ? "\t\tvec4 vc = COLOR;" : "\t\tvec4 vc = vec4(1.0);");
-		line("\t\tv_lit0 = clamp(vec4((dsum * w3d_diffuse.rgb + amb * w3d_ambient_mat + w3d_emissive) * vc.rgb * 0.5, vc.a * w3d_diffuse.a), 0.0, 1.0);");
-		line("\t\tv_lit1 = clamp(ssum * w3d_spec_color * 0.5, 0.0, 1.0);");
+		if (k.Vegetation)
+		{
+			// vegetation.fxo has no ColorDiffuse / ColorAmbient / ColorEmissive / ColorSpecular parameters:
+			// oD0.rgb = clamp((dsum + amb) * vc.rgb * 0.5, 0, 1), oD0.a = vc.a, no specular
+			line("\t\tv_lit0 = clamp(vec4((dsum + amb) * vc.rgb * 0.5, vc.a), 0.0, 1.0);");
+			line("\t\tv_lit1 = vec3(0.0);");
+		}
+		else
+		{
+			line("\t\tv_lit0 = clamp(vec4((dsum * w3d_diffuse.rgb + amb * w3d_ambient_mat + w3d_emissive) * vc.rgb * 0.5, vc.a * w3d_diffuse.a), 0.0, 1.0);");
+			line("\t\tv_lit1 = clamp(ssum * w3d_spec_color * 0.5, 0.0, 1.0);");
+		}
 		line("\t}");
 	}
 	if (k.OcclusionPass)

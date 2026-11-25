@@ -134,6 +134,9 @@ public:
 	// again under a name with "#sel", their opaque surfaces draw the selection decals (W3DShaderKey::SelectionDecals: the merge decals and, lane HERORING-1,
 	// the alpha decals). The add clears it
 	void Set_Build_Selection_Decals(bool on) { PendingSelectionDecals = on; }
+	// C++ only: the next add_model builds a W3DTreeDraw tree or shrub with Vegetation.fx lighting (W3DShaderKey::Vegetation); the model is cached under its
+	// own name ("#veg"). The add clears it
+	void Set_Build_Vegetation(bool on) { PendingVegetation = on; }
 	// "#tex&a=b&c=d" (lower case, in the state's order): the part of a model's cache name that its texture swaps make; empty without swaps
 	static std::string Texture_Swap_Suffix(const std::vector<TextureSwap> &swaps);
 	// RENDER-1 (stop S-390): the instance is lit by the map's infantry light set (KINDOF_INFANTRY drawables) instead of the objects set;
@@ -385,6 +388,7 @@ private:
 	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
 	std::vector<TextureSwap> PendingSwaps; // stop S-5015: Set_Build_Texture_Swaps, taken by the next add_model
 	bool PendingSelectionDecals = false; // lane SELWALL-1: Set_Build_Selection_Decals, taken by the next add_model
+	bool PendingVegetation = false; // Set_Build_Vegetation, taken by the next add_model
 	std::vector<std::unique_ptr<Model>> Models;
 	std::vector<Instance> Instances;
 	bool ShadowReceiving = false;

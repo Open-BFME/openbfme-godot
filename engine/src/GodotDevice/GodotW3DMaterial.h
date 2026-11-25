@@ -116,6 +116,9 @@ public:
 	// lane SELWALL-1: the surfaces this factory builds belong to a wall top or bridge model (W3DShaderKey::SelectionDecals: its opaque surfaces draw the
 	// selection's merge decals); off by default
 	void Set_Selection_Decals(bool on) { SelectionDecals = on; }
+	// Vegetation.fx (W3DTreeBuffer / W3DShrubBuffer): the surfaces this factory builds belong to a tree or shrub model: lit on both sides with abs(N.L), no
+	// specular, the VertexMaterial colours ignored (W3DShaderKey::Vegetation); off by default
+	void Set_Vegetation(bool on) { Vegetation = on; }
 	// RW 0x531C77 applied to the texture `name` (its A8R8G8B8 texels; another format stays as it is, as retail's switch leaves it), then mipmaps; cached
 	// by "#<path>#<kind>&<c0>&<c1>&<c2>" (retail names the new texture "#<texture>#<options>", RW 0x54BDE0). Invalid when the texture is missing.
 	Ref<Texture2D> Recolored_House_Texture(const std::string &name, const HouseColorParams &params, std::vector<std::string> &errors, std::vector<std::string> &notes);
@@ -164,6 +167,7 @@ private:
 	std::vector<TextureSwap> TextureSwaps; // stop S-5015
 	bool AlphaOverride = false;
 	bool SelectionDecals = false; // lane SELWALL-1
+	bool Vegetation = false;
 	// Shared entries live while a requesting factory owns them; the process lookup
 	// holds weak pointers and cannot keep GPU resources alive at shutdown.
 	std::vector<std::shared_ptr<const Ref<Shader>>> ShaderOwners;

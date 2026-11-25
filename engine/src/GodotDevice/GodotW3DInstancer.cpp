@@ -953,6 +953,24 @@ int64_t W3DInstancer::add_model(const String &model_name)
 		BuildSuffix = savedSuffix;
 		return id;
 	}
+	if (PendingVegetation)
+	{
+		// the tree's or shrub's meshes under their own name (after a colour set's suffix, before the texture swaps'), their factory flag on
+		PendingVegetation = false;
+		const std::string savedSuffix = BuildSuffix;
+		BuildSuffix += "#veg";
+		if (Materials)
+		{
+			Materials->Set_Vegetation(true);
+		}
+		const int64_t id = add_model(model_name);
+		if (Materials)
+		{
+			Materials->Set_Vegetation(false);
+		}
+		BuildSuffix = savedSuffix;
+		return id;
+	}
 	if (PendingSwaps.empty())
 	{
 		return build_model(model_name);

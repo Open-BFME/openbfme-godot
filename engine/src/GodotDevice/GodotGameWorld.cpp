@@ -902,12 +902,14 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		{
 			swaps = floorWeatherSwaps(d.draws[p.module].data, m_streakWeather); // a map-placed building's floor (bib) on a snowy map
 		}
-		const std::string key = AsciiStringUtil::lowered(p.modelName) + W3DInstancer::Texture_Swap_Suffix(swaps);
+		const bool isTree = p.kind == W3D_DRAWKIND_TREE; // RW 0x4E6753 / 0x4E699E / 0x4E9BD5: trees and shrubs draw with Vegetation.fx
+		const std::string key = AsciiStringUtil::lowered(p.modelName) + W3DInstancer::Texture_Swap_Suffix(swaps) + (isTree ? "#veg" : "");
 		auto it = m_staticModels.find(key);
 		int64_t model;
 		if (it == m_staticModels.end())
 		{
 			staticInst->Set_Build_Texture_Swaps(swaps);
+			staticInst->Set_Build_Vegetation(isTree);
 			model = staticInst->add_model(toGodot(p.modelName));
 			m_staticModels[key] = model;
 		}
