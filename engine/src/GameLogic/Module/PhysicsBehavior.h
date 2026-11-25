@@ -119,6 +119,7 @@ public:
 	void fling(const Coord3D &velocity, unsigned a = 0, unsigned b = 0);
 	// lane SUMMON-1: + 0x5D, written by the ObjectCreationList's SEND_IT_FLYING / SEND_IT_UP / RANDOM_FORCE (RW 0x5F248B)
 	void setAllowBouncing(bool on) { m_allowBouncing = on; }
+	bool hasBounced() const { return m_bounced; }
 	// RW 0x792997: fly to `landing` over a curve of height `apex` at `speed` per frame
 	void flyTo(const Coord3D &landing, float apex, float speed, unsigned a = 0, unsigned b = 0);
 	// RW 0x792A69: the shock stun on (unless the object resists shockwaves) or off (its model conditions cleared)
