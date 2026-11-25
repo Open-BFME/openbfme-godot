@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotDds.h"
 #include "GodotDevice/GodotShaderBudget.h"
 #include "Common/BfmeGame.h"
 #include "GodotDevice/GodotPackedTexture.h"
@@ -56,7 +57,7 @@ Error decodeTexture(const Ref<Image> &image, const PackedByteArray &buffer, bool
 			return image->load_jpg_from_buffer(buffer);
 		}
 	}
-	return dds ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+	return dds ? loadDdsFromBuffer(image, buffer) : image->load_tga_from_buffer(buffer);
 }
 
 // lane SDK-0: an asset pack's texture is decoded by its bytes (a modder may save a PNG for a retail .tga name)
@@ -65,7 +66,7 @@ Error decodePackTexture(const Ref<Image> &image, const PackedByteArray &buffer)
 	static const unsigned char png[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
 	if (buffer.size() >= 4 && std::memcmp(buffer.ptr(), "DDS ", 4) == 0)
 	{
-		return image->load_dds_from_buffer(buffer);
+		return loadDdsFromBuffer(image, buffer);
 	}
 	if (buffer.size() >= 8 && std::memcmp(buffer.ptr(), png, sizeof(png)) == 0)
 	{

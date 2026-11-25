@@ -19,6 +19,8 @@
  ],
  "excluded": [
   {"glob": "src/GameClient/CreateAHeroStats.cpp", "reason": "Create-a-Hero client profile statistics file IO; never simulation state"},
+  {"glob": "src/GameClient/DdsDecode.cpp", "reason": "client texture decoder fallback (level-0 S3TC / RGB DDS to RGBA8); presentation only, never simulation state"},
+  {"glob": "src/GodotDevice/GodotDds.cpp", "reason": "Godot Image DDS buffer loader wrapper delegating unsupported retail/mod DDS files to DdsDecode; presentation only"},
   {"glob": "src/GameClient/TutorialSettings.cpp", "reason": "lane BFME2CAMP1: GameData's Basic / Advanced tutorial records the main menu's OnTutorial reads (the map to start, its load screen and music); no logic state, the logic gets only the map name and the tutorial game mode"},
   {
    "glob": "src/Common/System/FloatFromChars.cpp",
