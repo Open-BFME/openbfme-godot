@@ -292,6 +292,9 @@ bool UnitVoiceResponse::handles(int msgType)
 		case MSG_DOCK:
 		case MSG_HARVEST:
 		case VOICE_EVENT_CREATED:
+		case VOICE_EVENT_DESPERATE_ATTACK:
+		case VOICE_EVENT_RAPID_FIRE:
+		case VOICE_EVENT_CAPTURE_BUILDING_COMPLETE:
 		case VOICE_EVENT_TASK_COMPLETE:
 		case VOICE_EVENT_DEFECT:
 		case VOICE_EVENT_FEAR:
@@ -1032,6 +1035,18 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 				}
 				break;
 			}
+			case VOICE_EVENT_DESPERATE_ATTACK:
+				// RW 0x8DF9D2 -> 0x8DDB2A: UnitSpecificSounds "VoiceDesperateAttack" (RW 0xC77AB4)
+				fillName(c, obj, "VoiceDesperateAttack");
+				break;
+			case VOICE_EVENT_RAPID_FIRE:
+				// RW 0x8DF9AD -> 0x8DDB2A: UnitSpecificSounds "VoiceRapidFire" (RW 0xC77ACC)
+				fillName(c, obj, "VoiceRapidFire");
+				break;
+			case VOICE_EVENT_CAPTURE_BUILDING_COMPLETE:
+				// RW 0x8DF97F -> 0x8DDB2A: UnitSpecificSounds "VoiceCaptureBuildingComplete" (RW 0xC77ADC)
+				fillName(c, obj, "VoiceCaptureBuildingComplete");
+				break;
 			case VOICE_EVENT_TASK_COMPLETE:
 				fillRow(c, obj, VOICE_TASK_COMPLETE);
 				break;
@@ -1192,7 +1207,7 @@ std::vector<std::string> UnitVoiceResponse::acceptanceStops()
 		"[S-702] unit voice: the enemy-near query of the battle voices (RW 0x701443 -> 0x7006D7 with filter 0x6E and the object's vision range RW 0x68E43B, which "
 		"scales obj + 0x1B0 by a module bonus) is approximated by `a living object of an ENEMIES relationship within the template's VisionRange (2D)`",
 		"[S-703] unit voice: message types of RW 0x8DEDBB not answered here: special powers (0x410 .. 0x412, 0x456), combine hordes (0x423), weapon modes (0x43A), "
-		"the planned action queue (0x46A), VoiceDesperateAttack / RapidFire / CaptureBuildingComplete / StartCharging / NoBuild (0x7DB .. 0x7DD, 0x7EA .. 0x7EC), "
+		"the planned action queue (0x46A), VoiceStartCharging / NoBuild (0x7EA .. 0x7EC), "
 		"the Ring voices (0x7E3 .. 0x7E5, 0x7E9)",
 		"[S-704] unit voice: rules of the move / attack / enter helpers not ported: the planning order mode (player + 0x770 == 2 -> MiscAudio PlanningModeOrderGiven), "
 		"VoiceCrush (GameData + 0x8B9, crushable target), the busy gate (GameData + 0x8B0), the castle and camp rules (RW 0x8DDBC4, campness RW 0x8DD6F3 with "

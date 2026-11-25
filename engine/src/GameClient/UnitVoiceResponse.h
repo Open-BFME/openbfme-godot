@@ -82,7 +82,10 @@ public:
 	// RotWK's client voice events: message types above the network range that only the voice picker switches on (RW 0x8DEDBB's switch)
 	enum VoiceEvent
 	{
-		VOICE_EVENT_CREATED = 0x7DA,        ///< VoiceCreatedFrom<producer template>, else VoiceCreated
+		VOICE_EVENT_CREATED = 0x7DA,                   ///< VoiceCreatedFrom<producer template>, else VoiceCreated
+		VOICE_EVENT_DESPERATE_ATTACK = 0x7DB,          ///< RW 0x8DF9D2: VoiceDesperateAttack
+		VOICE_EVENT_RAPID_FIRE = 0x7DC,                ///< RW 0x8DF9AD: VoiceRapidFire
+		VOICE_EVENT_CAPTURE_BUILDING_COMPLETE = 0x7DD, ///< RW 0x8DF97F: VoiceCaptureBuildingComplete
 		VOICE_EVENT_TASK_COMPLETE = 0x7DE,
 		VOICE_EVENT_DEFECT = 0x7DF,
 		VOICE_EVENT_FEAR = 0x7E0,

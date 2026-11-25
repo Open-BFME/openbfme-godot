@@ -206,6 +206,7 @@ include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the 
 include(cmake/Port7.cmake) # PORT-7: AnimalAIUpdate's enemy scan (OPENBFME_PORT7_TESTS)
 include(cmake/Port58.cmake) # PORT-58: SpecialAbilityUpdate/ApproachUntilMembersInRange (OPENBFME_PORT58_TESTS)
 include(cmake/Port217.cmake) # PORT-217: a builder turns to face the structure it builds or repairs (OPENBFME_PORT217_TESTS)
+include(cmake/Port86.cmake) # PORT-86: unit voices VoiceDesperateAttack / VoiceRapidFire / VoiceCaptureBuildingComplete (OPENBFME_PORT86_TESTS)
 include(cmake/Port10.cmake) # PORT-10: FlammableUpdate/RunToWater (issue #65; OPENBFME_PORT10_TESTS)
 include(cmake/Port307.cmake) # PORT-307: the gates' and the wall hubs' own functions (OPENBFME_PORT307_TESTS)
 include(cmake/Port17.cmake) # PORT-17: ThreatFinderUpdate + the threat-finder script action (issue #73; appends to OPENBFME_SIM_SOURCES; OPENBFME_PORT17_TESTS)
@@ -790,6 +791,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT7_TESTS}
     ${OPENBFME_PORT58_TESTS}
     ${OPENBFME_PORT217_TESTS}
+    ${OPENBFME_PORT86_TESTS}
     ${OPENBFME_PORT10_TESTS}
     ${OPENBFME_PORT17_TESTS}
     ${OPENBFME_PORT307_TESTS}

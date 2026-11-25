@@ -24,7 +24,7 @@ const char *const kStopEmotionAI =
 	"PreventPlayerCommands / model condition 206, the script lock (+ 0x3C6, never set) and locked temporary states. INFERENCE / NOT PORTED: the gate's status check RW 0x664D7E "
 	"(bits 2 and 0x100, commands 0x36 / 0x53 excepted) is not ported; the vision range's Object + 0x1B0 is the template's VisionRange (its writers are not read); the "
 	"safe path radius' Object + 0x1AC is 0 (its writer is not identified); AI + 0x3C4 (the short cower of state 21) is never set; the acos of relAngle (RW 0x4B3D8D) is "
-	"SimMath::acosDet; state 48's VoiceDesperateAttack client event is not sent; state 21 is defined (20's success) but no RotWK caller of state 20 as a normal state is known; a move resumed after a panic tests its arrival against the "
+	"SimMath::acosDet; state 21 is defined (20's success) but no RotWK caller of state 20 as a normal state is known; a move resumed after a panic tests its arrival against the "
 	"panic's safe path, which is still the AI's path (RW 0x748E46), and ends there";
 
 HordeContainInterface *hordeOf(Object &obj)
