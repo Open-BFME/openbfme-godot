@@ -319,8 +319,10 @@ AbilityResult runAbility(HudRig &h, const Offer &offer, const Coord3D &spot)
 	}
 	const unsigned now0 = logic.getFrame();
 	// a target for a GUI command mode
-	// in front of the caster as the camera (south of it, looking north) sees them: a click on them hits them, not the caster
-	Object *enemy = h.rig.make("MordorMountainTroll", spot.x + 260.0f, spot.y - 200.0f, h.rig.game->players().findPlayerWithName("Player_2")); // sturdy: alive until the ability lands
+	// in front of the caster as the camera (south of it, looking north) sees them: a click on them hits them, not the caster. Lane VISIONDEF-1: 250 away, in
+	// the caster's sight (the Necromancer horde's ShroudClearingRange 300 on flat ground; it was 328 away, which only the port's old height bonus saw: a
+	// player cannot aim an enemy-only power at a shrouded target, RW 0x82C167 / 0x82DFB7)
+	Object *enemy = h.rig.make("MordorMountainTroll", spot.x + 200.0f, spot.y - 150.0f, h.rig.game->players().findPlayerWithName("Player_2")); // sturdy: alive until the ability lands
 	made.push_back(enemy->getID());
 	if (enemy->getBodyModule())
 	{
@@ -441,6 +443,15 @@ AbilityResult runAbility(HudRig &h, const Offer &offer, const Coord3D &spot)
 	}
 	const Object *liveEnemy = logic.findObjectByID(made[1]);
 	why << "; the enemy " << (liveEnemy && !liveEnemy->isEffectivelyDead() ? "alive" : "gone");
+	if (liveEnemy && logic.findObjectByID(casterId))
+	{
+		// lane VISIONDEF-1: whether the player sees the enemy (a fogged target refuses the click, RW 0x82C167 / 0x82DFB7), and the caster's sight
+		why << " (its shroud status for the caster's player " << (logic.shroud() && o->getControllingPlayer() ? (int)logic.shroud()->clientObjectStatus(*liveEnemy, o->getControllingPlayer()->getPlayerIndex()) : -1) << ", the caster's sight " << (logic.shroud() ? logic.shroud()->visionRange(*o) : 0.0f)
+			<< " at z " << o->getPosition()->z << ", ground reference " << o->visionGroundReference() << ", distance "
+			<< std::sqrt((o->getPosition()->x - liveEnemy->getPosition()->x) * (o->getPosition()->x - liveEnemy->getPosition()->x) +
+						 (o->getPosition()->y - liveEnemy->getPosition()->y) * (o->getPosition()->y - liveEnemy->getPosition()->y))
+			<< ")";
+	}
 	r.outcome = fired ? "ok" : "pressed, the power never fired (no recharge started in 300 frames; message " + (sent.empty() ? std::string("none") : sent) + why.str() + ")";
 	if (modeLeft)
 	{

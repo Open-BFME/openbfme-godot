@@ -10,6 +10,7 @@ set(OPENBFME_STRUCTURE_SOURCES
 
 set(OPENBFME_STRUCTURE_TESTS
     tests/test_structure_bodies.cpp
+    tests/test_local_90.cpp
     tests/test_topple1.cpp
     tests/test_topple1_retail.cpp
     tests/test_structure_victory.cpp

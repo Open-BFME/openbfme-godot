@@ -836,9 +836,9 @@ static int staticGlowOf(const ModuleData *data)
 // stops S-115 / S-5015: a W3DFloorDraw's WeatherTexture of the map's weather (the first entry, as RW 0x4CFA9A picks a streak's) replaces the floor model's
 // texture: every texture of the model ("*"; 92 of the 96 retail floor models that set one have a single texture, the other four none or one name the
 // extractor split). INFERENCE: the floor draw's own routine was not read. Empty for any other draw module or when no entry has the weather.
-static std::vector<std::pair<std::string, std::string>> floorWeatherSwaps(const ModuleData *data, int weather)
+static std::vector<TextureSwap> floorWeatherSwaps(const ModuleData *data, int weather)
 {
-	std::vector<std::pair<std::string, std::string>> swaps;
+	std::vector<TextureSwap> swaps;
 	if (const W3DFloorDrawModuleData *fd = dynamic_cast<const W3DFloorDrawModuleData *>(data))
 	{
 		for (const std::pair<int, std::string> &w : fd->m_weatherTextures)
@@ -891,7 +891,7 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		const MapObjectDrawable &d = m_game->clientOnly().drawables[p.drawable];
 		const Transform3D xf = toTransform(d.basis, d.position, d.scale);
 		// stop S-5015: a model draw's state swaps textures (a rock's or a civilian building's SNOW state on a snowy map): its own model variant
-		std::vector<std::pair<std::string, std::string>> swaps;
+		std::vector<TextureSwap> swaps;
 		if (p.draw)
 		{
 			W3DDrawPoseView view;
@@ -1750,7 +1750,7 @@ bool GameWorld::view_is_local(size_t id, const W3DInstancer &dyn, const LogicSna
 			e.draw->poseView(f);
 			const bool shown = f.model && !e.moduleHidden && !fogHidden;
 			const auto palette = Render_House_Color_Params(d->getHouseColor(), d->customColorKind(), d->customColors());
-			const bool keySame = ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
+			const bool keySame = !flagsChanged && ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
 				&& ev.animKeySwaps == (const void *)f.textureSwaps && ev.animKeyKind == palette.kind && ev.animKeyGlow == f.glow
 				&& ev.animKeyColors[0] == (std::uint32_t)palette.colors[0] && ev.animKeyColors[1] == (std::uint32_t)palette.colors[1]
 				&& ev.animKeyColors[2] == (std::uint32_t)palette.colors[2];
@@ -1970,7 +1970,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			ev.colorsRevision = d->customColorRevision();
 			// lane PERF-HD: the model key below (the lowered name, the house colour's "#..." suffix, the swap suffix) depends only on these inputs;
 			// while they hold the key is `ev.model` already, so the strings are not made and compared again (every animated troop, every frame)
-			const bool keySame = ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
+			const bool keySame = !flagsChanged && ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
 				&& ev.animKeySwaps == (const void *)f.textureSwaps && ev.animKeyKind == palette.kind && ev.animKeyGlow == f.glow
 				&& ev.animKeyColors[0] == (std::uint32_t)palette.colors[0] && ev.animKeyColors[1] == (std::uint32_t)palette.colors[1]
 				&& ev.animKeyColors[2] == (std::uint32_t)palette.colors[2];
@@ -1993,7 +1993,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			std::string swappedModel;
 			if (shown && !f.textureSwaps->empty())
 			{
-				if (ev.swapSource != f.textureSwaps)
+				if (ev.swapSource != f.textureSwaps || flagsChanged)
 				{
 					ev.swapSource = f.textureSwaps;
 					ev.swapSuffix = W3DInstancer::Texture_Swap_Suffix(*f.textureSwaps); // once per state change (Sol review r1: not every frame)
@@ -2179,7 +2179,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			{
 				ev.staticKeyPalette = Render_House_Color_Params(owner, customKind, custom);
 				ev.staticKeyColored = m_houseColors && ev.staticKeyPalette.kind > 0;
-				ev.staticKeySwaps = e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<std::pair<std::string, std::string>>();
+				ev.staticKeySwaps = e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<TextureSwap>();
 				ev.staticKey = AsciiStringUtil::lowered(e.staticModel) + W3DInstancer::Texture_Swap_Suffix(ev.staticKeySwaps);
 				ev.staticGlow = staticGlowOf(e.data); // lane GLOW-1 (S-5231): a glowing module's model is a copy of its own, as on the animated path
 				if (ev.staticGlow != 0)
@@ -2207,7 +2207,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			}
 			const HouseColorParams &palette = ev.staticKeyPalette;
 			const bool colored = ev.staticKeyColored;
-			const std::vector<std::pair<std::string, std::string>> &swaps = ev.staticKeySwaps;
+			const std::vector<TextureSwap> &swaps = ev.staticKeySwaps;
 			const std::string &model = ev.staticKey;
 			if(ev.model!=model && ev.instance>=0) {dyn->remove_instance(ev.instance);ev.instance=-1;ev.posed=false;}
 			if (!ev.posed)

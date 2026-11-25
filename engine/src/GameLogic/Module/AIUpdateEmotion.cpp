@@ -148,7 +148,7 @@ float AIUpdateInterface::objectVisionRangeOf(Object &object)
 		const ShroudManager::TemplateVision tv = ShroudManager::templateVision(*tt);
 		if (tv.bonusPerFoot > 0.0f) // template + 0x4CC
 		{
-			float bonus = SimMath::pc24Mul(SimMath::pc24Sub(obj->getPosition()->z, sm->groundReferenceFor(*obj, tv)), tv.bonusPerFoot);
+			float bonus = SimMath::pc24Mul(SimMath::pc24Sub(obj->getPosition()->z, obj->visionGroundReference()), tv.bonusPerFoot);
 			// RW 0x68AF8E
 			if (bonus > tv.maxBonus)
 			{
