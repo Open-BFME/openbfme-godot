@@ -10,7 +10,7 @@
 #include "CombatTestUtil.h"
 
 #include "Common/GameEdition.h"
-#include "Common/StateHasher.h"
+#include "Common/StateHash.h"
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/GameLogic.h"
