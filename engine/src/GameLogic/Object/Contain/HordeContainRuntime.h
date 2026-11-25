@@ -518,3 +518,92 @@ namespace HordeCommands
 // lane HORDE-2: MSG_HORDE_TOGGLE_FORMATION (the dispatcher case RW 0x77BE83)
 void registerHandlers(GameLogicDispatch &d);
 }
+
+class AODHordeContainBehaviorData;
+
+// AODHordeContain (vtable RW 0xC5D3F0 / 0xC5CFA8, Port 26): the Army of the Dead's horde (AODHordeContain.cpp).
+class AODHordeContain : public HordeContain
+{
+public:
+	static constexpr int kMaxPathSamples = 60; // RW 0x3C (this + 0x338 .. + 0x6F7)
+	static constexpr int kMaxRanks = 20;       // RW 0x14 (this + 0x6FC .. + 0x8DB)
+
+	struct SwayRecord // RW 0x18 bytes per slot (iface + 0x1F0 / this + 0x30C)
+	{
+		float phaseXY = 0.0f;      // +0x00
+		float ampFactorXY = 0.0f;  // +0x04
+		float freqFactorXY = 0.0f; // +0x08
+		float phaseZ = 0.0f;       // +0x0C
+		float ampFactorZ = 0.0f;   // +0x10
+		float freqFactorZ = 0.0f;  // +0x14
+	};
+
+	struct PathSample // RW 0x10 bytes (this + 0x338)
+	{
+		Coord3D pos{ 0.0f, 0.0f, 0.0f };
+		float angle = 0.0f;
+	};
+
+	struct RankSpineNode // RW 0x18 bytes (ctor RW 0x87D97A, this + 0x6FC)
+	{
+		float slotX = 0.0f;              // +0x00
+		float angle = 0.0f;              // +0x04
+		Coord3D pos{ 0.0f, 0.0f, 0.0f }; // +0x08
+		bool valid = false;              // +0x14
+	};
+
+	OBFME_MODULE_XFER(AODHordeContain)
+	AODHordeContain(Thing *thing, const HordeContainBehaviorData *data);
+	~AODHordeContain() override;
+
+	void onObjectCreated() override; // RW 0x63F3BF: no-op; slots build lazily on first addToContain (RW 0x872D98 -> 0x87E8FC)
+	void crc(StateHasher &hasher) const override;
+	UpdateSleepTime update() override; // RW 0x872EFC + 0x87D9F6 + 0x873FE8 + 0x87DB01
+	bool addToContain(Object *obj) override; // RW 0x87D650 -> 0x872D0A
+	void removeFromContain(Object *obj) override;
+	void markDirty() override;
+	void updateFormation() override;
+	Coord3D getMemberFormationPosition(const Object *member) const override; // RW 0x87DEFB
+
+	// RW 0x87E894 (HordeContainInterface slot +0x130): called by AODCrushCollide on colliding with an enemy.
+	void onLargeObjectCollide(Object *member, Object *other);
+
+	const AODHordeContainBehaviorData &aodData() const;
+	const std::vector<SwayRecord> &swayRecords() const { return m_swayRecords; }
+	int pathSampleCount() const { return m_pathSampleCount; }
+	const std::array<PathSample, kMaxPathSamples> &pathSamples() const { return m_pathSamples; }
+	int rankCount() const { return m_rankCount; }
+	const std::array<RankSpineNode, kMaxRanks> &rankSpine() const { return m_ranks; }
+	ObjectID largeUnitID() const { return m_largeUnitID; }
+	unsigned largeUnitStartFrame() const { return m_largeUnitStartFrame; }
+	const Coord3D &largeUnitPosition() const { return m_largeUnitPos; }
+	float largeUnitExtent() const { return m_largeUnitExtent; }
+	float largeUnitHeight() const { return m_largeUnitHeight; }
+	float scatterProgress() const { return m_scatterProgress; }
+
+private:
+	void buildAodSlots();
+	void pushPathSample(const Coord3D &pos);
+	void updateRankSpine();
+	void updateRankSpineNode(int rankIdx);
+	void stepSpineAndScatter();
+	bool runAodMemberPass();
+	bool orderAodMember(Object &member, const Coord3D &slotPos);
+	void syncOathToMembers(bool fulfilled);
+	int findRankForSlotX(float slotX) const;
+	float surfaceHeightAt(float x, float y) const;
+
+	const AODHordeContainBehaviorData *m_aodData = nullptr;
+	std::vector<SwayRecord> m_swayRecords;
+	ObjectID m_largeUnitID = INVALID_ID;
+	unsigned m_largeUnitStartFrame = 0;
+	Coord3D m_largeUnitPos{ 0.0f, 0.0f, 0.0f };
+	float m_largeUnitExtent = 0.0f;
+	float m_largeUnitHeight = 0.0f;
+	float m_scatterProgress = 0.0f;
+	std::array<PathSample, kMaxPathSamples> m_pathSamples{};
+	int m_pathSampleCount = 0;
+	std::array<RankSpineNode, kMaxRanks> m_ranks{};
+	int m_rankCount = 0;
+	bool m_aodDirty = true;
+};

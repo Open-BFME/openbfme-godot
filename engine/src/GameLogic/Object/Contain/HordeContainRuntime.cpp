@@ -88,6 +88,10 @@ void HordeContain::registerClasses(ModuleFactory &modules)
 			return std::make_unique<HordeContain>(thing, dynamic_cast<const HordeContainBehaviorData *>(data));
 		});
 	}
+	modules.bindTypedData<AODHordeContainBehaviorData>("AODHordeContain", MODULETYPE_BEHAVIOR);
+	modules.bindModuleProc("AODHordeContain", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
+		return std::make_unique<AODHordeContain>(thing, dynamic_cast<const HordeContainBehaviorData *>(data));
+	});
 }
 
 // the slot table is built when the module exists and its object is complete (RW 0x877751, from the contain's creation)
