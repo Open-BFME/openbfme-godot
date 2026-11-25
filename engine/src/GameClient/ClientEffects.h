@@ -30,9 +30,9 @@
 //     only; retail's WWMath::Random_Float is the client's own generator (not TheGameClient's stream).
 //
 // INFERENCE (stop S-687): the random fudge of Compute_Rotations uses a private deterministic generator here (retail's WWMath
-// generator state is not reproduced); the light pulse's contribution to the object shading is a point light with the retail range and a
-// linear far attenuation (the D3D light attenuation is linear in the range but its exact scale is not decoded); the decal texture filter is
-// the asset loader's.
+// generator state is not reproduced); the decal texture filter is the asset loader's. The light pulse's contribution to the object shading
+// (lane LOCAL-38) is the retail one: each render object's LightEnvironmentClass (Libraries/WWVegas/WW3D2/lightenvironment.h) and the effects'
+// PointLight[0] term (normalmapped / defaultw3d .fxo: Color * max(1 - d / Range, 0)^2 * N.L).
 
 #pragma once
 
@@ -88,6 +88,14 @@ struct LightPulseFx
 	std::uint32_t currentIncrease = 0, currentDecrease = 0;
 	float targetEnd = 0.0f;
 	RGBColor targetColor{ 0.0f, 0.0f, 0.0f };
+	// lane LOCAL-38 (LightEnvironmentClass::Add_Light RW 0x540250): what the per-object light set reads besides the diffuse * intensity above.
+	// targetAmbient: LightClass Ambient (+0xD4) * Intensity (+0xD0): createLightPulse sets the ambient to the colour too (RW 0x443BAB), a
+	// W3DLightDraw to its Ambient (RW 0x4CF1A0). targetFilter: the raw Diffuse (+0xE0) the black filter reads before the intensity
+	// (RW 0x540261). farAttenuation: LightClass +0xC8 bit 0; W3DLightDraw sets it (RW 0x4CF227), createLightPulse does not (RW 0x443B5D) and
+	// the pool reuses a disabled light without clearing it (RW 0x46F226 / 0x442846), so it stays with the slot.
+	RGBColor targetAmbient{ 0.0f, 0.0f, 0.0f };
+	RGBColor targetFilter{ 0.0f, 0.0f, 0.0f };
+	bool farAttenuation = false;
 	bool enabled = false;
 	bool isPersistent = false; ///< true for persistent dynamic lights (W3DLightDraw) so transient FX pulses never alias the slot
 	// DONOR BFME2 0x6DE3D On_Frame_Update: one client frame; returns false when the light expired on this frame
@@ -96,10 +104,18 @@ struct LightPulseFx
 	float scale() const { return m_scale; }
 	float range() const;
 	RGBColor colorNow() const;
+	RGBColor ambientNow() const; // lane LOCAL-38: On_Frame_Update scales the ambient with the diffuse (RW 0x46D7CA keeps both originals)
+	RGBColor filterNow() const;  // lane LOCAL-38: the raw diffuse, scaled like the diffuse
 
 private:
 	float m_scale = 1.0f;
 };
+
+struct LightEnvSourceLight;
+// lane LOCAL-38: one pool light as LightEnvironmentClass::Add_Light reads its LightClass (Libraries/WWVegas/WW3D2/lightenvironment.h): POINT
+// (the pool's lights, RW 0x46D59B), position, ambient / diffuse already times the intensity (intensity 1), the raw diffuse for the black
+// filter, FarAttenStart / the current FarAttenEnd and the attenuation flag, enabled (+0x144)
+void LightPulseToEnvSource(const LightPulseFx &light, LightEnvSourceLight &out);
 
 class LightPulsePool
 {
@@ -110,8 +126,11 @@ public:
 
 	// Persistent dynamic light (W3DLightDraw, RW 0x004CE750 / DONOR BFME2 0x004CEF80).
 	// Returns a pool slot index (>= 0), or -1 if full. Does not apply the 21.0f range floor of transient pulses.
-	int addPersistent(const Coord3D &pos, const RGBColor &color, float radius);
-	void updatePersistent(int handle, const Coord3D &pos, const RGBColor &color, float radius, bool enabled);
+	// color = Diffuse * Intensity; lane LOCAL-38: ambient = Ambient * Intensity and rawDiffuse = Diffuse (the black filter's input); without
+	// them (null) the ambient is black and the filter reads `color` (the LOCAL-28 call shape)
+	int addPersistent(const Coord3D &pos, const RGBColor &color, float radius, const RGBColor *ambient = nullptr, const RGBColor *rawDiffuse = nullptr);
+	void updatePersistent(int handle, const Coord3D &pos, const RGBColor &color, float radius, bool enabled, const RGBColor *ambient = nullptr,
+		const RGBColor *rawDiffuse = nullptr);
 	void removePersistent(int handle);
 
 	void step();

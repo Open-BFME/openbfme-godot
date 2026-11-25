@@ -82,7 +82,6 @@ public:
 	// lane FEAT-BLDFX-1: rebuilds the terrain decal meshes (scorches, RW 0x5E0045 / DONOR BFME2 0x67EA3; DynamicDecal, RW 0x5E05AB / DONOR BFME2 0x10C785) from the playback's client
 	// effect state. Called by step_once; a viewer that plays a list without stepping calls it itself.
 	void updateClientEffects();
-	void updateLightPulseUniforms(); // lane FEAT-BLDFX-1: the active pulses as the object shaders' four dynamic lights
 	const ScorchBuffer &scorches() const;
 	int64_t decalCount() const; // int64_t: godot-cpp has no size_t binding on macOS (unsigned long)
 	int64_t scorchCount() const { return (int64_t)scorches().entries().size(); }

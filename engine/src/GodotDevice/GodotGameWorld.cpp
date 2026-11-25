@@ -1392,6 +1392,15 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	dyn->set_playing(false); // time only enters through set_instance_pose
 	dyn->set_pose_culling(m_perf3Client); // PiP supplies an additional frustum when a second camera sees the live objects.
 	dyn->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the same frusta decide what is drawn
+	if (m_fxPlayer && m_fxPlayer->playback())
+	{
+		// lane LOCAL-38: the map's objects see the scene's dynamic lights (W3DLightDraw lights, light pulses), each through its own light environment
+		dyn->set_scene_dynamic_lights(&m_fxPlayer->playback()->lightPulses());
+		if (W3DInstancer *st = instancerOf(m_staticId))
+		{
+			st->set_scene_dynamic_lights(&m_fxPlayer->playback()->lightPulses());
+		}
+	}
 	timings["static_layer_ms"] = timing::elapsedMs(t0);
 
 	t0 = nowMs();
@@ -2733,6 +2742,10 @@ void GameWorld::heldClientWork()
 		m_liveFX->updateAttachedSystems();
 		m_fxPlayer->advance(m_fxPendingDt);
 		syncBuffs(m_fxPendingDt); // lane SPELL-4
+		if (W3DInstancer *st = instancerOf(m_staticId))
+		{
+			st->refresh_object_lights(); // lane LOCAL-38: the static layer updates by hand; its objects' light environments follow the lights every frame
+		}
 	}
 	m_fxPendingDt = 0.0;
 	if (m_treeTopple)

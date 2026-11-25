@@ -199,12 +199,7 @@ void W3D_Ensure_Light_Globals()
 	rs->global_shader_parameter_add(StringName("w3d_fog_shift"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
 	// lane VISUAL-2: the fogged light fraction (RW 0x46DFD0: GameData FogAlpha / ClearAlpha), set by the map's game
 	rs->global_shader_parameter_add(StringName("w3d_fogged_frac"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 1.0f);
-	// lane FEAT-BLDFX-1: the dynamic light pulses (TARGET RW 0x5DFAA3 / DONOR BFME2 0x4423C / 0x6DE3D), view-space position and range in w, colour in the _col vec4; all off
-	for (int i = 0; i < 4; ++i)
-	{
-		rs->global_shader_parameter_add(StringName(String("w3d_pulse") + String::num_int64(i)), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4());
-		rs->global_shader_parameter_add(StringName(String("w3d_pulse") + String::num_int64(i) + "_col"), RenderingServer::GLOBAL_VAR_TYPE_VEC4, Vector4());
-	}
+	// lane LOCAL-38: no viewport-global dynamic lights; each render object's light environment is in its palette block (W3D_PALETTE_LIGHT_TEXELS)
 	// lane OCCLUDE-1: the behind-building colours and their switch (W3D_Set_Occlusion), off until a game sets them
 	rs->global_shader_parameter_add(StringName("w3d_occl_on"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
 	rs->global_shader_parameter_add(StringName("w3d_occl_colors"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
@@ -290,8 +285,29 @@ void W3D_Apply_Fog(bool enabled, const float color[3], float start, float end)
 	rs->global_shader_parameter_set(StringName("w3d_fog_color"), Vector3(color[0], color[1], color[2]));
 }
 
+namespace
+{
+// lane LOCAL-38: the light sets the object shaders were last given (the instancers rank the dynamic lights against these global lights)
+W3DObjectLighting &currentLighting()
+{
+	static W3DObjectLighting current = [] {
+		W3DObjectLighting l;
+		l.objects = viewerSet();
+		l.infantry = l.objects;
+		return l;
+	}();
+	return current;
+}
+} // namespace
+
+const W3DObjectLighting &W3D_Current_Object_Lighting()
+{
+	return currentLighting();
+}
+
 void W3D_Apply_Object_Lighting(const W3DObjectLighting &lighting)
 {
+	currentLighting() = lighting;
 	W3D_Ensure_Light_Globals();
 	if (!RenderingServer::get_singleton())
 	{
@@ -309,6 +325,9 @@ void W3D_Apply_Viewer_Lighting()
 		return;
 	}
 	const W3DLightSet v = viewerSet();
+	currentLighting().objects = v;
+	currentLighting().infantry = v;
+	currentLighting().colorScale = 1.0f;
 	setSet("obj", v);
 	setSet("inf", v);
 }

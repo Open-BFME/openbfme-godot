@@ -25,6 +25,9 @@
 #include "GameEngineDevice/W3DDevice/GameClient/HouseColor.h"
 #include "Libraries/WWVegas/WW3D2/w3dstops.h"
 #include "Libraries/WWVegas/WW3D2/w3dsort.h"
+#include "Libraries/WWVegas/WW3D2/lightenvironment.h" // lane LOCAL-38
+
+class LightPulsePool; // lane LOCAL-38 (GameClient/ClientEffects.h)
 
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/variant/color.hpp>
@@ -200,6 +203,19 @@ public:
 	bool get_draw_culling() const { return DrawCulling; }
 	// lane PERF-3 (tests): the palette texels of one instance as the last update wrote them (3 RGBA texels per pivot), empty for an unknown instance
 	PackedFloat32Array get_instance_palette(int64_t instance) const;
+	// lane LOCAL-38 (stop S-687, C++ only): the scene's dynamic lights (RTS3DScene's list +0x114: W3DLightDraw lights and light pulses). Every live
+	// instance is a render object with its own light environment (RTS3DScene::renderOneObject RW 0x46F48E, LightEnvironmentClass RW 0x540250,
+	// Libraries/WWVegas/WW3D2/lightenvironment.h), ranked against the global lights W3D_Apply_Object_Lighting last set, and written to the three
+	// palette texels in front of its pivots (W3D_PALETTE_LIGHT_TEXELS). Null (the default): no dynamic light reaches this instancer's objects (an
+	// Apt View3D or viewer scene of its own)
+	void set_scene_dynamic_lights(const ::LightPulsePool *pool) { SceneLights = pool; }
+	// lane LOCAL-38: update_now writes the light environments; a scene that updates itself by hand (set_auto_update(false)) calls this every frame
+	// (the lights move and flicker): the changed texels are written and uploaded
+	void refresh_object_lights();
+	// lane LOCAL-38 (tests): the light texels of one instance (12 floats: point light position + range, colour + dropped global lights, ambient),
+	// empty for an unknown instance; and how many instances the last update lit with a dynamic light
+	PackedFloat32Array get_instance_light_texels(int64_t instance) const;
+	int get_lit_instance_count() const { return LitInstances; }
 	bool get_pose_culling() const { return PoseCulling; }
 
 	// Evaluates everything now (also done by _process).
@@ -342,6 +358,8 @@ private:
 		const HAnimClass *MemoAnim[2] = { nullptr, nullptr };
 		const void *MemoKey[2] = { nullptr, nullptr };
 		std::vector<std::pair<int, float>> BoneSpins; // lane COMBAT-4: (pivot, angle about its Y) applied after the pose (set_instance_bone_spins_native)
+		float LightTexels[12] = {};           // lane LOCAL-38: the light environment last written in front of the pivots
+		bool LightTexelsWritten = false;      // lane LOCAL-38: false for a new block (a reused block holds another instance's texels)
 	};
 	// lane PERF-3: the radius around an instance's origin, in model units, that holds every vertex of the model in any pose (pose culling)
 	float cull_radius(Model &m) const;
@@ -357,6 +375,7 @@ private:
 	void evaluate_pose(Instance &inst) const;
 	void evaluate_animation_pose(Instance &inst) const; ///< the animation part of evaluate_pose (lane COMBAT-4 adds the bone spins after it)
 	void write_palette(const Instance &inst);
+	bool update_object_lights(); // lane LOCAL-38: true when a light texel changed (its rows are noted for the upload)
 	void write_buffers();
 	// lane GPUPERF-2: draw culling. cull_frustum gathers the camera planes (false without a camera: nothing is culled); compute_in_view marks every live
 	// instance whose sphere meets them; pack_draw writes d's buffer from d.Order (minus the culled ones while culling) with the MultiMeshes' boxes
@@ -392,6 +411,9 @@ private:
 	std::vector<Ref<ShaderMaterial>> AllMaterials;
 	std::vector<W3DMapperBinding> Mappers;
 
+	const ::LightPulsePool *SceneLights = nullptr;      // lane LOCAL-38: set_scene_dynamic_lights
+	std::vector<::LightEnvSourceLight> LightScratch;  // lane LOCAL-38: the enabled dynamic lights of the frame
+	int LitInstances = 0;                           // lane LOCAL-38: instances the last update lit with a dynamic light
 	// palette (lane PERF-3: the poses are written into PaletteImage's own buffer, PaletteWrite during an update; no separate copy is kept)
 	float *PaletteWrite = nullptr;
 	int PaletteTexels = 0;

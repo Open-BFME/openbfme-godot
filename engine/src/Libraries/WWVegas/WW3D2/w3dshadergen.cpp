@@ -234,18 +234,9 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("global uniform mat3 w3d_lcol_inf;");
 	line("global uniform mat3 w3d_ldir_inf;");
 	line("global uniform float w3d_fogged_frac;"); // lane VISUAL-2: RW 0x46DFD0 FogAlpha / ClearAlpha
-	// lane FEAT-BLDFX-1: the dynamic light pool's contribution to the object lighting (TARGET RW 0x5DFAA3; DONOR BFME2 0x4423C / 0x6DE3D; the retail dynamic lights light
-	// objects, not terrain). xyz = the light's position in VIEW space (the device passes it there), w = its current far attenuation end (0 = off);
-	// the second vec4 is its current colour (the On_Frame_Update scale already applied). Four lights: the retail pool grows, but no retail FXList
-	// keeps more than a few pulses alive at once (the rest are reported, stop S-687).
-	line("global uniform vec4 w3d_pulse0;");
-	line("global uniform vec4 w3d_pulse0_col;");
-	line("global uniform vec4 w3d_pulse1;");
-	line("global uniform vec4 w3d_pulse1_col;");
-	line("global uniform vec4 w3d_pulse2;");
-	line("global uniform vec4 w3d_pulse2_col;");
-	line("global uniform vec4 w3d_pulse3;");
-	line("global uniform vec4 w3d_pulse3_col;");
+	// lane LOCAL-38 (stop S-687): the dynamic lights (W3DLightDraw, LightPulse) reach a render object through its own light environment
+	// (RTS3DScene::renderOneObject RW 0x46F48E, LightEnvironmentClass RW 0x540250): the instancer writes it per instance in front of the instance's
+	// pivots (W3D_PALETTE_LIGHT_TEXELS); see w3d_object_light below
 	if (k.OcclusionPass == W3D_OCCLUSION_PASS_COLOR)
 	{
 		// lane OCCLUDE-1: the players' occluded colours by slot (0xAARRGGBB as RGBA8 texels, RTS3DSceneOcclusion::occludedColor) and the switch
@@ -291,9 +282,14 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("varying vec4 v_pack_pos; // xyz: the view-space position (v_vpos), w: the instance fade (v_fade)");
 	line("#define v_vpos v_pack_pos.xyz");
 	line("#define v_fade v_pack_pos.w");
-	line("varying vec3 v_vnrm;");
-	line("varying vec3 v_wnrm;");
-	line("varying vec3 v_wview;");
+	// lane LOCAL-38: w of the three normal varyings carries normalmapped.fxo's per-vertex PointLight[0] + per-object ambient term (oD0, blob 22)
+	// to the pixel stage: no extra location (every varying takes one whatever its width)
+	line("varying vec4 v_vnrm4;");
+	line("varying vec4 v_wnrm4;");
+	line("varying vec4 v_wview4;");
+	line("#define v_vnrm v_vnrm4.xyz");
+	line("#define v_wnrm v_wnrm4.xyz");
+	line("#define v_wview v_wview4.xyz");
 	// One flat varying carries per-instance lighting and team colour (separate scalars exceed the location budget).
 	line("varying flat vec3 v_instance;"); // x infantry light, y fog fraction, z packed house colour
 	if (k.Fx)
@@ -335,15 +331,23 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("}");
 	line("vec3 w3d_to_godot(vec3 v) { return vec3(v.x, v.z, -v.y); }");
 	line("vec3 w3d_to_linear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }");
-	// lane FEAT-BLDFX-1: one dynamic light, in view space: the retail W3DDynamicLight with FarAttenStart 1 and FarAttenEnd w (DONOR BFME2 0x4423C /
-	// 0x6DE3D). Linear far attenuation (INFERENCE, S-687) and a Lambert term against the surface normal; the caller adds it to its light sum.
-	line("vec3 w3d_dynamic_light(vec4 pulse, vec4 col, vec3 vpos, vec3 vnrm) {");
-	line("\tif (pulse.w <= 0.0) return vec3(0.0);");
-	line("\tvec3 d = pulse.xyz - vpos;");
+	// lane LOCAL-38: the render object's light environment, three texels in front of its pivots (W3DInstancer::update_object_lights):
+	// [0] = PointLight[0] position (Godot world) and Range (0: none), [1] = its Color (diffuse * intensity, unattenuated, SAS-scaled) and the
+	// global lights that lost their slot (bit i: light i), [2] = what the dynamic lights add to the AmbientLight (SAS-scaled). Zero = no
+	// dynamic light reaches the object (a base below the light texels, the shader probe's, reads none).
+	line("vec4 w3d_object_light(int base, int k) {");
+	line("\tint idx = base - " + std::to_string(W3D_PALETTE_LIGHT_TEXELS) + " + k;");
+	line("\tif (idx < 0) return vec4(0.0);");
+	line("\treturn texelFetch(w3d_palette, ivec2(idx & " + std::to_string(W3D_PALETTE_WIDTH - 1) + ", idx >> " + std::to_string(W3D_PALETTE_WIDTH_LOG2) + "), 0);");
+	line("}");
+	// normalmapped.fxo blob 22 / defaultw3d.fxo blob 151 / vegetation.fxo blob 6: d = |P - world position|, att = max(1 - d / Range, 0)^2,
+	// Color * att * max(N.L, 0) with N the world normal of the vertex (not the normal map) and L toward the light
+	line("vec3 w3d_point_light(vec4 pl, vec3 col, vec3 wpos, vec3 wn) {");
+	line("\tif (pl.w <= 0.0) return vec3(0.0);");
+	line("\tvec3 d = pl.xyz - wpos;");
 	line("\tfloat dl = length(d);");
-	line("\tfloat att = max(1.0 - dl / pulse.w, 0.0);");
-	line("\tif (att <= 0.0) return vec3(0.0);");
-	line("\treturn col.rgb * (att * max(dot(vnrm, d / max(dl, 1e-4)), 0.0));");
+	line("\tfloat att = max(1.0 - dl / pl.w, 0.0);");
+	line("\treturn col * (att * att) * max(dot(wn, d / max(dl, 1e-4)), 0.0);");
 	line("}");
 	if (k.Fog != W3DHardwareFog::FOG_DISABLE)
 	{
@@ -457,6 +461,17 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 	line("\tv_wnrm = normalize(MODEL_NORMAL_MATRIX * NORMAL);");
 	line("\tv_wview = mat3(INV_VIEW_MATRIX) * normalize(v_vpos);");
 	line("\tvec3 wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;");
+	// lane LOCAL-38: this render object's dynamic lights (palette texels in front of its pivots); the dropped global lights ride in v_instance.y
+	// above 2 (the fog fraction is at most 1: mod 2 gives it back)
+	line("\tvec4 w3d_ol0 = w3d_object_light(base, 0);");
+	line("\tvec4 w3d_ol1 = w3d_object_light(base, 1);");
+	line("\tvec4 w3d_ol2 = w3d_object_light(base, 2);");
+	line("\tint w3d_drop = int(w3d_ol1.w + 0.5);");
+	line("\tv_instance.y += 2.0 * float(w3d_drop);");
+	line("\tvec3 w3d_pt = w3d_point_light(w3d_ol0, w3d_ol1.rgb, wpos, normalize(mat3(MODEL_MATRIX) * NORMAL));");
+	// normalmapped.fxo blob 22: oD0 = (PointLight term + AmbientLight * AmbientColor) * 0.5; the part the dynamic lights add, for the pixel stage
+	line("\tvec3 w3d_pex = w3d_pt + w3d_ol2.rgb * w3d_ambient_mat;");
+	line("\tv_vnrm4.w = w3d_pex.x; v_wnrm4.w = w3d_pex.y; v_wview4.w = w3d_pex.z;");
 	if (k.Fx)
 	{
 		// blob 22: world normal / binormal / tangent (World * vector, normalized), frame x = -binormal, y = -tangent, z = normal;
@@ -516,7 +531,12 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t\tmat3 ld = inf ? w3d_ldir_inf : w3d_ldir_obj;");
 		line("\t\tvec3 amb = inf ? w3d_amb_inf : w3d_amb_obj;");
 		line("\t\tlc[0] += w3d_tint; lc[1] += w3d_tint; lc[2] += w3d_tint; amb += w3d_tint;");
-		line("\t\tlc *= v_instance.y; amb *= v_instance.y;"); // lane VISUAL-2: the fogged light environment (RW 0x46DFBA: the lights' diffuse and ambient times the fraction)
+		line("\t\tfloat fogk = mod(v_instance.y, 2.0);");
+		line("\t\tlc *= fogk; amb *= fogk;"); // lane VISUAL-2: the fogged light environment (RW 0x46DFBA: the lights' diffuse and ambient times the fraction)
+		// lane LOCAL-38: a global light that lost its slot to stronger point lights is black for this object (SAS DirectionalLight[] = the
+		// non-point slots, RW 0x53F170); the dynamic lights' ambient (RW 0x540394, clamped with the scene's, RW 0x54063B)
+		line("\t\tif ((w3d_drop & 1) != 0) lc[0] = vec3(0.0); if ((w3d_drop & 2) != 0) lc[1] = vec3(0.0); if ((w3d_drop & 4) != 0) lc[2] = vec3(0.0);");
+		line("\t\tamb += w3d_ol2.rgb;");
 		line("\t\tvec3 dsum = vec3(0.0);");
 		line("\t\tvec3 ssum = vec3(0.0);");
 		line("\t\tfor (int i = 0; i < 3; i++) {");
@@ -526,11 +546,8 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		// D3D9 lit clamps the power to [-127.9961, 127.9961]
 		line("\t\t\tssum += lc[i] * ((ndl > 0.0 && ndh > 0.0) ? pow(ndh, clamp(w3d_shininess, " + fmt(-W3D_LIT_POWER_LIMIT) + ", " + fmt(W3D_LIT_POWER_LIMIT) + ")) : 0.0);");
 		line("\t\t}");
-		// lane FEAT-BLDFX-1: the dynamic light pool's contribution (DONOR BFME2 0x4423C), added to the directional sum like a retail scene light
-		line("\t\tdsum += w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm);");
-		line("\t\tdsum += w3d_dynamic_light(w3d_pulse1, w3d_pulse1_col, v_vpos, v_vnrm);");
-		line("\t\tdsum += w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm);");
-		line("\t\tdsum += w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm);");
+		// lane LOCAL-38: defaultw3d.fxo blob 151 adds PointLight[0] to the directional diffuse sum before ColorDiffuse
+		line("\t\tdsum += w3d_pt;");
 		line(k.HasDCG ? "\t\tvec4 vc = COLOR;" : "\t\tvec4 vc = vec4(1.0);");
 		line("\t\tv_lit0 = clamp(vec4((dsum * w3d_diffuse.rgb + amb * w3d_ambient_mat + w3d_emissive) * vc.rgb * 0.5, vc.a * w3d_diffuse.a), 0.0, 1.0);");
 		line("\t\tv_lit1 = clamp(ssum * w3d_spec_color * 0.5, 0.0, 1.0);");
@@ -574,7 +591,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 			in = std::string("vec4(") + (s == 0 ? "v_uv.xy" : "v_uv.zw") + ", 1.0, 0.0)";
 			break;
 		case W3D_TEXGEN_CAMERA_NORMAL:
-			in = k.ViewDependent[s] ? "vec4(vec3(v_wnrm.x, -v_wnrm.z, v_wnrm.y), 1.0)" : "vec4(v_vnrm.x, v_vnrm.y, -v_vnrm.z, 1.0)";
+			in = k.ViewDependent[s] ? "vec4(vec3(v_wnrm4.x, -v_wnrm4.z, v_wnrm4.y), 1.0)" : "vec4(v_vnrm4.x, v_vnrm4.y, -v_vnrm4.z, 1.0)";
 			break;
 		case W3D_TEXGEN_CAMERA_REFLECTION:
 			if (k.ViewDependent[s])
@@ -648,9 +665,16 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\tmat3 lc = inf ? w3d_lcol_inf : w3d_lcol_obj;");
 		line("\tvec3 amb = inf ? w3d_amb_inf : w3d_amb_obj;");
 		line("\tlc[0] += w3d_tint; lc[1] += w3d_tint; lc[2] += w3d_tint; amb += w3d_tint;");
-		line("\tlc *= v_instance.y; amb *= v_instance.y;"); // lane VISUAL-2: the fogged light environment
+		line("\tfloat fogk = mod(v_instance.y, 2.0);");
+		line("\tlc *= fogk; amb *= fogk;"); // lane VISUAL-2: the fogged light environment
+		line("\tint w3d_drop = int(v_instance.y * 0.5);"); // lane LOCAL-38: the global lights that lost their slot (see the vertex stage)
+		line("\tif ((w3d_drop & 1) != 0) lc[0] = vec3(0.0); if ((w3d_drop & 2) != 0) lc[1] = vec3(0.0); if ((w3d_drop & 4) != 0) lc[2] = vec3(0.0);");
 		line("\tvec3 base = t0.rgb * w3d_diffuse.rgb;");
 		line("\tvec3 col = t0.rgb * clamp(amb * w3d_ambient_mat * 0.5, 0.0, 1.0) * 2.0;");
+		// lane LOCAL-38: normalmapped.fxo blob 22 saturates (PointLight term + AmbientLight * AmbientColor) * 0.5 as one sum (oD0); the line above
+		// is that without the dynamic lights, this adds the difference
+		line("\tvec3 w3d_pex = vec3(v_vnrm4.w, v_wnrm4.w, v_wview4.w);");
+		line("\tcol += t0.rgb * (clamp((amb * w3d_ambient_mat + w3d_pex) * 0.5, 0.0, 1.0) - clamp(amb * w3d_ambient_mat * 0.5, 0.0, 1.0)) * 2.0;");
 		line("\tfor (int i = 0; i < 3; i++) {");
 		line("\t\tfloat ndl = dot(nt, lts[i]);");
 		line("\t\tfloat ndh = dot(nt, hts[i]);");
@@ -658,10 +682,6 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k, W3DSamplerPolicy sam
 		line("\t\tfloat sp = (ndh > 0.0 && ndl > 0.0) ? pow(ndh, w3d_shininess) : 0.0;");
 		line("\t\tcol += lc[i] * (base * ndl * on + w3d_spec_color * sp);");
 		line("\t}");
-		// lane FEAT-BLDFX-1: the dynamic light pool's contribution on the normal-mapped path (DONOR BFME2 0x4423C), diffuse like the
-		// directional lights above: times the surface colour, so a black texel stays black
-		line("\tcol += base * (w3d_dynamic_light(w3d_pulse0, w3d_pulse0_col, v_vpos, v_vnrm) + w3d_dynamic_light(w3d_pulse1, w3d_pulse1_col, v_vpos, v_vnrm)");
-		line("\t\t+ w3d_dynamic_light(w3d_pulse2, w3d_pulse2_col, v_vpos, v_vnrm) + w3d_dynamic_light(w3d_pulse3, w3d_pulse3_col, v_vpos, v_vnrm));");
 		line("\tcur = vec4(col, t0.a);");
 	}
 	else if (k.SimpleFx)
