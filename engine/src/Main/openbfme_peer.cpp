@@ -541,6 +541,10 @@ bool loadWorld(const Args &a, World &w, std::string &error)
 			error = "the install-folder mod failed:\n" + error;
 			return false;
 		}
+		for (const std::string &n : im.notes) // as the rendering peer prints them: an archive left out, a file that is not used
+		{
+			std::fprintf(stderr, "openbfme_peer: %s\n", n.c_str());
+		}
 		w.fs = std::move(merged);
 		modLines = im.identity;
 		mountedArchives = im.merged;
