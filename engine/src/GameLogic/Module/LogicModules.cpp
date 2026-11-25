@@ -62,6 +62,7 @@
 #include "GameLogic/Module/ThreatFinderUpdate.h" // PORT 17 (issue #73)
 #include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/BoredUpdate.h"
+#include "GameLogic/Module/WallUpgradeUpdate.h"
 
 #include <stdexcept>
 
@@ -94,6 +95,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	SupplyCenterDockUpdate::registerClass(modules); // lane LUMBER1: the lumber mills' dock (the income of a delivery)
 	ConstructionModules::registerAll(modules);
 	WallSpan::registerModules(modules); // lane BUILD-2: WallHubBehavior
+	WallUpgradeUpdate::registerClass(modules); // WallUpgradeUpdate (RW 0x8AEBD3)
 	CastleModules::registerAll(modules);
 	CombatModules::registerAll(modules);  // lane COMBAT-1: ImmortalBody, HighlanderBody and the die modules
 	ProjectileModules::registerAll(modules); // lane PROJ-1: BezierProjectileBehavior

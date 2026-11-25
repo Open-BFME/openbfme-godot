@@ -159,6 +159,36 @@ BodyDamageType ActiveBody::calcDamageState() const
 	return BODY_PRISTINE;
 }
 
+// RW 0x008C1BF9 (DONOR BFME2 0x004BDAA9): body interface slot 10 (+0x28) ActiveBody::setDamageState
+void ActiveBody::resetDamageState(int state)
+{
+	float target = m_currentHealth;
+	bool valid = true;
+	switch (state)
+	{
+	case BODY_PRISTINE:
+		target = m_maxHealth;
+		break;
+	case BODY_DAMAGED:
+		target = SimMath::mulf32(m_damagedFraction, m_maxHealth);
+		break;
+	case BODY_REALLYDAMAGED:
+		target = SimMath::mulf32(m_reallyDamagedFraction, m_maxHealth);
+		break;
+	case BODY_RUBBLE:
+		target = 0.0f;
+		break;
+	default:
+		valid = false;
+		break;
+	}
+	if (valid)
+	{
+		internalChangeHealth(SimMath::subf32(target, m_currentHealth)); // RW 0x8C1C2D..0x8C1C3D
+	}
+	updateDamageState(false); // RW 0x8C1C43..0x8C1C49
+}
+
 // ZH ActiveBody::setInitialHealth (ActiveBody.cpp): the initial health is a percent of the max health; the current and previous health follow
 void ActiveBody::setInitialHealth(int initialPercent)
 {

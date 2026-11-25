@@ -95,6 +95,7 @@ public:
 	void applyInitialDamageState() override { updateDamageState(true); }
 	// Body interface RW 0x8C1D53: apply the stored damage state even when health did not change (e.g. construction completion).
 	void evaluateVisualCondition();
+	void resetDamageState(int state = 0) override; // RW 0x008C1BF9 / BFME2 0x004BDAA9
 	void setInitialHealth(int initialPercent) override;
 	// lane SUMMON-1: RW 0x8C47DE (vt[0x58]) with its second argument 0 (the ObjectCreationList's health)
 	void setInitialHealthPercent(float percent) override;

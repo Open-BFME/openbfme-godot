@@ -103,6 +103,8 @@ public:
 	// Retail 2.01: InactiveBody's body table 0xC718C8 has `ret 4` in slots 0x34/0x38
 	// and returns zero ArmorSetFlags from slot 0x3C (RW 0x8C1AC3), so an armor upgrade cannot add a condition.
 	virtual bool ignoresArmorSetFlagChanges() const { return false; }
+	// RW 0x008C1BF9 / BFME2 0x004BDAA9: body interface slot 10 (+0x28) ActiveBody::setDamageState
+	virtual void resetDamageState(int state = 0) { (void)state; }
 };
 
 // ZH ContainModuleInterface (the membership part). The members are Objects; the list keeps insertion order.
