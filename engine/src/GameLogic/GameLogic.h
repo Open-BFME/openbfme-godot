@@ -45,6 +45,7 @@
 // value or hash order reaches any state; all logic floats go through SimMath / plain float arithmetic compiled without FMA contraction.
 
 #pragma once
+#include "Common/TextureSwap.h"
 
 #include "GameLogic/LivingWorld/LivingWorldBattleTags.h"
 #include "Common/ObserverEvent.h"
@@ -90,6 +91,7 @@ class UpdateModule;
 class ObjectWeapons; // lane PERF-WS
 class TerrainLogic;
 class UpgradeTypeTable;
+class UpgradeTemplate;
 class AIWorld;
 class Economy;
 class CombatState;
@@ -137,6 +139,7 @@ public:
 	// template, S-114, so the template answers exactly what the drawable would); the visibility change goes to the client
 	virtual bool showModule(Object &obj, const std::string &tag, bool visible, bool permanent) { (void)obj; (void)tag; (void)visible; (void)permanent; return false; }
 	// RW 0x672823 Drawable::showSubObject
+	virtual void upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled) { (void)obj;(void)swap;(void)enabled; }
 	virtual void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) { (void)obj; (void)name; (void)visible; (void)permanent; }
 	// lane STEALTH-2, RW 0x776F03 (StealthUpdate's disguise): the object's drawable is destroyed (TheGameClient vslot 0x74) and a new one of `tmpl` made
 	// (RW 0x6CFE8C) and bound (RW 0x625AA4) at the object's position and orientation with its model conditions, in `color` when `hasColor`
@@ -168,6 +171,10 @@ public:
 	// test crash (stableqa1 cah retail, SIGSEGV after 43 assertions) with no code path of the lane running at all, while the same no-op virtual appended here
 	// leaves it green - the later slots' numbers must not move, whatever reads them
 	virtual void setDrawableOpacity(Object &obj, float opacity) { (void)obj; (void)opacity; }
+	// lane POSTERNPLOT-1, RW 0x85834C .. 0x858389 (FoundationAIUpdate slot 2 on a WALL_UPGRADE foundation): when the object's controlling player is the local
+	// player, the client appends MSG_REMOVE_FROM_SELECTED_GROUP (0x3ED) with its id and deselects its drawable (TheInGameUI vslot 0x10C). Appended at the
+	// end of the interface (see setDrawableOpacity)
+	virtual void deselectLocal(Object &obj) { (void)obj; }
 };
 
 class StateHasher;
@@ -244,6 +251,18 @@ struct GameLogicSettings
 	float meleeApproachDist = 60.0f;
 	float castleSiegeStandBackDistance = 100.0f;
 	bool hordesWaitForHordes = true;
+	// AIData ForceHordesToLowLOD (row RW 0xC1CE70, parseBool RW 0x42E558, AIData + 0xBB; ctor RW 0x6FFBEF -> RW 0x6FFDA5: true):
+	// sets OBJECT_STATUS_CREATE_DRAWABLE_WITH_LOW_DETAIL (bit 55) on produced units (RW 0x8A1B9F -> 0x8A25E4) and horde payloads / upgrade
+	// creation triggers (RW 0x86A104 -> 0x86A151, RW 0x86B169 -> 0x86B282; excluding HERO and MONSTER templates).
+	bool forceHordesToLowLOD = true;
+	// AIData low-LOD trees (rows RW 0xC1CF50 UseLowLODTrees + 0xD8 parseBool, RW 0xC1CF70..0xC1CF90 LowLodTreeName / NoGrab /
+	// NoHarvest + 0xDC/+0xE0/+0xE4 parseAsciiString, RW 0xC1CFA0 LowLodTreeScale + 0xE8 parseReal; ctor RW 0x6FFBEF -> RW 0x6FFE0C..0x6FFE4A:
+	// false, "", "", "", 0.55f from RW 0xBDAE10). Read by RW 0x62DCE4 (MapObjectCreation::build) when staticLODLevel <= 0. Presentation only: not in crc.
+	bool useLowLODTrees = false;
+	std::string lowLodTreeName;
+	std::string lowLodTreeNameNoGrab;
+	std::string lowLodTreeNameNoHarvest;
+	float lowLodTreeScale = 0.55f;
 	// RW 0x70153B: an `AttackPriority <name>` block of AIData (def 0x14 bytes, ctor RW 0x701323: Default 1). A repeated name re-parses the same def (its
 	// targets cleared, Default kept unless the block sets it); a new one is pushed at the list head. `Target = <template> <int>` (RW 0x7013C2) lines in
 	// file order (RW inserts each at the front of its list: TARGET 0x7004B4; the store applies them back to front)
@@ -602,6 +621,19 @@ public:
 	static constexpr size_t kBeaconNotices = 64;
 	void noteBeacon(BeaconNotice::Kind kind, int playerIndex, ObjectID object, const Coord3D &position);
 	const std::vector<BeaconNotice> &beaconNotices() const { return m_beaconNotices; }
+	// Presentation only: an upgrade completed in ProductionUpdate (RW 0x8A2080 .. 0x8A223B).
+	// Consumed by the issuing player's HUD to display the completion message, play sounds, and emit radar event.
+	struct UpgradeCompleteNotice
+	{
+		std::uint32_t seq = 0;
+		int playerIndex = -1;
+		ObjectID producerID = INVALID_ID;
+		const UpgradeTemplate *upgrade = nullptr;
+		Coord3D position{ 0.0f, 0.0f, 0.0f };
+	};
+	static constexpr size_t kUpgradeCompleteNotices = 64;
+	void noteUpgradeComplete(int playerIndex, ObjectID producerID, const UpgradeTemplate *upgrade, const Coord3D &position);
+	const std::vector<UpgradeCompleteNotice> &upgradeCompleteNotices() const { return m_upgradeCompleteNotices; }
 	void noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex);
 	const std::vector<RadarEventNotice> &radarEventNotices() const { return m_radarEventNotices; }
 	// bumped when a logic-side radar input is written (an attack frame, a script or construction notice). The HUD reads those once per
@@ -1059,6 +1091,8 @@ private:
 	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
 	std::vector<BeaconNotice> m_beaconNotices; ///< lane CHAT-1: oldest first, at most kBeaconNotices
 	std::uint32_t m_beaconSeq = 0;
+	std::vector<UpgradeCompleteNotice> m_upgradeCompleteNotices;
+	std::uint32_t m_upgradeCompleteSeq = 0;
 	std::uint32_t m_radarEventSeq = 0;
 	std::uint32_t m_radarLogicWrites = 0; // see noteRadarLogicWrite
 	ObjectClientHooks *m_clientHooks = nullptr;

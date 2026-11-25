@@ -26,6 +26,7 @@
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/Module/SpawnBehavior.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/AIUpdate.h"
@@ -187,6 +188,19 @@ bool CommandTranslator::objectCanDamage(Object &obj, Object &victim)
 				{
 					return true;
 				}
+			}
+		}
+	}
+	// PORT-198: RW 0x6913B7 .. 0x691416 asks the spawner's slaves when the spawner itself has no weapon. RW 0x6C8A01 reads the
+	// spawn interface slot 6; the answer is the first slave whose weapons can attack (SPAWN_ATTACK_NEW_TARGET, CMD_FROM_PLAYER).
+	if (obj.isKindOf((unsigned)CombatNames::kindOf("SPAWNS_ARE_THE_WEAPONS")))
+	{
+		if (const SpawnBehaviorInterface *spawn = SpawnBehaviorInterface::of(obj))
+		{
+			const SpawnCanAttackResult result = spawn->canAnySlavesUseWeaponAgainstTarget(SPAWN_ATTACK_NEW_TARGET, &victim, nullptr, CMD_FROM_PLAYER);
+			if (result >= SPAWN_ATTACKRESULT_POSSIBLE_AFTER_MOVING)
+			{
+				return true;
 			}
 		}
 	}

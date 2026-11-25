@@ -323,6 +323,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				d->showModule(ev.name, ev.visible, ev.permanent);
 			}
 			break;
+		case ClientEvent::UPGRADE_TEXTURE:
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->upgradeTexture(ev.textureSwap, ev.on);
+			}
+			break;
 		case ClientEvent::SHOW_SUB_OBJECT:
 			if (Drawable *d = findByObject(ev.object))
 			{
@@ -359,6 +365,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 			break;
 		case ClientEvent::EVA_DAMAGED: // lane EVADAMAGE-1 (RW 0x67B4B7's Eva half)
 			EvaDamage::apply(ev, *this, m_evaDamage);
+			break;
+		case ClientEvent::DESELECT_LOCAL: // lane POSTERNPLOT-1 (RW 0x85834C)
+			if (m_deselectLocalHandler)
+			{
+				m_deselectLocalHandler(ev.object, ev.ownerIndex);
+			}
 			break;
 		}
 	}

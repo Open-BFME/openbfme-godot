@@ -301,33 +301,48 @@ bool WeaponIsSourceWithGoalPositionWithinAttackRange(const WeaponTemplate &t, co
 bool WeaponIsWithinTargetPitch(const WeaponTemplate &t, bool pitchLimited, float sourceZ, float victimZ, float minPitch, float maxPitch);
 
 // =============================================================================================================================
-// FiringTracker (RW 0x8E326D shotFired / 0x8E302A reset / 0x8E3174 speedUp / 0x8E30DD update / 0x8E2E12 getShotsAtTarget): continuous fire and
-// AutoReloadWhenIdle. The owner's CONTINUOUS_FIRE_MEAN / FAST conditions are bits 2 and 3 of its weapon bonus condition mask.
+// FiringTracker (RW 0x8E326D shotFired / 0x8E302A coolDown / 0x8E3174 speedUp / 0x8E30DD update / 0x8E2E52 calcTimeToSleep / 0x8E2E12 getShotsAtTarget;
+// DONOR: BFME2 decomp Code/GameEngine/Source/GameLogic/Object/FiringTrackerXfer.cpp:316-560, tier B same-shape; both editions, lane FIRINGTRACKER-1, S-184):
+// continuous fire and AutoReloadWhenIdle. The owner's CONTINUOUS_FIRE_MEAN / FAST weapon bonus conditions are bits 2 and 3 of its weapon bonus condition
+// mask (Object + 0x39C); the model conditions CONTINUOUS_FIRE_SLOW / MEAN / FAST (bits 115 / 116 / 117) follow them. Retail's tracker is the
+// FiringTrackerHelper update module (RW 0x8E2EB2, Object + 0x248, PHASE_FINAL): this one is ObjectWeapons' member and the helper
+// (GameLogic/Module/FiringTrackerHelper.h) runs its update; shotFired wakes the helper through the host.
 // =============================================================================================================================
 class FiringTrackerHost
 {
 public:
+	enum { FIRE_CONDITION_SLOW = 1u << 0, FIRE_CONDITION_MEAN = 1u << 1, FIRE_CONDITION_FAST = 1u << 2 }; ///< model conditions 115 / 116 / 117
 	virtual ~FiringTrackerHost() {}
 	virtual std::uint32_t currentFrame() = 0;
 	virtual Coord3D ownerPosition() = 0;
 	virtual std::uint32_t weaponBonusConditionMask() = 0;
 	virtual void setWeaponBonusConditionMask(std::uint32_t mask) = 0;
 	virtual void reloadAllWeapons() = 0; ///< RW 0x68B491 -> WeaponSet reloadAmmo on every weapon
+	/// RW 0x68D607 (clearAndSetModelConditionFlags) with the FIRE_CONDITION_* bits: the clear set first, then the set
+	virtual void clearAndSetFireConditions(unsigned clear, unsigned set) = 0;
+	/// RW 0x8E3280 .. 0x8E32C0: true when the victim exists and is a HORDE_MEMBER (status 0x26); `hordeID` = its horde's id (RW 0x693A1A(0)) or 0
+	virtual bool victimHordeID(unsigned victimID, unsigned &hordeID) = 0;
+	/// RW 0x8E31CA .. 0x8E31FE: the MEAN -> FAST step's unit voice (message 0x7DC, pickAndPlayUnitVoiceResponse on the drawable): client
+	virtual void postSpeedUpVoice() = 0;
+	/// RW 0x8E34E4 .. 0x8E34ED: setWakeFrame(owner, calcTimeToSleep()) on the FiringTrackerHelper (RW 0x850C32)
+	virtual void setWakeFrame(std::uint32_t sleep) = 0;
 };
 
 class FiringTracker
 {
 public:
-	enum { CONDITION_CONTINUOUS_FIRE_MEAN = 2, CONDITION_CONTINUOUS_FIRE_FAST = 3, COAST_POLL_FRAMES = 5 };
+	enum { CONDITION_CONTINUOUS_FIRE_MEAN = 2, CONDITION_CONTINUOUS_FIRE_FAST = 3, COAST_POLL_FRAMES = 5 /* RW 0xD9F608 = 5 */ };
 
 	// RW 0x8E326D (hard = the bool argument; the fire path passes false)
 	void shotFired(FiringTrackerHost &host, const Weapon &weapon, unsigned victimID, const Coord3D &victimPos, bool hard);
-	// RW 0x8E30DD; returns the number of frames the owner may sleep (RW 0x3FFFFFFF when no timer is pending, else 1)
+	// RW 0x8E30DD (the FiringTrackerHelper's update); returns the sleep (RW 0x8E2E52's 1 / 0x3FFFFFFF, or COAST_POLL_FRAMES after a coast)
 	std::uint32_t update(FiringTrackerHost &host);
-	// RW 0x8E302A
+	// RW 0x8E302A coolDown(forceReset)
 	void reset(FiringTrackerHost &host, bool hard);
 	// RW 0x8E3174: none -> MEAN -> FAST
 	void speedUp(FiringTrackerHost &host);
+	// RW 0x8E2E52: 1 (UPDATE_SLEEP_NONE) while the coast, reload or loop-sound frame is set, else 0x3FFFFFFF
+	std::uint32_t calcTimeToSleep() const;
 	// RW 0x8E2E12
 	int getShotsAtTarget(bool hasVictim, unsigned victimID, const Coord3D &pos) const;
 	// the OpenBFME state hash (lane COMBAT-1)
@@ -335,8 +350,11 @@ public:
 	void xfer(Xfer &x); // lane SAVE-4b (OpenBFME native, S-4190)
 
 	int shotCount() const { return m_count; }               // +0x20
+	unsigned victimID() const { return m_victimID; }        // +0x24
+	unsigned auxiliaryID() const { return m_auxiliaryID; }  // +0x38
 	std::uint32_t autoReloadDeadline() const { return m_autoReloadDeadline; } // +0x40
 	std::uint32_t coastEnd() const { return m_coastEnd; }   // +0x3C
+	std::uint32_t fireSoundEnd() const { return m_fireSoundEnd; } // +0x54
 	const Coord3D &lastOwnerPosition() const { return m_lastOwnerPosition; } // +0x48
 	std::uint32_t lastShotFrame() const { return m_lastShotFrame; } // +0x44 (Object RW 0x68B645 reads it; lane HORDE-2)
 
@@ -344,11 +362,13 @@ private:
 	int m_count = 0;                      // +0x20
 	unsigned m_victimID = 0;              // +0x24
 	Coord3D m_victimPos{};                // +0x28
-	int m_positionMode = 0;               // +0x34
+	int m_positionMode = 0;               // +0x34 (a byte)
+	unsigned m_auxiliaryID = 0;           // +0x38: the last HORDE_MEMBER victim's horde (no RotWK reader found besides the module's xfer)
 	std::uint32_t m_coastEnd = 0;         // +0x3C
 	std::uint32_t m_autoReloadDeadline = 0; // +0x40
 	std::uint32_t m_lastShotFrame = 0;    // +0x44
 	Coord3D m_lastOwnerPosition{};        // +0x48
+	std::uint32_t m_fireSoundEnd = 0;     // +0x54: the looping FireSound's stop frame (the audio side keeps the handle, + 0x58: S-712)
 };
 
 // =============================================================================================================================

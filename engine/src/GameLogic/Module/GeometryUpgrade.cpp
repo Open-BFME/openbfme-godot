@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/GeometryUpgrade.h"
+// RW 0x8BAC26 (name literal 0xC0AE18), RW 0x8BAC2C (ModuleData factory via 0xA3CEF0/0x5487EC), RW 0x8BAD6F (scalar deleting dtor), RW 0x8BB094 (scalar deleting dtor via 0x8BB0B0), RW 0x00464A09 / 0x004B612F (shared UpgradeModule thunks, ported elsewhere via ModuleFactory)
 
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"

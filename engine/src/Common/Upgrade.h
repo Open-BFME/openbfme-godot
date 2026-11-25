@@ -140,6 +140,9 @@ public:
 	// RW 0x66F1A8: cvttss2si(cvtsi2ss(LOGICFRAMES_PER_SECOND = 5) * BuildTime) ; a Brutal skirmish AI: cvttss2si((1.0 - m) * BuildTime * 5.0) (RW 0x66F1CC, lane BRUTALAI-1)
 	int calcTimeToBuild(const Player *player) const;
 	const ThingTemplate *costDiscountTemplate() const { return m_costDiscountTemplate; }
+	const std::string &displayName() const { return m_displayName; }
+	const std::string &tooltip() const { return m_tooltip; }
+	void friend_setName(const std::string &name) { m_name = name; }
 
 	// the fields of the table RW 0xC107F8, in table order (offsets of the RW template)
 	std::string m_displayName;                     ///< +0x28 DisplayName (parseAsciiString RW 0x42EE5E)

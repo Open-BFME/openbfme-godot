@@ -204,7 +204,7 @@ void enterFully(InventoryHudRig &h, Object *unit, Object *building)
 } // namespace
 
 // The owner's report (2026-10-22 nightly): units put into a neutral stone tower could not be taken out, its exit button greyed. Retail's
-// GarrisonContain::recalcApparentControllingPlayer (RW 0x87C6CE; BFME2 0x00479432, GarrisonContainRecalcApparentControllingPlayer.cpp) gives the building
+// GarrisonContain::recalcApparentControllingPlayer (RW 0x87C6CE; BFME2 0x00479432, GarrisonContain.cpp) gives the building
 // its first rider's controlling player's default team (Player + 0x30C, Object::setTeam RW 0x69954A) and the original team (its id at contain + 0xDC) back
 // once empty: the garrisoned tower is the local player's, so the control bar is no foreign view (RW 0x94397F) and its riders' exit buttons are enabled.
 TEST_CASE("garrison4 hud: archers in a neutral ruined tower take it over; its exit button is enabled, lets them out, and the tower turns neutral again")

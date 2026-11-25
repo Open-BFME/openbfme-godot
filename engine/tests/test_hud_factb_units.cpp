@@ -44,6 +44,7 @@
 #include "GameLogic/WeaponNugget.h"
 #include "GameLogic/WeaponState.h"
 #include "GameLogic/WeaponStores.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "Common/PlayerHeroList.h"
 
 #include <cmath>
@@ -2912,11 +2913,14 @@ void spellBookOf(const std::string &faction, Results &res, bool viaStore = false
 						// lane SPELL-4: RotWK refuses a spot its location test fails (RW 0x6A4260 -> 0x82DFB7: e.g. Barricade's ForbiddenObjectFilter
 						// with the scene's barracks in range); the cursor is red and the click casts nothing (RW 0x81EBE9). The cast then goes to the
 						// nearest spot of a ring search the HUD accepts; none: the item fails by name
-						for (int ring = 1; ring <= 6 && g.hud->spellBar().targeting(); ++ring)
+						// lane VISIONDEF-1: the first ring is 100 out. The scene's own horde may stand on the spot (the Angmar scene's Goblin horde 13 from it once
+						// RotWK's sight left it guarding there), and a click on it picks the horde, not the ground: a player clicks beside it. The rings at 150 and
+						// beyond met fogged ground, the enemy's farms and barracks and cliffs there (each a RotWK refusal, RW 0x82E586 / 0x82E913)
+						for (int ring = 0; ring <= 6 && g.hud->spellBar().targeting(); ++ring)
 						{
 							for (int k = 0; k < 8 && g.hud->spellBar().targeting(); ++k)
 							{
-								const float a = 0.785398163f * (float)k, d = 150.0f * (float)ring;
+								const float a = 0.785398163f * (float)k, d = ring == 0 ? 100.0f : 150.0f * (float)ring;
 								Coord3D p{ c.x + d * std::cos(a), c.y + d * std::sin(a), 0.0f };
 								p.z = g.logic().getGroundHeight(p.x, p.y);
 								if (g.hud->spellBar().targetValid(g.logic(), p))
@@ -2928,6 +2932,19 @@ void spellBookOf(const std::string &faction, Results &res, bool viaStore = false
 						if (g.hud->spellBar().targeting())
 						{
 							out.fail = "the HUD refused the scene's spot and every spot of the ring search (RotWK's location test, RW 0x82DFB7)";
+							// lane VISIONDEF-1: what stands at the spot, and its shroud for the player (0 clear, 1 fogged, 2 shrouded)
+							if (g.logic().shroud())
+							{
+								out.fail += str(" (the spot's cell status %d)", (int)g.logic().shroud()->getStatusAt(g.rig.local->getPlayerIndex(), c.x, c.y));
+							}
+							for (Object *o = g.logic().getFirstObject(); o; o = o->getNextObject())
+							{
+								if (!o->isEffectivelyDead() && dist2d(*o->getPosition(), c) < 150.0f && !o->getContainedBy())
+								{
+									out.fail += str(" [%s of player %d at %.0f]", o->getTemplate()->getName().c_str(),
+										o->getControllingPlayer() ? o->getControllingPlayer()->getPlayerIndex() : -1, dist2d(*o->getPosition(), c));
+								}
+							}
 							g.clickAt(c, HudInput::Button::Right); // the targeting is cancelled
 						}
 					}
