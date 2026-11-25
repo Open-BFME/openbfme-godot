@@ -5,8 +5,11 @@
 // reads from a FileClass; this one reads from a memory buffer. Chunk header: uint32 type,
 // uint32 size whose MSB flags "contains sub-chunks". Micro chunks are not ported yet.
 //
-// Addition: Had_Error() reports a chunk whose declared size runs past its parent or the
-// buffer, which ZH would only notice as short reads later.
+// Addition: Had_Error() reports a chunk whose declared size runs past its parent or the buffer,
+// which ZH would only notice as short reads later. With `allowTruncatedEnd` (the asset loader) a
+// chunk that runs past the END of the buffer opens instead, as ZH's file reads do: Was_Truncated()
+// says so, a read past the end is still an error, and the next Open_Chunk at the end returns false
+// without one.
 
 #pragma once
 
@@ -26,7 +29,7 @@ struct ChunkHeader
 class ChunkLoadClass
 {
 public:
-	ChunkLoadClass(const std::uint8_t *data, size_t size);
+	ChunkLoadClass(const std::uint8_t *data, size_t size, bool allowTruncatedEnd = false);
 
 	bool Open_Chunk();
 	bool Close_Chunk();
@@ -40,6 +43,7 @@ public:
 	std::uint32_t Seek(std::uint32_t nbytes);
 
 	bool Had_Error() const { return Error; }
+	bool Was_Truncated() const { return Truncated; }
 
 private:
 	enum { MAX_STACK_DEPTH = 256 };
@@ -52,4 +56,6 @@ private:
 	std::uint32_t PositionStack[MAX_STACK_DEPTH];
 	ChunkHeader HeaderStack[MAX_STACK_DEPTH];
 	bool Error;
+	bool Truncated = false;
+	bool AllowTruncatedEnd = false;
 };

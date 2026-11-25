@@ -67,6 +67,35 @@ TEST_CASE("a child chunk larger than its parent is an error, not a silent over-r
 	CHECK(cload.Had_Error());
 }
 
+TEST_CASE("a last chunk that runs past the end of the file opens as ZH's file reads do: its whole sub-chunks load, the walk ends without an error")
+{
+	// Retail/mod truncated W3D: the parent chunk declares 44 bytes more than the file holds, while its sub-chunks are intact
+	ChunkWriter inner;
+	inner.u32(0x11);
+	inner.u32(4);
+	inner.u32(7);
+	ChunkWriter file;
+	file.wrapper(0x10, inner);
+	file.bytes[4] = (std::uint8_t)(file.bytes[4] + 44); // the parent claims 44 bytes the file does not have
+	{
+		ChunkLoadClass strict(file.bytes.data(), file.bytes.size()); // strict reads reject it
+		CHECK_FALSE(strict.Open_Chunk());
+		CHECK(strict.Had_Error());
+	}
+	ChunkLoadClass cload(file.bytes.data(), file.bytes.size(), true);
+	REQUIRE(cload.Open_Chunk());
+	REQUIRE(cload.Open_Chunk());
+	std::uint32_t v = 0;
+	CHECK(cload.Read(&v, 4) == 4);
+	CHECK(v == 7);
+	cload.Close_Chunk();
+	CHECK_FALSE(cload.Open_Chunk()); // the end of the file: no next sub-chunk
+	cload.Close_Chunk();
+	CHECK_FALSE(cload.Open_Chunk());
+	CHECK_FALSE(cload.Had_Error());
+	CHECK(cload.Was_Truncated());
+}
+
 TEST_CASE("mesh, hierarchy and HLod load from a synthetic W3D; skin bind pose follows the pivots")
 {
 	// Hierarchy: root + one bone translated by (0,0,10) and rotated 90 degrees about Z.

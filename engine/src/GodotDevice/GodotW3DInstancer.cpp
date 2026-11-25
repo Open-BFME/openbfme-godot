@@ -1009,7 +1009,16 @@ int64_t W3DInstancer::build_model(const String &model_name)
 		if (sub.Type == RenderSubObject::SUB_UNRESOLVED)
 		{
 			s["reason"] = toGodot(sub.Reason);
-			errors.push_back(toGodot("sub object " + sub.Name + " unresolved: " + sub.Reason));
+			if (sub.AbsentFromData)
+			{
+				// the model's own data names a sub object no file has (e.g. vanilla MUSauronEye's HLOD lists MUSAURONEYE.BOX01):
+				// retail's HLodClass creates nothing for it and continues (BFME2 hlod.cpp:1108 .. 1112), so report a note instead of an error
+				notes.push_back(toGodot("sub object " + sub.Name + " is in no file: skipped as retail's HLodClass does (" + sub.Reason + ")"));
+			}
+			else
+			{
+				errors.push_back(toGodot("sub object " + sub.Name + " unresolved: " + sub.Reason));
+			}
 		}
 		else if (sub.Type == RenderSubObject::SUB_EMITTER)
 		{
