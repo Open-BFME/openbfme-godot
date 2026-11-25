@@ -21,11 +21,9 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AISpecialPowerUpdate.h"
 #include "GameLogic/Module/AIUpdate.h"
-#include "GameLogic/Module/AODCrushCollide.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/FlammableUpdate.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
-#include "GameLogic/Module/HordeTransportContainDamage.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
@@ -381,7 +379,7 @@ TEST_CASE("LOCAL-123 SiegeEngineContain and HordeSiegeEngineContain evacuateCrew
 	REQUIRE(seContain->addToContain(crew1));
 	REQUIRE(seContain->addToContain(crew2));
 	REQUIRE(seContain->addToContain(passenger));
-	CHECK(seContain->getCrewCount() == 2);
+	CHECK(seContain->crewCount() == 2);
 	CHECK(seContain->getContainCount() == 1u);
 
 	DamageInfo flame;
@@ -391,7 +389,7 @@ TEST_CASE("LOCAL-123 SiegeEngineContain and HordeSiegeEngineContain evacuateCrew
 	siege->attemptDamage(flame);
 
 	// Crew members are evacuated by RW 0x0087F0CF while non-crew passenger remains inside (BurnContained = No).
-	CHECK(seContain->getCrewCount() == 0);
+	CHECK(seContain->crewCount() == 0);
 	CHECK(crew1->getContainedBy() == nullptr);
 	CHECK(crew2->getContainedBy() == nullptr);
 	CHECK(seContain->getContainCount() == 1u);
@@ -403,10 +401,10 @@ TEST_CASE("LOCAL-123 SiegeEngineContain and HordeSiegeEngineContain evacuateCrew
 	auto *hseContain = dynamic_cast<HordeSiegeEngineContain *>(hordeSiege->getContain());
 	REQUIRE(hseContain != nullptr);
 	REQUIRE(hseContain->addToContain(hCrew));
-	CHECK(hseContain->getCrewCount() == 1);
+	CHECK(hseContain->crewCount() == 1);
 
 	hordeSiege->attemptDamage(flame);
-	CHECK(hseContain->getCrewCount() == 0);
+	CHECK(hseContain->crewCount() == 0);
 	CHECK(hCrew->getContainedBy() == nullptr);
 	PhysicsBehavior *phys = PhysicsBehavior::find(*hordeSiege);
 	REQUIRE(phys != nullptr);

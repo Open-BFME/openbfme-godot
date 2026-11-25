@@ -602,7 +602,7 @@ void SiegeEngineContainT<Base, Horde>::evacuateCrew(int source)
 	while (!m_crew.empty())
 	{
 		Object *c = m_crew.front();
-		this->removeFromContain(c, false); // RW 0x87F0EA / RW 0x87FF40: contain slot 0xA4(c, false)
+		this->removeFromContain(c); // RW 0x87F0EA / RW 0x87FF40: contain slot 0xA4(c, false)
 		if (!m_crew.empty() && m_crew.front() == c)
 		{
 			m_crew.pop_front();

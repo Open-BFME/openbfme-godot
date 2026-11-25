@@ -868,7 +868,7 @@ void OpenContain::onContainedAboutToTakeDamage(Object *rider, const void *damage
 	{
 		if (info->m_input.m_kill)
 		{
-			removeFromContain(rider, false); // RW 0x865660: contain slot 0xA4(rider, false)
+			removeFromContain(rider); // RW 0x865660: contain slot 0xA4(rider, false)
 		}
 		return;
 	}
