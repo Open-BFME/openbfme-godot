@@ -17,6 +17,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/SlaveWatcherBehavior.h"
+#include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
@@ -229,7 +230,17 @@ UpdateSleepTime ObjectCreationUpgrade::update()
 			{
 				watcher->setSlave(made->getID()); // RW 0x887AF5
 			}
-			made->friend_onBuildComplete();                                          // RW 0x8B86DB .. 0x8B8708: its create modules
+			// RW 0x8B86DB .. 0x8B8708 (inside RW 0x8B8464; DONOR BFME2 0x004B42DB, ObjectCreationUpgrade.cpp:661-670):
+			// walk the spawned object's behavior modules (+ 0x24C), ask each for SlavedUpdateInterface (slot 0x68, RW 0x8B86EC)
+			// and call onEnslave(obj) (slot 4, RW 0x8B8702) so slaves with DieOnMastersDeath die when the creator falls.
+			for (const std::unique_ptr<BehaviorModule> &m : made->modules())
+			{
+				if (SlavedUpdateInterface *slaved = dynamic_cast<SlavedUpdateInterface *>(m.get()))
+				{
+					slaved->onEnslave(obj);
+				}
+			}
+			made->friend_onBuildComplete();                                          // BuildAssistant::buildObjectNow (vslot 0x38, RW 0x797796)
 			m_spawned = made->getID();
 			if (d->m_fadeInTime > 0)
 			{

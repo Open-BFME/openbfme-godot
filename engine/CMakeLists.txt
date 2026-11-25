@@ -1044,6 +1044,7 @@ add_executable(openbfme_tests
     tests/test_logic_hash.cpp
     tests/test_logic_settings.cpp
     tests/test_logic_retail.cpp
+    tests/test_local_120.cpp
     # lane LOCAL-8 (RespawnUpdate ButtonImage, AutoRespawnAtObjectFilter, DeathAnimationTime)
     tests/test_local_8.cpp
     # upgrade completion name in the interface and its feedback (RW 0x8A2080 .. 0x8A223B)
