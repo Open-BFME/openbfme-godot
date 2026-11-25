@@ -939,6 +939,14 @@ void ActiveBody::attemptHealing(DamageInfo &info)
 		if (m_currentHealth > m_previousHealth)
 		{
 			Object &obj = *getObject();
+			// RW 0x008C30C0..0x008C30E9: every damage module's slot 1 (onHealing) runs when healing raised health
+			for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
+			{
+				if (DamageModuleInterface *d = m->getDamage())
+				{
+					d->onHealing(info);
+				}
+			}
 			GameLogic &logic = obj.logic();
 			const std::string &fx = m_data->m_healingBuffFxSet ? m_data->m_healingBuffFx : logic.settings().defaultUnitHealingBuffFxList;
 			static const int kStructure = CombatNames::kindOf("STRUCTURE");
