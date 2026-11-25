@@ -46,20 +46,30 @@ float dot(V2 a,V2 b) { return a.x*b.x+a.y*b.y; }
 V2 normal(V2 a) { return {-a.y,a.x}; }
 V2 normalized(V2 a) { const float n=std::hypot(a.x,a.y); return n ? a*(1.0f/n) : V2{1,0}; }
 
-// The tokens of a value, split at INI's colon separators (INI m_sepsColon " \n\r\t=:", as getNextSubToken reads them).
-std::vector<std::string> subTokens(const std::string &val)
+bool isSubTokenSep(char c)
 {
-	std::vector<std::string> out;
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '=' || c == ':';
+}
+
+// The tokens of a value, split at INI's colon separators (INI m_sepsColon " \n\r\t=:", as getNextSubToken reads them).
+bool subTokens(const std::string &val, std::vector<std::string> &out, std::string &error)
+{
+	out.clear();
+	if (val.find('\0') != std::string::npos)
+	{
+		error = "unexpected NUL byte in roads.ini value";
+		return false;
+	}
 	size_t i = 0;
 	while (i < val.size())
 	{
-		while (i < val.size() && std::strchr(" \t\r\n=:", val[i]) && val[i] != '\0') ++i;
+		while (i < val.size() && isSubTokenSep(val[i])) ++i;
 		size_t j = i;
-		while (j < val.size() && !std::strchr(" \t\r\n=:", val[j])) ++j;
+		while (j < val.size() && !isSubTokenSep(val[j])) ++j;
 		if (j > i) out.push_back(val.substr(i, j - i));
 		i = j;
 	}
-	return out;
+	return true;
 }
 
 // parseAsciiString (RW 0x42EE5E) and the audio name (RW 0x73B217) take the value's first token.
@@ -100,7 +110,11 @@ bool subToken(const std::vector<std::string> &t, size_t &at, const char *expecte
 // parseRGBColor RW 0x42EF99 (INI::parseRGBColor): R: G: B:, each 0..255, scaled by 1/255.
 bool parseRadarColor(const std::string &val, float out[3], std::string &error)
 {
-	const std::vector<std::string> t = subTokens(val);
+	std::vector<std::string> t;
+	if (!subTokens(val, t, error))
+	{
+		return false;
+	}
 	const char *names[3] = { "R", "G", "B" };
 	size_t at = 0;
 	int c[3];
@@ -133,7 +147,11 @@ bool parseRadarColor(const std::string &val, float out[3], std::string &error)
 bool parseTransition(const std::string &val, bool ocl, RoadType &r, std::string &error)
 {
 	static const char *const states[RoadType::BODY_STATES] = { "PRISTINE", "DAMAGED", "REALLYDAMAGED", "RUBBLE" }; // RW 0xDA2038
-	const std::vector<std::string> t = subTokens(val);
+	std::vector<std::string> t;
+	if (!subTokens(val, t, error))
+	{
+		return false;
+	}
 	size_t at = 0;
 	std::string kind, state, num, name;
 	if (!subToken(t, at, "Transition", kind, error))

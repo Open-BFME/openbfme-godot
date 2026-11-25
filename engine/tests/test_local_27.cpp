@@ -190,3 +190,14 @@ TEST_CASE("LOCAL-27 bridges: a field outside the table RW 0xC19DC0 is an error i
 	CHECK(scanError(bridge("  RoadWidth = 34\n")).find("unknown field 'roadwidth'") != std::string::npos);
 	CHECK(scanError(bridge("  BridgeScale = wide\n")).find("floating point") != std::string::npos);
 }
+
+TEST_CASE("LOCAL-27 bridges: embedded NUL bytes in tokenized values fail with a named error instead of spinning")
+{
+	std::string radarWithNul = bridge("  RadarColor = R:0 G:0 B:0X\n");
+	radarWithNul[radarWithNul.find('X')] = '\0';
+	CHECK(scanError(radarWithNul).find("NUL") != std::string::npos);
+
+	std::string transWithNul = bridge("  TransitionToOCL = Transition:Repair ToState:PRISTINE EffectNum:1 OCL:OCL_UpX\n");
+	transWithNul[transWithNul.find('X')] = '\0';
+	CHECK(scanError(transWithNul).find("NUL") != std::string::npos);
+}
