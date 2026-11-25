@@ -508,7 +508,7 @@ void SkirmishAIManager::xferState(Xfer &x, bool hooksInstalled)
 		}
 	}
 	// lane PORT-196: the ARMY_BREAKER list or a draw bound other than its start value needs version 10
-	armyBreaker = !m_armyBreakerTimers.empty();
+	armyBreaker = armyBreaker || !m_armyBreakerTimers.empty();
 	// a task list needs the enemy-cache fields too: version 7 always carries version 6's bytes
 	const int written = armyBreaker ? 8 : (hasTasks ? 7 : (enemyCache ? 6 : 5));
 	XferVersion v{ 3, (std::uint8_t)written };
@@ -1157,6 +1157,7 @@ void SkirmishAIManager::xfer(Xfer &x)
 	m_attackedAtIds = loaded.m_attackedAtIds;
 	m_expansionHeuristicFrames = loaded.m_expansionHeuristicFrames;
 	m_assistTimers = std::move(loaded.m_assistTimers);
+	m_armyBreakerTimers = std::move(loaded.m_armyBreakerTimers);
 	m_groups = std::move(loaded.m_groups);
 	m_infoPlayers = std::move(loaded.m_infoPlayers);
 	m_captureFlags = std::move(loaded.m_captureFlags);
