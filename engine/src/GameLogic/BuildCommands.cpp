@@ -27,6 +27,12 @@ bool kindOfName(const Object &obj, const char *name)
 	return obj.isKindOfName(name);
 }
 
+bool kindOfTemplate(GameLogic &logic, const ThingTemplate &tt, const char *name)
+{
+	const int bit = ObjectTemplateInfoBuilder::kindOfIndex(name);
+	return bit >= 0 && MaskTest(logic.templateInfo(tt.getFinalOverride()).kindOf, (unsigned)bit);
+}
+
 struct ConstructArgs
 {
 	const ThingTemplate *tmpl = nullptr;
@@ -117,6 +123,17 @@ bool BuildCommands::foundationConstruct(GameLogic &logic, const GameMessage &m)
 	{
 		refuse(m, "the plot's command set does not offer the template (named guard, BuildAssistant::isInProducersCommandSet RW 0x794F38)");
 		return true;
+	}
+	// RW 0x6AAA2E (Player::canAfford, checked alongside buildability in RW 0x77A91B): separate from MaxSimultaneousOfType, so a crafted
+	// MSG_FOUNDATION_CONSTRUCT cannot raise an unaffordable offered expansion for free or receive a refund for money never spent.
+	if (!kindOfTemplate(logic, *a.tmpl, "BUILD_FOR_FREE"))
+	{
+		const int cost = BuildAssistant::calcCostToBuild(*a.tmpl, owner, plot, -1);
+		if (cost > 0 && (std::uint32_t)cost > owner->getMoney()->countMoney())
+		{
+			refuse(m, "Player::canAfford (RW 0x6AAA2E) refuses the template (not enough money)");
+			return true;
+		}
 	}
 	FoundationAIUpdate *foundation = nullptr;
 	for (const std::unique_ptr<BehaviorModule> &mod : plot->modules())

@@ -190,3 +190,22 @@ TEST_CASE("PORT-212 plot builds: the plot builds only a template its CommandSet 
 	f.construct(f.plot1, "Moot");
 	CHECK(f.commands.stats().foundations == 1);
 }
+
+TEST_CASE("PORT-212 plot builds: an unaffordable offered template is refused (Player::canAfford RW 0x6AAA2E)")
+{
+	Port212World f;
+	const ThingTemplate *moot = f.w.get("Moot");
+	REQUIRE(moot != nullptr);
+	const std::uint32_t startMoney = f.alice()->getMoney()->countMoney();
+	if (startMoney > 50)
+	{
+		f.alice()->getMoney()->withdraw(startMoney - 50);
+	}
+	REQUIRE(f.alice()->getMoney()->countMoney() == 50); // Moot BuildCost is 100
+	f.construct(f.plot1, "Moot");
+	CHECK(f.commands.stats().foundations == 0);
+	CHECK(f.countOf("Moot") == 0);
+	CHECK(f.alice()->getMoney()->countMoney() == 50);
+	REQUIRE(f.commands.refusals().size() == 1);
+	CHECK(f.commands.refusals().front().find("Player::canAfford") != std::string::npos);
+}
