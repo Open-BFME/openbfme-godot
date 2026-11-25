@@ -24,6 +24,9 @@ std::uint32_t playSoundForDrawable(const std::string &eventName, std::uint32_t d
 // lane SPELL-3: an event at a world position with the player it belongs to (SpecialPowerModule::aboutToDoSpecialPower RW 0x89713F: the
 // InitiateAtLocationSound, RW 0x6DA67E position, RW 0x66ECE1 player index, TheAudio slot 25)
 std::uint32_t playSoundAtPositionForPlayer(const std::string &eventName, const Coord3D &position, int owningPlayerIndex);
+// PORT-113: an event with no position and no object, with the player it belongs to (Player RW 0x6AB148: the template's LightPointsUpSound
+// copied RW 0x6DA95E, RW 0x66ECE1 the player index, TheAudio slot 25). Who hears it is the manager's local-player test of the event's type (RW 0x4533A9)
+std::uint32_t playSoundForPlayer(const std::string &eventName, int owningPlayerIndex);
 // true when the event exists (the "Invalid Sound" check of the INI field parsers and Lua's audio lookups)
 bool isValidEvent(const std::string &eventName);
 // the logic's unit voice events (see AudioEntryPoints.h installUnitVoiceHandler)

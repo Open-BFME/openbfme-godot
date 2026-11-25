@@ -6,7 +6,7 @@
 std::vector<std::string> SpellStops::lines()
 {
 	return {
-		"[S-520] spell book labels and sounds: Science DisplayName / Description, Rank RankName (RW 0x73B192, GameText), SpecialPower InitiateSound / InitiateAtLocationSound "
+		"[S-520] spell book labels and sounds: Science DisplayName / Description, Rank RankName, LightPointLevel Name (RW 0x73B192, GameText), SpecialPower InitiateSound / InitiateAtLocationSound "
 		"(RW 0x73B217, audio events) and EvaEventToPlayOnSuccess (RW 0x5DE588, TheEva) are stored by name, not looked up: retail throws for an unknown label or sound",
 		"[S-521] intrinsic sciences: PlayerTemplate IntrinsicSciences / IntrinsicSciencesMP are kept as names by the PlayerTemplate parser (S-145) and resolved when a player's "
 		"sciences reset (RW 0x6AED4B); an unknown name is a runtime error at the game start instead of retail's INI error (RW 0x73B4A0 at parse time)",
@@ -28,14 +28,15 @@ std::vector<std::string> SpellStops::lines()
 		"OCLSpecialPower (RW 0x8C75D8), the base do* gate and the initiate's SpecialPowerUpdate module call (RW 0x8980A3, 0x897E87, lane HERO-1), the trigger (RW 0x897987: "
 		"SetModelCondition and GiveLevels by lane HERO-1, the attribute modifiers, the weather branch and the view object by lane SPELL-2, S-920) and the other spell book "
 		"classes (S-921); lane BACKLOG4: the RECHARGE_TIME attribute modifier scale of the recharge (RW 0x896EA0), the trigger's script notice (RW 0x89713F -> 0x759986, read by "
-		"PLAYER_TRIGGERED_SPECIAL_POWER / _FROM_NAMED, RW 0x7E4E08 / 0x758CBF), the initiate's IdleWhenStartingPower (RW 0x897F97) and InitiateFX (RW 0x897FFA); "
+		"PLAYER_TRIGGERED_SPECIAL_POWER / _FROM_NAMED, RW 0x7E4E08 / 0x758CBF), the initiate's IdleWhenStartingPower (RW 0x897F97) and InitiateFX (RW 0x897FFA); PORT-113: the light point cost of a "
+		"trigger (RW 0x897A5E, and the special ability's RW 0x853FCB, through RW 0x6AA91D); "
 		"Open (lane BACKLOG4 r1 inventory): (1) the initiate's enum switch (RW 0x897EAB: types 0x33 / 0x88 end each other's module through RW 0x8A007F, type "
 		"0x8D sends a harvester back to its resource, RW 0x897F0D); (2) the target id the initiate keeps (+ 0x2C) and its + 0x28 flag (options bit 0x40000 "
 		"with the update's slot 2, RW 0x897FE5); (3) the radar window override of the template's name (RW 0x897FB2 .. 0x897FD4, client); (4) the unit's voice "
 		"response (RW 0x898009 .. 0x89809A, client); (5) the conditions PLAYER_MIDWAY_SPECIAL_POWER / PLAYER_COMPLETED_SPECIAL_POWER and their _FROM_NAMED "
 		"forms (the lists RW + 0x1A3B8 / + 0x1A408, written by RW 0x7599B8 / 0x7599EA (ZH: the special abilities' midway / end, INFERENCE), read by RW 0x758D21 / 0x758D83): they "
-		"answer false and are counted unported; (6) the light point cost of a trigger (RW 0x6AA91D, S-531); (7) the heal's FX / OCL requests are counted "
-		"(PlayerHealSpecialPower); (8) the trigger's unset AttributeModifierAffects filter and the outside-the-playable-area flag (S-920, S-922), "
+		"answer false and are counted unported; (6) the heal's FX / OCL requests are counted "
+		"(PlayerHealSpecialPower); (7) the trigger's unset AttributeModifierAffects filter and the outside-the-playable-area flag (S-920, S-922), "
 		"AdjustVictim's status 0x26 victim (S-920), OCLSpecialPower's secondary position (S-530). INFERENCE: the triggered list is hashed with the script "
 		"engine, i.e. once map scripts are loaded (nothing else reads it); names compare by CRC_String as retail (a collision would match); a player index "
 		"outside the 20 lists is refused and noted (retail does not test it); the list has no cap (retail's); the heal's partition query RW 0x8CC532 runs on "
@@ -50,7 +51,8 @@ std::vector<std::string> SpellStops::lines()
 		"spawn points (7) are counted",
 		"[S-531] casting: the ActionManager test (RW 0x82DFB7) keeps only the module / percent-ready / requirements parts (unit cost, range, terrain, shroud and forbidden objects "
 		"are not tested); a multi-member group's senior-hero choice and member order are ported (lane HEROCAST-1, RW 0x76F5DB / 0x76F774 / 0x77097E); the light point test and cost (RW 0x6AA8FB, 0x6AA91D) "
-		"are skipped; the spell book is made after the starting bases (RW 0x6B183D's place in the game start is not traced)",
+		"are ported (PORT-113: TheLightPointSystem RW 0xDE8C04 and the player's tracker; the War of the Ring screens that show the points are not); the spell "
+		"book is made after the starting bases (RW 0x6B183D's place in the game start is not traced)",
 		"[S-532] spell book creation draws logic random numbers as retail does (RW 0x6B18E7 -> 0x6D165E -> 0x693D31 -> 0x628882 -> 0x6D328E: one object-creation "
 		"seed draw, bounds 1 .. 999, per faction's book, after the bases, in player array order) and so moves the stream of a game with lobby slots; the RW 0x6B183D "
 		"call's place in the game start is not traced (S-531). The smoke check it disturbed (`production: its 15 members stand around it`) passes again since HORDE-2's "

@@ -4,6 +4,8 @@
 #include "Common/Player.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "Common/NumericState.h"
+#include "Common/Audio/AudioRequests.h"
+#include "Common/LightPointSystem.h"
 #include "GameLogic/SimMath.h"
 
 #include "Common/PlayerEconomyHost.h"
@@ -102,6 +104,7 @@ void Player::init(const PlayerTemplate *pt, std::uint32_t defaultStartingCash)
 	m_colorExplicit = false;
 	m_unitsShouldHunt = false; // RW 0x6B0401: + 0x35D cleared by the init (lane DECOMP-2, Sol's review)
 	m_resourceGathering.reset(); // lane LUMBER1: ZH Player::init makes a new ResourceGatheringManager (RW + 0x304)
+	m_lightPoints.reset();       // PORT-113: RW 0x6B0355 (the levels), 0x6B0362 (the points)
 	m_money.init();
 	m_money.setPlayerIndex(m_index);
 	// RW 0x6B06D4 .. 0x6B0707 (the player's reset): score, cost modifier lists, command points; the upgrades are the upgrade lane's reset
@@ -207,6 +210,11 @@ void Player::crc(StateHasher &h) const
 	{
 		h.addU32(0x5C);
 		m_resourceGathering.crc(h); // lane LUMBER1: hashed only once a supply center registered (a game without one keeps its hash)
+	}
+	if (!m_lightPoints.isUntouched())
+	{
+		h.addU32(0x338);
+		m_lightPoints.crc(h); // PORT-113: hashed only while the player holds points or a level (a game without light points keeps its hash)
 	}
 	h.addU32((std::uint32_t)m_upgradeRecords.size()); // UPGRADE-1: the records in list order, then both masks
 	for (const UpgradeRecord &r : m_upgradeRecords)
@@ -713,7 +721,10 @@ void Player::checkLoadedIndices(int playerCount) const
 
 void Player::xfer(Xfer &x, TeamFactory &teams)
 {
-	XferVersion v{ 1, 2 }; // lane LUMBER1: version 2 adds the ResourceGatheringManager (RW + 0x304) at the end
+	// lane LUMBER1: version 2 adds the ResourceGatheringManager (RW + 0x304) at the end. PORT-113: version 3 adds the light points (RW + 0x338) after it;
+	// a player that holds none (no points, no level) saves version 2, so the streams of games without light points stay as they were (the
+	// obfme:GameLogic pattern)
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || !m_lightPoints.isUntouched() ? 3 : 2) };
 	x.xferVersion(v);
 	// the identity the START made: checked, never overwritten
 	std::int32_t index = m_index;
@@ -868,6 +879,52 @@ void Player::xfer(Xfer &x, TeamFactory &teams)
 	else if (x.isLoading())
 	{
 		m_resourceGathering.reset(); // a version 1 snapshot predates the supply centers' registration
+	}
+	if (v.current >= 3)
+	{
+		m_lightPoints.xfer(x); // PORT-113 (RW 0x6B2B54 passes the tracker to the Xfer; the layout is OpenBFME's, see LightPointTracker::xfer)
+	}
+	else if (x.isLoading())
+	{
+		m_lightPoints.reset(); // a player saved without light points
+	}
+}
+
+// PORT-113: RW 0x6AB148
+void Player::giveLightPoints(int amount)
+{
+	m_lightPoints.addPoints(amount); // RW 0x6AB165: always, before any test
+	// RW 0x6AB171 no template, RW 0x6AB176 amount <= 0 (jle), RW 0x6AB17F no LightPointsUpSound (template + 0x1A4): no sound
+	if (!m_template || amount <= 0 || m_template->m_lightPointsUpSound.empty())
+	{
+		return;
+	}
+	// RW 0x6AB187 .. 0x6AB1B6: with TheAudio, a copy of the event (RW 0x6DA95E) gets this player's index (RW 0x66ECE1, Player + 0x54) and is added
+	// (vslot 0x64). No manager installed: the entry point counts the call (AudioApi::callsWithoutAudio)
+	AudioApi::playSoundForPlayer(m_template->m_lightPointsUpSound, m_index);
+}
+
+// RW 0x6AA8FB
+bool Player::hasLightPointsForSpecialPower(const SpecialPowerTemplate *t) const
+{
+	return !TheLightPointSystem || TheLightPointSystem->canUseSpecialPower(m_lightPoints, t);
+}
+
+// RW 0x6AA939
+void Player::giveLightPointLevel(const std::string &levelName)
+{
+	if (TheLightPointSystem)
+	{
+		TheLightPointSystem->giveLevel(m_lightPoints, levelName);
+	}
+}
+
+// RW 0x6AA957
+void Player::removeLightPointLevel(const std::string &levelName)
+{
+	if (TheLightPointSystem)
+	{
+		TheLightPointSystem->removeLevel(m_lightPoints, levelName);
 	}
 }
 

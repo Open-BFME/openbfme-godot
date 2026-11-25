@@ -15,6 +15,7 @@
 #pragma once
 
 #include "Common/CommandPoints.h"
+#include "Common/LightPointTracker.h"
 #include "Common/Money.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/PlayerHeroList.h"
@@ -43,6 +44,7 @@ class GameLogic;
 class PlayerEconomyHost;
 class TunnelTracker;
 struct ObjectFilter;
+class SpecialPowerTemplate;
 
 enum PlayerType
 {
@@ -332,6 +334,21 @@ public:
 	ResourceGatheringManager &resourceGatheringManager() { return m_resourceGathering; }
 	const ResourceGatheringManager &resourceGatheringManager() const { return m_resourceGathering; }
 
+	// PORT-113: the light points of the War of the Ring, the tracker at RW + 0x338 (the points at
+	// + 0x33C, the level indices at + 0x340). Scripts give and take them (actions 351 .. 354), the special powers test and spend them.
+	const LightPointTracker &lightPoints() const { return m_lightPoints; }
+	int getLightPoints() const { return m_lightPoints.getPoints(); } // RW 0x6AA8F4
+	// RW 0x6AB148: the amount goes to the tracker (RW 0x8309E3, a negative one too); then, for a positive amount and a template with a
+	// LightPointsUpSound (+ 0x1A4), that sound is added for this player (RW 0x6AB191 .. 0x6AB1B6)
+	void giveLightPoints(int amount);
+	void spendLightPoints(int cost) { m_lightPoints.subtractPoints(cost); } // RW 0x6AA91D (LightPointCost of a special power)
+	void resetLightPoints() { m_lightPoints.resetPoints(); }               // RW 0x6AA931
+	// RW 0x6AA8FB: true without TheLightPointSystem, else its test (RW 0x830AE3: a power no level names passes, a named one needs its LightPointCost)
+	bool hasLightPointsForSpecialPower(const SpecialPowerTemplate *t) const;
+	// RW 0x6AA939 / 0x6AA957: the level with this name (TheLightPointSystem RW 0x830E63 / 0x830BD5); nothing without the system or for an unknown name
+	void giveLightPointLevel(const std::string &levelName);
+	void removeLightPointLevel(const std::string &levelName);
+
 	void setEconomyHost(PlayerEconomyHost *host) { m_host = host; }
 	PlayerEconomyHost *economyHost() const { return m_host; }
 
@@ -388,4 +405,5 @@ private:
 	int m_orderMode = 0; // lane INPUT-1 r2
 	std::shared_ptr<TunnelTracker> m_tunnelTracker; ///< lane GARRISON-2 (RW + 0x308)
 	ResourceGatheringManager m_resourceGathering; ///< lane LUMBER1 (RW + 0x304)
+	LightPointTracker m_lightPoints;              ///< PORT-113 (RW + 0x338)
 };

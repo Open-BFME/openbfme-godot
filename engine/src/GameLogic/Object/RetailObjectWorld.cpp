@@ -116,7 +116,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	skip.insert(skip.end(), SkirmishAIStore::blockKeywords().begin(), SkirmishAIStore::blockKeywords().end());
 	for (const char *const *k = SpellStores::blockKeywords(); *k; ++k)
 	{
-		skip.push_back(*k); // SPELL-1: Science, Rank, SpecialPower
+		skip.push_back(*k); // SPELL-1: Science, Rank, SpecialPower, ObjectCreationList; PORT-113: LightPointLevel
 	}
 	// Only replace recording handlers for the selected Living World data mode.
 	// BFME1 campaigns remain explicitly unavailable (S-5017).

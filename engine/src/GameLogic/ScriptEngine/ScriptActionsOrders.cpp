@@ -871,6 +871,55 @@ bool ScriptActions::executeOrderAction(ScriptEngine &engine, const ScriptActionR
 		engine.counter(param(a, 1).stringValue).value = sum;
 		return true;
 	}
+	// PORT-113: the light points of the War of the Ring. The ordinals are the jump table's
+	// (RW 0x7CF857): 351 .. 354 and 405. Each body walks the players of its first parameter (RW 0x758F7C the mask, RW 0x6A85EE the next player)
+	if (name == "PLAYER_GIVE_LIGHT_POINTS")
+	{
+		// case 351, RW 0x7CE5B7 -> RW 0x7BD2D0 (players, amount): Player RW 0x6AB148 (the points, then LightPointsUpSound for a positive amount)
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			p->giveLightPoints(param(a, 1).intValue);
+		}
+		return true;
+	}
+	if (name == "PLAYER_RESET_LIGHT_POINTS")
+	{
+		// case 352, RW 0x7CE5DB -> RW 0x7BD311 (players): Player RW 0x6AA931 (the points become 0, the levels stay)
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			p->resetLightPoints();
+		}
+		return true;
+	}
+	if (name == "PLAYER_GIVE_LIGHT_POINT_LEVEL" || name == "PLAYER_REMOVE_LIGHT_POINT_LEVEL")
+	{
+		// cases 353 / 354, RW 0x7CE5F3 -> RW 0x7BD34F and RW 0x7CE618 -> RW 0x7BD390 (players, level name): Player RW 0x6AA939 / 0x6AA957
+		const bool give = name == "PLAYER_GIVE_LIGHT_POINT_LEVEL";
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			if (give)
+			{
+				p->giveLightPointLevel(param(a, 1).stringValue);
+			}
+			else
+			{
+				p->removeLightPointLevel(param(a, 1).stringValue);
+			}
+		}
+		return true;
+	}
+	if (name == "SET_PLAYER_LIGHT_POINTS_TO_COUNTER")
+	{
+		// case 405, RW 0x7CEC62 -> RW 0x7C36BD (players, counter): the points (RW 0x6AA8F4) of every player of the mask, summed (RW 0x7C36F8), into the
+		// counter (get or create, RW 0x60817A; RW 0x7C371D). No player: 0
+		std::int32_t sum = 0;
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			sum = (std::int32_t)((std::uint32_t)sum + (std::uint32_t)p->getLightPoints());
+		}
+		engine.counter(param(a, 1).stringValue).value = sum;
+		return true;
+	}
 	if (name == "SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER")
 	{
 		// RW 0x7C38F6 (BFME2 Rva003C2E61Do, tier B): the player only for a one-player mask (RW 0x6A85B6); its ScoreKeeper (+ 0x3DC) RW 0x79E4D8(the raw type
