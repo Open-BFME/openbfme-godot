@@ -171,6 +171,9 @@ public:
 	// test crash (stableqa1 cah retail, SIGSEGV after 43 assertions) with no code path of the lane running at all, while the same no-op virtual appended here
 	// leaves it green - the later slots' numbers must not move, whatever reads them
 	virtual void setDrawableOpacity(Object &obj, float opacity) { (void)obj; (void)opacity; }
+	// RW 0x008862E0 (Drawable + 0x118 |= bits) and RW 0x00670913 (Drawable::clearTintStatus)
+	virtual void setDrawableTintStatus(Object &obj, UnsignedInt statusBits) { (void)obj; (void)statusBits; }
+	virtual void clearDrawableTintStatus(Object &obj, UnsignedInt statusBits) { (void)obj; (void)statusBits; }
 	// lane POSTERNPLOT-1, RW 0x85834C .. 0x858389 (FoundationAIUpdate slot 2 on a WALL_UPGRADE foundation): when the object's controlling player is the local
 	// player, the client appends MSG_REMOVE_FROM_SELECTED_GROUP (0x3ED) with its id and deselects its drawable (TheInGameUI vslot 0x10C). Appended at the
 	// end of the interface (see setDrawableOpacity)
