@@ -82,6 +82,7 @@
 #include "GameClient/ControlBarCommands.h"
 #include "Common/CommandPoints.h"
 #include "Common/BuildAssistant.h"
+#include "GameLogic/BuildAssistantSell.h"
 #include "Common/Upgrade.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -674,6 +675,33 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
+	if (name == "TEAM_WANDER")
+	{
+		// RW 0x7CC3FF -> RW 0x7C955B (team, waypoint path): each member with an AI picks the closest waypoint on the path to its own
+		// position (stopping the loop at once if none), switches to LOCOMOTORSET_WANDER (3) and issues aiWander(way, CMD_FROM_SCRIPT)
+		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
+		if (!t || !terrain)
+		{
+			return true;
+		}
+		const std::string &pathName = param(a, 1).stringValue;
+		for (Object *o : ScriptConditions::members(*t))
+		{
+			AIUpdateInterface *ai = o->getAIUpdateInterface();
+			if (!ai)
+			{
+				continue;
+			}
+			const Waypoint *way = closestWaypointOnPath(*terrain, *o->getPosition(), pathName);
+			if (!way)
+			{
+				return true;
+			}
+			ai->chooseLocomotorSet(LOCOMOTORSET_WANDER);
+			ai->aiWander(way->id, CMD_FROM_SCRIPT);
+		}
+		return true;
+	}
 	if (name == "NAMED_FOLLOW_WAYPOINTS" || name == "NAMED_FOLLOW_WAYPOINTS_EXACT" || name == "NAMED_ATTACK_FOLLOW_WAYPOINTS")
 	{
 		// RW 0x7C9196 / 0x7C928D / 0x7C920F: the waypoint of the label closest to the unit, then AI command 6 / 0x32 / 0x10 (lane WARG-1: RW 0x754A3C with
@@ -974,6 +1002,105 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
+	if (name == "PLAYER_ENABLE_FACTORIES") // RW 0x7CC30D -> RW 0x7BBE76(player, templateName) -> Player::enableFactories RW 0x6AC7C5(templateName, 1)
+	{
+		const std::string &tmplName = param(a, 1).stringValue;
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() == p && o->getTemplate() && o->getTemplate()->getName() == tmplName)
+				{
+					o->setScriptStatus(1, false); // RW 0x6AC821 -> RW 0x69317D(1, 0): clears DISABLED_SCRIPT_DISABLED
+				}
+			}
+		}
+		return true;
+	}
+	if (name == "PLAYER_SELL_EVERYTHING") // RW 0x7CC288 -> RW 0x7BBD3B(player) -> Player::sellEverythingUnderTheSun RW 0x6ABFF9
+	{
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			std::vector<Object *> objs;
+			for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() == p)
+				{
+					objs.push_back(o);
+				}
+			}
+			for (Object *o : objs)
+			{
+				logic.sellList().sellObject(o); // RW 0x6AC042 -> TheBuildAssistant vslot 0x6C (RW 0x7966BB)
+			}
+		}
+		return true;
+	}
+	if (name == "TEAM_SET_PLAYERS_NEAREST_UNIT_OF_TYPE_TO_REFERENCE") // RW 0x7CE80F -> RW 0x7C50BB(types, team, refName)
+	{
+		Team *t = ScriptConditions::team(engine, param(a, 1).stringValue); // RW 0x759FDA(team, 0)
+		if (!t)
+		{
+			return true;
+		}
+		Player *p = t->getControllingPlayer(); // RW 0x79FD6F
+		Coord3D centre{ 0.0f, 0.0f, 0.0f };
+		int n = 0;
+		for (Object *o : ScriptConditions::members(*t)) // RW 0x7A0ECD: Team::getApproximatePosition (all members)
+		{
+			centre.x = SimMath::sseAdd(centre.x, o->getPosition()->x);
+			centre.y = SimMath::sseAdd(centre.y, o->getPosition()->y);
+			centre.z = SimMath::sseAdd(centre.z, o->getPosition()->z);
+			++n;
+		}
+		if (n > 0)
+		{
+			const float inv = SimMath::sseDiv(1.0f, SimMath::sseFromInt32(n));
+			centre.x = SimMath::sseMul(inv, centre.x);
+			centre.y = SimMath::sseMul(inv, centre.y);
+			centre.z = SimMath::sseMul(inv, centre.z);
+		}
+		const auto closestOf = [&](const ThingTemplate *tt) -> Object * {
+			auto owned = [p](Object &o) { return o.getControllingPlayer() == p; }; // RW 0xC10E38 -> RW 0x66107F
+			auto typed = [tt](Object &o) { return ScriptConditions::equivalentTemplates(o.getTemplate(), tt); }; // RW 0xC3603C -> RW 0x66114D
+			PartitionFilterFn<decltype(owned)> fOwned(owned);
+			PartitionFilterFn<decltype(typed)> fTyped(typed);
+			return logic.partition().getClosestObject(centre, 1000000.0f, FROM_CENTER_2D, { &fOwned, &fTyped });
+		};
+		Object *found = nullptr;
+		if (const std::vector<std::string> *list = engine.findObjectList(param(a, 0).stringValue)) // RW 0x759158 -> RW 0x7C2F85
+		{
+			float best = 3.4028235e38f;
+			for (const std::string &typeName : *list)
+			{
+				const ThingTemplate *tt = logic.things().findTemplate(typeName);
+				Object *c = tt ? closestOf(tt) : nullptr;
+				if (!c)
+				{
+					continue;
+				}
+				const float dx = SimMath::sseSub(centre.x, c->getPosition()->x);
+				const float dz = SimMath::sseSub(centre.z, c->getPosition()->z);
+				const float dy = SimMath::sseSub(centre.y, c->getPosition()->y);
+				const float d = SimMath::sseAdd(SimMath::sseAdd(SimMath::sseMul(dz, dz), SimMath::sseMul(dy, dy)), SimMath::sseMul(dx, dx));
+				if (d < best)
+				{
+					best = d;
+					found = c;
+				}
+			}
+		}
+		else if (const ThingTemplate *tt = logic.things().findTemplate(param(a, 0).stringValue))
+		{
+			found = closestOf(tt);
+		}
+		if (found)
+		{
+			engine.setReference(param(a, 2).stringValue, *found); // RW 0x7C51C2 -> RW 0x608397
+			engine.nameInCache(param(a, 2).stringValue, *found);  // RW 0x7C51D2 -> RW 0x60A1D5
+		}
+		return true;
+	}
 	if (name == "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER" || name == "SET_REF_TO_NEREST_TEAM_OF_UNNAMED_TYPE_OWNED_BY_PLAYER")
 	{
 		// lane CAMP-1: the UNNAMED form (RW 0x7CF1E7) is the same call with its flag set: one more filter (RW 0xC36060 -> RW 0x6611DD) keeps only the objects
@@ -1253,7 +1380,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	}
 	if (name == "TEAM_ATTACK_AREA")
 	{
-		// lane BFME2CAMP1: RW 0x7BF9B3 (BFME2 decomp ScriptActions_doTeamAttackArea.cpp, tier A): the team (RW 0x759FDA), its AI group (RW 0x70042A /
+		// lane BFME2CAMP1: RW 0x7BF9B3 (BFME2 decomp ScriptActions.cpp, tier A): the team (RW 0x759FDA), its AI group (RW 0x70042A /
 		// 0x7A3D3D), the area by name (RW 0x759194; none: nothing), then RW 0x77283D: every member with an AI (+ 0x260) -> aiAttackArea(area, CMD_FROM_SCRIPT)
 		// (RW 0x77145C: AI command 0x23, AIHunt.cpp)
 		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
@@ -1284,7 +1411,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	}
 	if (name == "TEAM_ATTACK_TEAM")
 	{
-		// lane BFME2CAMP1: RW 0x7BF7EC (BFME2 decomp ScriptActions_doTeamAttackTeam.cpp, tier A): both teams (RW 0x759FDA; either missing: nothing), the first
+		// lane BFME2CAMP1: RW 0x7BF7EC (BFME2 decomp ScriptActions.cpp, tier A): both teams (RW 0x759FDA; either missing: nothing), the first
 		// team's AI group (RW 0x70042A / 0x7A3D3D), then RW 0x772259: every member with an AI (+ 0x260) -> aiAttackTeam(the second team, 0x7FFFFFFF shots,
 		// CMD_FROM_SCRIPT) (RW 0x7713EE: AI command 0xD, AIHunt.cpp)
 		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
@@ -1333,7 +1460,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	}
 	if (name == "PLAYER_HUNT")
 	{
-		// RW 0x7BBCF9 (lane DECOMP-2, BFME2 decomp ScriptActionsRva003BB31D.cpp tier A): every player of the mask (RW 0x758F7C) -> Player::setUnitsShouldHunt(true,
+		// RW 0x7BBCF9 (lane DECOMP-2, BFME2 decomp ScriptActions.cpp tier A): every player of the mask (RW 0x758F7C) -> Player::setUnitsShouldHunt(true,
 		// CMD_FROM_SCRIPT) RW 0x6AF4B1: + 0x35D = true, then each member of each team of the player's prototypes that has none of DOZER, HARVESTER,
 		// IGNORES_SELECT_ALL (RW 0x6AF50E / 0x6AF515) and is no HORDE_MEMBER (status 0x26) leaves its AI group (RW 0x68C6EE: the port keeps no group) and its AI
 		// hunts (RW 0x6AF150). INFERENCE: the members are the player's objects in object list order (RW: prototype, team, member order)

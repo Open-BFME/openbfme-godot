@@ -49,6 +49,7 @@
 //   S-098  how hidden sub objects carry over when the render object is recreated (RetainSubObjects), and the sub object name match.
 
 #pragma once
+#include "Common/TextureSwap.h"
 
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawServices.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
@@ -118,7 +119,7 @@ struct W3DDrawPoseView
 	float blendPercentage = 0.0f;
 	const std::set<int> *hiddenSubObjects = nullptr; ///< indices into model->SubObjects (frame() names them; empty without a model)
 	std::uint32_t hiddenGeneration = 0;             ///< changes whenever the module's hidden set may have changed (with the same model: the same set)
-	const std::vector<std::pair<std::string, std::string>> *textureSwaps = nullptr; ///< the state's `Texture = A B` pairs (stop S-5015); never null after poseView
+	const std::vector<TextureSwap> *textureSwaps = nullptr; ///< the state's `Texture = A B` pairs (stop S-5015); never null after poseView
 	int glow = 0;                                    ///< lane GLOW-1: the module's GlowEnabled / GlowEmissive (module data + 0x128 / + 0x129): 0 none, 1 glows, 2 glows emissive only
 };
 
@@ -167,6 +168,7 @@ public:
 	// Drawable::setModelConditionState: the object's current model condition flags (RW 0x4BF2D8). Both lists are re-matched; see the
 	// header comment for the pending state rule.
 	void setModelConditionFlags(const ModelConditionFlags &flags);
+	void upgradeTexture(const TextureSwap &swap, bool enabled);
 	// lane COMBAT-4: the module data's DependencySharedModelFlags (+ 0xBC, RW table row 0xBE1420): the flags the module's dependents share (RW 0x4BF2D8)
 	const ModelConditionFlags &dependencySharedModelFlags() const { return m_data.m_dependencySharedModelFlags; }
 
@@ -408,6 +410,10 @@ private:
 	// lane RENDER-3: RW 0x4C3B25's permanent list (draw + 0x68): one record per name (_strcmpi), kept whether or not the current render object has the
 	// sub object, applied by name to every new render object (a model without it is skipped silently)
 	std::vector<std::pair<std::string, bool>> m_permanentSubObjectOps;
+	std::vector<TextureSwap> m_upgradeTextures;
+	mutable std::vector<TextureSwap> m_effectiveTextures;
+	mutable const ModelConditionInfo *m_textureState = nullptr;
+	mutable bool m_textureDirty = true;
 	std::vector<std::pair<std::string, bool>> m_subObjectOps; ///< lane PROJ-2: the non-permanent records (RW draw +0x5C), name -> hide, list order
 	std::set<std::string> m_hiddenModules;
 

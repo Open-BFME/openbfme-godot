@@ -58,6 +58,7 @@ enum
 	AI_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS = 3,
 	AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_TEAM = 4,
 	AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_INDIVIDUALS = 5,
+	AI_WANDER = 18, // RW 0x753E06 (0x753E23): state 0x12
 	AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS = 0x22, // lane WARG-1: RW 0x753755 (RW 0x750AE7(machine, 0))
 	AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_TEAM = 0x23         // RW 0x750AE7(machine, 1)
 };
@@ -85,8 +86,7 @@ protected:
 	// computeGoal (RW 0x747723): the current waypoint plus the group offset; false without a current waypoint
 	bool computeGoal(Coord3D &goal) const;
 	std::unique_ptr<AIMoveToState> &move() { return m_move; }
-
-private:
+	float calcExtraPathDistance() const;
 	// lane AIDATA-1, RW 0x755B77 .. 0x755C08: a skirmish AI player's team counts the waypoint reached when its centre is within members x SkirmishGroupFudgeDistance
 	bool skirmishTeamCloseEnough(Team &team);
 	bool m_asTeam, m_exact;
@@ -144,6 +144,36 @@ private:
 	std::unique_ptr<AIStateMachine> makeAttackMachine();
 	bool attackMachineIdle() const;
 	std::unique_ptr<AIStateMachine> m_attackMachine; ///< + 0x68
+};
+
+
+// AIWanderState (RW 0x74469E, vtable 0xC290D0, state 0x12; BFME2 AIStates.cpp / AIWanderStateMethods.cpp).
+// TARGET FACTS (RotWK game.dat, caveat S-001):
+//   * TEAM_WANDER (team, path) RW 0x7CC3FF -> RW 0x7C955B: for each member with an AI (RW 0x66362D walk), finds the closest waypoint on `path`
+//     to that member's position (TheTerrainLogic vslot 0x90; returns at once if none), chooses LOCOMOTORSET_WANDER (3, AI vslot 0x238), and sends
+//     AICMD_WANDER (0x2B, RW 0x7C828A) with CMD_FROM_SCRIPT (1).
+//   * AIUpdate::privateWander RW 0x664852: requires mobile object (RW 0x690E97), clears machine (vslot 0x14), stores source (+ 0x48), sets goal
+//     waypoint (RW 0x6E8498) and enters state 0x12 (AI_WANDER, RW 0x753E06 (0x753E23) -> onSuccess AI_IDLE, onFailure 0x28).
+//   * onEnter RW 0x750B75: m_current = goal, m_previous = 0, clears groupOffset and applies random offset from WanderWidthFactor (locomotor + 0xF0;
+//     lines 0x2954 / 0x2955), m_timer = 0, m_waitFrames = (obj->getID() & 7) + 10, starts move and sets path extra distance (RW 0x74297E).
+//   * update RW 0x74BB9A: sets WANDER model condition (4*32+2), updates move, advances to random link on arrival with new wander offset (lines
+//     0x2987 / 0x2988). Repulsor scan (RW 0x6FF3A2 -> state 0x28) is not ported (stop S-7581).
+//   * onExit RW 0x74BD02: AIFollowWaypointPathState::onExit, clears WANDER model condition, chooses LOCOMOTORSET_NORMAL (0).
+//   * xfer RW 0x742BB6: AIFollowWaypointPathState::xfer, then m_waitFrames and m_timer.
+class AIWanderState : public AIFollowWaypointPathState
+{
+public:
+	explicit AIWanderState(AIStateMachine &m);
+	StateReturnType onEnter() override;
+	StateReturnType update() override;
+	void onExit(StateExitType status) override;
+	void crc(class StateHasher &hasher) const override;
+	void xfer(class Xfer &x) override;
+
+private:
+	void applyWanderOffset(int lineX, int lineY);
+	int m_waitFrames = 0; ///< + 0x68
+	int m_timer = 0;      ///< + 0x6C
 };
 
 const char *waypointPathStopLine();

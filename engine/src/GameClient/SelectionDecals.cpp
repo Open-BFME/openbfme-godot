@@ -435,7 +435,7 @@ bool MarkRaisedSelectionDecals(std::vector<SelectionDecal> &list, const std::fun
 			d.position.z = z; // RW 0x68DB35: the layer's height under an AIRBORNE_TARGET object
 			changed = true;
 		}
-		// RW 0x50CDE4 .. 0x50CDF9 (= BFME2 0x50C841, decomp rva0010C841, W3DProjectedShadowDecalHelpers.cpp:1097-1098): the terrain part is drawn while
+		// RW 0x50CDE4 .. 0x50CDF9 (= BFME2 0x50C841, decomp rva0010C841, W3DProjectedShadow.cpp:3082): the terrain part is drawn while
 		// pos.z - floor < maxHeight
 		const bool raised = !(d.position.z - floorHeight(d.position.x, d.position.y) < kSelectionDecalMaxHeight);
 		changed = changed || raised != d.raised;
@@ -959,7 +959,7 @@ bool EvaluateSelectionDecals(const MergeDecalGrid &grid, const DecalImage &atlas
 				{
 					continue; // lane PLACEDECAL-1: a terrain-only decal draws on no wall top
 				}
-				// the top-down projection (BFME2 decomp W3DProjectedShadowDecalHelpers.cpp): u along the turned x axis, v toward -y at angle 0; lane
+				// the top-down projection (BFME2 decomp W3DProjectedShadow.cpp rva0010C841): u along the turned x axis, v toward -y at angle 0; lane
 				// PLACEDECAL-1: u over the decal's x size, v over its y size
 				const float co = d[12], si = d[13];
 				const float u = (dx * co + dy * si) / d[2] + 0.5f, v = (dx * si - dy * co) / d[14] + 0.5f;

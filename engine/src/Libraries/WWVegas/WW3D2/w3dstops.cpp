@@ -25,6 +25,10 @@ void add(std::vector<W3DStopHit> &out, const char *id, const std::string &detail
 
 void W3D_Collect_Mesh_Stops(const MeshRenderData &mesh, std::vector<W3DStopHit> &out)
 {
+	if (mesh.IgnoredInfluences)
+	{
+		add(out, "S-020", mesh.Name + ": rigid exporter influences ignored; the HLOD pivot controls this mesh (BFME1 presentation compatibility)", mesh.IgnoredInfluences);
+	}
 	if (mesh.ZeroWeightVertices > 0)
 	{
 		add(out, "S-020",

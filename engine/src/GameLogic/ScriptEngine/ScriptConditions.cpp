@@ -3,6 +3,7 @@
 // See GameLogic/ScriptEngine/ScriptConditions.h.
 
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
+#include "GameLogic/ScriptEngine/ScriptThreat.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/GateModules.h"
 
@@ -33,6 +34,8 @@
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/ConstructionModules.h"
+#include "Common/SpecialPower.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/System/ShroudManager.h"
@@ -75,6 +78,22 @@ bool compare(int op, std::int32_t lhs, std::int32_t rhs)
 	}
 }
 
+// lane THREATLEVEL-1: RW 0x7E5970 / 0x7E8A25's compare of the threat (lhs) with the parameter (rhs): comiss / ucomiss per op, 0 <, 1 <=, 2 ==, 3 >=, 4 >,
+// 5 !=, anything else false (the threat is read before the op is: an unknown op still refreshes the cache)
+bool compareReal(int op, float lhs, float rhs)
+{
+	switch (op)
+	{
+	case 0: return lhs < rhs;
+	case 1: return lhs <= rhs;
+	case 2: return lhs == rhs;
+	case 3: return lhs >= rhs;
+	case 4: return lhs > rhs;
+	case 5: return lhs != rhs;
+	default: return false;
+	}
+}
+
 // the condition ordinals ported here
 enum ConditionType
 {
@@ -87,7 +106,9 @@ enum ConditionType
 	UNIT_HAS_OBJECT_STATUS = 80,
 	TEAM_ALL_HAS_OBJECT_STATUS = 81,
 	TEAM_SOME_HAVE_OBJECT_STATUS = 82,
+	SKIRMISH_SPECIAL_POWER_READY = 85,
 	SKIRMISH_PLAYER_FACTION = 87,
+	REGION_CAMPS_SHOULD_UNPACK = 167,
 	TEAM_HAS_CUSTOM_STATE = 143,
 	TEAM_HAS_UNITS = 10,
 	NAMED_INSIDE_AREA = 13,
@@ -104,6 +125,8 @@ enum ConditionType
 	PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_WITH_UPGRADE = 110,
 	UNIT_HAS_GAINED_LEVEL = 117, // lane BFME2CAMP1
 	UNIT_IS_AT_LEVEL = 118,
+	UNIT_THREAT_LEVEL = 115, // lane THREATLEVEL-1
+	TEAM_THREAT_LEVEL = 116,
 	PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_COMPLETELY_BUILT = 188,
 	PLAYER_HAS_CREDITS = 26,
 	NAMED_OWNED_BY_PLAYER = 30,
@@ -148,6 +171,7 @@ enum ConditionType
 	NAMED_BUILDING_IS_EMPTY = 78,
 	PLAYER_HAS_SCIENCEPURCHASEPOINTS = 101,
 	PLAYER_HAS_KILLED_TYPE_UNITS = 129,
+	PLAYER_COMPARE_RANK = 145,
 	PLAYER_HAS_OBJECT_OF_VETERANCY = 146,
 	PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION = 160,
 	COMPARE_NUM_PLAYERS_IN_GAME = 168,
@@ -1788,6 +1812,11 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		const ContainModuleInterface *ct = o ? o->getContain() : nullptr;
 		return ct && ct->getContainCount() == 0;
 	}
+	case PLAYER_COMPARE_RANK: // RW 0x7ECFF6 -> RW 0x7E5EC8(player, op, rank): exact single-player mask (RW 0x6A85B6), compare m_rankLevel (+0x1C)
+	{
+		const Player *p = playerOfMask(engine, param(c, 0).stringValue);
+		return p && compare(param(c, 1).intValue, p->science().getRankLevel(), param(c, 2).intValue);
+	}
 	case PLAYER_HAS_SCIENCEPURCHASEPOINTS: // RW 0x7E50AE (BFME2 ScriptConditions.cpp, tier A): any player with at least the points
 		for (Player *p : players(engine, param(c, 0).stringValue))
 		{
@@ -2039,6 +2068,74 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		});
 		return count >= param(c, 1).intValue;
 	}
+	case UNIT_THREAT_LEVEL:
+	case TEAM_THREAT_LEVEL:
+	{
+		// lane THREATLEVEL-1: RW 0x7EB7CD -> RW 0x7E5970 (115, tier A = BFME2 0x7E4D93, ScriptConditions_evaluateTeamStateIs.cpp:293-310) /
+		// RW 0x7E8A25 (116, tier A = BFME2 0x7E7E54, ScriptConditions.cpp:3576): all four parameters present (else false); the unit (RW 0x75A3D8) /
+		// the team (getTeamNamed RW 0x759FDA, no create) by parameter 0, none: false; then the cached threat RW 0x697B41 / 0x7A6A20(parameter 3, the
+		// radius) against parameter 2 (real) by the op of parameter 1. Both editions (the BFME2 template table never fills 115, so only 116 can be
+		// authored there; the sum is per edition: ScriptThreat.h)
+		if (c.params.size() < 4)
+		{
+			return false;
+		}
+		const float radius = param(c, 3).realValue;
+		float threat = 0.0f;
+		if (c.resolved == UNIT_THREAT_LEVEL)
+		{
+			Object *unit = engine.getUnitNamed(param(c, 0).stringValue);
+			if (!unit)
+			{
+				return false;
+			}
+			threat = ScriptThreat::getThreatInRange(logic, *unit, radius);
+		}
+		else
+		{
+			Team *tm = team(engine, param(c, 0).stringValue);
+			if (!tm)
+			{
+				return false;
+			}
+			threat = ScriptThreat::getThreatInRange(logic, *tm, radius);
+		}
+		return compareReal(param(c, 1).intValue, threat, param(c, 2).realValue);
+	}
+	case SKIRMISH_SPECIAL_POWER_READY: // RW 0x7EC79F -> RW 0x7E9C33 (player, specialPower; Parameter + 0x20 retry cache not ported: evaluated every time)
+	{
+		logic.noteStop("[S-7188] SKIRMISH_SPECIAL_POWER_READY (RW 0x7E9C33, #343): retail's retry cache (the power parameter's int, Parameter + 0x20: -1 for an "
+			"unknown power, else the frame before which the condition answers no without a scan, set after a scan that finds no ready power to "
+			"min(now + 10 * LOGICFRAMES_PER_SECOND, the earliest module ready frame, vslot 0x10)) is not ported: the condition scans every evaluation, so it can "
+			"answer yes earlier than retail"); // S-7188 (#343 review)
+		const SpecialPowerTemplate *sp = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(param(c, 1).stringValue) : nullptr; // RW 0x69C146
+		if (!sp)
+		{
+			return false;
+		}
+		for (Player *p : ScriptConditions::players(engine, param(c, 0).stringValue)) // RW 0x75968D / RW 0x6A85EE
+		{
+			for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() != p)
+				{
+					continue;
+				}
+				if (o->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION) || o->getDisabledMask() != DISABLEDMASK_NONE) // RW 0x44DDEC(2), RW 0x9325B4 (+0x1C8)
+				{
+					continue;
+				}
+				const SpecialPowerModuleInterface *mod = SpecialPowerModules::findModule(*o, sp); // RW 0x68C26D
+				if (mod && SpecialPowerModules::canUseSpecialPower(*o, sp) && mod->isReady()) // RW 0x7B1D79, vslot 0x04
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+	case REGION_CAMPS_SHOULD_UNPACK: // RW 0x7ED40B (jump table 0x7ED414 + (167 - 5) * 4): xor al, al in both RotWK 2.01 and BFME2 1.06
+		return false;
 	default:
 		engine.noteUnportedCondition(t->name);
 		return false;

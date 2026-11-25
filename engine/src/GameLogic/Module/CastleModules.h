@@ -25,8 +25,9 @@
 //       - the template is looked up by the entry's name; one with KindOf OPTIMIZED_PROP is skipped (RW 0x798850); WALK_ON_TOP_OF_WALL sets module + 0x44;
 //       - the team is the castle's when the template passes FilterValidOwnedEntries (RW 0x763543, no players), else the neutral player's default team (RW 0x798885);
 //       - the position is the castle's transform applied to the entry's position (rotation by the castle's orientation, translation), the angle is the entry's plus the
-//         castle's, normalised (RW 0x798899 ff); a template that is not a COMMANDCENTER must pass the placement legality with options CLEAR_PATH | NO_OBJECT_OVERLAP (RW 0x797A96
-//         with 5), else the entry is skipped;
+//         castle's, normalised (RW 0x798899 ff); a template that is not a COMMANDCENTER must pass the placement legality with options 5 (RW 0x797A96
+//         adds 0x100: TERRAIN_RESTRICTIONS | NO_OBJECT_OVERLAP | CASTLE_MEMBERS, lane BUILDCLEAR-1; the port leaves the terrain bit out, S-303), else the entry
+//         is skipped;
 //       - the object is made by the creation interface at module + 0x20 (RW 0x859198) and recorded in the castle's owned list; the CastleMemberBehavior of every owned object
 //         learns its castle (RW 0x79BFC9: module + 0x14 / + 0x18);
 //     then the castle centre gets the status UNSELECTABLE (RW 0x79C07E), its drawable is hidden, the model flags / pathfinder footprint are updated, and the state is 4.

@@ -424,8 +424,10 @@ TEST_CASE("auth: the START's absent macKey keeps the game on the legacy envelope
 	const std::vector<std::uint8_t> ticket = ticketBytes(testTicket(0));
 	const RelayAuth::SessionKey k = RelayAuth::sessionKey(testKey().data(), testKey().size(), ticket.data(), ticket.size());
 	std::memcpy((void *)o.relay.macKey.data(), k.data(), k.size());
+	// the relay is a probe socket on a free port (port 0): a fixed port can be taken on a shared machine (the Windows CI runner could not bind 50000)
 	UDP probe;
-	REQUIRE(probe.bind(0x7F000001u, 50000, &error));
+	REQUIRE(probe.bind(0x7F000001u, 0, &error));
+	o.relay.address = probe.localAddress();
 	{
 		Transport t3(socket, 0, o);
 		t3.setClock([] { return (std::uint64_t)1000; });

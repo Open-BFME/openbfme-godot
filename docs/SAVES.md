@@ -1072,6 +1072,15 @@ and T3 (Linux and Windows bytes equal) cover it.
 - **War of the Ring battles:** not supported by this build (no War of the Ring battle start), so not in T1.
 - **Stops:** S-5010 .. S-5014.
 
+### THREATLEVEL-1: the map scripts' threat caches
+
+Written only once a threat question armed the cache, so games without UNIT_THREAT_LEVEL / TEAM_THREAT_LEVEL / SET_COUNTER_TO_*_THREAT keep their old bytes and hashes.
+
+| Where | Block / class | Version | Field (type) | An older save loads with |
+|---|---|---|---|---|
+| `Team.cpp` | Team | 5 (written with an armed cache) | the cached threat (real, + 0x120) and its deadline frame (unsigned, + 0x124), retail Team::xfer RW 0x7A5C06's order | versions 1 to 4: 0, 0 |
+| `Object.cpp` | Object | 3 (written with an armed cache) | the deadline frame (unsigned, + 0x468) and the cached threat (real, + 0x464), BFME2 1.06's order (ObjectDoXfer.cpp:715-716); RotWK's RW 0x697F28 does not save them (S-7184) | versions 1 and 2: 0, 0 |
+
 ### BFME2CAMP1: the campaign, tutorial and rebuild-hole state (lane BFME2CAMP1, PR #137)
 
 Every new field is versioned, and a block writes its new version only when the state it adds exists: games without that state keep their old bytes and hashes. Every older version loads, with the new field at its default.

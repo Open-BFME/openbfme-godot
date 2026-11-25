@@ -380,14 +380,15 @@ TEST_CASE("cah1 retail shell: the main menu's Create-a-Hero pushes CreateAHero.a
 	AptCreateAHero *scr = c.screen();
 	REQUIRE(scr);
 	CHECK(scr->currentPage() == 'M');
-	// stops S-1400 .. S-1405 and S-1408 (lane CAH-2): every one is reported by the screen
-	REQUIRE(AptCreateAHero::stopLines().size() == 7);
-	CHECK(c.fx->wm->noteCount("create-a-hero-stop") == 7);
+	// stops S-1400 .. S-1405, S-1408 (lane CAH-2) and S-7186 (lane CAHWHEEL-1): every one is reported by the screen
+	REQUIRE(AptCreateAHero::stopLines().size() == 8);
+	CHECK(c.fx->wm->noteCount("create-a-hero-stop") == 8);
 	for (int k = 0; k < 6; ++k)
 	{
 		CHECK(AptCreateAHero::stopLines()[(size_t)k].rfind("[S-140" + std::to_string(k) + "]", 0) == 0);
 	}
 	CHECK(AptCreateAHero::stopLines()[6].rfind("[S-1408]", 0) == 0);
+	CHECK(AptCreateAHero::stopLines()[7].rfind("[S-7186]", 0) == 0);
 	CHECK(AptCreateAHero::stopLines()[3] == "[S-1403] Create-a-Hero awards: statistics files, kill counters, award triggers and Manager presentation are implemented; reward UpgradeAwards drawable bling and in-game award popup are not ported; match-result timing is inferred from EndGameView, not yet verified against retail (RW 0x80B2AB); WotR result counters and PrimaryKey/SecondaryKey statistics remain unverified");
 	REQUIRE(scr->heroList());
 	CHECK(GadgetListBoxGetNumEntries(scr->heroList()) == 8);
@@ -1586,5 +1587,112 @@ TEST_CASE("stableqa1 cah retail: a builder-made Create-a-Hero of every class att
 			hurt = !e || e->isEffectivelyDead() || (e->getBodyModule() && e->getBodyModule()->getHealth() < hp0);
 		}
 		CHECK_MESSAGE(hurt, "class " << cls << " (" << sys.classes()[cls].nameTag << "): the hero did no damage in 600 frames");
+	}
+}
+
+TEST_CASE("cahwheel1 retail shell: on the Powers page a wheel notch moves the power matrix one line as its scroll bar's arrow does (NOT RETAIL, S-7186)")
+{
+	OPENBFME_REQUIRE_START(s);
+	CahShellFx c(s, true);
+	AptCreateAHero *scr = c.screen();
+	REQUIRE(scr);
+	std::string error;
+	REQUIRE_MESSAGE(c.fx->wm->invokeAS(scr->level(), "SetCreateNewHero", { "true" }, nullptr, &error), error);
+	c.show(scr, "Class");
+	REQUIRE(c.fx->wm->invokeCallback("AptCreateAHero::Class::SetClassAndType", "2 1"));
+	// another page: the screen does not take the notch
+	CHECK_FALSE(scr->inputWheel(-1));
+	c.show(scr, "Appearance");
+	REQUIRE(scr->nameEntry());
+	GadgetTextEntrySetText(scr->nameEntry(), u"Wheel");
+	REQUIRE(c.fx->wm->invokeCallback("AptCreateAHero::Appearance::OnComplete", ""));
+	c.show(scr, "Powers");
+	c.fx->tick(80); // past the first scroll position (S-1404)
+	REQUIRE(scr->currentPage() == 'P');
+	const std::string menuPath = "Main.mcPowersScreen.Screen.mcPowersMenu";
+	AptCharacterInst *rows = c.fx->at(scr->level(), menuPath + ".mcRows");
+	AptCharacterInst *mask = c.fx->at(scr->level(), menuPath + ".mcMaskAvailPowers");
+	REQUIRE(rows);
+	REQUIRE(mask);
+	// the scroll bar: an unnamed clip of mcPowersMenu holds VerticalScrollBar.apt's theBar
+	AptCharacterInst *bar = nullptr;
+	for (AptCharacterInst *child : dynamic_cast<AptSpriteInst *>(c.fx->at(scr->level(), menuPath))->children())
+	{
+		if (AptSpriteInst *holder = dynamic_cast<AptSpriteInst *>(child))
+		{
+			bar = bar ? bar : holder->childByName("theBar");
+		}
+	}
+	REQUIRE(bar);
+	AptCharacterInst *thumb = dynamic_cast<AptSpriteInst *>(bar)->childByName("thumb");
+	REQUIRE(thumb);
+	// the bar's position as the movie reads it (its own number formatting)
+	auto pos = [&]() {
+		std::string r;
+		REQUIRE(c.fx->wm->apt().invokeValues(bar, "GetCurPos", {}, &r, &error));
+		return r;
+	};
+	// presses of the bar's own arrow, as its button does (VerticalScrollBar.apt: _parent.OnScrollButtonPress(this))
+	auto arrow = [&](const char *name, int presses) {
+		AptCharacterInst *button = dynamic_cast<AptSpriteInst *>(bar)->childByName(name);
+		REQUIRE(button);
+		for (int i = 0; i < presses; ++i)
+		{
+			REQUIRE(c.fx->wm->apt().invokeValues(bar, "OnScrollButtonPress", { AptValue::object(button) }, nullptr, &error));
+		}
+		c.fx->tick(2);
+	};
+	const float top = rows->matrix.ty;
+	const float thumbTop = thumb->matrix.ty;
+	CHECK(pos() == "0");
+
+	// the wheel up at the top: nothing moves (the arrow's own clamp)
+	c.fx->wm->postMouseWheel(1);
+	c.fx->tick(2);
+	CHECK(pos() == "0");
+	CHECK(rows->matrix.ty == top);
+	CHECK(thumb->matrix.ty == thumbTop);
+
+	// a notch down through the window manager's wheel is one line (the movie's GetScrollLineSize for 14 rows), three are three
+	c.fx->wm->postMouseWheel(-1);
+	c.fx->tick(2);
+	CHECK(pos() == "0.109477");
+	c.fx->wm->postMouseWheel(-1);
+	c.fx->wm->postMouseWheel(-1);
+	c.fx->tick(2);
+	CHECK(pos() == "0.328432");
+	const float rowsWheel = rows->matrix.ty;
+	const float thumbWheel = thumb->matrix.ty;
+	// back to the top and the same three presses of the bar's own down arrow: rows and thumb exactly where the wheel put them
+	arrow("upButton", 3);
+	CHECK(pos() == "0");
+	CHECK(rows->matrix.ty == top);
+	CHECK(thumb->matrix.ty == thumbTop);
+	arrow("downButton", 3);
+	CHECK(pos() == "0.328432");
+	CHECK(rows->matrix.ty == rowsWheel);
+	CHECK(thumb->matrix.ty == thumbWheel);
+
+	// a notch up: one line back
+	c.fx->wm->postMouseWheel(1);
+	c.fx->tick(2);
+	CHECK(pos() == "0.218955");
+
+	// many notches down stop at the bar's own last position, and a further one moves nothing
+	for (int i = 0; i < 40; ++i)
+	{
+		c.fx->wm->postMouseWheel(-1);
+	}
+	c.fx->tick(2);
+	CHECK(pos() == "0.704886");
+	const float rowsBottom = rows->matrix.ty;
+	c.fx->wm->postMouseWheel(-1);
+	c.fx->tick(2);
+	CHECK(pos() == "0.704886");
+	CHECK(rows->matrix.ty == rowsBottom);
+	CHECK(c.fx->wm->errors().empty());
+	for (const std::string &e : c.fx->wm->errors())
+	{
+		MESSAGE("apt error: " << e);
 	}
 }

@@ -68,6 +68,7 @@ struct BlockState
 	unsigned seen = 0;
 	unsigned blocks = 0; ///< bit 0 GameData, 1 AIData, 2 MultiplayerSettings: which blocks were read
 	bool minDistFromEdgeOfMapForBuildSeen = false; // PORT-12: the seen mask already uses all 32 bits
+	bool maxCastleRadiusSeen = false;              // lane BUILDCLEAR-1
 	std::set<std::string> unapplied; ///< "Block.Field" of the fields no row of this lane reads
 };
 
@@ -91,6 +92,14 @@ void parseMinDistFromEdgeOfMapForBuild(INI *ini, void *instance, void *store, co
 {
 	INI::parseReal(ini, instance, store, nullptr);
 	static_cast<BlockState *>(instance)->minDistFromEdgeOfMapForBuildSeen = true;
+}
+
+// lane BUILDCLEAR-1: GameData MaxCastleRadius, row RW 0xC011C0 (parseReal RW 0x42ED00, GlobalData + 0x1220; BuildAssistant::isLocationClearOfObjects reads it at
+// RW 0x796DC3 / 0x796DFB). BFME2 1.06 and RotWK 2.01 both ship `MaxCastleRadius = 130` in data/ini/gamedata.ini.
+void parseMaxCastleRadius(INI *ini, void *instance, void *store, const void *)
+{
+	INI::parseReal(ini, instance, store, nullptr);
+	static_cast<BlockState *>(instance)->maxCastleRadiusSeen = true;
 }
 
 // the line without its ; or // comment
@@ -243,6 +252,7 @@ const FieldParse kGameDataFields[] = {
 	{ "SupplyBuildBorder", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_SUPPLYBORDER), (int)offsetof(BlockState, values.supplyBuildBorder) },
 	{ "MinDistFromEdgeOfMapForBuild", parseMinDistFromEdgeOfMapForBuild, nullptr, (int)offsetof(BlockState, values.minDistFromEdgeOfMapForBuild) },
 	{ "MaxLineBuildObjects", parseNoting<INI::parseInt>, SEEN_DATA(SEEN_LINEBUILD), (int)offsetof(BlockState, values.maxLineBuildObjects) },
+	{ "MaxCastleRadius", parseMaxCastleRadius, nullptr, (int)offsetof(BlockState, values.maxCastleRadius) },
 	// lane BUILD-3: BuilderMoveFromNewStructureDistance (row RW 0xC010D0, parseReal, GlobalData + 0x11E4): the walk of a porter out of the structure it built (RW 0x88D6AE)
 	{ "BuilderMoveFromNewStructureDistance", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_BUILDERMOVE), (int)offsetof(BlockState, values.builderMoveFromNewStructureDistance) },
 	// lane PORTERFOG-1: BuilderFadeOutTime / BuilderFadeInTime (BFME2 decomp GlobalData.cpp:1199-1200: parseDurationUnsignedInt, GlobalData + 0x11DC / + 0x11E0): the porter's
@@ -362,6 +372,14 @@ const FieldParse kAIDataFields[] = {
 	{ "MeleeApproachDist", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.meleeApproachDist) },
 	{ "CastleSiegeStandBackDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.castleSiegeStandBackDistance) },
 	{ "HordesWaitForHordes", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.hordesWaitForHordes) },
+	// ForceHordesToLowLOD (row RW 0xC1CE70, parseBool RW 0x42E558, AIData + 0xBB) and low-LOD trees (rows RW 0xC1CF50 UseLowLODTrees + 0xD8,
+	// RW 0xC1CF70..0xC1CF90 LowLodTreeName / NoGrab / NoHarvest + 0xDC..+0xE4 parseAsciiString, RW 0xC1CFA0 LowLodTreeScale + 0xE8 parseReal)
+	{ "ForceHordesToLowLOD", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.forceHordesToLowLOD) },
+	{ "UseLowLODTrees", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.useLowLODTrees) },
+	{ "LowLodTreeName", parseNoting<INI::parseAsciiString>, 0, (int)offsetof(BlockState, values.lowLodTreeName) },
+	{ "LowLodTreeNameNoGrab", parseNoting<INI::parseAsciiString>, 0, (int)offsetof(BlockState, values.lowLodTreeNameNoGrab) },
+	{ "LowLodTreeNameNoHarvest", parseNoting<INI::parseAsciiString>, 0, (int)offsetof(BlockState, values.lowLodTreeNameNoHarvest) },
+	{ "LowLodTreeScale", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.lowLodTreeScale) },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kMultiplayerFields[] = {
@@ -540,6 +558,10 @@ bool finish(Load &l, unsigned blockBit, const char *blockName, const std::vector
 		l.state().minDistFromEdgeOfMapForBuildSeen)
 	{
 		out.buildRulesLoaded = true;
+	}
+	if (l.state().maxCastleRadiusSeen)
+	{
+		out.maxCastleRadiusLoaded = true; // lane BUILDCLEAR-1: set only, like the build rules (BFME1's GameData has no such row)
 	}
 	out.builderMoveLoaded = (l.state().seen & SEEN_BUILDERMOVE) != 0; // lane BUILD-3
 	out.builderFadeLoaded = (l.state().seen & (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN)) == (SEEN_BUILDERFADE_OUT | SEEN_BUILDERFADE_IN); // lane PORTERFOG-1
@@ -733,6 +755,10 @@ void GameLogicSettings::crc(StateHasher &h) const
 		h.addFloat(maxRecruitRadius); // lane PORT-40: retail 2.01 and Ennorath set 400.0 (default\aidata.ini:32, the mod keeps it), so a game with
 		                             // that data is unchanged; a map.ini / mod AIData block with another value is hashed (as lane STEALTHFLY1 above)
 	}
+	if (!forceHordesToLowLOD)
+	{
+		h.addBool(forceHordesToLowLOD); // ctor RW 0x6FFDA5 and retail aidata.ini set true, so default games keep their settings hash
+	}
 	h.addU32((std::uint32_t)attackPriorityDefs.size());
 	for (const AttackPriorityDef &d : attackPriorityDefs)
 	{
@@ -757,6 +783,8 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addFloat(supplyBuildBorder); // PORT-12: always hash the placement rule, including zero
 	h.addI32(maxLineBuildObjects);
 	h.addFloat(minDistFromEdgeOfMapForBuild); // RotWK GameData +0xA68: always hash this simulation input, including zero
+	// lane BUILDCLEAR-1: GameData MaxCastleRadius (+ 0x1220) is not in the settings hash: an INI value with no state, and a mod changing it changes the INI
+	// checksum; so the settings hash of every game is unchanged by its row
 	h.addBool(builderMoveLoaded);
 	h.addFloat(builderMoveFromNewStructureDistance);
 	h.addBool(sellPercentageLoaded); // lane FACT-A

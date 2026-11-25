@@ -30,7 +30,7 @@
 //     an object list takes per type the strictly nearest by the squared 3D distance (RW 0x7C2F85); 394 walks the players of the mask in index order and
 //     keeps the strictly nearest by the 3D length (a tie: the lower index); then the team's AI group moves to the object's position (RW 0x774897,
 //     CMD_FROM_SCRIPT).
-//   * TEAM_RECRUIT_UNITS_FROM_TEAM (398) RW 0x7C2C7A -> Team RW 0x7A449F (BFME2 ScriptGlueRva003C21E5.cpp / TeamGetControllingPlayer.cpp:974): the
+//   * TEAM_RECRUIT_UNITS_FROM_TEAM (398) RW 0x7C2C7A -> Team RW 0x7A449F (BFME2 ScriptActions.cpp / TeamGetControllingPlayer.cpp:974): the
 //     destination team (created when missing), the source team; the template and the object list of the type (neither required); the destination's
 //     centre over its live members (RW 0x7A02E1), once; up to the count: over the source prototype's teams, newest first (prototype + 0x334), their
 //     members in order: of the type (RW 0x73D5C2, or the list, RW 0x778EA0), not DISABLED_HELD (+ 0x1C8 bit 3), recruitable (AI + 0x3BE): the nearest by
@@ -72,7 +72,7 @@
 //     tier B: RotWK walks 33 slots, bound 0x21, BFME2 32): the unit (RW 0x75A3D8; the target by name RW 0x75A243, the waypoint TheTerrainLogic vslot 0x88:
 //     each required), its command set (RW 0x69156B -> 0x71EFA2); every slot (RW 0x80C837) whose button's name equals the parameter (exact) runs
 //     Object::doCommandButton[AtObject / AtPosition](button, [target / the waypoint], CMD_FROM_SCRIPT, 0): a button in two slots runs twice.
-//   * TEAM_USE_COMMANDBUTTON_ABILITY (245) RW 0x7C11EE / _ON_NAMED (242) RW 0x7C1254 / _AT_WAYPOINT (243) RW 0x7C12DC (BFME2 ScriptGlueRva003C075B.cpp,
+//   * TEAM_USE_COMMANDBUTTON_ABILITY (245) RW 0x7C11EE / _ON_NAMED (242) RW 0x7C1254 / _AT_WAYPOINT (243) RW 0x7C12DC (BFME2 ScriptActions.cpp,
 //     tier A): the team, [the target / the waypoint], the button by name (RW 0x71D6EA, its final override; no command set test), the team's AI group:
 //     AIGroup RW 0x76F9FF / 0x76FA59 / 0x76FA2A run it on every member in the group's order (auto 0).
 //   * PLAYER_FIRE_SPECIAL_POWER_AT_WAYPOINT (571) RW 0x7C4C50 (BFME2 ScriptActions_doFireSpecialPowerAtWaypoint.cpp, tier A): the waypoint, the power by name (RW 0x69C146);
@@ -1036,6 +1036,125 @@ bool ScriptActions::executeOrderAction(ScriptEngine &engine, const ScriptActionR
 		for (Object *o : ScriptConditions::members(*t))
 		{
 			o->setSpecialModelConditionState(bit, (UnsignedInt)frames);
+		}
+		return true;
+	}
+	if (name == "TEAM_ENTER_NAMED") // RW 0x7CBFCB -> RW 0x7BFA20 (team, targetName) -> AIGroup::groupEnter (RW 0x7724BE)
+	{
+		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue); // RW 0x759FDA(team, 0)
+		Object *target = t ? engine.getUnitNamed(param(a, 1).stringValue) : nullptr; // RW 0x75A243
+		if (t && target)
+		{
+			AIGroup group(logic, idsOf(teamAIGroup(*t))); // RW 0x70042A / RW 0x7A3D3D
+			for (Object *o : group.members())
+			{
+				if (o->getAIUpdateInterface())
+				{
+					o->getAIUpdateInterface()->aiEnterObject(target, CMD_FROM_SCRIPT); // RW 0x7724BE -> RW 0x66C5A4
+				}
+			}
+		}
+		return true;
+	}
+	if (name == "NAMED_USE_COMMANDBUTTON_ON_NEAREST_KINDOF") // RW 0x7CD60B -> RW 0x7BE6EE (unit, buttonName, kindOfInt)
+	{
+		Object *o = engine.getUnitNamed(param(a, 0).stringValue); // RW 0x75A3D8
+		const CommandButton *btn = (o && TheCommandStore) ? TheCommandStore->findCommandButton(param(a, 1).stringValue) : nullptr; // RW 0x71D6EA
+		if (!o || !btn)
+		{
+			return true;
+		}
+		// CommandButton::isReady (RW 0x75CC3E)
+		bool ready = false;
+		if (btn->m_command == GUI_COMMAND_FIRE_WEAPON)
+		{
+			ready = false; // S-1871: FIRE_WEAPON deadline not ported
+			ActionManager::noteFireWeaponButton(*o); // the stop reaches the report (#343 review)
+		}
+		else
+		{
+			if (!btn->m_specialPowerName.empty() && TheSpecialPowerStore)
+			{
+				const SpecialPowerTemplate *sp = TheSpecialPowerStore->findSpecialPowerTemplate(btn->m_specialPowerName);
+				if (const SpecialPowerModuleInterface *mod = sp ? SpecialPowerModules::findModule(*o, sp) : nullptr)
+				{
+					if (mod->getPercentReady() >= 1.0f)
+					{
+						ready = true;
+					}
+				}
+			}
+			if (!ready && !btn->m_upgradeName.empty())
+			{
+				const UpgradeTemplate *up = Player::resolveUpgrade(btn->m_upgradeName, false);
+				if (up && o->affectedByUpgrade(up) && !o->hasUpgrade(up))
+				{
+					ready = true;
+				}
+			}
+		}
+		if (!ready)
+		{
+			return true;
+		}
+		// Object::canUseCommandButton (RW 0x692A75)
+		if (!btn->m_specialPowerName.empty())
+		{
+			const SpecialPowerTemplate *sp = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(btn->m_specialPowerName) : nullptr;
+			if (!sp || !SpecialPowerModules::findModule(*o, sp))
+			{
+				return true;
+			}
+		}
+		const CommandSet *set = TheCommandStore->findCommandSet(o->getCommandSetName()); // RW 0x69156B / RW 0x71EFA2
+		bool inSet = false;
+		for (int i = 0; set && i < CommandSet::MAX_BUTTONS; ++i) // RW 0x80C837, bound 0x21
+		{
+			if (set->getCommandButton(i) == btn)
+			{
+				inSet = true;
+				break;
+			}
+		}
+		if (!inSet)
+		{
+			return true;
+		}
+		const int kindOfBit = param(a, 2).intValue; // RW 0x444D39: KindOf bit index
+		if (kindOfBit < 0)
+		{
+			return true;
+		}
+		Player *owner = o->getControllingPlayer();
+		auto sameMap = [o](Object &c) { return o->isOffMap() == c.isOffMap(); }; // RW 0xC0F374 -> RW 0x660E93
+		auto hasKind = [kindOfBit](Object &c) { return c.isKindOf((unsigned)kindOfBit); }; // RW 0x444D39 + RW 0x445139
+		auto isEnemy = [owner](Object &c) { return owner && owner->getRelationship(c.getTeam()) == ENEMIES; }; // RW 0xC1676C -> RW 0x66110A (mask 4)
+		PartitionFilterFn<decltype(sameMap)> fSameMap(sameMap);
+		PartitionFilterFn<decltype(hasKind)> fKind(hasKind);
+		PartitionFilterFn<decltype(isEnemy)> fEnemy(isEnemy);
+		if (btn->hasOption(COMMAND_OPTION_NEED_TARGET_POS)) // RW 0x7BE753: +0x1C bit 5
+		{
+			if (Object *target = logic.partition().getClosestObject(*o->getPosition(), 1000000.0f, FROM_CENTER_2D, { &fSameMap, &fKind, &fEnemy }))
+			{
+				if (!ObjectCommandButton::doCommandButtonAtPosition(*o, btn, *target->getPosition(), CMD_FROM_SCRIPT)) // RW 0x6979D9
+				{
+					noteUnportedButton(engine, name, *btn);
+				}
+			}
+		}
+		else
+		{
+			auto validTarget = [o, btn](Object &c) {
+				return ActionManager::canUseCommandButtonAtObject(*o, *btn, c, CMD_FROM_SCRIPT); // RW 0xC36084 -> RW 0x6611FD -> RW 0x75CF21
+			};
+			PartitionFilterFn<decltype(validTarget)> fValid(validTarget);
+			if (Object *target = logic.partition().getClosestObject(*o->getPosition(), 1000000.0f, FROM_CENTER_2D, { &fSameMap, &fValid, &fKind, &fEnemy }))
+			{
+				if (!ObjectCommandButton::doCommandButtonAtObject(*o, btn, target, CMD_FROM_SCRIPT)) // RW 0x697890
+				{
+					noteUnportedButton(engine, name, *btn);
+				}
+			}
 		}
 		return true;
 	}

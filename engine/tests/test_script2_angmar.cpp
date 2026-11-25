@@ -145,8 +145,13 @@ static void runFoundation(SimulationProfile profile, bool defend, const SaveGame
 		// objects that carry it) moves banner carrier hits 46 -> 41, wolf rider hits 516 -> 580, the last sling hit takes 628 (743); the other items keep it
 		// pin: merge queue q56 (measured once on the merged tree and at each merge point): #323's merge point (stunned units halt their AI, RW 0x669652) moves
 		// banner carrier hits 41 -> 33, wolf rider hits 580 -> 423, the last sling hit takes 1259 (628); #321 keeps it
-		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 33 }, { "AngmarTrollSling dealt 1350 taken 1259", 1 },
-			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 423 } };
+		// pin: lane VISIONDEF-1 (the vision height bonus with RotWK's ThingTemplate defaults and per-object ground reference, RW 0x73FB7A / 0x69264D: the
+		// counterattackers and the player's units see otherwise; measured on the lane's tree): banner carrier hits 33 -> 52, wolf rider hits 423 -> 436, the last
+		// sling hit takes 938 (1259)
+		// pin: lane FIRINGTRACKER-1 (the FiringTracker read on the bytes, RW 0x8E326D / 0x8E30DD: a weapon without ContinuousFireCoast keeps its shot count between shots instead of losing it on every AI update, so a PER_ATTACK pre-attack delay, RW 0x68C54E -> 0x8E2E12, is paid on the first shot at a target only; the tracker runs as the PHASE_FINAL FiringTrackerHelper; measured on the lane's tree): wolf rider hits 436 -> 524, the last sling hit takes 816 (938)
+		// pin: merge queue q64 (measured once on the merged tree and at each merge point: #334's builders turn to face the site before they build or repair, RW 0x88DD3E / 0x88DA7A, so every AI build starts a few frames later and the AI game moves; #341 keeps it, FIRINGTRACKER-1 alone keeps its own lane values): banner carrier hits 52 -> 38, wolf rider hits 524 -> 482, the last sling hit takes 719 (816)
+		const std::map<std::string, int> expected = { { "AngmarThrallMasterWolfBanner dealt 2 taken 2", 38 }, { "AngmarTrollSling dealt 1350 taken 719", 1 },
+			{ "AngmarTrollSling dealt 1350 taken 1350", 4 }, { "AngmarTrollSling dealt 50 taken 50", 5 }, { "AngmarWolfRider dealt 5 taken 5", 482 } };
 		CHECK(kinds == expected);
 	};
 	if (!saved)

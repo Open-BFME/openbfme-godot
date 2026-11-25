@@ -692,6 +692,9 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_TEAM, std::make_unique<AIFollowWaypointPathState>(*m, true, true), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_EXACT_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, true), AI_IDLE, AI_IDLE);
+	// RW 0x753E1E .. 0x753E2B: defineState(0x12, wander, success 0 = idle, failure 0x28 = AIRunAwayPanicState). State 0x28 is not ported (S-7581):
+	// the failure goes to AI_PANIC (0x14) instead, a registered substitution (S-7581's text)
+	m->defineState(AI_WANDER, std::make_unique<AIWanderState>(*m), AI_IDLE, AI_PANIC);
 	// lane WARG-1 (RW 0x753755): the attack-follow states, 0x23 (RW 0x750AE7(machine, 1)) then 0x22 (asTeam 0), both ending in idle
 	m->defineState(AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_TEAM, std::make_unique<AIAttackFollowWaypointPathState>(*m, true), AI_IDLE, AI_IDLE);
 	m->defineState(AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, std::make_unique<AIAttackFollowWaypointPathState>(*m, false), AI_IDLE, AI_IDLE);
@@ -834,12 +837,8 @@ UpdateSleepTime AIUpdateInterface::update()
 	// cannot run its AI state machine, attack-move scan, turret, or locomotor until PhysicsBehavior clears m_stunned (+0x5C).
 	const PhysicsBehavior *const phys = !memberUpdate ? getObject()->physicsModule() : nullptr;
 	const bool stunnedNormalUnit = phys != nullptr && phys->isStunned();
-	if (ObjectWeapons *w = getObject()->getWeapons())
-	{
-		// the weapon model conditions (RW 0x68E197) are the WeaponStatusHelper's (lane PROJ-2: a PHASE_FINAL module, after this update; RW 0x66DA50 is
-		// a call inside RW 0x66D8F5, not one at the start of every AI update)
-		w->updateFiringTracker(); // RW 0x8E30DD
-	}
+	// the weapon model conditions (RW 0x68E197) are the WeaponStatusHelper's (lane PROJ-2) and the FiringTracker's update (RW 0x8E30DD) is the
+	// FiringTrackerHelper's (lane FIRINGTRACKER-1): both PHASE_FINAL modules, after this update, not calls at the start of every AI update
 	updateBeforeBase();
 	if (m_attackMoveActive && !m_mover->isAiDead() && !stunnedNormalUnit)
 	{
@@ -969,12 +968,9 @@ void AIUpdateInterface::doMovementCompleteBookkeeping()
 	pf.updatePos(*m_adapter);
 }
 
-void AIUpdateInterface::reactToTransformChange()
+bool AIUpdateInterface::reactToTransformChange()
 {
-	if (m_world->mapReady())
-	{
-		m_world->pathfinder().updatePos(*m_adapter);
-	}
+	return m_world->mapReady() && m_world->pathfinder().updatePos(*m_adapter);
 }
 
 void AIUpdateInterface::wakeUpNow()

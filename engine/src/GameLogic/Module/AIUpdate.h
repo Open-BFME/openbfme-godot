@@ -240,6 +240,7 @@ public:
 	// lane SCRIPT-3: AI commands 6 / 7 / 0x32 / 0x33 (RW 0x770FA8 / 0x771072 / 0x77100D / 0x7710D7): the waypoint path states from `waypointId`
 	// (AIWaypointPath.cpp); false when nothing changed
 	bool aiFollowWaypointPath(int waypointId, CommandSourceType source, bool asTeam, bool exact);
+	bool aiWander(int waypointId, CommandSourceType source);
 	// lane WARG-1: AI commands 0x10 / 0x11 (RW 0x754A3C / 0x754AAA -> RW 0x66C1C9): the attack-follow state 0x22 / 0x23 from the waypoint (AIWaypointPath.h)
 	bool aiAttackFollowWaypointPath(int waypointId, int maxShotsToFire, CommandSourceType source, bool asTeam);
 	// RW 0x664CD6: a HORDE_MEMBER (status 0x26) reads its horde's AI (RW 0x693A1A(0), the horde's AI + 0x260), up the chain
@@ -561,8 +562,9 @@ public:
 	// the emotion states' stop lines (S-1021 / S-1027)
 	static std::vector<std::string> emotionStops();
 
-	// ZH Object::reactToTransformChange -> Pathfinder::updatePos: the unit's position cell follows it (RW 0x8E26B7)
-	void reactToTransformChange();
+	// ZH Object::reactToTransformChange -> Pathfinder::updatePos: the unit's position cell follows it (RW 0x8E26B7); true when it took a new cell (lane
+	// VISIONDEF-1: Object::updateTriggerAreaFlags samples the vision ground ring again then, RW 0x6926F6)
+	bool reactToTransformChange();
 	// RW 0x66E233 through the collision pass of AIWorld
 	void onCollide(PathfindObject &other) { m_mover->onCollide(other); }
 

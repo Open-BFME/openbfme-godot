@@ -242,6 +242,7 @@
  "GameLogic/Object/Object.cpp::Object::xfer::originalID#1": "open: the id the recorded team had when it was recorded (RW 0x69959D keeps its name): the team may be gone since; its prototype is the looked-up reference",
  "GameLogic/Object/PartitionManager.cpp::PartitionManager::xfer::below#1": "open: the save side",
  "GameLogic/Object/PartitionManager.cpp::PartitionManager::xfer::below#2": "checked by PartitionManager::loadPostProcess in GameLogic/Object/PartitionManager.cpp: a node's count of entries below it is what its saved entries give (\"entries below it\")",
+ "GameLogic/Object/WeaponState.cpp::FiringTracker::xfer::m_auxiliaryID#1": "open: the last HORDE_MEMBER victim's horde id (RW + 0x38), recorded and saved only; no reader compares or looks it up",
  "GameLogic/Object/WeaponState.cpp::FiringTracker::xfer::m_victimID#1": "open: the last victim's id, compared with the next victim's only",
  "GameLogic/Object/WeaponState.cpp::Weapon::xfer::m_ammoInClip#1": "open: a count",
  "GameLogic/Object/WeaponState.cpp::Weapon::xfer::m_linearTargetCursor#1": "open: a cursor taken modulo the target count (WeaponState RW linear targets)",

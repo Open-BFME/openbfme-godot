@@ -48,9 +48,10 @@
 //     DO_NOT_PICK_ME and WONT_RIDE_WITH_YOU set, out of the world RW 0x68C18F) and comes out (RW 0x88D6AE) when the build ends (walking BuilderMoveFromNewStructure
 //     Distance away from it, a PLAYER-sourced move) or the task is cancelled: back in the world RW 0x68E31F, the statuses cleared.
 // Both editions: HudInput mirrors the deselection when the porter hides (RW 0x88C51B / BFME2 0x489256), removing it through the command stream;
-// the drawable's fade out at the work and in at the exit is ported, lane PORTERFOG-1.
-// INFERENCE / NOT PORTED (stops S-304, S-1282): the placement's TerrainLogic calls (RW 0x684BCA / 0x684CBA, lane FBSIM-1 ported the phantom and its placement); the
-// face command 0x26 (the AI face state 36) runs as nothing; the bridge tower branch of the dock position; the bored wander (RW 0x88E17F, an AI player's dozer); the TheInGameUI idle worker
+// the drawable's fade out at the work and in at the exit is ported, lane PORTERFOG-1. The turn to the structure before the work (dock sub task 2) is the AI's
+// face command 0x26 (RW 0x88DD3E in the build branch, RW 0x88DA7A in the repair one; lane PORT-217, the work waits for the turn: RW 0x88DD5F / 0x88DAA1).
+// INFERENCE / NOT PORTED (stops S-304, S-1282): the placement's TerrainLogic calls (RW 0x684BCA / 0x684CBA, lane FBSIM-1 ported the phantom and its placement);
+// the bridge tower branch of the dock position; the bored wander (RW 0x88E17F, an AI player's dozer); the TheInGameUI idle worker
 // list is the marked flag (isIdleWorker); the primary machine reset after a PLAYER command runs before the command (RW: after it); the dozer's "a task ended"
 // notification to the AI player is also sent when a task is cancelled or fails (S-890).
 //
@@ -118,8 +119,8 @@ public:
 	static void registerWorkerClass(ModuleFactory &modules); // lane LUMBER1: binds WorkerAIUpdate (GameLogic/Module/WorkerAIUpdate.h)
 	bool isWorker() const { return m_isWorker; }
 
-	// RW 0x88C217 -> 0x88C2A5: the legality gate of the construct body, flags 0x49F (ZH CLEAR_PATH | TERRAIN_RESTRICTIONS | NO_OBJECT_OVERLAP | USE_QUICK_PATHFIND | SHROUD_REVEALED = 0x1F
-	// plus the RotWK bits 0x80 and 0x400 whose meaning is not read, S-301): a nonzero result rejects the order. The dispatcher asks it before it changes the builder's state
+	// RW 0x88C217 -> 0x88C2A5: the legality gate of the construct body, flags 0x49F (RotWK numbering, lane BUILDCLEAR-1: terrain, clear path, object overlap,
+	// quick path, the unread 0x10, fogged objects ignored, the pending dozer structures): a nonzero result rejects the order. The dispatcher asks it before it changes the builder's state
 	static constexpr unsigned kConstructLegalFlags = 0x49F;
 	bool siteIsLegal(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
 	// RW vslot 0x1F8 (RW 0x88C217): makes the foundation of `what` at `pos` and starts the build task; null when refused (illegal site, no money). The 5th
