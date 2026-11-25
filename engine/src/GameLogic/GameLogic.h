@@ -622,9 +622,8 @@ public:
 	bool getShowBehindBuildingMarkers() const { return m_showBehindBuildingMarkers; }
 	// PORT-301: TheGameLogic + 0x9F, the hero-experience-sharing switch: the GameLogic constructor sets it to 1 (RW 0x62D299: mov byte ptr [esi + 0x9F], 1), script
 	// action 538 SET_HERO_EXPERIENCE_SHARING writes it (RW 0x7CDF99 -> RW 0x7BD3D1: the parameter's int (+ 8) != 0), and ShareExperienceBehavior::share reads it
-	// (RW 0x883428: cmp byte ptr [eax + 0x9F], 0) to skip a HERO candidate when it is clear. Not hashed and not saved: the retail's .text has only five +0x9F
-	// accesses (RW 0x5F1563 is a Player byte, RW 0x62D299 the constructor, RW 0x7BB038 / 0x7BD3DB the writers, RW 0x883428 the reader) and GameLogic's xfer
-	// (RW 0x630D6F .. 0x630D78) reads none of them
+	// (RW 0x883428: cmp byte ptr [eax + 0x9F], 0) to skip a HERO candidate when it is clear. Saved in obfme:GameLogic v6 (when off; older saves default true)
+	// and included in the native state hash when off (SAVES.md §6).
 	void setHeroExperienceSharing(bool on) { m_heroExperienceSharing = on; }
 	bool getHeroExperienceSharing() const { return m_heroExperienceSharing; }
 	// PORT-43: TheGameLogic + 0x118, m_rankLevelLimit: constructor RW 0x6301DD and startNewGame's init helper RW 0x62A20D (RW 0x62A11A, called at

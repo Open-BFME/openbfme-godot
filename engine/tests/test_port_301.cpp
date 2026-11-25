@@ -187,3 +187,24 @@ TEST_CASE("PORT-301: a version 1 snapshot of a ShareExperienceBehavior still loa
 	CHECK(load.position() == 17); // the load read the counter too: the version 1 layout is fully consumed
 	CHECK(s->shares() == 0); // the counter was read and dropped: it is diagnostics, not state
 }
+
+TEST_CASE("PORT-301: m_heroExperienceSharing survives a native snapshot round-trip and enters the state hash (SAVES.md §6)")
+{
+	combattest::CombatWorld f1(kPort301Objects);
+	REQUIRE(f1.logic->getHeroExperienceSharing());
+	const std::uint32_t hashOn = f1.logic->computeStateHash();
+
+	f1.logic->setHeroExperienceSharing(false);
+	const std::uint32_t hashOff = f1.logic->computeStateHash();
+	CHECK(hashOff != hashOn);
+
+	std::vector<std::uint8_t> bytes;
+	std::string err;
+	REQUIRE_MESSAGE(f1.logic->saveSnapshot(bytes, &err), err);
+
+	combattest::CombatWorld f2(kPort301Objects);
+	REQUIRE(f2.logic->getHeroExperienceSharing());
+	REQUIRE_MESSAGE(f2.logic->loadSnapshot(bytes, &err), err);
+	CHECK_FALSE(f2.logic->getHeroExperienceSharing());
+	CHECK(f2.logic->computeStateHash() == hashOff);
+}
