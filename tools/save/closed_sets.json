@@ -210,6 +210,7 @@
  "GameLogic/Module/SpellBookPowers.cpp::UntamedAllegianceSpecialPower::xfer::m_defected#1": "open: a statistic counter",
  "GameLogic/Module/StealthAbilityModules.cpp::ToggleHiddenSpecialAbilityUpdate::xfer::m_hides#1": "open: a statistic counter",
  "GameLogic/Module/StealthAbilityModules.cpp::ToggleHiddenSpecialAbilityUpdate::xfer::m_unhides#1": "open: a statistic counter",
+ "GameLogic/Module/StructureToppleUpdate.cpp::ToppleUpdate::xfer::m_numAngleDeltaX#1": "open: step count of initial topple angle deltas (RW 0x008ABDBD)",
  "GameLogic/Module/WorkerAIUpdate.cpp::WorkerAIUpdate::xferSupplyBody::m_currentTree#1": "open: a tree record's index (lane LUMBER1), only compared with the harvested tree's index (AIHarvest), never used to index",
  "GameLogic/Object/AttributeModifierPool.cpp::AttributeModifierPool::xfer::c#1": "open: a category's count",
  "GameLogic/Object/AttributeModifierPool.cpp::AttributeModifierPool::xfer::f#1": "open: a category's disabled-until frame",

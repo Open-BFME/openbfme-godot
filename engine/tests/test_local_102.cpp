@@ -224,17 +224,17 @@ TEST_CASE("LOCAL-102 ToppleUpdate: onCollide and Object::topple topple away from
 	CHECK(t->angularVelocity() < 0.0f); // tolerance: velocity sign reversal on first bounce (RW 0x8AC239 .. 0x8AC24E)
 	CHECK(w.logic->fxEvents().perSite().count("ToppleUpdate BounceFX") == 1u);
 
-	// xfer & crc round-trip mid-fall (RW 0x008ABDBD)
+	// xfer & crc round-trip mid-fall (RW 0x008ABDBD): save and restore the whole object
 	StateHasher hBefore;
-	t->crc(hBefore);
+	tree->crc(hBefore);
 	XferSave save;
-	t->xfer(save);
+	tree->xfer(save);
 	w.logic->runLogicFrame();
 	XferLoad load(save.data());
-	t->xfer(load);
+	tree->xfer(load);
 	CHECK(load.atEnd());
 	StateHasher hAfter;
-	t->crc(hAfter);
+	tree->crc(hAfter);
 	CHECK(hBefore.value() == hAfter.value());
 
 	// Run to TOPPLE_DOWN: kills HighlanderBody with 999999 UNRESISTABLE / DEATH_TOPPLED, reorients rubble by GeometryHeight (60) along +X, kills stump

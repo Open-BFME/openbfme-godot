@@ -921,10 +921,28 @@ void ToppleUpdate::crc(StateHasher &h) const
 }
 
 // RW 0x008ABDBD (DONOR BFME2 0x008A86E7)
+// OpenBFME native snapshot uses version 2 (version 1 was UnportedUpdateModule::xfer: UpdateModule + calls counter).
 void ToppleUpdate::xfer(Xfer &x)
 {
+	const XferVersion ver = SnapshotXfer::version(x, 2, 1);
 	xferUpdateModule(x);
-	SnapshotXfer::version(x, 1, 1);
+	if (ver == 1)
+	{
+		unsigned legacyCalls = 0;
+		x.xferUnsignedInt(&legacyCalls);
+		m_angularVelocity = 0.0f;
+		m_angularAcceleration = 0.0f;
+		m_toppleDirection = Coord3D{ 0.0f, 0.0f, 0.0f };
+		m_toppleState = TOPPLE_UPRIGHT;
+		m_angularAccumulation = 0.0f;
+		m_angleDeltaX = 0.0f;
+		m_numAngleDeltaX = 0;
+		m_doBounceFX = false;
+		m_options = TOPPLE_OPTIONS_NONE;
+		m_stumpID = INVALID_ID;
+		m_bounceVelocityDecay = 0.0f;
+		return;
+	}
 	x.xferReal(&m_angularVelocity);
 	x.xferReal(&m_angularAcceleration);
 	SnapshotXfer::coord3D(x, m_toppleDirection);
@@ -933,7 +951,7 @@ void ToppleUpdate::xfer(Xfer &x)
 	x.xferReal(&m_angleDeltaX);
 	x.xferInt(&m_numAngleDeltaX);
 	x.xferBool(&m_doBounceFX);
-	x.xferUnsignedInt(&m_options);
+	SnapshotXfer::maskWithin(x, m_options, (std::uint64_t)(TOPPLE_OPTIONS_NO_BOUNCE | TOPPLE_OPTIONS_NO_FX), "a ToppleUpdate's options", "TOPPLE_OPTIONS");
 	x.xferObjectID(&m_stumpID);
 	x.xferReal(&m_bounceVelocityDecay);
 }
