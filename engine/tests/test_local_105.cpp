@@ -187,9 +187,10 @@ TEST_CASE("LOCAL-105 FadeAndDieOrnamentUpdate: OCL FADE_AND_DIE_ORNAMENT links p
 	staticMod->setParent(parent);
 
 	// Kill parent: FollowTarget=Yes ornament kills itself (RW 0x007A783A -> kill(8, 0)), static ornament survives.
+	const ObjectID ornId = orn->getID();
 	parent->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
 	cw.logic->runLogicFrame();
-	CHECK(orn->isEffectivelyDead());
+	CHECK(cw.logic->findObjectByID(ornId) == nullptr);
 	CHECK(!staticOrn->isEffectivelyDead());
 	CHECK(staticOrn->getPosition()->x == 50.0f);
 }

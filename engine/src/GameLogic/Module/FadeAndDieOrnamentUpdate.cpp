@@ -238,16 +238,28 @@ void FadeAndDieOrnamentUpdate::crc(StateHasher &hasher) const
 }
 
 // RW 0x007A7796: retail version (1, 2) transfers UpdateModule, m_parentId (+0x20), and m_opacity (+0x24, v>=2).
-// OpenBFME native snapshot (S-4190) also preserves envelope runtime state (elapsedFrames, state).
+// OpenBFME native snapshot (S-4190) uses version 2 (version 1 was UnportedUpdateModule::xfer: UpdateModule + calls counter)
+// and also preserves envelope runtime state (elapsedFrames, state).
 void FadeAndDieOrnamentUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	const XferVersion ver = SnapshotXfer::version(x, 2, 1);
 	xferUpdateModule(x);
-	x.xferObjectID(&m_parentId);
-	x.xferReal(&m_opacity);
-	x.xferUnsignedInt(&m_envelope.elapsedFrames);
-	x.xferInt(&m_envelope.state);
-	SnapshotXfer::checkRange(m_envelope.state, (int)OrnamentEnvelopeData::STATE_INITIAL_DELAY, (int)OrnamentEnvelopeData::STATE_DONE, "FadeAndDieOrnamentUpdate envelope state");
+	if (ver == 1)
+	{
+		unsigned legacyCalls = 0;
+		x.xferUnsignedInt(&legacyCalls);
+		m_parentId = INVALID_ID;
+		m_opacity = 0.0f;
+		m_envelope = OrnamentEnvelopeData{};
+	}
+	else
+	{
+		x.xferObjectID(&m_parentId);
+		x.xferReal(&m_opacity);
+		x.xferUnsignedInt(&m_envelope.elapsedFrames);
+		x.xferInt(&m_envelope.state);
+		SnapshotXfer::checkRange(m_envelope.state, (int)OrnamentEnvelopeData::STATE_INITIAL_DELAY, (int)OrnamentEnvelopeData::STATE_DONE, "FadeAndDieOrnamentUpdate envelope state");
+	}
 	if (x.isLoading())
 	{
 		loadPostProcess(); // RW 0x008A7734
