@@ -308,7 +308,8 @@ TEST_CASE("LOCAL-59: WeaponFireSpecialAbilityUpdate xfer uses version 2, skips w
 	};
 	// not made, no weapon in the payload: the constructor's weapon stays (RW 0x895C75), the stream stays aligned
 	{
-		XferLoad notMade(v1Payload(mp, false)); // the same SpecialAbilityUpdate block with `made` 0 and `has` 0
+		const std::vector<std::uint8_t> notMadeBytes = v1Payload(mp, false); // the same SpecialAbilityUpdate block with `made` 0 and `has` 0
+		XferLoad notMade(notMadeBytes);
 		wf1->xfer(notMade);
 		CHECK(notMade.atEnd());
 		CHECK(wf1->ownedWeapon() != nullptr);
@@ -316,7 +317,8 @@ TEST_CASE("LOCAL-59: WeaponFireSpecialAbilityUpdate xfer uses version 2, skips w
 	}
 	// a missing template: no weapon either way, the shot count still read
 	{
-		XferLoad missingV1(v1Payload(mp, false));
+		const std::vector<std::uint8_t> missingV1Bytes = v1Payload(mp, false);
+		XferLoad missingV1(missingV1Bytes);
 		wfMissing1->xfer(missingV1);
 		CHECK(missingV1.atEnd());
 		CHECK(wfMissing1->ownedWeapon() == nullptr);
@@ -369,7 +371,8 @@ TEST_CASE("LOCAL-59: WeaponFireSpecialAbilityUpdate xfer uses version 2, skips w
 		REQUIRE(caster3);
 		auto *wf3 = dynamic_cast<WeaponFireSpecialAbilityUpdate *>(caster3->findModule("WeaponFireSpecialAbilityUpdate"));
 		REQUIRE(wf3);
-		XferLoad madeV1(v1Payload(saveFired.data(), true));
+		const std::vector<std::uint8_t> madeV1Bytes = v1Payload(saveFired.data(), true);
+		XferLoad madeV1(madeV1Bytes);
 		wf3->xfer(madeV1);
 		CHECK(madeV1.atEnd());
 		CHECK(wf3->shotsFired() == 1);
