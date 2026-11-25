@@ -49,6 +49,7 @@
 
 // Common/Audio/AudioIni.h pulls GameLogic/ObjectFilter.h (another ModelConditionFlags than Common/ModelState.h): forward declared here.
 class AudioIniState;
+class FXListParseServices;
 
 class RetailObjectWorld
 {
@@ -151,6 +152,11 @@ public:
 	// lane MAPRESET-1 (tests): the INI environment the map.ini blocks are parsed with (applyMapIni's INI), and the FX stores the INI load filled
 	INIEnvironment &iniEnvironment() { return m_s->m_env; }
 	const FXListStore &fxLists() const { return *m_s->m_recorder.fxLists; }
+	// PORT-330 (S-190): the FXList block's parse-time name checks, answered from this world's TheAudio / TheEva tables (FXListParseServices.cpp). The
+	// world's own load installs them on its FXList store; the client's FX player (FXPlayback, which parses the FX files again) takes them from here,
+	// as retail has one TheAudio and one TheEva for both loads. The services belong to the WORLD, not to the state reload() replaces, so a player
+	// that took this pointer keeps a valid one across a reload (they answer from the current state's tables).
+	FXListParseServices *fxListParseServices() const { return m_fxParseServices.get(); }
 	const FXParticleSystem::FXParticleSystemTemplateStore *fxParticleSystems() const { return m_s->m_recorder.fxParticleSystems.get(); }
 
 	std::vector<std::string> acceptanceStops() const;
@@ -240,4 +246,11 @@ private:
 	bool m_dirty = false;          ///< lane MAPRESET-1: a map or a game changed the state since its (re)load
 	bool m_gameLive = false;       ///< lane MAPRESET-1: beginGame .. endGame
 	bool m_gameMapApplied = false; ///< the live game's map.ini is applied
+	// PORT-330 (S-190): the FXList block's parse-time name checks. RW resolves them through two GLOBAL tables whose subsystem inits (TheAudio
+	// RW 0x4538DA, TheEva RW 0x5DE837) run before TheFXListStore's own load: a `Sound` nugget's name is asked of TheAudio (RW 0x73B217 ->
+	// RW 0x73AA94, `Invalid Sound '%s'`) and an `EvaEvent*` name of TheEva (RW 0x5DE588 -> RW 0x5DE0D8, `Expected a recognized Eva event name or
+	// 'None'`). The world owns the two tables (the state's m_audio), so it answers for them; the FXList store keeps a bare pointer to this.
+	// Held here rather than in State: reload() destroys State, and the client's FX player holds the pointer across reloads.
+	std::unique_ptr<FXListParseServices> m_fxParseServices;
+	void installFxParseServices(); ///< builds m_fxParseServices for the current state's tables (the constructor, and reload() when it is kept)
 };

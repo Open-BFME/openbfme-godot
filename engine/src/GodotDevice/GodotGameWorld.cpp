@@ -738,6 +738,11 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 				m_fxPlayer->set_name("LiveFX");
 				add_child(m_fxPlayer);
 			}
+			if (m_world)
+			{
+				// PORT-330 (S-190): the FXList blocks the FX player parses are checked against the same TheAudio / TheEva tables the world loaded
+				m_fxPlayer->setParseServices(m_world->fxListParseServices());
+			}
 			const Dictionary fx = m_fxPlayer->setup(fs);
 			m_fxSetupErrors = fx.get("errors", Array());
 			for (int64_t i = 0; i < m_fxSetupErrors.size(); ++i)

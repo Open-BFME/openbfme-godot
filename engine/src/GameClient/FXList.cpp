@@ -67,7 +67,8 @@ void parseSoundName(INI *ini, void *, void *store, const void *)
 	out = name;
 }
 
-// RW 0x5de588 -> 0x5de0d8: "None" -> -1 (empty here); unknown -> code 3.
+// RW 0x5de588 -> 0x5de0d8: "None" -> -1 (empty here); unknown -> code 3. RW stores the index; the port keeps the name (the nugget reports it
+// by name through AudioApi), so the index is only taken to test it.
 void parseEvaName(INI *ini, void *, void *store, const void *)
 {
 	const std::string name = ini->getNextToken();
@@ -79,9 +80,9 @@ void parseEvaName(INI *ini, void *, void *store, const void *)
 	}
 	if (FXListParseServices *services = TheFXListStore ? TheFXListStore->parseServices() : nullptr)
 	{
-		if (!services->evaEventExists(name))
+		if (services->evaEventIndex(name) < 0)
 		{
-			throw INIException(3, "Expected a recognized Eva event name or 'None'; got '%s'", name.c_str());
+			throw INIException(3, "Expected a recognized Eva event name or 'None'; got '%s'", name.c_str()); // RW 0x5DE14E, string RW 0xBF2678
 		}
 	}
 	else if (TheFXListStore)
@@ -579,11 +580,11 @@ std::vector<std::string> FXListStore::unverified() const
 	std::vector<std::string> out;
 	if (m_unvalidatedSounds)
 	{
-		out.push_back("S-190: " + std::to_string(m_unvalidatedSounds) + " Sound nugget names were not validated against the audio event registry (RW 0x73b217 throws `Invalid Sound` at parse time; the audio lane is not ported)");
+		out.push_back("S-190: " + std::to_string(m_unvalidatedSounds) + " Sound nugget names were not validated against the audio event registry (RW 0x73b217 throws `Invalid Sound` at parse time): this store has no parse services, so it was not parsed through a world's TheAudio table");
 	}
 	if (m_unvalidatedEva)
 	{
-		out.push_back("S-190: " + std::to_string(m_unvalidatedEva) + " EvaEvent names were not validated against the Eva registry (RW 0x5de588; the Eva lane is not ported)");
+		out.push_back("S-190: " + std::to_string(m_unvalidatedEva) + " EvaEvent names were not validated against the Eva registry (RW 0x5de588 -> 0x5de0d8): this store has no parse services, so it was not parsed through a world's TheEva table");
 	}
 	return out;
 }

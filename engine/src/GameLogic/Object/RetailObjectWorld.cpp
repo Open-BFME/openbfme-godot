@@ -299,6 +299,20 @@ RetailObjectWorld::ContextScope::~ContextScope()
 RetailObjectWorld::RetailObjectWorld(ArchiveFileSystem &fs)
 	: m_fs(fs), m_s(std::make_unique<State>(fs))
 {
+	installFxParseServices();
+}
+
+// PORT-330 (S-190): the world's FXList blocks (and the client's FX player, which parses the FX files again) check a `Sound` nugget's name against
+// TheAudio (RW 0x73B217 -> RW 0x73AA94) and an `EvaEvent*` name against TheEva (RW 0x5DE588 -> RW 0x5DE0D8) while the block parses. Both tables are
+// this world's (m_s->m_audio), and their subsystem inits (RW 0x4538DA, RW 0x5DE837) precede TheFXListStore's own (RW 0x63AF2D onward).
+void RetailObjectWorld::installFxParseServices()
+{
+	// built once and kept across reloads: the FX player holds the pointer, the state it answers from is swapped under it
+	if (!m_fxParseServices)
+	{
+		m_fxParseServices = MakeWorldFXListParseServices(*this);
+	}
+	m_s->m_recorder.fxLists->setParseServices(m_fxParseServices.get());
 }
 
 RetailObjectWorld::State::~State() = default;
@@ -351,6 +365,7 @@ void RetailObjectWorld::reloadState()
 	unregisterContext();
 	m_s.reset(); // every store the INI load made goes (the old one first: no two states in memory)
 	m_s = std::make_unique<State>(m_fs);
+	installFxParseServices(); // PORT-330: the new state's FXList store, and the answers from its TheAudio / TheEva tables
 	std::string error;
 	if (!loadState(&error)) // selects this world's context, as load() does
 	{

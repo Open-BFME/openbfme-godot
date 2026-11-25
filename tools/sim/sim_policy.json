@@ -19,6 +19,7 @@
  ],
  "excluded": [
   {"glob": "src/GameClient/CreateAHeroStats.cpp", "reason": "Create-a-Hero client profile statistics file IO; never simulation state"},
+  {"glob": "src/GameClient/FXListParseServices.cpp", "reason": "PORT-330 (S-190): read-only parse-time lookup adapter validating FXList Sound / EvaEvent names against loaded audio/Eva tables; never writes simulation state"},
   {"glob": "src/GameClient/TutorialSettings.cpp", "reason": "lane BFME2CAMP1: GameData's Basic / Advanced tutorial records the main menu's OnTutorial reads (the map to start, its load screen and music); no logic state, the logic gets only the map name and the tutorial game mode"},
   {
    "glob": "src/Common/System/FloatFromChars.cpp",
