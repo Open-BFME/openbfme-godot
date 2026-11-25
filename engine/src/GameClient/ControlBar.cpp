@@ -885,7 +885,7 @@ void ControlBar::update()
 					cb.borderType = b->getButtonBorderType();
 					bool draw = false;
 					cb.borderColor = borderColorForType(cb.borderType, &draw);
-					cb.drawBorder = (!b->m_radial) && draw && ((cb.borderColor & 0x00FFFFFFu) != 0x00FFFFFFu);
+					cb.drawBorder = (!b->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 					cb.inPalantir = b->m_inPalantir;
 					cb.textLabel = b->m_textLabel.empty() ? std::string() : b->m_textLabel.front();
 					cb.descriptLabel = b->m_descriptLabel.empty() ? std::string() : b->m_descriptLabel.front();
@@ -984,7 +984,7 @@ void ControlBar::update()
 				cb.borderType = b->getButtonBorderType();
 				bool draw = false;
 				cb.borderColor = borderColorForType(cb.borderType, &draw);
-				cb.drawBorder = (!b->m_radial) && draw && ((cb.borderColor & 0x00FFFFFFu) != 0x00FFFFFFu);
+				cb.drawBorder = (!b->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 				foreignDisable(cb);
 				place(cb, start);
 			}
@@ -1200,7 +1200,7 @@ bool ControlBar::structureInventory(Object &obj, Player *local)
 		cb.borderType = exitButton->getButtonBorderType();
 		bool draw = false;
 		cb.borderColor = borderColorForType(cb.borderType, &draw);
-		cb.drawBorder = (!exitButton->m_radial) && draw && ((cb.borderColor & 0x00FFFFFFu) != 0x00FFFFFFu);
+		cb.drawBorder = (!exitButton->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 		buttons.push_back(cb);
 	}
 	int index = 0;
@@ -1228,7 +1228,7 @@ bool ControlBar::structureInventory(Object &obj, Player *local)
 		cb.borderType = evacuate->getButtonBorderType();
 		bool draw = false;
 		cb.borderColor = borderColorForType(cb.borderType, &draw);
-		cb.drawBorder = (!evacuate->m_radial) && draw && ((cb.borderColor & 0x00FFFFFFu) != 0x00FFFFFFu);
+		cb.drawBorder = (!evacuate->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 		buttons.push_back(cb);
 	}
 	else if (max > 11 && contain->getContainCount() != 0)
@@ -1302,7 +1302,7 @@ void ControlBar::populateUnderConstruction(Object &obj, bool mine)
 	cb.borderType = b->getButtonBorderType();
 	bool draw = false;
 	cb.borderColor = borderColorForType(cb.borderType, &draw);
-	cb.drawBorder = (!b->m_radial) && draw && ((cb.borderColor & 0x00FFFFFFu) != 0x00FFFFFFu);
+	cb.drawBorder = (!b->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 	place(cb, 0); // command window 0
 }
 

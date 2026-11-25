@@ -197,12 +197,14 @@ void ControlBarSchemeStore::loadFromFiles(INIEnvironment &env, std::vector<std::
 		"Data\\INI\\Default\\ControlBarScheme.ini",
 		"Data\\INI\\ControlBarScheme.ini"
 	};
+	int loaded = 0;
 	for (const char *file : files)
 	{
 		if (!env.fileSystem || !env.fileSystem->doesFileExist(file))
 		{
 			continue;
 		}
+		++loaded;
 		INI ini(env);
 		try
 		{
@@ -215,5 +217,9 @@ void ControlBarSchemeStore::loadFromFiles(INIEnvironment &env, std::vector<std::
 				errors->push_back(std::string(file) + ": " + e.what());
 			}
 		}
+	}
+	if (loaded == 0 && errors)
+	{
+		errors->push_back("ControlBarScheme: no ControlBarScheme.ini found (Data\\INI\\Default\\ControlBarScheme.ini / Data\\INI\\ControlBarScheme.ini)");
 	}
 }

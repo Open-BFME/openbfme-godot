@@ -403,7 +403,7 @@ void W3DGadgetPushButtonImageDraw(GameWindow *window, WinInstanceData *instData)
 	if (!BitTest(winStatus, WIN_STATUS_CIRCULAR))
 	{
 		const auto *data = static_cast<const PushButtonData *>(window->winGetUserData());
-		if (data && s_borderData.count(data) != 0 && data->drawBorder && (data->borderColor & 0x00FFFFFFu) != 0x00FFFFFFu)
+		if (data && s_borderData.count(data) != 0 && data->drawBorder && data->borderColor != 0x00FFFFFFu)
 		{
 			ICoord2D start, size;
 			window->winGetScreenPosition(&start.x, &start.y);

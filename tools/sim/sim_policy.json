@@ -621,6 +621,10 @@
    "reason": "the control bar view model (button states, queue display, money): client user interface reading the logic; the messages a press builds are in ControlBarCommandProcessing.cpp (manifested)"
   },
   {
+   "glob": "src/GameClient/ControlBarScheme.cpp",
+   "reason": "control bar scheme INI loader (button border colours per side): client UI presentation only"
+  },
+  {
    "glob": "src/GameClient/Radar.cpp",
    "reason": "the radar picture: client user interface reading the logic"
   },
