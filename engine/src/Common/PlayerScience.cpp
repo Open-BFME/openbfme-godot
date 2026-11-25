@@ -57,6 +57,7 @@ void PlayerScience::bind(const PlayerTemplate *pt, const SpellGameMode &mode, Sc
 	++m_noticeGeneration;
 	m_spellBookId = 0;          // RW 0x6B0455
 	m_rechargeDiscount = 0.0f;  // RW 0x6B045B
+	m_rechargeModifierCount = 0; // RW 0x6B0463
 	m_sharedReadyFrames.clear(); // (INFERENCE: a new game's player has no shared timer)
 }
 
@@ -404,10 +405,55 @@ void PlayerScience::resetOrStartSharedReadyFrame(unsigned powerId, unsigned relo
 	m_sharedReadyFrames.push_back({ powerId, now });
 }
 
+// lane PORT-65: the modifier the SpellRechargeModifierUpgrade of RW 0x8BA139 / 0x8B9FE0 / 0x8BA05E applies, identical in all four copies of the code
+// (RW 0x8BA010 .. 0x8BA04C is the implementation's, RW 0x8BA07F .. 0x8BA0B9 the onCapture's old owner, RW 0x8BA0DE .. 0x8BA118 its new owner, RW
+// 0x8BA15D .. 0x8BA197 the removal's):
+//   index = the count after the inc / dec (RW 0x6AAAD9), minus one; `test eax,eax; jg` (RW 0x8BA018) keeps it at 0 when it is not positive;
+//   the vector's last index (RW 0x8BA024: (end - begin) / 4 - 1); `cmp ecx,eax; jl` (RW 0x8BA03A) keeps `last` when the index is not below it;
+//   the float at that index, written to Player + 0x718 (RW 0x6AAAEE).
+// RW builds an empty vector's index arithmetic on its null begin() and dereferences it; the data of the mod never does that, so the port names the
+// case instead of reading address -4 (the rule that no value is silently invented, PROCESS.md 5).
+static float clampedRechargeModifier(const std::vector<float> &modifiers, int count)
+{
+	if (modifiers.empty())
+	{
+		throw std::logic_error("SpellRechargeModifierUpgrade: a modifier list without a Percentage (RW 0x8BA04C reads past an empty vector)");
+	}
+	int index = count - 1;
+	if (!(index > 0))
+	{
+		index = 0;
+	}
+	const int last = (int)modifiers.size() - 1;
+	if (!(index < last))
+	{
+		index = last;
+	}
+	return modifiers[(size_t)index];
+}
+
+// RW 0x8BA139 (the mux's slot 10) and RW 0x8BA1A2 (the tail RW 0x8B9F9A .. 0x8BA1A7 wraps, the same code): inc [Player + 0x71C] (RW 0x6AAAE0),
+// then the discount (RW 0x6AAAEE).
+void PlayerScience::addSpellRechargeModifier(const std::vector<float> &modifiers)
+{
+	++m_rechargeModifierCount; // RW 0x6AAAE0
+	m_rechargeDiscount = clampedRechargeModifier(modifiers, m_rechargeModifierCount); // RW 0x6AAAD9 .. 0x6AAAEE
+}
+
+// RW 0x8B9FE0 (the mux's slot 8), the old owner's half of RW 0x8BA05E (the capture) and the removal inside RW 0x8B9F9A: dec [Player + 0x71C]
+// (RW 0x6AAAE7), then the discount again (RW 0x6AAAEE). The executed flag is the module's (RW 0x8B9FE8 tests it, it is not cleared here; the mux's
+// removeUpgrade RW 0x8D2688 clears it).
+void PlayerScience::removeSpellRechargeModifier(const std::vector<float> &modifiers)
+{
+	--m_rechargeModifierCount; // RW 0x6AAAE7
+	m_rechargeDiscount = clampedRechargeModifier(modifiers, m_rechargeModifierCount); // RW 0x6AAAD9 .. 0x6AAAEE
+}
+
 void PlayerScience::crc(StateHasher &h) const
 {
 	h.addU32(m_spellBookId);
 	h.addFloat(m_rechargeDiscount);
+	h.addI32(m_rechargeModifierCount); // lane PORT-65: Player + 0x71C is state (the module applies a modifier by it)
 	h.addU32((std::uint32_t)m_sharedReadyFrames.size());
 	for (const auto &e : m_sharedReadyFrames)
 	{
@@ -555,10 +601,18 @@ void AcquiredScienceQueue::xfer(Xfer &x, const PlayerScience *player)
 // their name keys, as the state hash has them (identical for an identical install).
 void PlayerScience::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // lane PORT-65: version 2 adds the SpellRechargeModifierUpgrade count (Player + 0x71C)
 	x.xferVersion(v);
 	x.xferUnsignedInt(&m_spellBookId);
 	x.xferReal(&m_rechargeDiscount);
+	if (v.current >= 2)
+	{
+		x.xferInt(&m_rechargeModifierCount); // RW 0x6B27C0: the discount (+ 0x718) and the count (+ 0x71C) travel together at version 4 and above
+	}
+	else
+	{
+		m_rechargeModifierCount = 0; // a version-1 save had no module to count
+	}
 	x.xferVectorSize(m_sharedReadyFrames, 8);
 	for (auto &e : m_sharedReadyFrames)
 	{

@@ -142,9 +142,20 @@ public:
 	// Player + 0x710: the id of the player's spell book object (0 until made or found, RW 0x6B0455 / 0x6B18F1 / 0x6AD128)
 	std::uint32_t spellBookId() const { return m_spellBookId; }
 	void setSpellBookId(std::uint32_t id) { m_spellBookId = id; }
-	// Player + 0x718: the recharge time discount RESPECT_RECHARGE_TIME_DISCOUNT powers add to 1.0 (RW 0x6AAAD2; set by RW 0x6AAAEE, 0.0 at init)
+	// Player + 0x718: the recharge time discount RESPECT_RECHARGE_TIME_DISCOUNT powers add to 1.0 (getter RW 0x6AAAD2; 0.0 at the Player constructor
+	// RW 0x6B045B, set by RW 0x6AAAEE). Its only writer in game.dat is RW 0x6AAAEE, and every caller of that is SpellRechargeModifierUpgrade's
+	// clamp (RW 0x8BA055 / 0x8BA0C4 / 0x8BA123 / 0x8BA1A2, lane PORT-65): the discount is the modifier of the applied upgrades below.
 	float rechargeDiscount() const { return m_rechargeDiscount; }
-	void setRechargeDiscount(float d) { m_rechargeDiscount = d; }
+	void setRechargeDiscount(float d) { m_rechargeDiscount = d; } // RW 0x6AAAEE (the module's clamp writes it; nothing else does)
+	// Player + 0x71C: how many SpellRechargeModifierUpgrades are applied to this player (getter RW 0x6AAAD9, inc RW 0x6AAAE0, dec RW 0x6AAAE7;
+	// 0 at the Player constructor RW 0x6B0463). The same offset is the first field of PlayerTemplate's TimedUpgradeData (`upgrade + 0x0`), a different
+	// class (PORT-65, port65-spell-recharge-rw.md).
+	int spellRechargeModifierCount() const { return m_rechargeModifierCount; }
+	// RW 0x8BA139 (slot 10) and RW 0x8BA1A2 (the ClampHelper tail): inc, then the discount = `modifiers` at (count - 1) clamped into the vector
+	void addSpellRechargeModifier(const std::vector<float> &modifiers);
+	// RW 0x8B9FE0 (slot 8) and RW 0x8BA05E (onCapture, old owner): dec, then the same clamp (the shortest vector of this player's applied modifiers
+	// leaves the empty branch alone, see the .cpp)
+	void removeSpellRechargeModifier(const std::vector<float> &modifiers);
 	// Player + 0x724: the shared (SharedSyncedTimer) ready frames by special power id, in insertion order (RW 0x6AD180 inserts)
 	unsigned getSharedReadyFrame(unsigned powerId, unsigned now);              // RW 0x6AD26F (absent: inserted at `now`)
 	unsigned peekSharedReadyFrame(unsigned powerId, unsigned now) const;       // the same answer, nothing inserted (display reads only)
@@ -178,6 +189,7 @@ private:
 	unsigned long long m_droppedNotifications = 0;
 	std::uint32_t m_spellBookId = 0;                                   // Player + 0x710
 	float m_rechargeDiscount = 0.0f;                                   // Player + 0x718
+	int m_rechargeModifierCount = 0;                                   // Player + 0x71C
 	std::vector<std::pair<unsigned, unsigned>> m_sharedReadyFrames;    // Player + 0x724
 };
 
