@@ -1769,7 +1769,7 @@ bool GiantBirdAIUpdate::routeCommand(const RoutedCommand &c)
 		// INFERENCE: reachability of that read after the target's removal is not proved; the adjacent branch RW 0x76A139 returns without touching the machine.
 		if (!c.target)
 		{
-			o.logic().noteStop("[PORT-5] missing GiantBird ability target: command cancelled (INFERENCE, RW 0x76DAF4; owner decision fork issue 57)");
+			o.logic().noteStop("[PORT-5] missing GiantBird ability target: command cancelled (INFERENCE, RW 0x76DAF4; owner decision #57)");
 			return true;
 		}
 		if (mobile)
