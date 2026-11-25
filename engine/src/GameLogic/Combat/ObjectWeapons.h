@@ -222,7 +222,9 @@ public:
 	// conditions cleared, RW 0x6C84C9) set at once, without touching the cached condition of RW 0x68E197; the fire state calls it right before the shot
 	void setFiringConditionForCurrentWeapon();
 	// the sleep the FiringTracker asks for (RW 0x3FFFFFFF when nothing is pending)
-	std::uint32_t updateFiringTracker();
+	std::uint32_t updateFiringTracker(); // the FiringTrackerHelper's update (RW 0x8E30DD)
+	// lane FIRINGTRACKER-1: true when the tracker's update ran in `frame` (the final pass: GameLogic::runModules recomputes a pooled WeaponStatusHelper entry)
+	bool firingTrackerRanOn(std::uint32_t frame) const { return m_trackerRanFrame == frame; }
 	FiringTracker &firingTracker() { return m_tracker; }
 	// lane HUD-4: RW 0x8E302A on the object's FiringTracker (Object + 0x248) with this set as its host
 	void resetFiringTracker(bool hard);
@@ -276,6 +278,7 @@ private:
 	int m_lockedSlot = PRIMARY_WEAPON;
 	std::array<int, WEAPONSLOT_COUNT> m_slotCondition{}; ///< the last status condition applied per slot (RW 0x68E197)
 	FiringTracker m_tracker;
+	std::uint32_t m_trackerRanFrame = 0xFFFFFFFFu; ///< the frame of the tracker's last update (not state: only compared with the frame being run)
 	Stats m_stats;
 	std::unique_ptr<Host> m_host;
 	std::unique_ptr<RangeHost> m_rangeHost;

@@ -4,6 +4,7 @@
 # simulation sources (sim audit manifest): the helper sets the object's weapon model conditions (lockstep state)
 list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/Module/WeaponStatusHelper.cpp
+    src/GameLogic/Module/FiringTrackerHelper.cpp
 )
 # client-only sources (excluded from the simulation audit in tools/sim/sim_policy.json): the drawable's fade
 set(OPENBFME_PROJ2_SOURCES

@@ -167,6 +167,7 @@ include(cmake/Combat.cmake)     # OPENBFME_COMBAT_SOURCES / OPENBFME_COMBAT_TEST
 include(cmake/Structure.cmake)  # OPENBFME_STRUCTURE_SOURCES / OPENBFME_STRUCTURE_TESTS (lane COMBAT-2)
 include(cmake/Spell.cmake)      # OPENBFME_SPELL_SOURCES / OPENBFME_SPELL_TESTS (lane SPELL-1)
 include(cmake/Port43.cmake)     # PORT-43: GameData/PowerLimit -> GameLogic + 0x118 (issue #128; OPENBFME_PORT43_TESTS)
+include(cmake/Local80.cmake)    # script rank actions and PLAYER_COMPARE_RANK (fork issue 704; OPENBFME_LOCAL80_TESTS)
 include(cmake/Render.cmake)     # OPENBFME_RENDER_SOURCES / OPENBFME_RENDER_TESTS (lane RENDER-1, client / draw only)
 include(cmake/SkirmishAI.cmake) # OPENBFME_SKIRMISH_AI_SOURCES / OPENBFME_SKIRMISH_AI_TESTS (lane AI-1)
 include(cmake/Vis.cmake)        # OPENBFME_VIS_SOURCES / OPENBFME_VIS_TESTS (lane VIS-1)
@@ -183,6 +184,7 @@ include(cmake/FactB.cmake)      # OPENBFME_FACTB_TESTS (lane FACT-B: Isengard an
 include(cmake/Port4.cmake) # OPENBFME_PORT4_TESTS
 include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Port166.cmake) # PORT-166: the ordered slot lock survives the shot that starts the reload (fork issue 395; OPENBFME_PORT166_TESTS)
+include(cmake/Port302.cmake) # retail 2.01 InactiveBody armor flags and damage
 include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
@@ -203,7 +205,9 @@ include(cmake/Port13.cmake) # PORT-13: AIData/AttackMoveUsesFormations and the f
 include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the collide pickup (OPENBFME_PORT9_TESTS)
 include(cmake/Port7.cmake) # PORT-7: AnimalAIUpdate's enemy scan (OPENBFME_PORT7_TESTS)
 include(cmake/Port58.cmake) # PORT-58: SpecialAbilityUpdate/ApproachUntilMembersInRange (OPENBFME_PORT58_TESTS)
+include(cmake/Port217.cmake) # PORT-217: a builder turns to face the structure it builds or repairs (OPENBFME_PORT217_TESTS)
 include(cmake/Port10.cmake) # PORT-10: FlammableUpdate/RunToWater (issue #65; OPENBFME_PORT10_TESTS)
+include(cmake/Port307.cmake) # PORT-307: the gates' and the wall hubs' own functions (OPENBFME_PORT307_TESTS)
 include(cmake/Port17.cmake) # PORT-17: ThreatFinderUpdate + the threat-finder script action (issue #73; appends to OPENBFME_SIM_SOURCES; OPENBFME_PORT17_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
@@ -343,6 +347,8 @@ include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elve
 include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
 include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-objects test RW 0x796D37 (OPENBFME_BUILDCLEAR1_TESTS)
 include(cmake/Bldgdebris1.cmake) # BLDGDEBRIS-1: the DamageCreationList debris and the siege side damage of ActiveBody (OPENBFME_BLDGDEBRIS1_TESTS)
+include(cmake/Port294.cmake)    # PORT-294: ObjectCreationUpgrade's own mux slots — wouldUpgrade, postUpgradeCheck, isPermanent (OPENBFME_PORT294_TESTS)
+include(cmake/Port198.cmake) # PORT-198: the SpawnBehavior order slots and Player::onUnitCreated (OPENBFME_PORT198_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -745,6 +751,7 @@ if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
     ${OPENBFME_PORT426_TESTS}
+    tests/test_local_98.cpp
     ${OPENBFME_WIN1_TESTS}
     ${OPENBFME_DEP2_TESTS}
     ${OPENBFME_SMOOTH_TESTS}
@@ -778,8 +785,10 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT9_TESTS}
     ${OPENBFME_PORT7_TESTS}
     ${OPENBFME_PORT58_TESTS}
+    ${OPENBFME_PORT217_TESTS}
     ${OPENBFME_PORT10_TESTS}
     ${OPENBFME_PORT17_TESTS}
+    ${OPENBFME_PORT307_TESTS}
     ${OPENBFME_PLAY4_TESTS}
     ${OPENBFME_MAPRESET1_TESTS}
     ${OPENBFME_APT_TESTS}
@@ -796,6 +805,7 @@ add_executable(openbfme_tests
     ${OPENBFME_STRUCTURE_TESTS}
     ${OPENBFME_SPELL_TESTS}
     ${OPENBFME_PORT43_TESTS}
+    ${OPENBFME_LOCAL80_TESTS}
     ${OPENBFME_RENDER_TESTS}
     ${OPENBFME_SKIRMISH_AI_TESTS}
     ${OPENBFME_VIS_TESTS}
@@ -924,6 +934,9 @@ add_executable(openbfme_tests
     ${OPENBFME_THREATLEVEL1_TESTS}
     ${OPENBFME_BUILDCLEAR1_TESTS}
     ${OPENBFME_BLDGDEBRIS1_TESTS}
+    ${OPENBFME_PORT302_TESTS}
+    ${OPENBFME_PORT294_TESTS}
+    ${OPENBFME_PORT198_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
@@ -998,6 +1011,7 @@ add_executable(openbfme_tests
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp
+    tests/test_local_93.cpp
     tests/test_mapobj_shadergen.cpp
     tests/test_mapobj_retail.cpp
     # ---- LUA-1 (Lua scripting) ----
@@ -1024,6 +1038,7 @@ add_executable(openbfme_tests
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp
+    tests/test_lifetime_xfer.cpp
     tests/test_logic_players.cpp
     tests/test_logic_modules.cpp
     tests/test_logic_hash.cpp
@@ -1037,6 +1052,7 @@ add_executable(openbfme_tests
     tests/test_local_62.cpp
     # lane LOCAL-59 (WeaponFireSpecialAbilityUpdate makes and loads weapon in ctor, fork issue 418)
     tests/test_local_59.cpp
+    tests/test_local_91.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy
@@ -1047,7 +1063,8 @@ add_executable(openbfme_tests
     tests/test_falsedef_retail.cpp
     tests/test_capcrash1.cpp
     # lane VISIONDEF-1: the vision height bonus's ground reference (Object + 0x1C4)
-    tests/test_visiondef1_retail.cpp)
+    tests/test_visiondef1_retail.cpp
+    tests/test_local_81.cpp)
 target_sources(openbfme_tests PRIVATE
     tests/test_coverage_online_shell.cpp
     tests/test_coverage_simple_screens.cpp
