@@ -37,6 +37,11 @@
 #include <cstddef>
 #include <stdexcept>
 
+// RW 0xDB2B04, 5 names: PORT-45, the DamageCreationList's optional death-side token (ActiveBody parser RW 0x8C3F1F)
+const char *const TheDamageSideNames[] = {
+	"NONE", "FRONT_DESTROYED", "RIGHT_DESTROYED", "BACK_DESTROYED", "LEFT_DESTROYED",
+	nullptr };
+
 namespace
 {
 // RW 0x73A302 (parseFXList): the token is stored; retail looks it up and rejects an unknown name other than None (the FXList store is
