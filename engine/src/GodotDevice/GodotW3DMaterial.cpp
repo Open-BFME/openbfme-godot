@@ -521,7 +521,10 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	}
 	if (!res.Found)
 	{
-		if (!quietWhenMissing)
+		// A name without an extension (the W3D data's `None`, GBFARM_BIB / ANGPORTER.BUCKET / CAH_skull) is never opened by
+		// retail's loader (RW 0x530D59: no dot, no candidate), so its 1 x 1 texture (RW 0x53193E) is the whole story and
+		// retail logs nothing. The caller still draws W3D_MISSING_TEXTURE_COLOR, as before.
+		if (!quietWhenMissing && res.Probed)
 		{
 			errors.push_back("texture not found: " + name
 				+ (res.TerrainFolderPath.empty() ? std::string() : " (a file of that name exists only as " + res.TerrainFolderPath + ", which retail's texture lookup does not search: RW 0x477D1C)"));

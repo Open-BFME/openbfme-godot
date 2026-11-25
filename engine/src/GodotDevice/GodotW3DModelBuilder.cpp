@@ -176,9 +176,14 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 	}
 	if (texture.is_null())
 	{
-		std::string tried;
-		for (const std::string &path : candidates) tried += (tried.empty() ? "" : ", ") + path;
-		((Array)m_report["errors"]).push_back(toGodot("texture not found: " + name + " (tried " + tried + ")"));
+		// A name without an extension is never opened by retail's loader (RW 0x530D59: no dot, no candidate): the surface
+		// draws the 1 x 1 texture of RW 0x53193E and retail logs nothing, so neither does this report.
+		if (resolved.Probed)
+		{
+			std::string tried;
+			for (const std::string &path : candidates) tried += (tried.empty() ? "" : ", ") + path;
+			((Array)m_report["errors"]).push_back(toGodot("texture not found: " + name + " (tried " + tried + ")"));
+		}
 		return texture;
 	}
 	m_textureCache[key] = texture;
