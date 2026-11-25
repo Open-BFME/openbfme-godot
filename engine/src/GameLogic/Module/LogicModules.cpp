@@ -62,6 +62,7 @@
 #include "GameLogic/Module/ThreatFinderUpdate.h" // PORT 17 (issue #73)
 #include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/BoredUpdate.h"
+#include "GameLogic/Module/ReflectDamage.h"
 
 #include <stdexcept>
 
@@ -96,6 +97,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	WallSpan::registerModules(modules); // lane BUILD-2: WallHubBehavior
 	CastleModules::registerAll(modules);
 	CombatModules::registerAll(modules);  // lane COMBAT-1: ImmortalBody, HighlanderBody and the die modules
+	ReflectDamage::registerClass(modules); // ReflectDamage (RW 0x8BED43)
 	ProjectileModules::registerAll(modules); // lane PROJ-1: BezierProjectileBehavior
 	StructureModules::registerAll(modules); // lane COMBAT-2: StructureBody, InactiveBody, StructureCollapseUpdate
 	UpgradeModuleClasses::registerAll(modules); // lane UPGRADE-1: the upgrade module classes
