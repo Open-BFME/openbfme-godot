@@ -2,6 +2,7 @@
 
 #include "Common/BfmeGame.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
+#include "GodotDevice/GodotDds.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DMaterial.h"
 #include "GodotDevice/GodotPackedTexture.h"
@@ -152,7 +153,7 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 		image.instantiate();
 		std::string ext = path.substr(path.size() - 4);
 		Error err = ERR_FILE_UNRECOGNIZED;
-		if (ext == ".dds") err = image->load_dds_from_buffer(buffer);
+		if (ext == ".dds") err = loadDdsFromBuffer(image, buffer);
 		else if (ext == ".png") err = image->load_png_from_buffer(buffer);
 		else if (ext == ".jpg" && fs.archive_fs())
 		{

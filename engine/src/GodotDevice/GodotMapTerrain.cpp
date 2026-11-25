@@ -2,6 +2,7 @@
 // See GodotDevice/GodotMapTerrain.h.
 
 #include "Common/BfmeGame.h"
+#include "GodotDevice/GodotDds.h"
 #include "GodotDevice/GodotGammaComposite.h"
 #include "GodotDevice/GodotMapTerrain.h"
 #include "GodotDevice/GodotShaderBudget.h"
@@ -130,7 +131,7 @@ bool loadLookupVolume(RetailFileSystem &fs, const std::string &name, std::vector
 		Ref<Image> image;
 		image.instantiate();
 		const std::string pext = path.substr(path.size() - 4);
-		const Error err = pext == ".dds" ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+		const Error err = pext == ".dds" ? loadDdsFromBuffer(image, buffer) : image->load_tga_from_buffer(buffer);
 		if (err != OK || image->is_empty())
 		{
 			why = "could not decode " + path;
@@ -321,7 +322,7 @@ Ref<Texture2D> MapTerrainBuilder::loadTexture(RetailFileSystem &fs, const std::s
 		memcpy(buffer.ptrw(), bytes.data(), bytes.size());
 		image.instantiate();
 		const std::string ext = path.substr(path.size() - 4);
-		Error err = ext == ".dds" ? image->load_dds_from_buffer(buffer)
+		Error err = ext == ".dds" ? loadDdsFromBuffer(image, buffer)
 			: ext == ".jpg" ? image->load_jpg_from_buffer(buffer)
 			: ext == ".png" ? image->load_png_from_buffer(buffer)
 			: image->load_tga_from_buffer(buffer);

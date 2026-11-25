@@ -522,6 +522,7 @@ target_sources(openbfme_core PRIVATE
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.cpp # lane LOCAL-28 (object lights, both editions)
+    src/GameClient/DdsDecode.cpp # fallback level-0 DDS decoder for non-multiple-of-4 / partial mip / pitch-flag DDS textures
     src/GameClient/DrawableLight.cpp # lane LOCAL-28: the drawable's light step and bone position (client only, excluded from the sim audit)
     src/GameClient/MapObjectDrawables.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.cpp)
@@ -667,6 +668,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotRetailFileSystem.cpp
     src/GodotDevice/GodotW3DModelBuilder.cpp
     src/GodotDevice/GodotW3DMaterial.cpp
+    src/GodotDevice/GodotDds.cpp
     src/GodotDevice/GodotW3DInstancer.cpp
     src/GodotDevice/GodotLogicClock.cpp
     src/GodotDevice/GodotMapTerrain.cpp
@@ -1068,6 +1070,7 @@ add_executable(openbfme_tests
     tests/test_capcrash1.cpp
     # lane VISIONDEF-1: the vision height bonus's ground reference (Object + 0x1C4)
     tests/test_visiondef1_retail.cpp
+    tests/test_dds_decode.cpp
     tests/test_local_81.cpp)
 target_sources(openbfme_tests PRIVATE
     tests/test_coverage_online_shell.cpp

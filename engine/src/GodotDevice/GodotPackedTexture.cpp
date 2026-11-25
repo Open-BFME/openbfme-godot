@@ -2,6 +2,7 @@
 // See GodotPackedTexture.h.
 
 #include "GodotDevice/GodotPackedTexture.h"
+#include "GodotDevice/GodotDds.h"
 
 #include "Libraries/Source/Apt/AptLoad.h"
 
@@ -67,7 +68,7 @@ Ref<godot::Image> loadPackedTexture(AptFileSource &source, const std::string &st
 	image.instantiate();
 	if (read(stem + ".dds", data))
 	{
-		return image->load_dds_from_buffer(data) == OK ? image : Ref<godot::Image>();
+		return loadDdsFromBuffer(image, data) == OK ? image : Ref<godot::Image>();
 	}
 	if ((!preloadedJpg && !read(stem + ".jpg", data)) || image->load_jpg_from_buffer(preloadedJpg ? *preloadedJpg : data) != OK)
 	{
