@@ -19,8 +19,9 @@
 // right click carries it out (doAttackMoveCommand 0x004311A7: MSG_DO_ATTACKMOVETO 0x430 at the clicked terrain point plus the unit voice) and the left
 // click ends it. The left press is destroyed while a command waits. A right click that was not dragged cancels any other pending command (setGUICommand(0),
 // the click destroyed: RW 0x83DB8D); cancelling it on SelectionTranslator's raw button up let the same click reach CommandTranslator as an ordinary move.
-// The port applies the ATTACK_MOVE swap here and the general right-click cancel above; RotWK 2.01's translator RW 0x83D7AD was not read for the other
-// commands (INFERENCE: it keeps BFME2's roles).
+// The port applies BFME2's click roles to ATTACK_MOVE only. The other command types (GUARD, SET_RALLY_POINT, PLACE_BEACON, EVACUATE) keep the
+// port's left-click carry-out path and SelectionTranslator's right-button cancel. That is port behavior, not a retail claim: RotWK 0x83D7AD's
+// role swap was not read for them (S-280).
 
 #pragma once
 

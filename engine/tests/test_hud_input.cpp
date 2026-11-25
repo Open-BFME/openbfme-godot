@@ -1029,11 +1029,19 @@ TEST_CASE("synthetic HUD: a left click with no valid target cancels Bloodthirsty
 		CHECK(r.input->ui().getGUICommand() == &power);
 		CHECK(r.commands.messages().empty());
 	}
-	SUBCASE("a context ability in the void")
+	SUBCASE("a context ability's point click in the void ends the command")
 	{
+		r.view.setNoRayAt(300, 300);
 		r.input->ui().setGUICommand(&bloodthirsty);
-		// PixelView maps every pixel to terrain; the null terrain case is the same branch the device takes over the letterbox's black.
-		// Keep the command armed through a drag (not a point click): a drag is not a target click.
+		r.click(300, 300);
+		checkNoOrder();
+	}
+	SUBCASE("a context ability's drag in the void is not a target click")
+	{
+		r.view.setNoRayAt(300, 300);
+		r.view.setNoRayAt(360, 300);
+		r.input->ui().setGUICommand(&bloodthirsty);
+		// both ends are off the map; a drag is not a point click, so the aim stays armed
 		r.drag(300, 300, 360, 300);
 		CHECK(r.input->ui().getGUICommand() == &bloodthirsty);
 	}
