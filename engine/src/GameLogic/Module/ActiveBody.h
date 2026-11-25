@@ -21,8 +21,8 @@
 //   * which GlobalData fields +0xB4 / +0xB8 are is INFERENCE (the INI names UnitDamagedThreshold / UnitReallyDamagedThreshold; the offsets
 //     are not tied to the names): stop S-149.
 // Not ported: the transition times and RecoveryTime consumers, DodgePercent, the Grab* fields (rock throwing), the attribute modifiers, the
-// burning death behaviour, CheerRadius, the damage creation list: the fields are parsed and kept (the FX and OCL names unresolved: their
-// stores are not loaded, stop S-149); nothing acts on them yet.
+// burning death behaviour, CheerRadius: the fields are parsed and kept (the FX names unresolved: stop S-149); nothing acts on them yet. The damage
+// creation list and the siege side damage run since lane BLDGDEBRIS-1 (see ActiveBody.cpp).
 
 #pragma once
 
@@ -55,7 +55,17 @@ public:
 	float m_grabDamage = 200.0f;
 	Coord2D m_grabOffset;
 	bool m_useDefaultDamageSettings = true;
-	std::vector<std::vector<std::string>> m_damageCreationList; ///< one entry per `DamageCreationList = OCL DamageType [...]` line
+	// lane BLDGDEBRIS-1: RW 0x8C3F1F (BFME2 0x4BFD83, decomp ActiveBody.cpp:2477 Rva004BFD83Parse): one 12-byte entry { ocl, rock, stage } per
+	// `DamageCreationList = <OCL> [<rock>] [<side>]` row (data + 0x58). The OCL is kept by name and looked up when created (RW 0x73A368: "None" and an unknown
+	// name are NULL, which the creating loops skip); rock is TheFXTriggerNames' index (RW 0xDB2AF4: NONE / CATAPULT_ROCK / TREBUCHET_ROCK), stage
+	// TheDamageSideNames' (RW 0xDB2B04: NONE / FRONT_DESTROYED / RIGHT_DESTROYED / BACK_DESTROYED / LEFT_DESTROYED); a missing token is 0
+	struct DamageCreation
+	{
+		std::string ocl;
+		int rock = 0;
+		int stage = 0;
+	};
+	std::vector<DamageCreation> m_damageCreationList;
 	std::string m_healingBuffFx;
 	bool m_healingBuffFxSet = false; ///< lane OWNERFIX-1: a HealingBuffFx row was read (else the GameData default, RW 0x8C373F)
 	std::string m_damagedAttributeModifier;
@@ -142,6 +152,10 @@ public:
 	bool lastDamageNoEffect() const { return m_lastDamageNoEffect; }
 	// lane COMBAT-2: the damage state the body last applied (RW + 0x30, written by setCorrectDamageState RW 0x8C2A5D)
 	BodyDamageType appliedDamageState() const { return m_curDamageState; }
+	// lane BLDGDEBRIS-1: the destroyed side stage (RW + 0x34) and the side values / flags (RW + 0xCC / + 0xDC), for tests and reports
+	int sideStage() const { return m_sideStage; }
+	float sideDamage(int side) const { return m_sideDamage[side]; }
+	bool sideDestroyed(int side) const { return m_sideDestroyed[side]; }
 	void crc(StateHasher &hasher) const override;
 	OBFME_MODULE_XFER(ActiveBody) // lane SAVE-4b (OpenBFME native, S-4190)
 
@@ -161,7 +175,14 @@ protected:
 private:
 	class DamageHost;
 	BodyDamageType calcDamageState() const;
-	void doDamageFX(const DamageInfo &info); // RW 0x8C2F02 (lane FX-2)
+	void doDamageFX(const DamageInfo &info); // RW 0x8C2F02 (lane FX-2; the DamageCreationList loop: lane BLDGDEBRIS-1)
+	void playDamageFX(const DamageInfo &info); // its throttled DamageFX part (lane FX-2)
+	// lane BLDGDEBRIS-1: RW 0x8C3E70 -> 0x8C3CB8 (BFME2 0x4BFCD4 -> 0x4BFB1C): SIEGE damage poured into the four side values, the sides facing `from` first
+	void distributeSideDamage(float amount, const Coord3D &from);
+	// lane BLDGDEBRIS-1: the side stage part of setCorrectDamageState (RW 0x8C2C5D .. 0x8C2EF1)
+	void updateSideStage(BodyDamageType oldState, bool arg);
+	// lane BLDGDEBRIS-1: create the OCL of every DamageCreationList entry that matches (RW 0x5F0126(object, 0, 0))
+	void createDamageOCL(const std::string &name);
 
 	const ActiveBodyModuleData *m_data;
 	float m_initialHealth = 0.0f;  // RW +0x1C
@@ -183,6 +204,11 @@ private:
 	// client output depends on them; not hashed (the event queue boundary of FXEvents.h)
 	int m_lastDamageFXType = 0;           // RW + 0x3C
 	UnsignedInt m_damageFXThrottleUntil = 0; // RW + 0x38
+	// lane BLDGDEBRIS-1: the destroyed side (RW + 0x34: 0 none, 1..4 FRONT / RIGHT / BACK / LEFT, XferBodySideDestroyedType), the four side damage values
+	// (RW + 0xCC) and their "side destroyed" flags (RW + 0xDC)
+	int m_sideStage = 0;
+	float m_sideDamage[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	bool m_sideDestroyed[4] = { false, false, false, false };
 };
 
 // RW vtable 0xC71FE0: health never drops below 1 (internalChangeHealth delta = max(delta, 1 - health), RW 0x8C4AB4)

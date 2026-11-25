@@ -51,6 +51,9 @@ public:
 	// lane SAVE-UI1: a key (DirectInput scan code, KEY_STATE_*) for the screen window's own input procedure (retail: the screen is a GameWindow whose
 	// input callback sees GWM_CHAR, e.g. SaveLoad's RW 0x816627); true when used. The host offers the shell's top screen every key first; nothing by default
 	virtual bool inputKey(int key, int keyState) { (void)key; (void)keyState; return false; }
+	// lane CAHWHEEL-1 (NOT RETAIL, S-7186): a wheel notch (+1 up, -1 down) for the shell's input top screen when no gadget used it
+	// (WindowManager::postMouseWheel); true when used. Nothing by default
+	virtual bool inputWheel(int delta) { (void)delta; return false; }
 	// lane OPTS-6: a menu the keyboard / controller navigation works on (MenuNavigator.h) when it has the input; the in-game HUD (Palantir.apt, on the
 	// shell's stack during a game) is not one: its keys are the game's
 	virtual bool isMenu() const { return true; }

@@ -37,6 +37,7 @@ enum ObjectStatusBit
 	OBJECT_STATUS_DESTROYED = 0,        // the three bits the scheduler and the end-of-frame checks test by number (RW constants)
 	OBJECT_STATUS_UNDER_CONSTRUCTION = 2, // RW 0x797894 (BuildAssistant slot 0x38: the mask word | 4); AutoDepositUpdate's `status 2` (lane BUILD-1)
 	OBJECT_STATUS_NO_COLLISIONS = 4,
+	OBJECT_STATUS_CREATE_DRAWABLE_WITH_LOW_DETAIL = 55, // RW 0xD8AFF0[55] (byte 6, 0x80): AIData ForceHordesToLowLOD (RW 0x86A151 / 0x86B282 / 0x8A25E4)
 	OBJECT_STATUS_IGNORE_AI_COMMAND = 74
 };
 

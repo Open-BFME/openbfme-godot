@@ -20,6 +20,8 @@
 #include "GameLogic/Damage.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/Damage.h"
+#include "GameLogic/Module/SlaveWatcherBehavior.h"
 #include "Common/INIException.h"
 #include "Common/ModelState.h"
 
@@ -132,6 +134,49 @@ void ObjectCreationUpgrade::processUpgradeRemoval()
 			}
 		}
 	}
+}
+
+bool ObjectCreationUpgrade::wouldUpgrade(const UpgradeMaskType &mask) const
+{
+	// RW 0x8B82AB (mux slot 2), the class's own answer, not the mux base's RW 0x8D26F3. Two of the base's questions are not asked here:
+	//   * whether the upgrade already ran (the base's test of mux + 4 at RW 0x8D273F): postUpgradeCheck RW 0x8B8329 asks this of modules that
+	//     have run and needs "yes" while the trigger is still there, so the answer must not look at the flag;
+	//   * slot 14 for the conflicting mask (the base's RW 0x8D2749, "all" with RequiresAllConflictingTriggers): 0x8097D6 is always the "any"
+	//     test, although the class answers slot 14 itself at RW 0x8B81E6.
+	const ObjectCreationUpgradeModuleData *d = m_data;
+	if (!d->m_activationMask.any()) // 0x8B82E0: the 0x24 words of the activation mask are all zero
+	{
+		return false;
+	}
+	if (mask.testForAny(d->m_conflictingMask)) // RW 0x8B8300 (RW 0x8097D6), on the conflicting mask
+	{
+		return false;
+	}
+	// RW 0x8B830D: slot 13 (RW 0x8B81DC, RequiresAllTriggers) chooses "all" (RW 0x6AACB3) or "any" (RW 0x8097D6) over the activation mask
+	return d->m_requiresAllTriggers ? mask.testForAll(d->m_activationMask) : mask.testForAny(d->m_activationMask);
+}
+
+void ObjectCreationUpgrade::postUpgradeCheck()
+{
+	// RW 0x8B8329 (mux slot 6). Object::updateUpgradeModules (RW 0x6936FE, its 0x6937AB) asks this on every upgrade event, on every mux, executed or not.
+	Object *obj = getObject();
+	const Player *player = obj->getControllingPlayer(); // RW 0x8B8338 (RW 0x68B678)
+	if (!player)
+	{
+		throw std::logic_error("ObjectCreationUpgrade::postUpgradeCheck: no controlling player (RW 0x8B833D adds to the answer unchecked)");
+	}
+	UpgradeMaskType mask = player->getCompletedUpgradeMask(); // RW 0x8B833D .. 0x8B8349: player + 0x14C copied (RW 0x444DB3)
+	mask.orWith(obj->getUpgradeMask());                       // RW 0x8B835D (RW 0x68CC6C), object + 0x28C; the keep's mask of RW 0x69378C is not here
+	if (wouldUpgrade(mask))                                   // 0x8B836D: its own slot 2 (RW 0x8B82AB)
+	{
+		if (!m_pending) // 0x8B8374: + 0x2C
+		{
+			giveSelfUpgrade(); // RW 0x855388: the implementation (the delay starts) then executed
+		}
+		return;
+	}
+	// 0x8B8387: slot 8 at once, pending or not: the upgrade leaves and, with DestroyWhenSold, the slave an earlier run made is killed
+	processUpgradeRemoval(); // RW 0x8B87C5
 }
 
 UpdateSleepTime ObjectCreationUpgrade::update()

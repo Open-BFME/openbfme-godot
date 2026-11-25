@@ -323,6 +323,8 @@ TEST_CASE("skirmish ai attack: each of the 7 factions as the Medium computer on 
 		// lane had Isengard's generator draw a PincerAttack whose crossbow team kept acquiring a BarrowWight_Slaved across the water in its attack-move
 		// and never finished its leg, so nothing of Isengard's arrived; that stall is the approach's missing give-up rules (stop S-7162) and shows on
 		// main too (the same crossbow horde stands in attack-move for a whole run). The lane's final tree draws other tactics and every faction arrives
+		// (lane APPROACHGIVEUP-1 ported the give-up rules, S-7162: an unreachable victim is given up ten seconds after the approach's move ends; the arrivals
+		// of all seven factions are unchanged by it)
 		CHECK(run.arrivalFrame > 0);
 		CHECK(run.arrivalFrame <= 2400);
 	}

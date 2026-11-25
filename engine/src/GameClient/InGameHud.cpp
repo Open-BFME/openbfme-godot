@@ -3,6 +3,7 @@
 
 #include "Common/BfmeGame.h"
 #include "GameClient/InGameHud.h"
+#include "GameClient/MouseoverTooltip.h"
 #include "GameClient/BeaconClientUpdate.h"
 #include "Common/Audio/AudioEntryPoints.h"
 #include "GameLogic/BeaconCommands.h"
@@ -32,6 +33,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Science.h"
+#include "Common/Upgrade.h"
 #include "GameLogic/WeaponSetToggle.h"
 #include "GameClient/PalantirCommandUI.h"
 #include "GameClient/MapClassification.h"
@@ -122,7 +124,10 @@ InGameHud::InGameHud(Config config)
 	m_radar = std::make_unique<Radar>(m_input->context());
 	m_input->commandTranslator().setRadar(m_radar.get()); // lane HUD-4: Space (VIEW_LAST_RADAR_EVENT)
 	// lane INPUT-1: a hotkey presses its command button as a click on it would (ControlBar::processCommandUI through pressButton)
-	m_input->hotKeyTranslator().setPress([this](int slot, bool inPalantir) { return m_bar->pressButton(slot, inPalantir); });
+	// PORT-426: the hotkey's Shift is the same Keyboard::isShift (RW 0x940BB3) the button's own press reads.
+	m_input->hotKeyTranslator().setPress([this](int slot, bool inPalantir) {
+		return m_bar->pressButton(slot, inPalantir, (m_keyState & KEY_STATE_SHIFT) != 0);
+	});
 	// AUDIO-2: ZH CommandXlat / SelectionXlat play the unit voice when a command or a selection leaves the translators (RotWK RW 0x8DEDBB)
 	m_voice = std::make_unique<UnitVoiceResponse>(m_config.game.logic(), m_voiceSink);
 	// the crowd responses of the voices (S-700): Data\INI\CrowdResponse.ini; a missing or malformed file is an error of the HUD, the voices still work.
@@ -173,6 +178,11 @@ InGameHud::~InGameHud()
 		m_config.game.setScriptLocalView(nullptr); // lane BFME2CAMP1
 	}
 	m_config.game.drawables().destroyClientDrawable(m_rallyPointDrawable);
+	// lane HOVER-2 (review #404): the shell's window manager outlives a shell-hosted HUD; its world tool tip must not stay over the score screen and the menus
+	if (m_wm)
+	{
+		m_wm->setWorldTooltip(std::u16string());
+	}
 	// lane SPELL-2 (review r2): an open spell store is a screen of the window manager below: it goes first, without sending its pending purchases
 	m_store.reset();
 	if (m_palantirRef)
@@ -181,6 +191,7 @@ InGameHud::~InGameHud()
 	}
 	m_config.game.drawables().setHeroAttackedHandler(nullptr);
 	m_config.game.drawables().setHeroFlashHandler(nullptr);
+	m_config.game.drawables().setDeselectLocalHandler(nullptr);
 	m_heroSelect.reset();
 	// the screen before the window manager it registered on
 	m_ownedPalantir.reset();
@@ -207,6 +218,9 @@ bool InGameHud::boot(std::string *error)
 	{
 		m_errors.push_back("rally marker: " + (settingsError.empty() ? std::string("GameData has no DownwindAngle") : settingsError));
 	}
+	// lane HOVER-2: GameData's DebugAI, which the mouse-over tool tip reads (absent: reported by the tool tip, S-7187)
+	m_debugAI = gameData.debugAI;
+	m_haveDebugAI = gameData.haveDebugAI;
 	// lane CHAT-1: the message lines' InGameUI rows (data\ini\ingameui.ini + language.ini's MessageFont)
 	{
 		InGameUIMessageSettings ms;
@@ -249,9 +263,10 @@ bool InGameHud::boot(std::string *error)
 	// update) may come while the logic worker runs a frame: the press then waits, in order, for the next update the logic is held in (whenHeld)
 	m_palantirRef->setBfme1(isBfme1Data(m_config.fs));
 	m_palantirRef->setButtonHandler([this](int slot, bool inPalantir) {
-		whenHeld([this, slot, inPalantir]() {
+		const bool shift = (m_keyState & KEY_STATE_SHIFT) != 0; // PORT-426: RW 0x940BB3
+		whenHeld([this, slot, inPalantir, shift]() {
 			const auto worldContext = enterContext(); // the movie's own update and invoke_at reach this outside the scoped entry points (BuildAssistant reads TheCommandStore)
-			m_bar->pressButton(slot, inPalantir);
+			m_bar->pressButton(slot, inPalantir, shift);
 		});
 	});
 	// lane CAMPUI-1: a stance item of the stance toggle's radial (RW 0x96F53C: MSG_CHANGE_STANCE with the item's stance)
@@ -297,6 +312,17 @@ bool InGameHud::boot(std::string *error)
 	m_heroSelect = std::make_unique<InGameHeroSelect>(m_input->context(), builderCycleTimeoutMs);
 	m_config.game.drawables().setHeroAttackedHandler([this](ObjectID id) { m_heroSelect->onHeroAttacked(id); });
 	m_config.game.drawables().setHeroFlashHandler([this](const std::string &name, int frames) { m_heroSelect->flashHeroButton(name, frames); });
+	// lane POSTERNPLOT-1, RW 0x85834C .. 0x858389: the local player's object leaves the selection (the message, then TheInGameUI's deselectDrawable)
+	m_config.game.drawables().setDeselectLocalHandler([this](ObjectID id, int ownerIndex) {
+		HudContext &ctx = m_input->context();
+		const Player *local = ctx.localPlayer();
+		if (!local || ownerIndex < 0 || local->getPlayerIndex() != ownerIndex)
+		{
+			return;
+		}
+		ctx.stream.append(MSG_REMOVE_FROM_SELECTED_GROUP).appendObjectID(id);
+		ctx.ui.deselectObject(id);
+	});
 	m_palantirRef->setHeroSelectHandler([this](const std::string &clipPath, bool loaded) {
 		if (!loaded)
 		{
@@ -568,6 +594,7 @@ void InGameHud::update(double seconds)
 		}
 	}
 	part(m_updateParts.input);
+	updateMouseoverTooltip(); // lane HOVER-2: after the translators set this frame's mouse-over hint
 	// lane INPUT-1: the SPELL_STORE meta (the ` key): RW 0x71C6AF closes the open store, else opens it (the Palantir's powers button path)
 	while (m_spellToggleSeen < m_input->ui().spellStoreToggles())
 	{
@@ -711,6 +738,7 @@ void InGameHud::update(double seconds)
 	m_iconSettings.snapshot = iconSnap.get();
 	m_iconSettings.shroudDrawn = iconSnap && iconSnap->shroud && iconSnap->shroud->displayed;
 	presentBeacons(); // lane CHAT-1
+	presentUpgradeComplete(); // RW 0x8A2080 .. 0x8A223B: the issuing player's feedback after upgrade completion
 	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, m_input->ui().mouseoverObject(), m_iconOps);
 	updateFloatingText(m_config.view, m_iconSettings.shroudDrawn);
 	m_iconSettings.snapshot = nullptr; // the frame's snapshot goes with this frame
@@ -781,6 +809,44 @@ bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
 // lane RADAR-1: the radar's events (Radar.h): the local player's attacked objects (RW 0x67B4B7), the events' end (RW 0x6D8E2B), then
 // W3DRadar::drawEvents (RW 0x44DE58) for the picture the device drew last (the events end in the radar's update, Radar::advanceClock) and the Palantir's pings; the window pixels go to the movie's stage units
 // (RW 0x6D5AD9: the Apt player's scale)
+// lane HOVER-2: RW 0x69F637's tool tip (MouseoverTooltip.h) for the object under the pointer; over the HUD, while scrolling or selecting, while a script
+// has the input off (DISABLE_INPUT: no pointer, InGameUI::applyScriptInput) and with no object the request is empty (INFERENCE S-7187: ZH's window manager
+// clears it on every mouse event before createMouseoverHint runs).
+// The object: ZH's Mouse::createStreamMessages appends MSG_RAW_MOUSE_POSITION in every client frame ("basic position messages are always created"), so
+// the selection translator's hover pick (RW 0x83CC13) follows an object that moves under a still pointer. The port posts the position only when the
+// pointer moves (S-137), so the tool tip picks again here each frame with the translator's rule (HudObjects::pickForHover; a dead object only when
+// ALWAYS_SELECTABLE)
+void InGameHud::updateMouseoverTooltip()
+{
+	InGameUI &ui = m_input->ui();
+	UnicodeString text;
+	if (m_pointerSeen && !m_modal && ui.getInputEnabled() && !ui.scriptMouseHidden() && !ui.isScrolling() && !ui.isSelecting() &&
+		!isOverGui(m_pointerX, m_pointerY))
+	{
+		GameLogic &logic = m_config.game.logic();
+		const Object *obj = HudObjects::pickForHover(m_input->context(), { m_pointerX, m_pointerY });
+		if (obj && HudObjects::isEffectivelyDead(*obj) && !obj->isKindOfName("ALWAYS_SELECTABLE"))
+		{
+			obj = nullptr;
+		}
+		if (obj)
+		{
+			MouseoverTooltip::Inputs in;
+			in.localPlayer = m_config.game.players().getLocalPlayer();
+			in.networkGame = ui.networkGame();
+			in.debugAI = m_debugAI;
+			in.haveDebugAI = m_haveDebugAI;
+			const ICoord2D pixel{ m_pointerX, m_pointerY };
+			in.groundUnderPointer = [this, &logic, pixel](Coord3D &out) { return m_config.view.screenToTerrain(pixel, logic, out); };
+			MouseoverTooltip::Result r = MouseoverTooltip::compose(*obj, logic, m_config.gameText, in);
+			text = r.text;
+			m_mouseoverUnported.insert(r.unported.begin(), r.unported.end());
+		}
+	}
+	m_mouseoverTooltip = text;
+	m_wm->setWorldTooltip(text);
+}
+
 void InGameHud::updateRadarEvents()
 {
 	// What a logic frame writes (an object's radar attack frame, the scripts' event notices) is read once per logic frame.
@@ -1545,6 +1611,14 @@ std::vector<std::string> InGameHud::stops() const
 	std::vector<std::string> out = m_input->stops();
 	out.push_back("[S-6101] player message log: BFME2 recovered six-entry message, positioning and fade routines ported; independent RotWK display-routine verification remains outstanding");
 	out.push_back(DrawablePick::stopLine()); // lane QA-1: the HUD's pick is the drawn-model ray test, not S-284's geometry volumes
+	for (const std::string &l : MouseoverTooltip::acceptanceStops()) // lane HOVER-2
+	{
+		out.push_back(l);
+	}
+	for (const std::string &u : m_mouseoverUnported)
+	{
+		out.push_back("[S-7187] met: " + u);
+	}
 	out.push_back("[S-1201] context commands (lane QA-1): a click with a builder on our rising structure is MSG_RESUME_CONSTRUCTION, on our damaged finished structure "
 				  "MSG_DO_REPAIR (CommandTranslator::evaluateContextCommand), by ZH ActionManager::canResumeConstructionOf / canRepairObject (a DOZER of the same player); "
 				  "RotWK's ActionManager checks and the order of its context checks are not read");
@@ -1554,7 +1628,7 @@ std::vector<std::string> InGameHud::stops() const
 				  "the look-at argument");
 	out.push_back("[S-4640] radius cursor (lane SPELL-4): InGameUI's RadiusCursorTemplate decal of a targeted spell-book or selected-unit ground power (RW 0x6A077A / 0x732DE7 / "
 				  "0x732926 / 0x73232B); handleRadiusCursor's radar pixel and shroud second pass are not ported (the view's terrain point), the spiral branch and "
-				  "the radius > 110 flag are not used, the cursor texture is composited by the terrain shader alongside selection decals (S-2522)");
+				  "the radius > 110 flag are not used; the cursor and resource overlays composite on terrain and upward opaque object faces (S-2522), a presentation extension with retail receiver parity unverified");
 	out.push_back(TerrainResourceFeedback::stopLine()); // lane OWNERFIX-2
 	out.push_back("[S-5032] placement ghost decal shadows (lane OWNERFIX-2): the ghost draws its model state's SHADOW_ALPHA_DECAL / SHADOW_ADDITIVE_DECAL "
 				  "(a well's / statue's area of effect) with the selection decals (lane PLACEDECAL-1) at ShadowOpacityPeak; an additive one is added (lane ECOCIRCLE-2); the "
@@ -1618,6 +1692,54 @@ void InGameHud::showMessageLabel(const std::string &label, const std::u16string 
 	}
 	m_messageLines.addMessageText(argument ? InGameChat::formatLine(text, *argument) : text, nullptr, m_messageFrame);
 	++m_guiMessagesShown;
+}
+
+void InGameHud::presentUpgradeComplete()
+{
+	// RW 0x8A2080 .. 0x8A223B: the issuing player's feedback after upgrade completion
+	const Player *local = m_config.game.players().getLocalPlayer();
+	for (const GameLogic::UpgradeCompleteNotice &n : m_config.game.logic().upgradeCompleteNotices())
+	{
+		if (n.seq <= m_upgradeCompleteNoticeSeen)
+		{
+			continue;
+		}
+		m_upgradeCompleteNoticeSeen = n.seq;
+		if (!local || local->getPlayerIndex() != n.playerIndex || !n.upgrade)
+		{
+			continue;
+		}
+
+		// RW 0x8A2094 .. 0x8A211C: format "UPGRADE:UpgradeComplete" with upgrade's DisplayName (+0x28)
+		// Missing label yields MISSING: '<label>' (RW 0x6E7AC0 / GameTextSource::fetchOrMissing)
+		const std::u16string formatStr = fetchOrMissing(m_config.gameText, "UPGRADE:UpgradeComplete");
+		const std::u16string nameStr = fetchOrMissing(m_config.gameText, n.upgrade->m_displayName);
+		const std::u16string messageText = InGameChat::formatLine(formatStr, nameStr);
+		m_messageLines.addMessageText(messageText, nullptr, m_messageFrame);
+		++m_guiMessagesShown;
+
+		// RW 0x8A213F .. 0x8A2212: audio / Eva feedback
+		bool feedbackPlayed = false;
+		if (n.upgrade->m_researchCompleteEvaEvent != -1)
+		{
+			AudioApi::reportEva(n.upgrade->m_researchCompleteEvaEvent, &n.position);
+			feedbackPlayed = true;
+		}
+		if (!n.upgrade->m_researchSound.empty())
+		{
+			AudioApi::playSoundForObject(n.upgrade->m_researchSound, n.producerID, n.playerIndex);
+			feedbackPlayed = true;
+		}
+		if (!feedbackPlayed)
+		{
+			// RW 0x8A21C9: default Eva event 4 (EVA_UPGRADE_COMPLETE, "UpgradeComplete")
+			AudioApi::reportEva(4, &n.position);
+		}
+		if (!n.upgrade->m_unitSpecificSound.empty())
+		{
+			AudioApi::playSoundForObject(n.upgrade->m_unitSpecificSound, n.producerID, n.playerIndex);
+		}
+	}
 }
 
 void InGameHud::presentBeacons()

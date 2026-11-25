@@ -12,6 +12,7 @@
 #include "GameLogic/SnapshotXfer.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/AI/TurretAI.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -30,6 +31,8 @@
 #include "GameLogic/WeaponNugget.h"
 #include "GameLogic/WeaponSet.h"
 #include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/Module/FiringTrackerHelper.h"
+#include "GameLogic/Construction.h"
 
 #include <cstring>
 #include <stdexcept>
@@ -126,7 +129,16 @@ public:
 	GameLogicRandom &logicRandom() override { return m_w.owner().logic().random(); }
 	std::uint32_t weaponBonusConditionMask() override { return m_w.owner().weaponBonusConditionMask(); }
 	const WeaponBonusSet *globalWeaponBonusSet() override { return nullptr; } // GameData's WeaponBonus set is not loaded (S-320): the bonus of no condition is 1.0
-	float rateOfFireAttributeProduct() override { return 1.0f; }              // the attribute modifiers (S-320)
+	// RW 0x6CEF6D (Weapon::privateFireWeapon) -> RW 0x6CF042: source->getAttributeModifierProduct(0x15, &factor, nullptr, true) (RW 0x68C82D).
+	// Both editions: BFME2 1.06 game.dat has the same call (push 0x15 at 0x6CE3DB -> 0x68C15E, the factor passed to getDelayBetweenShots 0x6C9322),
+	// and both name tables list RATE_OF_FIRE as type 21.
+	// Pure const read on the owner's pool (safe on the PERF-WS logic job pool).
+	float rateOfFireAttributeProduct() override
+	{
+		float rof = 1.0f;
+		m_w.owner().attributeModifierProduct(ATTRIBUTE_RATE_OF_FIRE, nullptr, true, rof);
+		return rof;
+	}
 	// lane PERF-WS: the two reads below run on the logic job pool (computeWeaponStatusConditions through Weapon::getStatus): keep them reads when
 	// S-320 is ported
 	bool containedAmmo(const ObjectFilter &, unsigned &count) override
@@ -192,7 +204,10 @@ class ObjectWeapons::RangeHost : public WeaponRangeHost
 public:
 	explicit RangeHost(ObjectWeapons &w) : m_w(w) {}
 	ObjectWeapons &m_w;
-	bool rangeAttributeSum(float &) override { return false; }
+	// RW 0x6CA61F (WeaponRangeScale) -> RW 0x6CA641: source->getAttributeModifierSum(7, &sum, nullptr) (RW 0x68C818).
+	// Both editions: BFME2 1.06 game.dat 0x6C98E2 is the same body (push 7, call 0x68C149 at 0x6C9904, scale = sum + 1.0f); RANGE is type 7 in both.
+	// Pure const read on the owner's pool (safe on the PERF-WS logic job pool).
+	bool rangeAttributeSum(float &sum) override { return m_w.owner().attributeModifierSum(ATTRIBUTE_RANGE, nullptr, sum); }
 	// lane GARRISON-1: GameData GarrisonedRangeMultiplier (RW + 0x1224; RW 0x6CA61F applies it when >= 0 and the source is INSIDE_GARRISON)
 	float garrisonRangeScale() override { return m_w.owner().logic().settings().garrisonedRangeMultiplier; }
 	// lane GARRISON-1: RW 0x6FF412(source, 3): with an AI, the bounding radius plus the vision range (RW 0x68E43B: Object + 0x1B0, the template's VisionRange; its
@@ -320,13 +335,54 @@ public:
 	std::uint32_t weaponBonusConditionMask() override { return m_w.owner().weaponBonusConditionMask(); }
 	void setWeaponBonusConditionMask(std::uint32_t mask) override
 	{
-		// RW 0x8E3174 sets / clears the CONTINUOUS_FIRE_MEAN / FAST bits (2, 3) of the owner's weapon bonus mask
+		// RW 0x8E302A / 0x8E3174 set / clear the CONTINUOUS_FIRE_MEAN / FAST bits (2, 3) of the owner's weapon bonus mask (Object + 0x39C)
 		for (int bit : { (int)FiringTracker::CONDITION_CONTINUOUS_FIRE_MEAN, (int)FiringTracker::CONDITION_CONTINUOUS_FIRE_FAST })
 		{
 			m_w.owner().setWeaponBonusCondition(bit, (mask >> bit) & 1u);
 		}
 	}
 	void reloadAllWeapons() override { m_w.reloadAllAmmo(false); }
+	void clearAndSetFireConditions(unsigned clear, unsigned set) override
+	{
+		// RW 0x8E302A / 0x8E3174: two 0x4C-byte flag sets, byte 0xE bits 3 / 4 / 5 = model conditions 115 / 116 / 117, then RW 0x68D607(clear, set)
+		static const int kBits[3] = { Construction::modelConditionIndex("CONTINUOUS_FIRE_SLOW"), Construction::modelConditionIndex("CONTINUOUS_FIRE_MEAN"),
+			Construction::modelConditionIndex("CONTINUOUS_FIRE_FAST") };
+		Object::ModelConditionBits c{}, st{};
+		for (int i = 0; i < 3; ++i)
+		{
+			if (clear & (1u << i))
+			{
+				c[(size_t)kBits[i] >> 5] |= 1u << (kBits[i] & 31);
+			}
+			if (set & (1u << i))
+			{
+				st[(size_t)kBits[i] >> 5] |= 1u << (kBits[i] & 31);
+			}
+		}
+		m_w.owner().clearAndSetModelConditionFlags(c, st);
+	}
+	bool victimHordeID(unsigned victimID, unsigned &hordeID) override
+	{
+		const Object *victim = victimID != 0 ? m_w.owner().logic().findObjectByID(victimID) : nullptr;
+		if (!victim || !victim->testStatus((unsigned)CombatNames::statuses().hordeMember))
+		{
+			return false;
+		}
+		const Object *horde = victim->getHordeObject(false); // RW 0x693A1A(0)
+		hordeID = horde ? horde->getID() : 0u;
+		return true;
+	}
+	void postSpeedUpVoice() override { AudioApi::postUnitVoice(0x7DC, m_w.owner().getID()); } // RW 0x8E31F9: client (the drawable's voice)
+	void setWakeFrame(std::uint32_t sleep) override
+	{
+		// RW 0x8E34ED: the helper is made with the weapons (Object + 0x248, the template can possibly have a weapon); an object that fires without one is a bug
+		FiringTrackerHelper *h = m_w.owner().firingTrackerHelper();
+		if (!h)
+		{
+			throw std::logic_error("FiringTracker: '" + m_w.owner().getTemplate()->getName() + "' fired without a FiringTrackerHelper");
+		}
+		h->wakeAfterShot((UpdateSleepTime)sleep);
+	}
 
 private:
 	ObjectWeapons &m_w;
@@ -1632,9 +1688,18 @@ bool ObjectWeapons::fireCurrentWeapon(Object *victim, const Coord3D *pos)
 	}
 	ObjectWeaponDelivery delivery(*m_owner, *this, t, *w);
 	const bool reloaded = w->privateFireWeapon(host(), delivery, args);
-	if (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu)
+	// RW 0x6920AD .. 0x69212B (disassembled): after 0x6CF34B -> 0x6CEF6D (privateFireWeapon) the release (0x68DF11(1) at RW 0x69212B) is gated
+	// only by that call's reloaded answer (`cmp [ebp-1], bl; je` at RW 0x692122). The ZH-era `|| IdleAfterFiringDelay == -1` clause is not in
+	// RW's function: it released the ordered FIRE_WEAPON lock at the strike's shot, the next chooseBestWeaponForTarget re-picked the SECONDARY
+	// (a ready weapon while the fired one reloads), and the attack left at RW 0x751482's weapon-changed gate before the run-through could run
+	// (fork issue 395 Q2: "the charge does not happen"). ClipSize 0 is unlimited (0x7FFFFFFF at reloadWithBonus), so a clipless weapon never
+	// answers reloaded and keeps its lock until the state releases it (RW 0x74D8D2 at the charge exit).
+	// The object-target overload RW 0x69200A differs: it ignores privateFireWeapon's answer and releases only when IdleAfterFiringDelay (template
+	// + 0x78) is -1 (`cmp [eax+0x78], -1; jnz` at RW 0x692090, release at RW 0x69209A). The port keeps its earlier rule there (reloaded or
+	// -1), so only position targets change here; dropping `reloaded` from the object path is a follow-up.
+	if (victim ? (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu) : reloaded)
 	{
-		releaseWeaponLock(LOCKED_TEMPORARILY); // ZH: unlock when loaded; RW: IdleAfterFiringDelay == -1 releases it after every shot
+		releaseWeaponLock(LOCKED_TEMPORARILY);
 	}
 	m_tracker.shotFired(*m_trackerHost, *w, victim ? victim->getID() : 0u, args.target.victimPosition, false);
 	// RW 0x8E3411 .. 0x8E34DD (inside FiringTracker::shotFired): the weapon's FireSound (template + 0xC8) attached to the shooter, looped while it keeps
@@ -1748,6 +1813,7 @@ void ObjectWeapons::resetFiringTracker(bool hard)
 
 std::uint32_t ObjectWeapons::updateFiringTracker()
 {
+	m_trackerRanFrame = m_owner->logic().getFrame();
 	return m_tracker.update(*m_trackerHost);
 }
 

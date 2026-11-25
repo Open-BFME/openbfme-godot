@@ -27,6 +27,9 @@
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/ObjectCreationList.h"
+#include "GameLogic/Weapon.h"
+#include "Common/AsciiString.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Object/Object.h"
@@ -43,16 +46,27 @@ void parseFXName(INI *ini, void *, void *store, const void *)
 	*static_cast<std::string *>(store) = ini->getNextToken();
 }
 
-// RW 0x8C3F1F: one `DamageCreationList = OCL DamageType [BONE_STATE]` line per row (the tokens are kept; the OCL store is not loaded, S-149)
+// RW 0xDB2B04 (theDamageSideNames, the stage of a DamageCreationList entry and of the body's + 0x34)
+const char *const kDamageSideNames[] = { "NONE", "FRONT_DESTROYED", "RIGHT_DESTROYED", "BACK_DESTROYED", "LEFT_DESTROYED", nullptr };
+
+// lane BLDGDEBRIS-1: RW 0x8C3F1F (BFME2 0x4BFD83, tier A; decomp ActiveBody.cpp:2477-2496 Rva004BFD83Parse): the OCL (RW 0x73A368: a name, "None" is
+// none), then two optional tokens scanned (RW 0x42B999, an unknown name is an INI error) in the rock names (RW 0xDB2AF4 = TheFXTriggerNames) and the
+// side names (RW 0xDB2B04); an absent token is 0; the proc reads no further token (the rest of the line is left unread, as every field proc leaves it). The
+// entry is appended (RW 0x6E0A42 on data + 0x58)
 void parseDamageCreation(INI *ini, void *, void *store, const void *)
 {
-	std::vector<std::vector<std::string>> *list = static_cast<std::vector<std::vector<std::string>> *>(store);
-	std::vector<std::string> tokens;
-	for (const char *t = ini->getNextTokenOrNull(); t; t = ini->getNextTokenOrNull())
+	ActiveBodyModuleData::DamageCreation entry;
+	const std::string name = ini->getNextToken();
+	entry.ocl = AsciiStringUtil::compareNoCase(name, "None") == 0 ? std::string() : name;
+	if (const char *t = ini->getNextTokenOrNull())
 	{
-		tokens.push_back(t);
+		entry.rock = INI::scanIndexList(t, TheFXTriggerNames);
 	}
-	list->push_back(std::move(tokens));
+	if (const char *t = ini->getNextTokenOrNull())
+	{
+		entry.stage = INI::scanIndexList(t, kDamageSideNames);
+	}
+	static_cast<std::vector<ActiveBodyModuleData::DamageCreation> *>(store)->push_back(std::move(entry));
 }
 
 // lane OWNERFIX-1: HealingBuffFx (RW 0x73A302, + 0x48) replaces the GameData default the constructor took (RW 0x8C373F); "None" stores none
@@ -203,12 +217,27 @@ void ActiveBody::crc(StateHasher &h) const
 	{
 		h.addU32(0xD178u); // Local 30, RW 0x744203: record +0x78; false leaves hash unchanged
 	}
+	// lane BLDGDEBRIS-1: the side stage and the side values / flags, hashed only when one is set (a game without siege damage keeps its hash)
+	bool sides = m_sideStage != 0;
+	for (int i = 0; i < 4; ++i)
+	{
+		sides = sides || m_sideDamage[i] != 0.0f || m_sideDestroyed[i];
+	}
+	if (sides)
+	{
+		h.addU32(0x51DEu ^ (std::uint32_t)m_sideStage);
+		for (int i = 0; i < 4; ++i)
+		{
+			h.addFloat(m_sideDamage[i]);
+			h.addBool(m_sideDestroyed[i]);
+		}
+	}
 }
 
 void ActiveBody::evaluateVisualCondition()
 {
-	// RW 0x8C1D53 -> Object RW 0x6903B6: the damage flags follow the stored body state, without the construction suppression of internalChangeHealth.
-	// The ambient-sound / damage-stage tail remains S-653; this is the existing damage-flag mapping.
+	// RW 0x8C1D53 -> Object RW 0x6903B6(state + 0x30, stage + 0x34): the damage flags follow the stored body state, without the construction suppression of
+	// internalChangeHealth. The ambient-sound part (RW 0x67876B, the drawable's) remains S-653.
 	Object &obj = *getObject();
 	Object::ModelConditionBits clear{}, set{};
 	const int damaged = CombatNames::modelCondition("DAMAGED"), really = CombatNames::modelCondition("REALLYDAMAGED"), rubble = CombatNames::modelCondition("RUBBLE");
@@ -222,6 +251,41 @@ void ActiveBody::evaluateVisualCondition()
 		set[(size_t)on >> 5] |= 1u << (on & 31);
 	}
 	obj.clearAndSetModelConditionFlags(clear, set);
+	// lane BLDGDEBRIS-1: the tail of RW 0x6903B6 (BFME2 0x68FCD9, tier B same-shape; decomp ObjectRva0028FCD9.cpp:58). RUBBLE: an object with the model condition
+	// ACTIVELY_BEING_CONSTRUCTED (0x45) gets DESTROYED_WHILST_BEING_CONSTRUCTED (0x14E) for 3 * [RW 0xD9F608] (5) frames through the SMC helper (RW 0x8E2C0F),
+	// and the four DESTROYED_<side> conditions (0x8B .. 0x8E) are cleared. Else, with the model condition REALLYDAMAGED (RW 0x46E918(4), read after the flags
+	// above changed): stage 1 .. 4 sets DESTROYED_FRONT / RIGHT / BACK / LEFT and clears the other three; stage 0 changes none. Without REALLYDAMAGED: the
+	// four are cleared
+	static const int kBeingBuilt = CombatNames::modelCondition("ACTIVELY_BEING_CONSTRUCTED");
+	static const int kDestroyedBuilding = CombatNames::modelCondition("DESTROYED_WHILST_BEING_CONSTRUCTED");
+	static const int kSide[4] = { CombatNames::modelCondition("DESTROYED_FRONT"), CombatNames::modelCondition("DESTROYED_RIGHT"),
+		CombatNames::modelCondition("DESTROYED_BACK"), CombatNames::modelCondition("DESTROYED_LEFT") };
+	constexpr UnsignedInt kLogicFramesPerSecond = 5; // RW 0xD9F608
+	Object::ModelConditionBits sideClear{}, sideSet{};
+	if (on == rubble)
+	{
+		if (obj.testModelCondition(kBeingBuilt))
+		{
+			obj.setSpecialModelConditionState(kDestroyedBuilding, kLogicFramesPerSecond * 3);
+		}
+	}
+	else if (obj.testModelCondition(really))
+	{
+		if (m_sideStage < 1 || m_sideStage > 4)
+		{
+			return;
+		}
+		const int bit = kSide[m_sideStage - 1];
+		sideSet[(size_t)bit >> 5] |= 1u << (bit & 31);
+	}
+	for (int bit : kSide)
+	{
+		if (!(sideSet[(size_t)bit >> 5] & (1u << (bit & 31))))
+		{
+			sideClear[(size_t)bit >> 5] |= 1u << (bit & 31);
+		}
+	}
+	obj.clearAndSetModelConditionFlags(sideClear, sideSet);
 }
 
 // RW 0x8C2A5D (setCorrectDamageState). TARGET FACTS read from the binary: the damage state field (+0x30) is rewritten from calcDamageState (RW 0x8C1B79); when it changed vslot 0x34 runs
@@ -235,15 +299,20 @@ void ActiveBody::evaluateVisualCondition()
 //   leaving it (new < 3, old == 3): the template geometry returns, the footprint is re-entered, NO_COLLISIONS is cleared (RW 0x8C2D87..0x8C2DCC).
 // A WALK_ON_TOP_OF_WALL template (KindOf 60, byte 0x10F bit 0x10) runs a "Bookend" variant (BOOKENDING status 0x53, CAN_NOT_WALK_ON 0x4D) that is a wall's (S-342).
 // NOT PORTED (S-342): the geometry height (the geometry is the template's, an Object has none of its own), the upgrade removal, the attribute modifier
-// pool clear and the Damaged / ReallyDamaged attribute modifiers, the damage FX transitions of the tail (RW 0x8C2C64..0x8C2EF1) and the Bookend of walls.
-// The model conditions DAMAGED / REALLYDAMAGED / RUBBLE: internalChangeHealth calls the visual update (vslot 0x94, RW 0x8C32A8) after the state changed, not while the
-// object is UNDER_CONSTRUCTION (unless dead). RW 0x8C1D53 -> Object RW 0x6903B6 sets the state's flag and clears the other two.
+// pool clear and the Damaged / ReallyDamaged attribute modifiers and the Bookend of walls.
+// The model conditions DAMAGED / REALLYDAMAGED / RUBBLE: internalChangeHealth calls the visual update (vslot 0x94, RW 0x8C32A8) after the state or the side
+// stage (+ 0x34) changed, not while the object is UNDER_CONSTRUCTION (unless dead). RW 0x8C1D53 -> Object RW 0x6903B6 sets the state's flag and clears the
+// other two (and the DESTROYED_<side> flags, evaluateVisualCondition).
+// lane BLDGDEBRIS-1: the side stage tail (RW 0x8C2C5D .. 0x8C2EF1, updateSideStage) runs on every call, also when the state did not change. Every caller
+// here is RW's setCorrectDamageState(false) (internalChangeHealth RW 0x8C31A5 `push 0`, the constructor RW 0x8C39CD `push ebx` = 0)
 void ActiveBody::updateDamageState(bool initial)
 {
 	const BodyDamageType old = m_curDamageState;
+	const int oldStage = m_sideStage;
 	const BodyDamageType now = calcDamageState();
 	m_curDamageState = now;
-	if (now == old)
+	updateSideStage(old, false);
+	if (now == old && m_sideStage == oldStage)
 	{
 		return;
 	}
@@ -256,7 +325,7 @@ void ActiveBody::updateDamageState(bool initial)
 		evaluateVisualCondition();
 	}
 	// lane FX-4: RotWK's setCorrectDamageState does not tell the damage modules (ZH's does); attemptDamage / attemptHealing do (notifyDamageStateChange)
-	if (!obj.isKindOf((unsigned)CombatNames::kinds().structure))
+	if (now == old || !obj.isKindOf((unsigned)CombatNames::kinds().structure))
 	{
 		return;
 	}
@@ -286,6 +355,132 @@ void ActiveBody::updateDamageState(bool initial)
 			world->addObjectToPathfindMap(obj);
 		}
 		obj.setStatus((unsigned)CombatNames::statuses().noCollisions, false);
+	}
+}
+
+// lane BLDGDEBRIS-1: the side stage of RW 0x8C2A5D (BFME2 0x4BE8BD, tier B same-shape; decomp ActiveBody.cpp:1760-1898), read on the RotWK bytes:
+//   * a WALK_ON_TOP_OF_WALL template (tt + 0x10F bit 0x10, KindOf 60) always ends its branch with stage = 0 (RW 0x8C2C5D) and goes on to the side test;
+//   * else a STRUCTURE (tt + 0x108 bit 0x80) in RUBBLE (RW 0x8C2DD4 .. 0x8C2E4A) ends with stage = 0 and returns, before the side test;
+//   * the side test (RW 0x8C2C64): only with the model condition REALLYDAMAGED (RW 0x46E918(4) on Object + 0x10C: the decomp's `isKindOf(KINDOF_4)` is a
+//     model-condition test), and only when the state did not change or `arg` is set: threshold = x87 (getMaxHealth() * 0.25) * 0.75 (RW 0xBD1904 / 0xBDC628,
+//     fstp dword); the first side 0 .. 3 whose flag (+ 0xDC + i) is clear and whose value (+ 0xCC + 4i) >= threshold (comiss: unordered fails) sets stage =
+//     i + 1 and its flag; none: return. With `arg` false every entry whose stage equals the new stage creates its OCL, whatever its rock (RW 0x5F0126)
+void ActiveBody::updateSideStage(BodyDamageType oldState, bool arg)
+{
+	Object &obj = *getObject();
+	static const int kWalkOnWall = ObjectTemplateInfoBuilder::kindOfIndex("WALK_ON_TOP_OF_WALL");
+	if (kWalkOnWall >= 0 && obj.isKindOf((unsigned)kWalkOnWall))
+	{
+		m_sideStage = 0;
+	}
+	else if (obj.isKindOf((unsigned)CombatNames::kinds().structure) && m_curDamageState == BODY_RUBBLE)
+	{
+		m_sideStage = 0;
+		return;
+	}
+	static const int kReallyDamaged = CombatNames::modelCondition("REALLYDAMAGED"); // 4
+	if (!obj.testModelCondition(kReallyDamaged))
+	{
+		return;
+	}
+	if (oldState != m_curDamageState && !arg)
+	{
+		return;
+	}
+	const float threshold = SimMath::pc24Mul(SimMath::pc24Mul(getMaxHealth(), 0.25f), 0.75f); // RW 0x8C2C8C: interface vslot 0x1C
+	int side = -1;
+	for (int i = 0; i < 4; ++i)
+	{
+		if (!m_sideDestroyed[i] && m_sideDamage[i] >= threshold)
+		{
+			side = i;
+			break;
+		}
+	}
+	if (side < 0)
+	{
+		return;
+	}
+	m_sideStage = side + 1;
+	m_sideDestroyed[side] = true;
+	if (!arg)
+	{
+		for (const ActiveBodyModuleData::DamageCreation &c : m_data->m_damageCreationList)
+		{
+			if (c.stage == m_sideStage)
+			{
+				createDamageOCL(c.ocl);
+			}
+		}
+	}
+}
+
+// RW 0x5F0126(ocl, object, 0, 0): the OCL at the object (the position variant of S-980, as FlammableUpdate / CritterEmitterUpdate create theirs); a NULL OCL
+// ("None", an unknown name: RW 0x73A368's NULL) creates nothing
+void ActiveBody::createDamageOCL(const std::string &name)
+{
+	if (name.empty() || !TheObjectCreationListStore)
+	{
+		return;
+	}
+	if (const ObjectCreationList *ocl = TheObjectCreationListStore->findObjectCreationList(name))
+	{
+		Object *obj = getObject();
+		ocl->create(obj->logic(), obj, *obj->getPosition());
+	}
+}
+
+// lane BLDGDEBRIS-1: RW 0x8C3CB8 (BFME2 0x4BFB1C, tier B same-shape; decomp ActiveBody.cpp:1978-2023), on the RotWK bytes. The object's matrix: X axis =
+// basis column 0 (m00 m10 m20), Y axis = column 1, the translation = the position. d = object position - `from` (subss each). The side scores, SSE in this
+// order: s0 = ((0 - m00) * dx + (0 - m10) * dy) + (0 - m20) * dz (the back of the X axis, FRONT), s1 = (m11 * dy + m21 * dz) + m01 * dx (RIGHT),
+// s2 = 0 - s0 (BACK), s3 = 0 - s1 (LEFT). Sorted into a vector, highest first: side i goes before the first entry it is strictly greater than (comiss / ja),
+// else at the end (ties keep index order). Then cap = x87 (getMaxHealth() * 0.25) * 0.75; while remaining > 0 and k < 4: room = cap - value; take =
+// remaining > room ? room : remaining; take > 0 -> value = value + take, remaining = remaining - take
+void ActiveBody::distributeSideDamage(float amount, const Coord3D &from)
+{
+	const Object &obj = *getObject();
+	const float *m = obj.getBasis();
+	const Coord3D &pos = *obj.getPosition();
+	const float dx = SimMath::subf32(pos.x, from.x);
+	const float dy = SimMath::subf32(pos.y, from.y);
+	const float dz = SimMath::subf32(pos.z, from.z);
+	using SimMath::addf32;
+	using SimMath::mulf32;
+	using SimMath::subf32;
+	float score[4];
+	score[0] = addf32(addf32(mulf32(subf32(0.0f, m[0]), dx), mulf32(subf32(0.0f, m[3]), dy)), mulf32(subf32(0.0f, m[6]), dz));
+	score[1] = addf32(addf32(mulf32(m[4], dy), mulf32(m[7], dz)), mulf32(m[1], dx));
+	score[2] = subf32(0.0f, score[0]);
+	score[3] = subf32(0.0f, score[1]);
+	// RW builds a vector (RW 0x478CBE, inserts RW 0x970ED8 / push_back RW 0x90BE00); a fixed four-slot array with the same insertion gives the same order
+	int order[4] = { 0, 0, 0, 0 };
+	int count = 0;
+	for (int i = 0; i < 4; ++i)
+	{
+		int at = 0;
+		while (at < count && !(score[i] > score[order[at]]))
+		{
+			++at;
+		}
+		for (int j = count; j > at; --j)
+		{
+			order[j] = order[j - 1];
+		}
+		order[at] = i;
+		++count;
+	}
+	const float cap = SimMath::pc24Mul(SimMath::pc24Mul(getMaxHealth(), 0.25f), 0.75f); // RW 0x8C3DD0: interface vslot 0x1C
+	float remaining = amount;
+	for (int k = 0; remaining > 0.0f && k < 4; ++k)
+	{
+		float &value = m_sideDamage[order[k]];
+		const float room = subf32(cap, value);
+		const float take = remaining > room ? room : remaining;
+		if (take > 0.0f)
+		{
+			value = addf32(value, take);
+			remaining = subf32(remaining, take);
+		}
 	}
 }
 
@@ -366,7 +561,9 @@ float ActiveBody::estimateDamage(const DamageInfoInput &input) const
 	return AdjustDamage(armor, armor, input, true, host);
 }
 
-// RW 0x8C31A5
+// RW 0x8C31A5. Lane BLDGDEBRIS-1 (BFME2 0x4BF005, tier B same-shape; decomp ActiveBody.cpp:1502-1545), on the RotWK bytes: the four side values follow the
+// health: capped at the maximum (h > max) -> 0; else the previous health == 0 (ucomiss, a revive) -> x87 ((getMaxHealth() * 0.25) * 0.75) - 1.0 each
+// (fstp dword); else delta > 0 (a heal) -> value = value - (delta * 0.25) * 0.75 (SSE), then 0 when 0 > value
 void ActiveBody::internalChangeHealth(float delta)
 {
 	BodyHealth h;
@@ -376,20 +573,38 @@ void ActiveBody::internalChangeHealth(float delta)
 	InternalChangeHealth(h, delta);
 	m_currentHealth = h.health;
 	m_previousHealth = h.previousHealth;
+	if (h.healHistoryCleared)
+	{
+		for (float &v : m_sideDamage)
+		{
+			v = 0.0f;
+		}
+	}
+	else if (m_previousHealth == 0.0f)
+	{
+		const float v = SimMath::pc24Sub(SimMath::pc24Mul(SimMath::pc24Mul(getMaxHealth(), 0.25f), 0.75f), 1.0f); // RW 0x8C31F7: vslot 0x1C
+		for (float &side : m_sideDamage)
+		{
+			side = v;
+		}
+	}
+	else if (delta > 0.0f)
+	{
+		const float reduce = SimMath::mulf32(SimMath::mulf32(delta, 0.25f), 0.75f);
+		for (float &side : m_sideDamage)
+		{
+			side = SimMath::subf32(side, reduce);
+			side = 0.0f > side ? 0.0f : side;
+		}
+	}
 	updateDamageState(); // RW 0x8C31A5 calls vslot 0x54 = setCorrectDamageState(false)
 }
 
-// RW 0x8C4AB4
+// RW 0x8C4AB4: delta = max(delta, 1.0f - health) (x87 fsubr; fcomip / ja keeps delta when greater), then the base RW 0x8C31A5
 void ImmortalBody::internalChangeHealth(float delta)
 {
-	BodyHealth h;
-	h.health = m_currentHealth;
-	h.maxHealth = getMaxHealth();
-	h.previousHealth = m_previousHealth;
-	ImmortalInternalChangeHealth(h, delta);
-	m_currentHealth = h.health;
-	m_previousHealth = h.previousHealth;
-	updateDamageState();
+	const float floorDelta = SimMath::subf32(1.0f, getHealth());
+	ActiveBody::internalChangeHealth(floorDelta > delta ? floorDelta : delta);
 }
 
 // RW 0x8C49C7
@@ -471,6 +686,15 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 		}
 		// (13) internalChangeHealth(-amount) (the info goes down with it in RW: DelayedDeathBody's override reads and clears its kill flag)
 		const BodyDamageType stateBefore = m_curDamageState; // lane FX-4: RW 0x8C3FA3 keeps + 0x30 (EBP - 0x1C) before the health change (vslot 0x84, RW 0x8C4257)
+		// lane BLDGDEBRIS-1: RW 0x8C422E .. 0x8C423F (BFME2 0x4BFE07, tier B same-shape; decomp ActiveBody.cpp:2119): a SIEGE hit (damage type 4), after the kill
+		// override, goes to RW 0x8C3E70 (BFME2 0x4BFCD4, tier A): the source found by id (none: nothing), then the side distributor with its position
+		if (type == DAMAGE_SIEGE)
+		{
+			if (const Object *source = logic.findObjectByID(info.m_input.m_sourceID))
+			{
+				distributeSideDamage(amount, *source->getPosition());
+			}
+		}
 		m_currentInfo = &info;
 		internalChangeHealth(SimMath::subf32(0.0f, amount));
 		m_currentInfo = nullptr;
@@ -582,9 +806,25 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 // field, resolved by name in TheDamageFXStore; RW keeps the pointer of the set in use); none: no FX. A hit of the type played last (+0x3C) while the frame is
 // below +0x38 is throttled. Else RW 0x76256A: the FXList is getDamageFX(type, actual damage dealt, source) (RW 0x76226B: row 0, amount 0 gives none,
 // amount >= AmountForMajorFX the major list) and plays as doFXObj(fx, this object, the source) through RW 0x4B1B5A; when one played, +0x3C = the type and
-// +0x38 = now + ThrottleTime(type) (RW 0x76225D, row 0). NOT PORTED (stop S-681): the loop after it (body + 0xE0: per damage type ObjectCreationLists created
-// through RW 0x5F0126) - no OCL store exists yet.
+// +0x38 = now + ThrottleTime(type) (RW 0x76225D, row 0). Lane BLDGDEBRIS-1: then the loop RW 0x8C2F75 .. 0x8C2FB8 (BFME2 0x4BED62, tier A; decomp
+// ActiveBody.cpp:1345-1350) over the DamageCreationList entries (body + 0xE0), unthrottled and also when no DamageFX played: an entry whose rock equals the
+// hit's FX trigger (DamageInfoInput + 0x2C) and whose stage is 0 creates its OCL (RW 0x5F0126(object, 0, 0)). With retail data this never happens: every
+// weapon with an FXTrigger is a projectile launcher, and a warhead's hit carries the warhead template's FXTrigger (WeaponStore::handleProjectileDetonation
+// RW 0x6CF4D6, generateDamageInfo RW 0x90E665 .. 0x90E66B), NONE for every retail warhead; a mod's direct-damage weapon with an FXTrigger fires it
 void ActiveBody::doDamageFX(const DamageInfo &info)
+{
+	playDamageFX(info);
+	for (const ActiveBodyModuleData::DamageCreation &c : m_data->m_damageCreationList)
+	{
+		if (c.rock == info.m_input.m_fxTrigger && c.stage == 0)
+		{
+			createDamageOCL(c.ocl);
+		}
+	}
+}
+
+// RW 0x8C2F02 up to RW 0x8C2F72: the throttled DamageFX (lane FX-2)
+void ActiveBody::playDamageFX(const DamageInfo &info)
 {
 	Object &obj = *getObject();
 	const ThingTemplate *tt = obj.getTemplate();
@@ -747,7 +987,7 @@ void ActiveBody::attemptHealing(DamageInfo &info)
 // current DamageInfo pointer is null outside a hit (a snapshot is taken between frames); the armour report flag is the report's.
 void ActiveBody::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 3 }; // 2: lane FX-4's last damage type, 3: Local 30's last damage no-effect
+	XferVersion v{ 1, 4 }; // 2: lane FX-4's last damage type; 3: lane BLDGDEBRIS-1's side stage and side values / flags; 4: Local 30's last damage no-effect
 	x.xferVersion(v);
 	xferBehaviorModule(x);
 	x.xferReal(&m_currentHealth);
@@ -776,6 +1016,16 @@ void ActiveBody::xfer(Xfer &x)
 		m_lastDamageType = DAMAGE_UNDEFINED;
 	}
 	if (v.current >= 3)
+	{
+		// RW 0x8C3388 transfers the stage (XferBodySideDestroyedType) and the four value / flag pairs
+		SnapshotXfer::enumIn(x, m_sideStage, 0, 4, "a body's destroyed side");
+		for (int i = 0; i < 4; ++i)
+		{
+			x.xferReal(&m_sideDamage[i]);
+			x.xferBool(&m_sideDestroyed[i]);
+		}
+	}
+	if (v.current >= 4)
 	{
 		x.xferBool(&m_lastDamageNoEffect); // RW 0x744203: DamageInfo + 0x78
 	}

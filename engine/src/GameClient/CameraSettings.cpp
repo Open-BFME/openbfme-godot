@@ -63,6 +63,12 @@ void parseSecondsToMilliseconds(INI *ini, void *instance, void *store, const voi
 	static_cast<State *>(instance)->seen |= (unsigned long long)(std::uintptr_t)userData;
 }
 
+// lane PORT-439: GlobalData + 0x9A4, parseBool RW 0x42E558; written through the settings (the State's member)
+void parseDisableCameraMovements(INI *ini, void *instance, void *, const void *)
+{
+	INI::parseBool(ini, nullptr, &static_cast<State *>(instance)->values.disableCameraMovements, nullptr);
+}
+
 // lane PLAY-1: MoveHintName (GlobalData + 0x10, parseAsciiString RW 0x42EE5E): written through the instance (the settings hold a std::string)
 void parseMoveHintName(INI *ini, void *instance, void *, const void *)
 {
@@ -83,6 +89,13 @@ void parseShowObjectHealth(INI *ini, void *instance, void *, const void *)
 {
 	State *st = static_cast<State *>(instance);
 	INI::parseBool(ini, nullptr, &st->values.showObjectHealth, nullptr);
+}
+// lane HOVER-2: DebugAI (see CameraSettings.h)
+void parseDebugAI(INI *ini, void *instance, void *, const void *)
+{
+	State *st = static_cast<State *>(instance);
+	INI::parseBool(ini, nullptr, &st->values.debugAI, nullptr);
+	st->values.haveDebugAI = true;
 }
 // lane FX-4: the camera shake's GameData fields (CameraSettings.h): user data 0 .. 5 = the intensities by shake type, 6 MaxShakeIntensity, 7 MaxShakeRange
 void parseShake(INI *ini, void *instance, void *, const void *userData)
@@ -199,9 +212,11 @@ FieldParse kFields[] = {
 	{ "KeyboardDefaultScrollSpeedFactor", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_KBDEFAULT), CS_OFF(keyboardDefaultScrollSpeedFactor) },
 	{ "KeyboardCameraRotateSpeed", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_KBROTATE), CS_OFF(keyboardCameraRotateSpeed) },
 	{ "PartitionCellSize", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_PARTITION), CS_OFF(partitionCellSize) },
+	{ "DisableCameraMovements", parseDisableCameraMovements, nullptr, 0 }, // lane PORT-439: GlobalData + 0x9A4 (row RW 0xC000C0)
 	{ "MoveHintName", parseMoveHintName, nullptr, 0 },
 	{ "DownwindAngle", parseDownwindAngle, nullptr, 0 },
 	{ "ShowObjectHealth", parseShowObjectHealth, nullptr, 0 },
+	{ "DebugAI", parseDebugAI, nullptr, 0 },                                         // RW + 0x9B8 (row RW 0xC000E0)
 	{ "ShowSelectedUnitMarker", parseShowSelectedUnitMarker, nullptr, 0 },         // RW + 0x9A5
 	{ "UseSimpleHordeDecals", parseUseSimpleHordeDecals, nullptr, 0 },             // RW + 0x9A6
 	{ "UseSimpleMergeDecals", parseUseSimpleMergeDecals, nullptr, 0 },             // RW + 0x9A7

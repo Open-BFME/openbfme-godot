@@ -81,6 +81,10 @@
    "reason": "lane HOVER-1: the help box's text over a hero portrait (name, level, health, damages, upgrades): user interface, reads the logic, never changes it"
   },
   {
+   "glob": "src/GameClient/MouseoverTooltip.cpp",
+   "reason": "lane HOVER-2: the mouse-over tool tip's text over an object in the world (InGameUI::createMouseoverHint): user interface, reads the logic, never changes it"
+  },
+  {
    "glob": "src/GameClient/InGameHelpBox.cpp",
    "reason": "lane HUD-6: the help box movie's state machine and the hover provider: user interface on the render clock"
   },
@@ -635,6 +639,10 @@
   {
    "glob": "src/GameClient/MessageStream/LookAtXlat.cpp",
    "reason": "the LookAt translator: raw input to camera movement, client state; it emits no GameMessage (CAM-1)"
+  },
+  {
+   "glob": "src/GameClient/DrawableLight.cpp",
+   "reason": "lane LOCAL-28 (#331): W3DLightDraw's drawable side (the flicker / pulse step by render time, RW 0x4CE930; the bone position an AttachToBoneInAnotherModule light follows, RW 0x672B5B): reads the draw frames and the drawable's transform, writes only the client light pool, never simulation state"
   },
   {
    "glob": "src/GameClient/DrawableFade.cpp",
