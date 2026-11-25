@@ -1063,10 +1063,10 @@ std::vector<std::string> LiveGameAudio::acceptanceStops()
 		"[S-706] object ambient sounds: the rules are ZH's Drawable::startAmbientSound (damage-state sound with the pristine fallback, MaxRange gate for non global "
 		"non critical sounds) read as donor; RotWK's own drawable ambient code was not read: SoundAmbientBattle, the per-object custom ambient info "
 		"(ZH m_customSoundAmbientInfo), the time of day and the script enable flags are not ported, and an out-of-range ambient is retried every frame",
-		"[S-707] object sounds not ported: SoundCreated, SoundEnter / Exit, SoundStealthOn / Off, SoundImpact, "
-		"SoundCrushing, SoundFallingFromPlane, SoundAmbientBattle (the death, impact and FireFX sounds are FX list nuggets: FX-2's lane). Lane OBJSOUND-1: "
-		"SoundOnDamaged / ReallyDamaged at a hit's damage state change (ActiveBody::attemptDamage RW 0x8C4422, the template row without the drawable's "
-		"selectors RW 0x676A8A); SoundPromoted* is not ported: no live caller found (RW 0x6957B9 is unreferenced) and no retail template sets it. Done in AUDIO-2 "
+		"[S-707] object sounds not ported: SoundEnter / Exit, SoundStealthOn / Off, "
+		"SoundFallingFromPlane, SoundAmbientBattle: no retail template sets them (the death, impact and FireFX sounds are FX list nuggets: FX-2's lane). Lane OBJSOUND-1: "
+		"SoundOnDamaged / ReallyDamaged at a hit's damage state change (ActiveBody::attemptDamage RW 0x8C4422); lane OBJSOUND-2, all of them with the drawable's sound selectors (RW 0x676A8A): SoundCrushing (Object::onCrush RW 0x69324A), SoundImpact / SoundImpactCyclonic (the shock wave handler RW 0x696974 / "
+		"0x696962), SoundCreated (ProductionUpdate RW 0x8A2970); SoundPromoted* is not ported: no live caller found (RW 0x6957B9 is unreferenced) and no retail template sets it. Done in AUDIO-2 "
 		"part 2: the weapon FireSound (RW 0x8E3411), SoundMoveStart / Loop (S-712), VoiceFullyCreated at construction completion (RW 0x857D6C .. 0x857DBA: "
 		"GettingBuiltBehavior::checkCompletion posts it right before m_completedOnce = true, guarded by !m_completedOnce && frame >= 5; retail's +0x33 is "
 		"m_completedOnce), LargeGroupAudio (S-248)",
