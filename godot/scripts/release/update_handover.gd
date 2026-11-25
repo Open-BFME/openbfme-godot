@@ -220,6 +220,11 @@ static func _start_detached(path: String, args: PackedStringArray) -> int:
 	return OS.create_process("/bin/sh", PackedStringArray(["-c", "exec \"$0\" \"$@\" </dev/null >/dev/null 2>&1", path]) + args)
 
 
+## Lane CRASHDIALOG-1: the crash dialog's "Restart": this program again, with the crashed run's arguments (net_guard allows OS.create_process in this file alone)
+static func restart_game(args: PackedStringArray) -> int:
+	return _start_detached(OS.get_executable_path(), args)
+
+
 func _write(name: String, text: String) -> bool:
 	var tmp := dir.path_join(name + ".tmp")
 	var f := FileAccess.open(tmp, FileAccess.WRITE)

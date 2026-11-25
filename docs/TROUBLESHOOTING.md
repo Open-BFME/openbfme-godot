@@ -46,6 +46,7 @@ changing them.
 
 | Message (or start) | Meaning and what to do |
 |---|---|
+| `OpenBFME closed unexpectedly` | The crash dialog: the game crashed. It lists what the crash report holds and sends it to the team (or asks first, with "Send crash reports automatically" off). The reference it shows after sending identifies your report; quote it when you report the crash. If it could not be sent, the report goes at the next start. |
 | `OpenBFME did not close normally last time (a crash?).` | The previous run left a running marker. A crash or forced quit can do this. The box says **The log of that run is:**; attach **that** log to a report, even if the game starts now. |
 | `OpenBFME cannot continue.` | A fatal error stopped this run. Read the first line of the box and attach the log named after **Log file:** with the displayed **Version:**. Use **Open log folder**. |
 | `the openbfme extension is not loaded (or too old);` | The game library is missing, from another build, or incompatible with this system. Re-extract or reinstall the complete matching OpenBFME package. On Linux, check the GLIBC line for a system-version requirement. An extension-loading failure may happen before any session log can be written. |

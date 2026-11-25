@@ -103,6 +103,7 @@ void ReleaseInfo::_bind_methods()
 	ClassDB::bind_method(D_METHOD("crash_test"), &ReleaseInfo::crash_test);
 	ClassDB::bind_method(D_METHOD("crash_test_worker"), &ReleaseInfo::crash_test_worker);
 	ClassDB::bind_method(D_METHOD("install_crash_handler"), &ReleaseInfo::install_crash_handler);
+	ClassDB::bind_method(D_METHOD("arm_crash_dialog", "extra_arguments"), &ReleaseInfo::arm_crash_dialog);
 }
 
 namespace
@@ -229,6 +230,19 @@ String ReleaseInfo::install_crash_handler() const
 {
 	std::string error;
 	if (!WindowsCrashDump::install(toNative(ProjectSettings::get_singleton()->globalize_path("user://logs/minidumps")), error))
+		return toGodot(error);
+	return String();
+}
+
+String ReleaseInfo::arm_crash_dialog(const PackedStringArray &extra_arguments) const
+{
+	std::vector<std::string> extra;
+	for (int64_t i = 0; i < extra_arguments.size(); ++i)
+	{
+		extra.push_back(toNative(extra_arguments[i]));
+	}
+	std::string error;
+	if (!WindowsCrashDump::armCrashDialog(extra, error))
 		return toGodot(error);
 	return String();
 }

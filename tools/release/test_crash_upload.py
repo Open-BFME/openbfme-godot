@@ -238,6 +238,8 @@ def _ok(r: subprocess.CompletedProcess, summary: str) -> str:
 
 def test_clients_identical_and_guarded():
     assert GAME_CLIENT.read_bytes() == LAUNCHER_CLIENT.read_bytes(), "copy godot/scripts/crash/crash_client.gd to launcher/scripts/net/"
+    assert (REPO / "godot/scripts/crash/crash_dialog.gd").read_bytes() == (REPO / "launcher/scripts/ui/crash_dialog.gd").read_bytes(), \
+        "copy godot/scripts/crash/crash_dialog.gd to launcher/scripts/ui/"
     for path in net_guard.CRASH_CLIENT_FILES:
         assert net_guard.crash_client_problems((REPO / path).read_text(encoding="utf-8")) == [], path
     assert net_guard.ALLOWED_GAME["godot/scripts/crash/crash_client.gd"] == {"HTTPRequest", "HTTPClient"}
@@ -267,11 +269,12 @@ def test_game_local(tmp_path):
 
 @godot_needed
 def test_game_upload_end_to_end(tmp_path):
-    with FakeCrashService([201, 201, 429, 400, 201, ("delay", 4, 201), "hang"]) as service:
+    # the dialog's plan (lane CRASHDIALOG-1) after _upload's: its report, the older one, a refusal, a 429 and its retry, the answer "Don't send" cuts off
+    with FakeCrashService([201, 201, 429, 400, 201, ("delay", 4, 201), "hang", 201, 201, 400, 429, 201, "hang"]) as service:
         env = _env(tmp_path, OPENBFME_CRASH_TEST_ENDPOINT=service.url, OPENBFME_CRASH_TEST_KEY=KEY)
         out = _ok(_run("godot", "crash_upload_test.gd", env, "--stage=upload"), "CRASHUP OK")
     assert service.problems == [], service.problems
-    assert len(service.requests) == 7 and not service.plan, (len(service.requests), service.plan, out[-3000:])
+    assert len(service.requests) == 13 and not service.plan, (len(service.requests), service.plan, out[-3000:])
     installs = {r["headers"]["x-crash-install-id"] for r in service.requests}
     assert len(installs) == 1, "one install id, kept"
     report = service.requests[0]["report"]
@@ -280,12 +283,12 @@ def test_game_upload_end_to_end(tmp_path):
 
 @godot_needed
 def test_launcher_local_and_upload(tmp_path):
-    with FakeCrashService([201]) as service:
+    with FakeCrashService([201, 201]) as service:
         env = _env(tmp_path, OPENBFME_GAME_USER_DIR=str(tmp_path / "game"), OPENBFME_CRASH_TEST_ENDPOINT=service.url,
                                    OPENBFME_CRASH_TEST_KEY=KEY)
         out = _ok(_run("launcher", "crash_upload_test.gd", env, "--stage=upload"), "CRASHUP LAUNCHER OK")
     assert service.problems == [], service.problems
-    assert len(service.requests) == 1 and service.requests[0]["report"]["log_tail"][0].startswith("OpenBFME crash report: the launcher"), out[-3000:]
+    assert len(service.requests) == 2 and service.requests[0]["report"]["log_tail"][0].startswith("OpenBFME crash report: the launcher"), out[-3000:]
 
 
 def _plant_crash(data_home: Path) -> None:
