@@ -285,6 +285,41 @@ struct SkirmishGameInfo
 		return true;
 	}
 
+	// Local 56: RotWK GameInfo::isSlotLocalAlly (RW 0x801190) and GameSlot::getApparentStartPos (RW 0x801249).
+	// An enemy's Random start position remains -1 when MultiplayerSettings::ShowRandomStartPos is true, unless the local player is on the same
+	// non-negative team or is an observer (origPlayerTemplate == PLAYERTEMPLATE_OBSERVER).
+	bool isSlotLocalAlly(int slotIndex, int localSlot) const
+	{
+		if (slotIndex < 0 || slotIndex >= MAX_SLOTS || localSlot < 0 || localSlot >= MAX_SLOTS)
+		{
+			return false;
+		}
+		if (slotIndex == localSlot)
+		{
+			return true;
+		}
+		const SkirmishGameSlot &slot = slots[(std::size_t)slotIndex];
+		const SkirmishGameSlot &local = slots[(std::size_t)localSlot];
+		if (slot.teamNumber == local.teamNumber && slot.teamNumber >= 0)
+		{
+			return true;
+		}
+		return local.origPlayerTemplate == PLAYERTEMPLATE_OBSERVER;
+	}
+	int apparentStartPos(int slotIndex, int localSlot, bool showRandomStartPos) const
+	{
+		if (slotIndex < 0 || slotIndex >= MAX_SLOTS)
+		{
+			return -1;
+		}
+		const SkirmishGameSlot &slot = slots[(std::size_t)slotIndex];
+		if (showRandomStartPos && !isSlotLocalAlly(slotIndex, localSlot))
+		{
+			return slot.origStartPos;
+		}
+		return slot.startPos;
+	}
+
 	int numPlayers() const
 	{
 		int n = 0;

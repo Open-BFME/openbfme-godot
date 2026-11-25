@@ -55,6 +55,7 @@ bool WorldSkirmishSetupSource::load(RetailObjectWorld &world, const GameLogicSet
 	}
 	std::sort(m_cashChoices.begin(), m_cashChoices.end());
 	m_defaultStartingCash = (int)settings.defaultStartingCash;
+	m_showRandomStartPos = settings.showRandomStartPos;
 	return IniSkirmishSetupSource::loadMapCache(fs, m_maps, error);
 }
 

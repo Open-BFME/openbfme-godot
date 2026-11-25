@@ -75,6 +75,8 @@ public:
 	virtual int defaultStartingCash() const = 0;
 	// MultiplayerSettings InitialCredits*: the starting money choices, ascending.
 	virtual const std::vector<int> &startingCashChoices() const = 0;
+	// Local 56: MultiplayerSettings ShowRandomStartPos (RW 0x7836C0 +0x1E = 1, RW 0xC2F798).
+	virtual bool showRandomStartPos() const { return true; }
 	// ZH GameInfo::setMap: bit 1 = the map is known, 2 = preview .tga, 4 = map.ini, 8 = map.str, 16 = solo.ini, 32 = assetusage.txt, 64 = readme.txt.
 	virtual int mapContentsMask(const MapCacheEntry &map) const = 0;
 	// lane UI-2: TheFileSystem->doesFileExist (RW 0xA14AEB) for a path in the mounted archives, '\\' separators (the lobby's map picture

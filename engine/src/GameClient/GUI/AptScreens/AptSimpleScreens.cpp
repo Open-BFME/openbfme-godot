@@ -16,6 +16,7 @@
 #include "GameClient/OptionPreferences.h"
 #include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/GUI/ShellEnvironment.h"
+#include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
 
 #include "GameClient/GUI/GameTextSource.h"
 #include "Libraries/Source/Apt/Apt.h"
@@ -928,6 +929,7 @@ AptLoadScreen::AptLoadScreen(WindowManager &windows, Shell &shell, ShellEnvironm
 			return true;
 		});
 	}
+	attachMapPreview();
 	populate();
 	windows.addUpdateListener(this, [this]() { flush(); });
 }
@@ -1019,7 +1021,117 @@ bool AptLoadScreen::callBar(int card, int percent)
 
 AptLoadScreen::~AptLoadScreen()
 {
+	detachMapPreview();
 	if (AptGadgetLayer *layer = windows().gadgetLayer()) layer->destroyEngineGadget(m_cardRange);
+}
+
+void AptLoadScreen::runInit()
+{
+	AptScreen::runInit();
+	attachMapPreview();
+	updateMapPreview();
+}
+
+void AptLoadScreen::runShutdown(bool *immediate)
+{
+	detachMapPreview();
+	AptScreen::runShutdown(immediate);
+}
+
+void AptLoadScreen::attachMapPreview()
+{
+	m_mapPreview.attach(
+		windows(),
+		[this](const std::string &name, GameWindow *w) {
+			if (m_mapPreview.initGadget(name, w))
+			{
+				updateMapPreview();
+			}
+		},
+		[](const std::string &, std::string &value, bool setting) {
+			if (!setting)
+			{
+				value = "OpenPlay";
+			}
+			return true;
+		},
+		[this](AptComponentRequest &) -> std::shared_ptr<GameWindow> {
+			windows().note("unported-component", "AptMapPreview::Picture: the map picture is a device texture [S-177]");
+			return nullptr;
+		});
+}
+
+void AptLoadScreen::detachMapPreview()
+{
+	m_mapPreview.detach(windows());
+}
+
+void AptLoadScreen::updateMapPreview()
+{
+	if (!m_env.loadScreen || !m_env.loadScreen->error.empty())
+	{
+		return;
+	}
+	const MapCacheEntry *map = m_env.skirmish ? AptMapPreview::findMap(*m_env.skirmish, m_env.loadScreen->mapName) : nullptr;
+	if (m_env.skirmish)
+	{
+		m_mapPreview.updatePicture(windows(), m_env.skirmish, map, false);
+	}
+	if (m_mapPreview.mapInfo())
+	{
+		std::string title;
+		if (map && m_env.skirmish)
+		{
+			title = loadScreenU16ToUtf8(SkirmishGameSetup(*m_env.skirmish, m_env.gameText).mapDisplayName(*map, false));
+		}
+		windows().setAptText("APT:CurrentMapName", title);
+		windows().setAptText("APT:LobbyGameType", map ? std::string("Free For All") : std::string());
+		GadgetListBoxReset(m_mapPreview.mapInfo());
+		if (map && m_env.skirmish)
+		{
+			GadgetListBoxAddEntryText(m_mapPreview.mapInfo(),
+				SkirmishGameSetup(*m_env.skirmish, m_env.gameText).mapDescription(*map), 0xFFFFFFFFu, -1, -1, true);
+		}
+	}
+	if (m_mapPreview.mapDescription())
+	{
+		GadgetListBoxReset(m_mapPreview.mapDescription());
+		if (map && m_env.skirmish)
+		{
+			GadgetListBoxAddEntryText(m_mapPreview.mapDescription(),
+				SkirmishGameSetup(*m_env.skirmish, m_env.gameText).mapDescriptionFirstLine(*map), 0xFFFFFFFFu, -1, -1, true);
+		}
+	}
+	if (!m_mapPreview.currentMap())
+	{
+		return;
+	}
+	std::string previewImage;
+	if (map && m_env.skirmish)
+	{
+		previewImage = AptMapPreview::resolveCurrentMapImage(windows(), m_mapPreview.currentMap(), *m_env.skirmish, *map);
+	}
+	m_mapPreviewError.clear();
+	// RW 0x81D356 + 0x976240: AptLoadScreen keeps AptMapPreview::m_enableStartSpots (+0x61) false, so start spot buttons are disabled.
+	AptMapPreview::populateCurrentMapWindow(windows(), m_env.gameText, m_mapPreview.currentMap(),
+		m_mapPreview.mutableCurrentMapChildren(), map, previewImage, false, true, m_mapPreviewError);
+	if (!m_mapPreviewError.empty())
+	{
+		return;
+	}
+	// RW 0x81C5D3 -> RW 0x977542(1) -> RW 0x7052BE(onLoadScreen=true): show apparent start positions (RW 0x801249) on CurrentMap.
+	AptMapPreview::updateStartSpots(
+		m_env.gameText, map, m_mapPreview.mutableCurrentMapChildren().data(), (int)m_mapPreview.mutableCurrentMapChildren().size(), true,
+		[this](int slot, bool &nonObserver) -> int {
+			if (slot < 0 || slot >= MAX_LOAD_SLOTS)
+			{
+				nonObserver = false;
+				return -1;
+			}
+			const int pos = m_env.loadScreen->slotStartSpots[(std::size_t)slot];
+			nonObserver = pos >= 0;
+			return pos;
+		});
 }
 
 WindowMsgHandledType AptLoadScreen::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)

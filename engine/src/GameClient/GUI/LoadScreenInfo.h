@@ -44,9 +44,19 @@ struct LoadScreenSlotInfo
 	int rankPoints = 0;      ///< lane RANKICON-1: a human card's "<army>Points" from the current profile's stats file (0 without one)
 };
 
+inline std::array<int, MAX_LOAD_SLOTS> emptyLoadScreenStartSpots()
+{
+	std::array<int, MAX_LOAD_SLOTS> spots;
+	spots.fill(-1);
+	return spots;
+}
+
 struct LoadScreenInfo
 {
 	LoadScreenSlotInfo cards[MAX_LOAD_SLOTS];
+	// Local 56: apparent start position per GAME slot (RW 0x7052BE onLoadScreen = true -> GameSlot::getApparentStartPos RW 0x801249,
+	// -1 when hidden/random/observer/vacant). ButtonMapStartPosition[pos] shows "NUMBER:<slot + 1>".
+	std::array<int, MAX_LOAD_SLOTS> slotStartSpots = emptyLoadScreenStartSpots();
 	int mapStartCount = LEGACY_MAX_SLOTS;
 	int cardCapacity() const { return mapStartCount > LEGACY_MAX_SLOTS ? MAX_LOAD_SLOTS : LEGACY_MAX_SLOTS; }
 	std::string error;
@@ -72,7 +82,8 @@ std::string loadScreenU16ToUtf8(const std::u16string &s);
 // `online`: an online game (retail: TheGameSpyInfo, RW 0xDE7D68): retail looks a human up in the online player records and the ONLINE table (RW 0x81CDAB ..,
 // AptRankIcon0 without a record); the port has no such record on this screen, so no stats file is read and the human cards stay at 0 points (S-3506).
 LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSetupSource &setup, const GameTextSource *text,
-	const std::function<bool(const std::string &)> &imageExists = {}, const SkirmishProfileStore *profiles = nullptr, bool online = false);
+	const std::function<bool(const std::string &)> &imageExists = {}, const SkirmishProfileStore *profiles = nullptr, bool online = false,
+	int localSlot = -1);
 
 // Lane RANKICON-1: the rank-point tables (RankPointValue, 11 ints: -1, 0, then the thresholds of levels 2 .. 10). TARGET FACTS (RotWK game.dat, S-001
 // caveat; BFME2 decomp RankPointValue.cpp / Rva00559A11.cpp, byte-matched):

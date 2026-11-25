@@ -23,6 +23,7 @@
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/PlatformIcons.h"
+#include "GameClient/GUI/AptScreens/AptMapPreview.h"
 #include "Libraries/Source/Apt/Apt.h"
 #include "Libraries/Source/Apt/AptCharacterInst.h"
 
@@ -207,7 +208,7 @@ AptSkirmish::~AptSkirmish()
 	destroySlotScroll();
 	if (AptGadgetLayer *layer = windows().gadgetLayer()) layer->destroyEngineGadget(m_mapCapacityFilter);
 	// lane UI-2: AptMapPreview's teardown (RW 0x9769E8) releases the picture the render callback draws
-	windows().clearRenderPicture("AptMapPreview::Picture");
+	detachMapPreview();
 }
 
 AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment &environment, const char *filename, const char *codePrefix, bool lan)
@@ -670,9 +671,16 @@ void AptSkirmish::keepGame()
 	m_profiles->flush();
 }
 
+void AptSkirmish::runInit()
+{
+	AptScreen::runInit();
+	attachMapPreview();
+}
+
 void AptSkirmish::runShutdown(bool *immediate)
 {
 	keepGame(); // lane UI-6: RW 0x927FEF, the screen's teardown slot
+	detachMapPreview();
 	AptScreen::runShutdown(immediate);
 }
 
@@ -997,7 +1005,7 @@ void AptSkirmish::registerLobby()
 		registerScreenRef("MpGameSetup::GadgetInit", [this](const std::string &name, GameWindow *w) { initMpGameSetupGadget(name, w); }); // community PR #36: BFME1 MpGameSetupGadgetInit.cpp
 	}
 	registerScreenRef("MpGameSetup::InitGadgets", [this](const std::string &name, GameWindow *w) { initMpGameSetupGadget(name, w); });
-	registerScreenRef("AptMapPreview::MapGadgetInit", [this](const std::string &name, GameWindow *w) { initMapPreviewGadget(name, w); });
+	attachMapPreview();
 	// lane UI-1: AptMpChat::InitGadgets (RW 0x987E4B): "Chat", "ChatPlayers", "ChatEntry"
 	registerScreenRef("AptMpChat::InitGadgets", [this](const std::string &name, GameWindow *w) { initChatGadget(name, w); });
 	// lane RULES-1: AptMpGameRules::InitGadgets (RW 0x987092): "RuleComboBox_<n>" / "RuleCheckBox_<n>"
@@ -1006,15 +1014,6 @@ void AptSkirmish::registerLobby()
 		windows().note("unported-gadget-init", "AptMpClans::InitGadgets(" + name + ") [S-178]");
 	});
 	// ---- providers ----
-	registerProvider("AptMapPreview::GameMapType", [this](const std::string &, std::string &value, bool setting) {
-		if (setting)
-		{
-			setGameMapType(value);
-			return true;
-		}
-		value = m_gameMapType;
-		return true;
-	});
 	registerProvider("MpGameSetup::HostMode", [this](const std::string &, std::string &value, bool setting) {
 		// RW 0x845AE2: query 0 reads the owner; writes do not change host status.
 		if (!setting)
@@ -1085,11 +1084,52 @@ void AptSkirmish::registerLobby()
 	{
 		registerCommand(name, unportedCommand(name));
 	}
-	// ---- the map picture render component (a device texture) ----
-	registerComponent("AptMapPreview::Picture", [this](AptComponentRequest &) -> std::shared_ptr<GameWindow> {
-		windows().note("unported-component", "AptMapPreview::Picture: the map picture is a device texture [S-177]");
-		return nullptr;
-	});
+	// AptMapPreview::Picture is managed alongside the other AptMapPreview keys by attachMapPreview()/detachMapPreview().
+}
+
+void AptSkirmish::attachMapPreview()
+{
+	if (!m_mapPreviewAttached)
+	{
+		auto noteConflict = [this](const std::string &what, bool ok) {
+			if (!ok) windows().note("registration-refused", what);
+		};
+		noteConflict("screenRef:AptMapPreview::MapGadgetInit",
+			windows().registerScreenRef("AptMapPreview::MapGadgetInit", [this](const std::string &name, GameWindow *w) { initMapPreviewGadget(name, w); }));
+		noteConflict("provider:AptMapPreview::GameMapType",
+			windows().registerProvider("AptMapPreview::GameMapType", [this](const std::string &, std::string &value, bool setting) {
+				if (setting)
+				{
+					setGameMapType(value);
+					return true;
+				}
+				value = m_gameMapType;
+				return true;
+			}));
+		noteConflict("component:AptMapPreview::Picture",
+			windows().registerComponent("AptMapPreview::Picture", [this](AptComponentRequest &) -> std::shared_ptr<GameWindow> {
+				windows().note("unported-component", "AptMapPreview::Picture: the map picture is a device texture [S-177]");
+				return nullptr;
+			}));
+		m_mapPreviewAttached = true;
+	}
+	if (m_hasMapPictureRender)
+	{
+		windows().setRenderPicture("AptMapPreview::Picture", m_mapPictureRender);
+	}
+}
+
+void AptSkirmish::detachMapPreview()
+{
+	if (!m_mapPreviewAttached)
+	{
+		return;
+	}
+	windows().closeAptScreen("AptMapPreview::MapGadgetInit");
+	windows().unregisterProvider("AptMapPreview::GameMapType");
+	windows().unregisterComponent("AptMapPreview::Picture");
+	windows().clearRenderPicture("AptMapPreview::Picture");
+	m_mapPreviewAttached = false;
 }
 
 void AptSkirmish::onReadyPress(const std::string &argument)
@@ -2382,7 +2422,9 @@ void AptSkirmish::updateMapPreview()
 				picture.file = file;
 			}
 		}
-		windows().setRenderPicture("AptMapPreview::Picture", picture);
+		m_mapPictureRender = picture;
+		m_hasMapPictureRender = true;
+		if (m_mapPreviewAttached) windows().setRenderPicture("AptMapPreview::Picture", picture);
 	}
 	// lane UI-2 (owner feedback F5, "no map name"): RotWK's map-info update RW 0x976497 (MapInfo present, not the strategic lobby) sets
 	// APT:CurrentMapName to the map's display name without the player count (RW 0x7022BF) and APT:LobbyGameType to the binary's own literal
@@ -2487,130 +2529,9 @@ void AptSkirmish::updateCurrentMapWindow(const MapCacheEntry *map)
 	{
 		m_error.clear();
 	}
-	window->winSetEnabledImage(1, std::string());
-	std::string image;
-	if (map)
-	{
-		image = mapPreviewImage(*map);
-		const Image *made = image.empty() ? nullptr : window->manager().images()->findImageByName(image);
-		const std::string art = "_art.tga";
-		if (made && made->filename.size() >= art.size() && asciiLower(made->filename.substr(made->filename.size() - art.size())) == art)
-		{
-			window->winSetEnabledImage(1, "ScrollShroud"); // RW 0x97745A: the radar's shroud over an _art picture
-		}
-	}
-	window->winSetUserData(const_cast<MapCacheEntry *>(map)); // W3DDrawMapPreview reads the map (RW 0x97749A)
-	if (image.empty())
-	{
-		image = "MissingMap"; // RW 0x9774C6
-	}
-	if (window->manager().images() && window->manager().images()->findImageByName(image))
-	{
-		window->winSetStatus(WIN_STATUS_IMAGE);
-		window->winSetEnabledImage(0, image);
-	}
-	else
-	{
-		window->winClearStatus(WIN_STATUS_IMAGE); // RW 0x977522
-	}
-	// OpenBFME extended maps reuse the retail start button's skin and input, owned by the same map window.
-	if (map && map->numPlayers > LEGACY_MAX_SLOTS && !m_currentMapChildren.empty())
-	{
-		GameWindow *prototype = m_currentMapChildren.front();
-		int w = 0, h = 0;
-		prototype->winGetSize(&w, &h);
-		while (m_currentMapChildren.size() < MAX_SLOTS)
-		{
-			WinInstanceData instance = *prototype->winGetInstanceData();
-			GameWindow *button = window->manager().gogoGadgetPushButton(window, prototype->winGetStatus(), 0, 0, w, h, &instance, prototype->winGetFont(), false);
-			if (!button)
-			{
-				break;
-			}
-			m_currentMapChildren.push_back(button);
-		}
-	}
-	// RW 0x976F59: the start spots. Validate the whole preview before showing any marker.
-	GameWindow *buttons[MAX_SLOTS] = {};
-	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < MAX_SLOTS; ++i)
-	{
-		buttons[i] = m_currentMapChildren[i];
-	}
-	// In a sparse map cache entry a previously displayed button may no longer have a start
-	// position. Hide every button before showing the positions this map actually provides.
-	for (GameWindow *button : buttons)
-	{
-		if (button)
-		{
-			button->winHide(true);
-		}
-	}
-	if (map)
-	{
-		std::string error;
-		if (map->numPlayers > MAX_SLOTS)
-		{
-			error = "map preview: unsupported player capacity " + std::to_string(map->numPlayers);
-		}
-		for (int i = 0; error.empty() && i < map->numPlayers; ++i)
-		{
-			if (!map->startPositions.count(i + 1) || !buttons[i])
-			{
-				error = "map preview: missing start position or control " + std::to_string(i + 1);
-			}
-		}
-		if (!error.empty())
-		{
-			m_error = error;
-			windows().note("map-preview-error", error);
-			window->winEnable(false);
-			for (GameWindow *button : buttons)
-			{
-				if (button)
-				{
-					button->winHide(true);
-				}
-			}
-			return;
-		}
-	}
-	int shown = 0;
-	if (map)
-	{
-		window->winEnable(true);
-		// RW 0x976F9C .. 0x976FB6: only for a multiplayer map (MapMetaData + 0x24) while TheGameLogic + 0x114 is 3. Lane ONLINE-5: + 0x114 is the battle
-		// kind, and 3 is "not a War of the Ring battle" (docs/SAVES-RETAIL.md: 0 a single-player War of the Ring battle, 1 / 2 a multiplayer one): the
-		// value GameLogic's constructor sets (RW 0x6301D3) and the logic dispatcher sets again when a game's data is cleared (RW 0x779F20). So every
-		// ordinary lobby that hosts the setup movie shows the map's start spots: the skirmish, the LAN and the online staging room alike. (FB7-1 took 3
-		// for "a skirmish" and hid them in the network lobbies: the owner's "no spot to place where you wanted to play".) NOT PORTED: a War of the
-		// Ring battle's lobby (kinds 0 .. 2) would hide them; this port's War of the Ring does not use this screen for its battles
-		if (map->isMultiplayer && map->numPlayers > 0)
-		{
-			for (; shown < map->numPlayers && shown < MAX_SLOTS; ++shown)
-			{
-				auto spot = map->startPositions.find(shown + 1); // "Player_%d_Start"
-				GameWindow *button = buttons[shown];
-				MapPreviewPositionStartSpot(button, window, spot->second, *map, buttons, MAX_SLOTS);
-				if (button)
-				{
-					button->winEnable(true); // RW 0x976FFE: the screen's flag + 0x61 (INFERENCE [S-1480]: enabled)
-					button->winHide(false);
-				}
-			}
-		}
-	}
-	else
-	{
-		window->winEnable(false);
-	}
-	for (int i = shown; i < MAX_SLOTS; ++i)
-	{
-		if (buttons[i])
-		{
-			buttons[i]->winHide(true);
-			GadgetButtonSetText(buttons[i], fetchOrMissing(m_env.gameText, "GUI:Blank")); // RW 0x977047
-		}
-	}
+	const std::string image = map ? mapPreviewImage(*map) : std::string();
+	// RW 0x976F9C .. 0x976FB6: every ordinary lobby shows enabled start spots (m_enableStartSpots = true, RW 0x976FFE).
+	AptMapPreview::populateCurrentMapWindow(windows(), m_env.gameText, window, m_currentMapChildren, map, image, true, true, m_error);
 }
 
 WindowMsgHandledType AptSkirmish::gadgetMessage(GameWindow *, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
@@ -2834,54 +2755,14 @@ void AptSkirmish::updateMapStartSpots()
 			break;
 		}
 	}
-	GameWindow *buttons[MAX_SLOTS] = {};
-	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < MAX_SLOTS; ++i)
-	{
-		buttons[i] = m_currentMapChildren[i];
-	}
-	if (!map)
-	{
-		for (GameWindow *b : buttons)
-		{
-			if (b)
-			{
-				GadgetButtonSetText(b, fetchOrMissing(m_env.gameText, "GUI:Blank"));
-			}
-		}
-		return;
-	}
-	for (GameWindow *b : buttons)
-	{
-		if (b)
-		{
-			GadgetButtonSetText(b, std::u16string());
-			b->winSetTooltip(fetchOrMissing(m_env.gameText, "TOOLTIP:StartPosition"));
-		}
-	}
-	for (int i = 0; i < MAX_SLOTS; ++i)
-	{
-		const SkirmishGameSlot &s = m_setup->info().slots[i];
-		const int pos = s.startPos;
-		if (pos >= map->numPlayers)
-		{
-			m_setup->setSlotStartPos(i, -1);
-			continue;
-		}
-		if (pos < 0 || s.playerTemplate <= PLAYERTEMPLATE_OBSERVER || pos >= MAX_SLOTS || !buttons[pos])
-		{
-			continue;
-		}
-		GadgetButtonSetText(buttons[pos], fetchOrMissing(m_env.gameText, "NUMBER:" + std::to_string(i + 1)));
-		// TOOLTIP:StartPositionN is a format with the slot's number (RW 0x7054B0: fetch with the number as the argument)
-		std::u16string tip = fetchOrMissing(m_env.gameText, "TOOLTIP:StartPositionN");
-		const std::size_t at = tip.find(u"%d");
-		if (at != std::u16string::npos)
-		{
-			const std::string n = std::to_string(i + 1);
-			tip.replace(at, 2, std::u16string(n.begin(), n.end()));
-		}
-		buttons[pos]->winSetTooltip(tip);
-	}
+	AptMapPreview::updateStartSpots(
+		m_env.gameText, map, m_currentMapChildren.data(), (int)m_currentMapChildren.size(), false,
+		[this](int slot, bool &nonObserver) -> int {
+			const SkirmishGameSlot &s = m_setup->info().slots[slot];
+			nonObserver = s.playerTemplate > PLAYERTEMPLATE_OBSERVER;
+			return s.startPos;
+		},
+		[this](int slot) { m_setup->setSlotStartPos(slot, -1); });
 }
 
 void AptSkirmish::onComboSelected(GameWindow *combo)

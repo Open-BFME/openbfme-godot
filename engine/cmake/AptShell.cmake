@@ -9,6 +9,7 @@ list(APPEND OPENBFME_APT_SOURCES
     src/GameClient/GUI/StillImageLoadScreen.cpp
     src/GameClient/GUI/AptScreens/AptMainMenu.cpp
     src/GameClient/GUI/AptScreens/AptSimpleScreens.cpp
+    src/GameClient/GUI/AptScreens/AptMapPreview.cpp
     src/GameClient/GUI/AptScreens/AptSkirmish.cpp
     src/GameClient/GUI/Skirmish/SkirmishPreferences.cpp
     src/GameClient/GUI/AptScreens/AptScreenFactories.cpp
@@ -36,6 +37,7 @@ list(APPEND OPENBFME_SIM_SOURCES
 list(APPEND OPENBFME_APT_TESTS
     tests/test_apt_shell.cpp
     tests/test_apt_gadgets.cpp
+    tests/test_local_56.cpp # Local 56: loading screen map start spot numbers
     tests/test_apt_skirmish.cpp
     tests/test_p16_ui.cpp
     tests/test_p16_ui_preview.cpp
