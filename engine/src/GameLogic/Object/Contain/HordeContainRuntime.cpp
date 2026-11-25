@@ -2,6 +2,10 @@
 // See GameLogic/Object/Contain/HordeContainRuntime.h.
 
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/CombatQueries.h"
+#include "GameLogic/ObjectFilterMatch.h"
+
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
 #include "GameLogic/SimMath.h"
@@ -605,6 +609,168 @@ void HordeContain::reserveMemberGoals()
 		p.z = goal.z;
 		pf.updateGoal(world->adapterFor(*m), &p, layer);
 	}
+}
+
+// lane MODGAP-2: RW 0x86CA3D, the callback RW 0x86C9FF
+const char *HordeContain::splitStopLine()
+{
+	return "[S-6004] HordeContain::splitHorde (RW 0x8791C5): NOT ported: the attribute modifiers' removal of RW 0x86C962 (slot 0x1E8), a defected horde's hand-over RW 0x6930C9, the weapon set flag 0x18 of the first member; INFERENCE: the held member destroyed is the banner carrier";
+}
+
+bool HordeContain::canSplit() const
+{
+	if (m_data->horde.m_splitHorde.empty())
+	{
+		return false; // RW 0x86C9CD
+	}
+	static const int kBanner = CombatNames::kindOf("BANNER"); // template + 0x11C bit 0x10
+	unsigned short first = 0;
+	for (const Object *member : m_members)
+	{
+		const ThingTemplate *tt = member ? member->getTemplate() : nullptr;
+		if (!tt || member->isKindOf((unsigned)kBanner))
+		{
+			continue;
+		}
+		if (first == 0)
+		{
+			first = tt->getTemplateID();
+		}
+		else if (tt->getTemplateID() != first)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// lane MODGAP-2: RW 0x8791C5 (BFME2 HordeContainRva00475F61.cpp)
+void HordeContain::splitHorde()
+{
+	Object *self = getObject();
+	GameLogic &logic = self->logic();
+	if (Object *carrier = logic.findObjectByID(m_bannerCarrier)) // the held member (INFERENCE: H + 0x26C) is destroyed, not moved
+	{
+		removeFromContain(carrier);
+		logic.destroyObject(carrier);
+	}
+	const std::vector<Object *> members(m_members.begin(), m_members.end());
+	const float *basis = self->getBasis(); // RW 0x70B9E0: the facing
+	Coord3D offset{ basis[0], basis[3], 0.0f };
+	const float half = SimMath::mulf32(CombatQueries::boundingCircleRadius(*self), 0.5f); // Object + 0xB8 (the BFME2 getter)
+	offset.x = SimMath::mulf32(offset.x, half);
+	offset.y = SimMath::mulf32(offset.y, half);
+	offset.z = SimMath::mulf32(offset.z, half);
+	struct Group
+	{
+		int rank = 0;
+		std::vector<Object *> list;
+	};
+	std::vector<Group> groups;
+	const bool byRank = m_data->horde.m_rankSplit; // data + 0x254
+	for (Object *member : members)
+	{
+		if (AIUpdateInterface *ai = member->getAIUpdateInterface())
+		{
+			ai->chooseLocomotorSet(LOCOMOTORSET_NORMAL); // AI slot 0x238(0)
+		}
+		const int slot = getMemberSlot(member);
+		const int rank = slot >= 0 ? m_core->slots()[(size_t)slot].rank : 0;
+		bool found = false;
+		for (Group &g : groups)
+		{
+			if (ObjectFilterMatch::isEquivalentTo(g.list.front()->getTemplate(), member->getTemplate()) && (!byRank || g.rank == rank)) // RW 0x73D5C2
+			{
+				g.list.push_back(member);
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+		{
+			Group g;
+			g.rank = rank;
+			g.list.push_back(member);
+			groups.push_back(g);
+		}
+		removeFromContain(member);
+	}
+	static const int kHorde = CombatNames::kindOf("HORDE"); // template + 0x115 bit 0x20
+	const Player *player = self->getControllingPlayer();
+	for (const SplitHordeEntry &entry : m_data->horde.m_splitHorde)
+	{
+		const ThingTemplate *result = logic.things().findTemplate(entry.splitResult);
+		const ThingTemplate *unit = logic.things().findTemplate(entry.unitType);
+		Object *replacement = nullptr;
+		if (result && player)
+		{
+			replacement = logic.newObject(result, player->getDefaultTeam(), ObjectStatusMaskType{}); // RW 0x6D165E
+		}
+		if (replacement && !replacement->isKindOf((unsigned)kHorde))
+		{
+			logic.destroyObject(replacement);
+			replacement = nullptr; // RW tests the template's HORDE bit first
+		}
+		if (replacement)
+		{
+			Coord3D pos = *self->getPosition();
+			pos.x = SimMath::addf32(pos.x, offset.x);
+			pos.y = SimMath::addf32(pos.y, offset.y);
+			pos.z = SimMath::addf32(pos.z, offset.z);
+			offset.x = SimMath::mulf32(offset.x, -1.0f); // RW 0xBD19DC
+			offset.y = SimMath::mulf32(offset.y, -1.0f);
+			offset.z = SimMath::mulf32(offset.z, -1.0f);
+			adjustMemberDestination(*replacement, pos); // RW 0x871897
+			replacement->setPosition(&pos);
+			replacement->setOrientation(self->getOrientation()); // the transform copy keeps the horde's rotation
+		}
+		bool used = false;
+		for (Group &g : groups)
+		{
+			if (!unit || !ObjectFilterMatch::isEquivalentTo(g.list.front()->getTemplate(), unit) || (byRank && g.rank != entry.rankNumber))
+			{
+				continue;
+			}
+			ContainModuleInterface *contain = replacement ? replacement->getContain() : nullptr;
+			if (contain)
+			{
+				replacement->friend_orUpgradeMask(g.list.front()->getUpgradeMask()); // the first member's upgrades
+				for (Object *member : g.list)
+				{
+					contain->addToContain(member); // contain slot 30
+				}
+				used = true;
+			}
+			else
+			{
+				for (Object *member : g.list)
+				{
+					if (AIUpdateInterface *ai = member->getAIUpdateInterface())
+					{
+						ai->aiIdle(CMD_FROM_AI);
+					}
+				}
+			}
+			break;
+		}
+		if (replacement && used)
+		{
+			if (AIUpdateInterface *ai = replacement->getAIUpdateInterface())
+			{
+				ai->aiIdle(CMD_FROM_AI);
+			}
+			if (AIWorld *world = logic.aiWorld())
+			{
+				world->addObjectToPathfindMap(*replacement);
+			}
+		}
+		else if (replacement)
+		{
+			logic.destroyObject(replacement); // a row with no members
+		}
+	}
+	logic.noteStop(splitStopLine());
+	logic.destroyObject(self);
 }
 
 void HordeContain::removeFromContain(Object *obj)

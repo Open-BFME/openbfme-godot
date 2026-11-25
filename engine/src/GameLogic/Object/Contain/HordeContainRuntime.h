@@ -200,6 +200,9 @@ public:
 	bool isPassengerAllowedToFire() const override;
 	bool addToContain(Object *obj) override;
 	void removeFromContain(Object *obj) override;
+	bool canSplit() const; // RW 0x86CA3D
+	void splitHorde();     // RW 0x8791C5
+	static const char *splitStopLine();
 	void containReactToTransformChange() override;
 	HordeContainInterface *getHordeContainInterface() override { return this; }
 	// CreateModuleInterface
