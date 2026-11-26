@@ -136,6 +136,11 @@ void AIUpdateInterface::readCombatSettings(const ModuleData *data)
 		{
 			m_combat.moodAttackCheckRate = NumericState::ceilScaled((std::uint32_t)std::strtoul(tok[0].c_str(), nullptr, 10), 0.005f);
 		}
+		else if (ieq(name, "BurningDeathTime"))
+		{
+			// RW 0xC0F530 offset 0x40: parseDurationUnsignedInt (ms -> ceil(ms * 0.005f))
+			m_combat.burningDeathTime = NumericState::ceilScaled((std::uint32_t)std::strtoul(tok[0].c_str(), nullptr, 10), 0.005f);
+		}
 		else if (ieq(name, "AutoAcquireEnemiesWhenIdle"))
 		{
 			unsigned flags = 0;

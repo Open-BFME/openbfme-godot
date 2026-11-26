@@ -3,6 +3,7 @@
 // TerrainTrees. See GameLogic/Map/TerrainTrees.h for the target facts. Lane SPELL-3.
 
 #include "GameLogic/Map/TerrainTrees.h"
+#include "GameLogic/Map/FireLogicSystem.h" 
 
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -141,6 +142,7 @@ int TerrainTrees::bucketOf(float x, float y) const
 bool TerrainTrees::addTree(const ThingTemplate &tmpl, const Coord3D &position, std::uint32_t clientId)
 {
 	m_changedFrame = m_logic.getFrame(); // RW 0x683D9F
+	m_logic.fireLogic().registerTree(clientId, position, &tmpl); // RW 0x683F80
 	if (!hasTreeDraw(tmpl) || !m_hasExtent)
 	{
 		return false; // RW 0x683DF6: the debug report only
@@ -197,6 +199,10 @@ void TerrainTrees::markChanged(Record &tree)
 // RW 0x67D3C2: the record is cleared (the bucket link stays)
 void TerrainTrees::clearRecord(Record &tree)
 {
+	if (tree.clientId != 0)
+	{
+		m_logic.fireLogic().unregisterTree(tree.clientId, tree.position); // RW 0x684C54 / 0x686B2E
+	}
 	tree.position = Coord3D{};
 	tree.clientId = 0;
 	tree.index = 0;
@@ -317,6 +323,19 @@ void TerrainTrees::toppleTree(Record &tree, const Coord3D &from, const Object *s
 }
 
 // RW 0x67D6E1
+void TerrainTrees::burnTreeLumber(std::uint32_t treeId, int amount)
+{
+	// RW 0x67F4C2 -> 0x67D6E1
+	for (Record &tree : m_records)
+	{
+		if (tree.clientId == treeId && tree.clientId != 0)
+		{
+			harvestTree(tree, amount);
+			break;
+		}
+	}
+}
+
 int TerrainTrees::harvestTree(Record &tree, int amount)
 {
 	const int taken = amount < tree.value ? amount : tree.value; // RW 0x67D6EC .. 0x67D6FD: `cmp amount, value; jl`

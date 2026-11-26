@@ -9,6 +9,7 @@
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Map/TerrainTrees.h"
+#include "GameLogic/Map/FireLogicSystem.h"
 #include "GameLogic/LegendaryHeroesGame.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -437,6 +438,11 @@ void Object::reactToTransformChange(const Coord3D *oldPos, float)
 		shroud->markDirty(*this, false); // RW 0x68B862 -> 0xB4E290 (VIS-1): the shroud record re-covers and re-looks in the next shroud update
 	}
 	m_logic.partition().markDirty(*this); // RW 0x68B862 / 0x68B244 -> 0xA39570 (lane MODULES-2): re-linked in the next partition update
+	if (m_fireWatchCount >= 0)
+	{
+		m_logic.fireLogic().unregisterObject(this); // RW 0x693636
+		m_logic.fireLogic().registerObject(this);   // RW 0x693642
+	}
 	if (oldPos && (oldPos->x != getPosition()->x || oldPos->y != getPosition()->y || oldPos->z != getPosition()->z))
 	{
 		// lane VISIONDEF-1: RW 0x6935DC .. 0x6935F2 (BFME2 ObjectScriptStatus.cpp:274): the vision ground reference still 0 takes the object's z

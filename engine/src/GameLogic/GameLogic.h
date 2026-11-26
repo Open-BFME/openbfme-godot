@@ -97,6 +97,7 @@ class Economy;
 class CombatState;
 class ExperienceWorld;
 class CreateAHeroGame;
+class FireLogicSystem;
 class GlobalWeatherSystem;
 class VictoryConditions;
 class BuildAssistantSell;
@@ -467,6 +468,8 @@ public:
 	// lane HERO-2: the players' Create-a-Heroes (TheCreateAHeroSystem's game side: the slot records, RW 0x61B17D / 0x809FFB / 0x73C28F)
 	CreateAHeroGame &createAHeroes() { return *m_createAHeroes; }
 	const CreateAHeroGame &createAHeroes() const { return *m_createAHeroes; }
+	FireLogicSystem &fireLogic() { return *m_fireLogic; } // TheFireLogicSystem (RW 0xDE46A8)
+	const FireLogicSystem &fireLogic() const { return *m_fireLogic; }
 	GlobalWeatherSystem &weather() { return *m_weather; } // lane SPELL-2: TheGlobalWeatherSystem (RW 0xDE772C)
 	const GlobalWeatherSystem &weather() const { return *m_weather; }
 	// lane SCRIPT-1: TheScriptEngine (RW 0xDE3BAC), the map script engine: idle until a game loads its scripts (ScriptEngine::newGame); its update runs
@@ -1076,6 +1079,7 @@ private:
 	std::unique_ptr<SkirmishAIManager> m_skirmishAI;
 	std::unique_ptr<ExperienceWorld> m_experience; // lane XP-1
 	std::unique_ptr<CreateAHeroGame> m_createAHeroes; // lane HERO-2
+	std::unique_ptr<FireLogicSystem> m_fireLogic; // RW 0xDE46A8
 	std::unique_ptr<GlobalWeatherSystem> m_weather; // lane SPELL-2
 	std::unique_ptr<InvisibilityManager> m_invisibility; // lane STEALTH-1
 	std::unique_ptr<DOTManager> m_dot;                   // lane DECOMP-1

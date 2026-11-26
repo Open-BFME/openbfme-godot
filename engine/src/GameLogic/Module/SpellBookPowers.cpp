@@ -9,6 +9,7 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/SnapshotXfer.h"
 #include "GameLogic/Module/SpellBookPowers.h"
+#include "GameLogic/Map/FireLogicSystem.h"
 #include "GameLogic/Module/SpellEffectModules.h"
 
 #include "Common/Player.h"
@@ -336,7 +337,7 @@ void FreezingRainSpecialPower::doSpecialPowerAtLocation(const Coord3D &loc, unsi
 	{
 		emitCentreFX(m_data->m_fx, &loc);
 	}
-	++m_unported; // RW 0x687C4C: every fire grid cell's burn rate = BurnRateModifier (the fire logic is not ported): S-921
+	getObject()->logic().fireLogic().changeBurnRateAll(m_data->m_burnRateModifier); // RW 0x8C918D -> RW 0x687C4C
 }
 
 void CloudBreakSpecialPower::doSpecialPowerAtLocation(const Coord3D &loc, unsigned options)

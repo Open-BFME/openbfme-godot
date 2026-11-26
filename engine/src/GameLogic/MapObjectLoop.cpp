@@ -13,6 +13,7 @@
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Map/TerrainTrees.h"
+#include "GameLogic/Map/FireLogicSystem.h"
 #include "Common/Upgrade.h"
 
 namespace
@@ -281,6 +282,7 @@ MapObjectLoopResult MapObjectLoop::create(GameLogic &logic, const LoadedMap &map
 		float lx = 0.0f, ly = 0.0f, hx = 0.0f, hy = 0.0f;
 		terrain->getMapExtentIncludingBorder(lx, ly, hx, hy);
 		logic.trees().setExtent(lx, ly, hx, hy);
+		logic.fireLogic().newMap(lx, ly, hx, hy); // RW 0x687015 (TheFireLogicSystem::NewMap)
 	}
 	for (const MapObjectDrawable &d : classified.drawables)
 	{
