@@ -7,6 +7,7 @@
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/PlayerCommands.h"
 #include <algorithm>
+#include <vector>
 
 namespace synthetichud
 {
@@ -18,14 +19,24 @@ public:
 	bool worldToScreen(const Coord3D &p, ICoord2D &s) const override { s = { (int)p.x, (int)p.y }; return true; }
 	bool screenToRay(const ICoord2D &p, Coord3D &o, Coord3D &d) const override
 	{
+		for (const ICoord2D &q : m_noRayAt)
+		{
+			if (q.x == p.x && q.y == p.y)
+			{
+				return false; // a point click off the map: no terrain ray, as the device's letterbox black
+			}
+		}
 		o = { (float)p.x, (float)p.y, 100.0f };
 		d = { 0.0f, 0.0f, -1.0f };
 		return true;
 	}
 	Coord3D position() const override { return m_position; }
 	void lookAt(const Coord3D &p) override { m_position = p; }
+	// pixels whose screenToRay answers false (the off-map cancel test); empty: every pixel meets the terrain
+	void setNoRayAt(int x, int y) { m_noRayAt.push_back(ICoord2D{ x, y }); }
 private:
 	Coord3D m_position{ 512, 384, 0 };
+	std::vector<ICoord2D> m_noRayAt;
 };
 
 struct Rig : logictest::LogicWorld

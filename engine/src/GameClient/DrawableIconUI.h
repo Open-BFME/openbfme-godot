@@ -10,7 +10,8 @@
 //     (RW 0x6778F4: the drawable's position, z + the template's HealthBoxHeightOffset (+0x548, default 10.0 RW 0xBD83D8) + the geometry's max height above the
 //     position (RW 0xAD1990); a HORDE's is its contain's slot 0x22C, RW 0x87127D: the mean drawable position of its members and of H+0x170, not raised) and its health box (RW 0x68DF5B: none for KindOf IGNORED_IN_GUI; width = 2 * clamp(the
 //     geometry's bounding circle radius (Object + 0xB8) * HealthBoxScale (+0x544, default 1.5 RW 0x73FE06), 20, 150), at least 20) projected on screen (off
-//     screen: only an object under construction tries again a third of the way down to its position); the bar's rectangle is x0 = (int)(sx - w/zoom * 0.45),
+//     screen: only an object under construction tries again a third of the way down to its position); a GeometryUpgrade's active shapes (Object + 0xA8) are
+//     the object's own, not the template's; the bar's rectangle is x0 = (int)(sx - w/zoom * 0.45),
 //     y0 = (int)(sy - 2), x1 = (int)(x0 + w/zoom), y1 = (int)(y0 + 4) (Drawable + 0x460 .. + 0x46C). List 0 (every drawable with an object): the health bar
 //     (RW 0x676346) and the construction text (RW 0x677CF9); list 2 (not dead, not IGNORED_IN_GUI): the veterancy marks (RW 0x67939F);
 //   * the health bar (RW 0x676346, BFME2 0x67601B): GameData ShowObjectHealth (GlobalData + 0x9BD); the drawable is selected, or the object's container is a
@@ -47,6 +48,7 @@ class GameLogic;
 class GameTextSource;
 struct LogicSnapshot;
 class MappedImageCollection;
+class Object;
 class Player;
 class TacticalView;
 class ThingTemplate;
@@ -115,7 +117,8 @@ private:
 		float scale = 1.5f;        ///< HealthBoxScale
 		float heightOffset = 10.0f; ///< HealthBoxHeightOffset
 	};
-	const TemplateBox &boxOf(const ThingTemplate &tt);
+	const TemplateBox &templateBoxOf(const ThingTemplate &tt);
+	TemplateBox boxOf(const Object &obj);
 	std::map<const ThingTemplate *, TemplateBox> m_boxes;
 	std::set<std::string> m_notes;
 };

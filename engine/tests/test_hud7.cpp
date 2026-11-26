@@ -407,8 +407,7 @@ TEST_CASE("hud7 upgrade: an object upgrade being researched shows RotWK's availa
 	CHECK(b->state == ButtonState::Purchased);
 	CHECK(std::string(AptPalantir::commandStateName(b->state, b->button->m_options)) == "_cantAfford");
 	CHECK(std::string(AptPalantir::commandStateName(ButtonState::Restricted, b->button->m_options)) == "_disabled"); // what it showed before HUD-7
-	// the bubble (W3DGadgetPushButtonImageDrawOne RW 0x4A5112 with the statuses ALWAYS_COLOR | GRAY_OVERLAY): the image in colour times 0x909090, a grey rim;
-	// an unavailable upgrade bubble of the same ring (availability 0: GRAY_OVERLAY only) is grayscale with the grey rim
+	// the bubble (W3DGadgetPushButtonImageDrawOne RW 0x4A5112 with the statuses ALWAYS_COLOR | GRAY_OVERLAY): the image in colour times 0x909090, a grey rim
 	look = lookOf(radial, slot);
 	REQUIRE(look.found);
 	CHECK_FALSE(look.grayscale);
@@ -425,9 +424,12 @@ TEST_CASE("hud7 upgrade: an object upgrade being researched shows RotWK's availa
 		const ButtonState st = other.source.state;
 		INFO(other.source.button->m_name << " state " << (int)st);
 		const bool enabled = st == ButtonState::Enabled || st == ButtonState::Active;
-		CHECK(l.grayscale == (st == ButtonState::Restricted));
-		CHECK(l.iconColor == (!enabled && (st == ButtonState::CantAfford || st == ButtonState::Purchased) ? 0xFF909090u : 0xFFFFFFFFu));
-		CHECK(l.rimColor == (st == ButtonState::Restricted || st == ButtonState::Purchased ? 0xFF909090u : 0xFFFFFFFFu));
+		// availability 0 / 4 carry WIN_STATUS_GRAY_OVERLAY: the icon is drawn in grayscale and the 0x909090 filter applies
+		const bool grayOverlayState = st == ButtonState::Restricted || st == ButtonState::ExtraDisabled;
+		const bool alwaysColor = st == ButtonState::CantAfford || st == ButtonState::Purchased;
+		CHECK(l.grayscale == (!enabled && !alwaysColor && st != ButtonState::NotReady));
+		CHECK(l.iconColor == (!enabled && (grayOverlayState || alwaysColor) ? 0xFF909090u : 0xFFFFFFFFu));
+		CHECK(l.rimColor == (grayOverlayState || st == ButtonState::Purchased ? 0xFF909090u : 0xFFFFFFFFu));
 	}
 
 	// The wheel follows research progress even though availability is Purchased.
@@ -449,7 +451,11 @@ TEST_CASE("hud7 upgrade: an object upgrade being researched shows RotWK's availa
 		{
 			if (op.slot == slot && op.kind == RadialDrawOp::CLOCK)
 			{
+				// RW 0x4A5112: fill and rim are wiped by the same clock percent; the clock is the frame while it runs.
+				// The fill is the timer colour 0x80FFFFFF (RW 0x72A247 / 0x729F0C / 0x4A56D3), the rim the good side's
+				// 0xFF0B5EF2 (RW 0x64392E). The fill is the same for every faction: it is not the scheme's colour.
 				CHECK(op.percent == b->timer * 100.0f);
+				CHECK(op.color == (op.image == "RadialClockOverlay1" ? 0x80FFFFFFu : 0xFF0B5EF2u));
 				++wheels;
 			}
 		}
@@ -804,4 +810,13 @@ TEST_CASE("hud7 sell: every sellable structure of Isengard, Mordor, the Goblins 
 		CHECK(excluded == expected.at(f).second);
 		CHECK(r.logic().sellList().empty());
 	}
+}
+
+TEST_CASE("hud7 retail: availability 4 is the command clip's _extraDisabled frame")
+{
+	ControlBarButton b;
+	b.state = ButtonState::ExtraDisabled;
+	CHECK(std::string(AptPalantir::commandStateName(b.state, 0)) == "_extraDisabled");
+	CHECK(std::string(AptPalantir::commandStateName(ButtonState::Restricted, 0)) == "_disabled");
+	CHECK(std::string(AptPalantir::commandStateName(ButtonState::CantAfford, 0)) == "_cantAfford");
 }

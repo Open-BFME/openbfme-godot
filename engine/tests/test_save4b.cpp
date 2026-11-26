@@ -28,6 +28,8 @@
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/LogicModules.h"
 #include "GameLogic/Module/StructureModules.h"
+#include "GameLogic/Module/UnportedModule.h"
+#include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Module/UpdateModule.h"
 #include "GameLogic/Object/Contain/HordeContainCore.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -168,6 +170,28 @@ const char kObjects[] =
 	"End\n"
 	"Object Rock\n"
 	"  Body = InactiveBody ModuleTag_Body\n"
+	"  End\n"
+	"End\n";
+
+// a unit with two TooltipUpgrades whose module order is the reverse of the upgrade order the test applies
+const char kTooltipObjects[] =
+	"Upgrade Upgrade_TipB\n"
+	"  Type = OBJECT\n"
+	"End\n"
+	"Object TipUnit\n"
+	"  KindOf = INFANTRY\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 100\n"
+	"  End\n"
+	"  Behavior = TooltipUpgrade ModuleTag_TipA\n"
+	"    TriggeredBy = Upgrade_Barracks2\n"
+	"    DisplayName = LabelA\n"
+	"    Description = DescriptionA\n"
+	"  End\n"
+	"  Behavior = TooltipUpgrade ModuleTag_TipB\n"
+	"    TriggeredBy = Upgrade_TipB\n"
+	"    DisplayName = LabelB\n"
+	"    Description = DescriptionB\n"
 	"  End\n"
 	"End\n";
 } // namespace
@@ -383,6 +407,79 @@ TEST_CASE("save4b objects T1 / T2: a game's objects (made, changed, destroyed an
 	{
 		CHECK_MESSAGE(a.at(name) == b.at(name), name);
 	}
+}
+
+TEST_CASE("save4b: Object::xfer version 5 keeps the help-only fields (the TooltipUpgrade labels and the campaign statistics own name / battles) across a load")
+{
+	S4World saved(kObjects);
+	Object *soldier = saved.make("Soldier", saved.teamOf("Alice"));
+	REQUIRE(soldier);
+	soldier->setTooltipDisplayName("Display");
+	soldier->setTooltipDescription("Description");
+	soldier->setOwnName("Veteran");
+	soldier->setBattlesFought(10);
+	runFrames(*saved.logic, 1);
+	std::vector<std::uint8_t> stream;
+	saved.activateUpgrades();
+	saved.logic->gameState().saveBlocks(coreAndSave4b(), stream);
+	S4World loaded(kObjects);
+	loaded.activateUpgrades();
+	loaded.logic->gameState().loadBlocks(coreAndSave4b(), stream);
+	const Object *back = loaded.logic->findObjectByID(soldier->getID());
+	REQUIRE(back);
+	CHECK(back->tooltipDisplayName() == "Display");
+	CHECK(back->tooltipDescription() == "Description");
+	CHECK(back->ownName() == "Veteran");
+	CHECK(back->battlesFought() == 10);
+	std::vector<std::uint8_t> again;
+	loaded.logic->gameState().saveBlocks(coreAndSave4b(), again);
+	CHECK(again == stream);
+}
+
+TEST_CASE("save4b: Object::xfer version 5 keeps the TooltipUpgrade labels the last applied upgrade wrote when the modules are in the opposite order")
+{
+	S4World saved(kTooltipObjects);
+	saved.activateUpgrades();
+	Object *unit = saved.make("TipUnit", saved.teamOf("Alice"));
+	REQUIRE(unit);
+	unit->giveUpgrade("Upgrade_TipB");     // module B, applied first
+	unit->giveUpgrade("Upgrade_Barracks2"); // module A, applied last: its labels are the live pair
+	CHECK(unit->tooltipDisplayName() == "LabelA");
+	CHECK(unit->tooltipDescription() == "DescriptionA");
+	runFrames(*saved.logic, 1);
+	std::vector<std::uint8_t> stream;
+	saved.logic->gameState().saveBlocks(coreAndSave4b(), stream);
+	S4World loaded(kTooltipObjects);
+	loaded.activateUpgrades();
+	loaded.logic->gameState().loadBlocks(coreAndSave4b(), stream);
+	const Object *back = loaded.logic->findObjectByID(unit->getID());
+	REQUIRE(back);
+	// the live labels belong to the last applied upgrade, not to the last module in the file
+	CHECK(back->tooltipDisplayName() == "LabelA");
+	CHECK(back->tooltipDescription() == "DescriptionA");
+}
+
+TEST_CASE("save4b: a TooltipUpgrade version 1 block (the old unported shell) still loads")
+{
+	S4World w(kTooltipObjects);
+	Object *unit = w.make("TipUnit", w.teamOf("Alice"));
+	REQUIRE(unit);
+	auto *tip = dynamic_cast<TooltipUpgrade *>(unit->findModule("TooltipUpgrade"));
+	REQUIRE(tip);
+	XferSave current;
+	tip->xfer(current);
+	REQUIRE_FALSE(current.data().empty());
+	CHECK(current.data().front() == 2); // the ported UpgradeModule layout
+	// the payload the old UnportedBehaviorModule wrote for the same tag: version 1 plus BehaviorModule, no UpgradeModule version or mux
+	XferSave oldSave;
+	UnportedBehaviorModule oldShell(unit, nullptr, 0);
+	oldShell.xfer(oldSave);
+	REQUIRE_FALSE(oldSave.data().empty());
+	CHECK(oldSave.data().front() == 1);
+	XferLoad load(oldSave.data());
+	CHECK_NOTHROW(tip->xfer(load));
+	CHECK(load.atEnd());
+	CHECK_FALSE(tip->isAlreadyUpgraded());
 }
 
 TEST_CASE("save4b subsystem blocks round-trip with non-default values: combat, the sell list, the delayed experience grants, invisibility, damage over "

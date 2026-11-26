@@ -17,9 +17,11 @@
 // when it did since the right press (+ 0x30). One of them carries the waiting command out, the other ends it (setGUICommand(0), the click destroyed): the
 // left one carries it out and the right one ends it, except for an ATTACK_MOVE (type 0xA) with GlobalData m_useAlternateMouse (+ 0x5C) set, where the
 // right click carries it out (doAttackMoveCommand 0x004311A7: MSG_DO_ATTACKMOVETO 0x430 at the clicked terrain point plus the unit voice) and the left
-// click ends it. The left press is destroyed while a command waits. The port applies these roles to ATTACK_MOVE; the other commands keep the port's
-// left-click path and SelectionTranslator's right-button cancel (INFERENCE: RotWK 2.01 keeps BFME2's swap; its translator RW 0x83D7AD was not read
-// for it).
+// click ends it. The left press is destroyed while a command waits. A right click that was not dragged cancels any other pending command (setGUICommand(0),
+// the click destroyed: RW 0x83DB8D); cancelling it on SelectionTranslator's raw button up let the same click reach CommandTranslator as an ordinary move.
+// The port applies BFME2's click roles to ATTACK_MOVE only. The other command types (GUARD, SET_RALLY_POINT, PLACE_BEACON, EVACUATE) keep the
+// port's left-click carry-out path and SelectionTranslator's right-button cancel. That is port behavior, not a retail claim: RotWK 0x83D7AD's
+// role swap was not read for them (S-280).
 
 #pragma once
 

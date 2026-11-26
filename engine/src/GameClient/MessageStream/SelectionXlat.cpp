@@ -53,6 +53,13 @@ std::vector<Object *> drawablesThatWillSelect(HudContext &ctx, const IRegion2D &
 	return out;
 }
 
+bool isBuilder(const Object &o)
+{
+	// QoL (owner report 2026-11-11): a builder caught in a troop drag box is left out, so it is not sent
+	// into battle by accident. The game's builders are KindOf DOZER (the no-select workers included).
+	return o.isKindOfName("DOZER");
+}
+
 bool areAllSelected(const HudContext &ctx, const std::vector<Object *> &list)
 {
 	for (Object *o : list)
@@ -279,6 +286,23 @@ MessageDisposition SelectionTranslator::leftClick(const ClientMessage &msg)
 	const IRegion2D selectionRegion = msg.arg(0).region;
 	const bool isPoint = selectionRegion.lo.x == selectionRegion.hi.x && selectionRegion.lo.y == selectionRegion.hi.y;
 	std::vector<Object *> will = drawablesThatWillSelect(m_ctx, selectionRegion);
+	if (!isPoint && will.size() > 1)
+	{
+		// QoL (owner report 2026-11-11): a drag box that catches troops and builders selects the troops only. A box that
+		// holds builders alone keeps them, so several builders can still be selected together. A box with builders and
+		// buildings but no troops selects the builders: more than one building cannot be selected at once, and the box
+		// used to end up selecting nothing (owner report 2026-11-11).
+		const auto isStructure = [](const Object *o) { return o && o->isKindOfName("STRUCTURE"); };
+		const bool hasTroops = std::any_of(will.begin(), will.end(), [&](const Object *o) { return o && !isBuilder(*o) && !isStructure(o); });
+		if (hasTroops)
+		{
+			will.erase(std::remove_if(will.begin(), will.end(), [](const Object *o) { return o && isBuilder(*o); }), will.end());
+		}
+		else if (std::any_of(will.begin(), will.end(), [](const Object *o) { return o && isBuilder(*o); }))
+		{
+			will.erase(std::remove_if(will.begin(), will.end(), isStructure), will.end());
+		}
+	}
 	if (will.empty())
 	{
 		// lane HUD-7, TARGET FACTS (RotWK SelectionTranslator::translateGameMessage, the MSG_MOUSE_LEFT_CLICK case, RW 0x83C44F .. 0x83C4B9; caveat S-001): a click
@@ -471,39 +495,7 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 			}
 			else
 			{
-				// the mouseover hint for the command translator and the cursor
-				Object *under = HudObjects::pickForHover(m_ctx, pixel); // RW 0x83CC13
-				if (under && (!HudObjects::isEffectivelyDead(*under) || under->isKindOfName("ALWAYS_SELECTABLE")))
-				{
-					m_ctx.ui.setMouseover(under->getID());
-					m_ctx.stream.append(CMSG_MOUSEOVER_DRAWABLE_HINT).appendObjectID(under->getID());
-				}
-				else
-				{
-					Coord3D position;
-					if (m_ctx.view.screenToTerrain(pixel, m_ctx.logic, position))
-					{
-						m_ctx.ui.setMouseoverLocation(position);
-						m_ctx.stream.append(CMSG_MOUSEOVER_LOCATION_HINT).appendLocation(position);
-					}
-				}
-				// lane BUILD-5: createMouseoverHint's cursor (RW 0x69F637, BFME2 decomp InGameUICreateMouseoverHint.cpp:511): nothing while scrolling or
-				// selecting; in a mouse mode (a placement) the mode's cursor (Target)
-				if (m_ctx.ui.isScrolling() || m_ctx.ui.isSelecting())
-				{
-				}
-				else if (m_ctx.ui.mouseMode() != 0)
-				{
-					m_ctx.ui.setCursor(m_ctx.ui.mouseModeCursor());
-				}
-				else
-				{
-					m_ctx.ui.setCursor(MouseCursorName::Arrow);
-					if (under && m_ctx.ui.getGUICommand() == nullptr && HudObjects::canSelect(m_ctx, *under, false) && !under->isKindOfName("SHRUBBERY"))
-					{
-						m_ctx.ui.setCursor(MouseCursorName::Select);
-					}
-				}
+				updateHover(pixel);
 			}
 			break;
 		}
@@ -527,12 +519,14 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 			}
 			break;
 		case CMSG_RAW_MOUSE_RIGHT_BUTTON_DOWN:
+			m_ctx.ui.clearRightClickCommandCancel(); // a stale cancel cannot skip a later click's deselection
 			m_deselectAnchor = msg.arg(0).pixel;
 			m_lastClick = msg.arg(2).integer;
 			m_deselectDownCamera = m_ctx.view.position();
 			break;
 		case CMSG_RAW_MOUSE_RIGHT_BUTTON_UP:
 		{
+			const bool cancelledCommand = m_ctx.ui.takeRightClickCommandCancel();
 			const ICoord2D pixel = msg.arg(0).pixel;
 			const int now = msg.arg(2).integer;
 			bool isClick = true;
@@ -551,19 +545,17 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 			if (isClick)
 			{
 				// BFME2 SelectionTranslator::translateGameMessage (0x0043003C, SelectionXlatTranslateGameMessage.cpp, matched), the right button up:
-				// a waiting ATTACK_MOVE (type 10) is not cancelled here (GUICommandTranslator's click roles own it, 0x004314B1) and takes the
-				// no-command branch: the standard mouse setup deselects
+				// a waiting ATTACK_MOVE (type 10) is not cancelled here (GUICommandTranslator's click roles own it, 0x004314B1)
+				// and takes the no-command branch: the standard mouse setup deselects. A waiting command of another type is GUICommandTranslator's too:
+				// its right click ends it and is destroyed before CommandTranslator sees it (GUICommandTranslator.cpp, RW 0x83DB8D). Cancelling it here
+				// cleared the command on the raw-up message, so the same click became an ordinary move (owner report 2026-11-21, Bloodthirsty).
 				const CommandButton *command = m_ctx.ui.getGUICommand();
-				if (command && command->m_command != GUI_COMMAND_ATTACK_MOVE)
+				if (!cancelledCommand && (!command || command->m_command == GUI_COMMAND_ATTACK_MOVE))
 				{
-					// cancel the GUI command mode without deselecting
-					m_ctx.ui.setGUICommand(nullptr);
-					disp = MessageDisposition::Destroy;
-					m_ctx.ui.setScrolling(false);
-				}
-				else if (!m_commands.useAlternateMouse())
-				{
-					m_ctx.ui.deselectAll();
+					if (!m_commands.useAlternateMouse())
+					{
+						m_ctx.ui.deselectAll();
+					}
 				}
 			}
 			break;
@@ -704,4 +696,52 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 		m_leftDown = false;
 	}
 	return disp;
+}
+
+// lane HOVER-1: the pointer's object, health bar, help and cursor follow the world under a still pointer. The mouseover hint goes to the command
+// translator, whose createCommandHint then sets its cursor after the base Arrow / Select below (retail's order, RW 0x6A3B77 after RW 0x69F637).
+void SelectionTranslator::updateHover(const ICoord2D &pixel)
+{
+	// the mouseover hint for the command translator and the cursor
+	Object *under = HudObjects::pickForHover(m_ctx, pixel); // RW 0x83CC13
+	if (under && (!HudObjects::isEffectivelyDead(*under) || under->isKindOfName("ALWAYS_SELECTABLE")))
+	{
+		// owner report 2026-11-13: the tooltip and the health bar follow the soldier under the cursor, not always the horde's first member.
+		// The command hint keeps the horde (retail's promoted drawable); the UI's mouseover gets the raw member when the pick returns one of it.
+		Object *member = HudObjects::pickObject(m_ctx, pixel, HudObjects::pickTypesForContext(m_ctx, true), false);
+		const bool isMember = member && member != under && member->getContainedBy() == under;
+		m_ctx.ui.setMouseover(isMember ? member->getID() : under->getID());
+		m_ctx.stream.append(CMSG_MOUSEOVER_DRAWABLE_HINT).appendObjectID(under->getID());
+	}
+	else
+	{
+		Coord3D position;
+		if (m_ctx.view.screenToTerrain(pixel, m_ctx.logic, position))
+		{
+			m_ctx.ui.setMouseoverLocation(position);
+			m_ctx.stream.append(CMSG_MOUSEOVER_LOCATION_HINT).appendLocation(position);
+		}
+		else
+		{
+			// no object and no terrain under the pointer: the help box and the health bar must not keep the last object
+			m_ctx.ui.setMouseover(INVALID_ID);
+		}
+	}
+	// lane BUILD-5: createMouseoverHint's cursor (RW 0x69F637, BFME2 decomp InGameUICreateMouseoverHint.cpp:511): nothing while scrolling or
+	// selecting; in a mouse mode (a placement) the mode's cursor (Target)
+	if (m_ctx.ui.isScrolling() || m_ctx.ui.isSelecting())
+	{
+	}
+	else if (m_ctx.ui.mouseMode() != 0)
+	{
+		m_ctx.ui.setCursor(m_ctx.ui.mouseModeCursor());
+	}
+	else
+	{
+		m_ctx.ui.setCursor(MouseCursorName::Arrow);
+		if (under && m_ctx.ui.getGUICommand() == nullptr && HudObjects::canSelect(m_ctx, *under, false) && !under->isKindOfName("SHRUBBERY"))
+		{
+			m_ctx.ui.setCursor(MouseCursorName::Select);
+		}
+	}
 }

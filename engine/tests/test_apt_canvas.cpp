@@ -1282,3 +1282,50 @@ TEST_CASE("GameText: BFME1 CSF decodes complemented Unicode and wave records, re
 		CHECK(truncated.size() == 0);
 	}
 }
+
+TEST_CASE("retail inventory: RenderImage clips without _imageMap across every movie")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	AptArchiveFileSource source(mount.fs);
+	std::set<std::string> paths;
+	std::set<std::string> moviesWith;
+	std::string error;
+	for (const std::string &name : source.listMovies())
+	{
+		AptStubHost host;
+		Apt apt(source, host);
+		REQUIRE_MESSAGE(apt.loadMovie(1, name, &error), name << ": " << error);
+		for (int f = 0; f < 100; ++f)
+		{
+			apt.update(33);
+		}
+		AptRenderList rl;
+		apt.buildRenderList(rl);
+		for (const AptRenderCommand &c : rl.commands)
+		{
+			if (c.symbolName != "RenderImage")
+			{
+				continue;
+			}
+			std::string imageMap;
+			for (const auto &v : c.nativeVars)
+			{
+				if (v.first == "_imageMap")
+				{
+					imageMap = v.second;
+				}
+			}
+			if (imageMap.empty())
+			{
+				paths.insert(name + "|" + c.path);
+				moviesWith.insert(name);
+			}
+		}
+	}
+	for (const std::string &p : paths)
+	{
+		std::printf("RenderImage without _imageMap: %s\n", p.c_str());
+	}
+	std::printf("RenderImage without _imageMap: %zu paths in %zu movies\n", paths.size(), moviesWith.size());
+	CHECK_FALSE(paths.empty());
+}

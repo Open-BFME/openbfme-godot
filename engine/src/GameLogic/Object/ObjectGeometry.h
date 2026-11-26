@@ -52,6 +52,7 @@ struct Shape
 	float minorRadius = 1.0f;
 	float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;
 	bool active = true;
+	bool usedForHealthBox = true; ///< +0x21: a `GeometryUsedForHealthBox = No` shape is left out of the health box's anchor height (RW 0xAD1920's second walk)
 	std::string name; ///< lane HUD-5: GeometryName (+ 0x1C)
 };
 
@@ -61,6 +62,8 @@ std::vector<Shape> shapesOf(const ThingTemplate &tt);
 const std::vector<Shape> &cachedShapesOf(const ThingTemplate &tt);
 // RW 0xAD1920
 float maxHeightAbovePosition(const std::vector<Shape> &shapes);
+// the same walk for the health box's anchor (RW 0xAD1920's second loop): a shape whose `GeometryUsedForHealthBox = No` (+0x21) is left out
+float maxHeightForHealthBox(const std::vector<Shape> &shapes);
 // RW 0xAD2040: the box around the active shapes in the object's own space, from 0 .. 0 (each shape's offset +- its major radius in x, a box's minor and the
 // others' major radius in y; a sphere's offset z +- its major radius, the others' offset z .. offset z + height)
 void localBox(const std::vector<Shape> &shapes, float lo[3], float hi[3]);

@@ -367,9 +367,24 @@ TEST_CASE("ownerfix1 cutscene input: a control bar button, a hotkey and a pendin
 	const ControlBarButton *attackMove = f.button(GUI_COMMAND_ATTACK_MOVE);
 	REQUIRE(stop);
 	REQUIRE(attackMove);
+	const std::string stopLabel = stop->textLabel;
 	const int stopSlot = stop->slot, attackSlot = attackMove->slot;
 	const bool stopInPalantir = stop->inPalantir, attackInPalantir = attackMove->inPalantir;
 	const ObjectID id = horde->getID();
+	// the Stop button's own hotkey is the translated character after '&' (the Spanish label may differ from "&Stop"; retail
+	// registers the translated one, so the test presses that character, not the English S)
+	std::u16string stopText;
+	const bool stopHotkey = f.text.fetch(stopLabel, stopText) && stopText.find(u'&') != std::u16string::npos;
+	char16_t stopKey = 0;
+	if (stopHotkey)
+	{
+		const size_t amp = stopText.find(u'&');
+		stopKey = amp + 1 < stopText.size() ? stopText[amp + 1] : 0;
+	}
+	const bool stopKeyIsS = stopKey == u'S' || stopKey == u's';
+	const char16_t stopKeyUpper = stopKey >= u'a' && stopKey <= u'z' ? (char16_t)(stopKey - 32) : stopKey;
+	const int stopKeyCode = stopHotkey ? (int)stopKeyUpper : KEY_S;
+	const char16_t stopKeyChar = stopHotkey ? stopKey : u's';
 
 	// the attack move button pressed with the horde selected: a pending GUI command, waiting for its ground click
 	REQUIRE(f.hud->controlBar().pressButton(attackSlot, attackInPalantir));
@@ -401,8 +416,8 @@ TEST_CASE("ownerfix1 cutscene input: a control bar button, a hotkey and a pendin
 	f.hud->controlBar().pressButton(stopSlot, stopInPalantir);
 	f.frames(2);
 	CHECK(f.count("MSG_DO_STOP") == stops0);
-	// the S hotkey
-	f.key(KEY_S, U's');
+	// the Stop button's own hotkey (the translated character after '&')
+	f.key(stopKeyCode, stopKeyChar);
 	CHECK(f.count("MSG_DO_STOP") == stops0);
 
 	// the controls: with the input on, the same three actions work (the selection the hook made is still there)
@@ -415,11 +430,11 @@ TEST_CASE("ownerfix1 cutscene input: a control bar button, a hotkey and a pendin
 	f.click(ground);
 	f.frames(3);
 	CHECK(f.count("MSG_DO_ATTACKMOVETO") == moves0 + 1);
-	f.key(KEY_S, U's');
-	CHECK(f.count("MSG_DO_STOP") == stops0 + 2); // the S key sends two: the CommandMap's STOP and the Stop button's own "&Stop" hotkey (both in the log)
+	f.key(stopKeyCode, stopKeyChar);
+	CHECK(f.count("MSG_DO_STOP") == stops0 + (stopKeyIsS ? 2 : 1)); // the button's hotkey, plus the CommandMap's STOP when the key is S
 	f.hud->controlBar().pressButton(stopSlot, stopInPalantir);
 	f.frames(2);
-	CHECK(f.count("MSG_DO_STOP") == stops0 + 3);
+	CHECK(f.count("MSG_DO_STOP") == stops0 + (stopKeyIsS ? 2 : 1) + 1);
 }
 
 TEST_CASE("ownerfix1 cutscene input: a double click, a drag box and the hero bar select nothing while the input is off")

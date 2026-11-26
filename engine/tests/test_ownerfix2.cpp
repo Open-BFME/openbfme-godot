@@ -975,6 +975,7 @@ TEST_CASE("floating text: GUI:AddCash records hold for FloatingTextTimeOut, rise
 	REQUIRE(ops.size() == 1);
 	CHECK(ops[0].kind == IconUIOp::TEXT);
 	CHECK(ops[0].text == "+10");
+	CHECK(ops[0].stageTextSize == 12.0f); // InGameUI.ini DrawableCaptionPointSize (both editions)
 	CHECK(ops[0].x == 100.0f);
 	CHECK(ops[0].y == 170.0f); // 200 - 30 frames * 30 / 30
 	CHECK(ops[0].dropColor == 0xE6000000u);

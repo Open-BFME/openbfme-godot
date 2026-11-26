@@ -5,6 +5,8 @@
 ##              (RotWK's SPECIAL_POWER "TOOLTIP:UnitCost", RW 0x808675)
 ##   spellbook  power points given (test hook) and every store power bought through the store's own clicks: the pointer on the spell book's first slot
 ##              shows the power's help box (RW 0x930DC4)
+##   cutscene   a spell book slot's help is shown, then the scripts' DISABLE_INPUT (game._script_input(false)): the box hides and the next frames do not
+##              re-compose it while the pointer stays on the slot; ENABLE_INPUT lets a fresh hover show it again (lane HOVER-1 guards vslot 0x1BC / 0x17C)
 ##   herobar    a hero of the faction (create_object test hook): the pointer on its hero bar portrait shows the unit help (name, level, health, damage,
 ##              description: UnitHelpSource RW 0x8EBC61)
 ##   portrait   an own hero selected: the pointer on the Palantir's portrait shows its unit help (RW 0x93099D)
@@ -122,6 +124,55 @@ func _scenario_spellbook() -> String:
 		await hover(Vector2(first.x, first.y))
 		shot("spellbook-power") # the "before" shot: nothing over the slot
 	return "no spell book slot showed a help box"
+
+
+func _scenario_cutscene() -> String:
+	# the spell book is a provider that does not depend on the selection: its slot stays under the pointer while DISABLE_INPUT clears the selection.
+	# This is the button/Apt branch the review found re-composing the help after the input went off.
+	var me: int = game._local_index
+	world.debug_add_science_points(me, 200)
+	if not hud.open_spell_store():
+		return "the spell store did not open"
+	await game._step(60)
+	for pass_index in 5:
+		for i in 20:
+			hud.spell_store_click(i)
+		await game._step(4)
+	hud.close_spell_store()
+	await game._step(90)
+	var sb: Dictionary = hud.get_spellbook_state()
+	var path: String = str(sb.get("path", ""))
+	var target := {}
+	for slot in range(1, 25):
+		var w: Dictionary = hud.find_button_window("%s.Spell%d" % [path, slot])
+		if w.get("found", false):
+			target = w
+			break
+	if target.is_empty():
+		return "no spell book slot window"
+	var p := Vector2(target.x, target.y)
+	var h := await hover(p)
+	print("HOVER1 cutscene before: %s" % JSON.stringify(h))
+	if not bool(h.get("shown", false)) or int(h.get("draws", 0)) == 0:
+		return "the spell book slot showed no help before DISABLE_INPUT"
+	shot("cutscene-before")
+	game._script_input(false) # the same call a campaign cutscene makes (RW 0x7BC586)
+	hud.inject_mouse_move(p) # the pointer does not move off the slot
+	await game._step(30)
+	var during := help()
+	print("HOVER1 cutscene off: %s" % JSON.stringify(during))
+	shot("cutscene-off")
+	if bool(during.get("shown", false)) or not str(during.get("name", "")).is_empty() or not str(during.get("text", "")).is_empty():
+		return "the help box re-composed with the input off (RW 0x807861 / 0x807978 guards missing)"
+	game._script_input(true)
+	await game._step(10)
+	var after := await hover(p)
+	print("HOVER1 cutscene after: %s" % JSON.stringify(after))
+	shot("cutscene-after")
+	if not bool(after.get("shown", false)) or int(after.get("draws", 0)) == 0:
+		return "the help box did not show after ENABLE_INPUT"
+	await away()
+	return ""
 
 
 func _scenario_herobar() -> String:

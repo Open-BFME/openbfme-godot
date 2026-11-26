@@ -38,11 +38,24 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 		case CMSG_MOUSE_RIGHT_CLICK:
 		case CMSG_MOUSE_RIGHT_DOUBLE_CLICK:
 			// RW 0x83D8C2 .. 0x83DB8D: a right click that was not dragged ends the waiting command (setGUICommand(0)) and is destroyed: no order, no
-			// deselection follows from it. The port's spell book power waits outside InGameUI (the hook); InGameUI's own GUI command keeps the port's
-			// SelectionTranslator cancel (ZH SelectionXlat.cpp:930)
-			if (!m_rightDragged && m_hudTargetCancel && m_hudTargetCancel())
+			// deselection follows from it. The port's spell book power waits outside InGameUI (the hook). A normal waiting command is cancelled HERE, on
+			// the click, not on the raw right button up: SelectionTranslator's raw-up cancel cleared the command first, so the same click reached
+			// CommandTranslator with no pending command and became an ordinary move (the owner's 2026-11-21 Bloodthirsty report: cancelling the aim sent
+			// the orcs across the map). ATTACK_MOVE keeps its own click roles below.
+			if (!m_rightDragged)
 			{
-				return MessageDisposition::Destroy;
+				if (m_hudTargetCancel && m_hudTargetCancel())
+				{
+					m_ctx.ui.noteRightClickCommandCancel();
+					return MessageDisposition::Destroy;
+				}
+				const CommandButton *pending = m_ctx.ui.getGUICommand();
+				if (pending && pending->m_command != GUI_COMMAND_ATTACK_MOVE && m_ctx.ui.getInputEnabled())
+				{
+					m_ctx.ui.setGUICommand(nullptr);
+					m_ctx.ui.noteRightClickCommandCancel();
+					return MessageDisposition::Destroy;
+				}
 			}
 			break;
 		default:

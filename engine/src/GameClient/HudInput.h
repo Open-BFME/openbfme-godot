@@ -126,6 +126,8 @@ private:
 	std::unique_ptr<LookAtTranslator> m_lookAt;
 	bool m_keyDown[256] = {}; // lane BACKLOG3
 	bool m_ignoreLeftUp = false, m_ignoreRightUp = false, m_ignoreMiddleUp = false;
+	ICoord2D m_lastMouse{};            // lane HOVER-1: the pointer the per-frame hover refresh uses
+	bool m_haveMouse = false;
 	unsigned long long m_sent = 0;
 	std::function<void(const GameMessage &)> m_observer;
 	std::vector<std::string> m_scriptSteps; ///< lane OWNERFIX-1 r2

@@ -23,8 +23,9 @@
 //     and drops the provider; the mark is cleared.
 // INFERENCE (stop S-2703): the hovered command button of the Palantir's movie is the Apt player's current button (the button under the pointer) inside a
 // content clip the control bar filled (the content updaters' rollover route, vslot 2 of RW 0xC8C3D4, was not traced to its caller); the Apt player's y scale
-// is the stage height over the window height; ported (lane ROTWK-C, docs/re/rotwk/RW_0x807848.md): showHelp's end-game timer guard (RW 0xDE3BAC + 0x1A204),
-// the provider release (RW 0xA0CB16) and the late TheDisconnectMenu guard (RW 0xDEA328); the guards InGameUI vslot 0x1BC / 0x17C are not ported. Lane HOVER-1
+// is the stage height over the window height; ported (lane ROTWK-C): showHelp's end-game timer guard (RW 0xDE3BAC + 0x1A204),
+// the provider release (RW 0xA0CB16) and the late TheDisconnectMenu guard (RW 0xDEA328); lane HOVER-1 ports the InGameUI
+// guards: vslot 0x1BC (areTooltipsDisabled, first) and vslot 0x17C (+0x810, after the hover is consumed). Lane HOVER-1
 // adds the spell book's slots (RW 0x930DC4) and the hero bar's (RW 0x92BF34 / 0x92C265) as providers (InGameHud, S-4612).
 
 #pragma once
@@ -66,17 +67,25 @@ public:
 	struct Provider
 	{
 		int bar = -1;  ///< 0 the Palantir arc, 1 the side bar, 2 the radial ring (the "kind" of RW 0x8075A3); lane HOVER-1: 3 a command button without a window
-		               ///< (RW 0x807A00(0, button): the spell book, the hero bar's builder / select-all), 4 a unit's help (the hero bar's portraits);
-		               ///< lane CAMPUI-1: 5 a stance item of the stance toggle's radial (RW 0x96F33E; `object` holds the stance)
+		               ///< (RW 0x807A00(0, button): the spell book, the hero bar's builder / select-all), 4 a unit's help (the hero bar's / portrait's UnitHelpSource),
+		               ///< 6 a world object's unit help (the port's mouseover branch); lane CAMPUI-1: 5 a stance item of the stance toggle's radial (RW 0x96F33E; `object` holds the stance)
 		int slot = -1; ///< the command set slot (the window)
 		const CommandButton *button = nullptr;
-		std::uint32_t object = 0; ///< lane HOVER-1: bar 4's object (a UnitHelpSource, RW 0xC130E8, compares its object id)
+		std::uint32_t object = 0; ///< lane HOVER-1: bar 4 / 6's object (a UnitHelpSource, RW 0xC130E8, compares its object id)
 		bool operator==(const Provider &o) const { return bar == o.bar && slot == o.slot && button == o.button && object == o.object; }
 	};
 	// RW 0x71FC08's test, once per HUD update before the hover: a frame nobody marked hides the box soon and drops the provider
 	void beginFrame();
-	// RW 0x807867: the end-game timer is an early gate; the late vslot 0x17C mode gate is not wired. The separate RW 0xDEA328 TheDisconnectMenu guard is wired by screen lifetime.
+	// RW 0x807867: the end-game timer is an early gate; the late vslot 0x17C mode gate is wired through setUiGuards. The separate RW 0xDEA328 TheDisconnectMenu guard is wired by screen lifetime.
 	void setEndGameTimer(int endGameTimer) { m_endGameTimer = endGameTimer; }
+	// lane HOVER-1: showHelp's InGameUI guards. RW 0x807861 reads vslot +0x1BC (areTooltipsDisabled) before anything
+	// else; RW 0x807978 reads vslot +0x17C (+0x810) after the hover is marked consumed and before composition. The HUD
+	// installs the InGameUI queries here; a missing function keeps the old behavior (no extra guard).
+	void setUiGuards(std::function<bool()> tooltipsDisabled, std::function<bool()> modeGate810)
+	{
+		m_tooltipsDisabled = std::move(tooltipsDisabled);
+		m_modeGate810 = std::move(modeGate810);
+	}
 	void setDisconnectMenuPresent(bool present) { m_disconnectMenuPresent = present; } // RW 0xDEA328: TheDisconnectMenu
 	// RW 0x807848 for the provider under the pointer; `compose` makes the help when it is time to show it
 	void showHelp(const Provider &p, std::uint32_t nowMs, int tooltipDelayMs, const std::function<std::shared_ptr<CommandButtonHelp>()> &compose);
@@ -107,5 +116,7 @@ private:
 	unsigned m_helpsShown = 0;
 	int m_endGameTimer = -1;
 	bool m_disconnectMenuPresent = false;
+	std::function<bool()> m_tooltipsDisabled; ///< RW 0x807861: InGameUI vslot +0x1BC
+	std::function<bool()> m_modeGate810;      ///< RW 0x807978: InGameUI vslot +0x17C (+0x810)
 	std::vector<std::string> m_calls;
 };

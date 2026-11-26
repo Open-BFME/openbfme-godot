@@ -137,9 +137,10 @@ TEST_CASE("hudredraw1 retail: 300 frames closed and open, the Palantir draws aga
 	MESSAGE("closed: Palantir level " << pal << ", " << closed.segments[pal] << " segments, " << closed.redrawn[pal] << " drawn again; levels " << closed.segments.size());
 	CHECK(closed.full == 0);
 	CHECK(closed.segments.size() == 1);
-	// 29 (was 52 before lane DEVPORT-UI): the six empty arc slots hold no content (RW 0x92FF5C creates no controller for a slot without a
-	// command button), so their inert disabled contents are no longer drawn
-	CHECK(closed.segments[pal] == 29);
+	// 30 (was 52 before lane DEVPORT-UI): the six empty arc slots hold no content (RW 0x92FF5C creates no controller for a slot without a
+	// command button), so their inert disabled contents are no longer drawn; the resource icon is the 30th (RW 0x6D577C -> 0x800336 shows it
+	// for a playable side, and Palantir.apt starts the clip on `_hide`)
+	CHECK(closed.segments[pal] == 30);
 	CHECK(closed.redrawn[pal] == 302);
 	CHECK(closed.paths[pal] == std::map<std::string, int>{ { button, 300 }, { resources, 2 } });
 	// open: as the Palantir's PlayerMagic button does (play1 drives the click: test_spell_book_hud.cpp), then the fade-in
@@ -171,7 +172,7 @@ TEST_CASE("hudredraw1 retail: 300 frames closed and open, the Palantir draws aga
 	}
 	CHECK(open.full == 0);
 	CHECK(open.segments.size() == 2);
-	CHECK(open.segments[pal] == 29);
+	CHECK(open.segments[pal] == 30);
 	// 2 (was 302 before PR #185): with the powers screen open RotWK puts the highlight out (UpdatePlayerStats RW 0x6D5D14 -> RW 0x822A35 open
 	// -> RW 0x6D5D45 stores 0), so the powers button stops pulsing; the old pin was taken while the "0" argument was truthy and kept it lit
 	CHECK(open.redrawn[pal] == 2);

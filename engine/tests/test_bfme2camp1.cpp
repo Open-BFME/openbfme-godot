@@ -239,6 +239,31 @@ TEST_CASE("bfme2camp1 CampaignCarryover: beginCampaign (RW 0x5EC4EC) makes one r
 	CHECK_FALSE(CampaignCarryover::isDelayed({ "elvenglorfindel" }, r[0])); // AsciiString == (RW 0x4065D4): case-sensitive
 }
 
+TEST_CASE("bfme2camp1 CampaignCarryover: the statistics help fields survive the state text (Object +0x488 / +0x494 subset)")
+{
+	CampaignCarryover::State st = CampaignCarryover::beginCampaign({ "ElvenGlorfindel" });
+	REQUIRE(st.records.size() == 1);
+	st.records[0].battlesFought = 10; // above 9: the count is decimal even though the rest of the record is hex
+	st.records[0].ownName = "Glorfindel";
+	const std::string text = st.serialize();
+	CHECK(text.find("|10|") != std::string::npos);
+	CampaignCarryover::State out;
+	std::string error;
+	REQUIRE_MESSAGE(CampaignCarryover::State::parse(text, out, &error), error);
+	REQUIRE(out.records.size() == 1);
+	CHECK(out.records[0].battlesFought == 10);
+	CHECK(out.records[0].ownName == "Glorfindel");
+	CHECK(out == st);
+	// an older line without the optional suffix still parses (zero stats)
+	CampaignCarryover::State oldBase = CampaignCarryover::beginCampaign({ "ElvenGlorfindel" });
+	const std::string oldText = oldBase.serialize();
+	CampaignCarryover::State old;
+	REQUIRE_MESSAGE(CampaignCarryover::State::parse(oldText, old, &error), error);
+	REQUIRE(old.records.size() == 1);
+	CHECK(old.records[0].battlesFought == 0);
+	CHECK(old.records[0].ownName.empty());
+}
+
 TEST_CASE("bfme2camp1 CampaignCarryover: the spawn (RW 0x5EBD76) goes to the first human player, places at Player_1_Start facing Player_1_Start_Rally "
 		  "(RW 0x781B17 / 0x781FAF), marks the object (Object + 0x458 bit 4) and moves the record to the used ones")
 {

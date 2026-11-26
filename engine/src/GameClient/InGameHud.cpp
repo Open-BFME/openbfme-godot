@@ -31,6 +31,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "Common/Player.h"
+#include "Common/Team.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Science.h"
 #include "Common/Upgrade.h"
@@ -55,6 +56,32 @@
 #include <algorithm>
 #include <chrono>
 #include <set>
+
+namespace
+{
+// Retail input (RW 0x6C23AD / 0x715A84) makes the top screen's full-stage GameWindow own the pointer. The port's shell
+// top/level did not consistently identify TimeLine.apt after QuitMenuExit (the score screen lost input), so the proven
+// Palantir root block stays while a menu is modal: the menu levels remain above it, the Palantir stays drawn, and TimeLine
+// at any level is not blocked. AptInput::setInputTopLevel is kept for a later, verified top-screen port.
+void applyModalInputState(WindowManager *wm, bool modal, Shell *shell, AptPalantir *palantir)
+{
+	(void)shell;
+	if (!wm)
+	{
+		return;
+	}
+	AptInput &input = wm->apt().input();
+	input.setInputTopLevel(-1);
+	input.clearBlockedRoots();
+	if (modal && palantir && palantir->level() >= 0)
+	{
+		if (AptSpriteInst *root = wm->apt().level(palantir->level()))
+		{
+			input.setRootBlocked(root, true);
+		}
+	}
+}
+} // namespace
 
 InGameHud::InGameHud(Config config)
 	: m_config(config)
@@ -743,7 +770,24 @@ void InGameHud::update(double seconds)
 	m_iconSettings.shroudDrawn = iconSnap && iconSnap->shroud && iconSnap->shroud->displayed;
 	presentBeacons(); // lane CHAT-1
 	presentUpgradeComplete(); // RW 0x8A2080 .. 0x8A223B: the issuing player's feedback after upgrade completion
-	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, m_input->ui().mouseoverObject(), m_iconOps);
+	// owner report 2026-11-12: hovering a horde must show the soldier's bar and help, not the horde object's. The pick returns the horde; the
+	// first living member stands for it (the member's own name and health; its rank comes from the horde in UnitHelpSource).
+	ObjectID mouseover = m_input->ui().getInputEnabled() ? m_input->ui().mouseoverObject() : INVALID_ID;
+	if (Object *ho = m_config.game.logic().findObjectByID(mouseover); ho && ho->isKindOfName("HORDE") && ho->getContain())
+	{
+		if (const ContainModuleInterface::ContainedItemsList *members = ho->getContain()->getContainedItemsList())
+		{
+			for (Object *member : *members)
+			{
+				if (member && !member->isEffectivelyDead())
+				{
+					mouseover = member->getID();
+					break;
+				}
+			}
+		}
+	}
+	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, mouseover, m_iconOps);
 	updateFloatingText(m_config.view, m_iconSettings.shroudDrawn);
 	m_iconSettings.snapshot = nullptr; // the frame's snapshot goes with this frame
 	part(m_updateParts.icons);
@@ -949,6 +993,18 @@ void InGameHud::updateFloatingText(const TacticalView &view, bool shroudDrawn)
 			if (!owner || e.amount <= 0)
 			{
 				continue;
+			}
+			// owner report 2026-11-12: another player's production shows its "+25" over the enemy's buildings. Only the local player's and its
+			// allies' income texts are drawn.
+			const Player *local = m_config.game.players().getLocalPlayer();
+			if (local && owner != local)
+			{
+				const Team *ot = owner->getDefaultTeam();
+				const Team *lt = local->getDefaultTeam();
+				if (!ot || !lt || ot->getRelationship(lt) != ALLIES)
+				{
+					continue;
+				}
 			}
 			Coord3D pos = e.textPos;
 			// BFME2 AutoDepositUpdate.cpp: "add a little z to make it show up above the unit".
@@ -1482,6 +1538,7 @@ void InGameHud::setModal(bool modal)
 		m_input->cancelHeld(); // what began before the menu opened ends with it
 	}
 	m_modal = modal;
+	applyModalInputState(m_wm, m_modal, m_shellRef, m_palantirRef);
 }
 
 void InGameHud::mouseMove(int x, int y, int keyState)
@@ -1493,6 +1550,7 @@ void InGameHud::mouseMove(int x, int y, int keyState)
 	m.windowH = (float)m_windowH;
 	float sx, sy;
 	m.windowToStage((float)x, (float)y, sx, sy);
+	applyModalInputState(m_wm, m_modal, m_shellRef, m_palantirRef);
 	if (m_booted && (!m_broadcastClean || m_wm->capturesMouse()))
 	{
 		m_wm->postMouseMove(sx, sy);
@@ -1515,6 +1573,7 @@ void InGameHud::mouseButton(HudInput::Button button, bool down, int x, int y, in
 {
 	m_keyState = keyState;
 	const auto worldContext = enterContext(); // this world's stores for the whole call (see InGameHud.h)
+	applyModalInputState(m_wm, m_modal, m_shellRef, m_palantirRef);
 	if (m_modal)
 	{
 		// lane OPTS-6: a press goes to the menus' movies (their buttons, gadgets and the ones the quit menu sits over: nothing of the game); a release too

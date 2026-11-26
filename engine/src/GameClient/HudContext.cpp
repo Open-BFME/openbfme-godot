@@ -19,7 +19,7 @@ bool MouseSettings::load(ArchiveFileSystem &fs, MouseSettings &out, std::string 
 	std::istringstream in(std::string(bytes.begin(), bytes.end()));
 	std::string line;
 	bool inMouse = false;
-	bool haveDrag = false, have3d = false, haveMs = false;
+	bool haveDrag = false, have3d = false, haveMs = false, haveTooltip = false;
 	MouseSettings s;
 	while (std::getline(in, line))
 	{
@@ -73,6 +73,19 @@ bool MouseSettings::load(ArchiveFileSystem &fs, MouseSettings &out, std::string 
 			(key == "DragTolerance" ? s.dragTolerance : key == "DragTolerance3D" ? s.dragTolerance3D : s.dragToleranceMS) = (int)v;
 			(key == "DragTolerance" ? haveDrag : key == "DragTolerance3D" ? have3d : haveMs) = true;
 		}
+		else if (key == "TooltipDelayTime")
+		{
+			if (!ok)
+			{
+				if (error)
+				{
+					*error = "mouse.ini: TooltipDelayTime is not a number";
+				}
+				return false;
+			}
+			s.tooltipDelay = (int)v;
+			haveTooltip = true;
+		}
 	}
 	if (!haveDrag || !have3d || !haveMs)
 	{
@@ -81,6 +94,11 @@ bool MouseSettings::load(ArchiveFileSystem &fs, MouseSettings &out, std::string 
 			*error = "mouse.ini: the Mouse block lacks DragTolerance, DragTolerance3D or DragToleranceMS";
 		}
 		return false;
+	}
+	if (!haveTooltip && error)
+	{
+		// the retail default is 800 ms; keep it, but do not hide that the file left it out
+		*error = "mouse.ini: TooltipDelayTime is missing; using the 800 ms default";
 	}
 	out = s;
 	return true;

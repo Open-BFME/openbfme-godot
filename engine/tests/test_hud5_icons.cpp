@@ -25,6 +25,7 @@
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -210,7 +211,7 @@ TEST_CASE("hud5 icons retail: a newly produced unit's construction sentinel has 
 		if (op.kind == IconUIOp::TEXT)
 		{
 			++texts;
-			CHECK(op.text == "Building: 0%");
+			CHECK(op.text.find("0%") != std::string::npos); // locale-independent: the install's UnderConstructionDesc
 		}
 	}
 	CHECK(texts == 1);
@@ -273,6 +274,68 @@ TEST_CASE("hud5 icons retail: a structure's health bar when selected or under th
 	REQUIRE(unit.size() == 6);
 	CHECK(unit[0].h == 9.0f);
 	CHECK(unit[3].color == 0xFF0C9C24u); // RW 0xC11048 (12 156 36)
+}
+
+// RW 0x68DF5B reads Object + 0xB8, the object's own GeometryInfo: a GeometryUpgrade changes the active shapes and the health box with them (the owner's
+// 2026-11-21 "some health bars are the wrong size for the unit or structure"). The template's cached values are the object's until a shape flag changes.
+TEST_CASE("hud5 icons retail: a geometry upgrade's active shapes size the object's health box")
+{
+	if (!haveWorld("hud5 icons own geometry"))
+	{
+		return;
+	}
+	IconRig r(shared());
+	Object *b = r.place("GondorArcherRange", r.rig.local, 700.0f, 700.0f);
+	r.rig.game->advance(0.2);
+	r.look(*b);
+	auto widthOf = [&]() -> float {
+		const std::vector<IconUIOp> ops = IconRig::of(r.build({ b->getID() }, 0), b->getID());
+		REQUIRE(!ops.empty());
+		REQUIRE(ops[0].kind == IconUIOp::OPEN_RECT);
+		return ops[0].w - 6.0f;
+	};
+	auto expected = [&]() -> float {
+		PathfindGeometry g;
+		ObjectGeometry::fillPathfindGeometry(b->geometryShapes(), g);
+		const float half = std::min(std::max(g.boundingCircleRadius() * 1.5f, 20.0f), 150.0f);
+		return std::max(half * 2.0f, 20.0f);
+	};
+	const float orig = widthOf();
+	CHECK(orig == doctest::Approx(expected()).epsilon(0.02)); // tolerance: the bar is rounded to whole window pixels from float geometry; 2% absorbs the pixel rounding
+	// Geom_V1 / Geom_V2 add the wider walls and the tower; the structure starts on Geom_Orig alone
+	b->setGeometryActive("Geom_V1", true);
+	b->setGeometryActive("Geom_V2", true);
+	const float wide = widthOf();
+	CHECK(wide == doctest::Approx(expected()).epsilon(0.02)); // tolerance: the bar is rounded to whole window pixels from float geometry; 2% absorbs the pixel rounding
+	CHECK(wide > orig); // tolerance: the wider geometry must add a wall or tower; any positive increase is the property under test
+	b->setGeometryActive("Geom_V1", false);
+	b->setGeometryActive("Geom_V2", false);
+	CHECK(widthOf() == doctest::Approx(orig).epsilon(0.02)); // tolerance: restoring the original geometry rounds the bar to the same pixel width; 2% absorbs the pixel rounding
+}
+
+// RW 0xAD1920's second walk: a shape with GeometryUsedForHealthBox = No (the fortresses' HighTowerGeom) is left out of the health box's anchor height
+TEST_CASE("hud5 icons retail: GeometryUsedForHealthBox = No leaves the high tower out of the bar's anchor")
+{
+	if (!haveWorld("hud5 icons health box geometry"))
+	{
+		return;
+	}
+	IconRig r(shared());
+	Object *b = r.place("MenFortress", r.rig.local, 800.0f, 800.0f);
+	r.rig.game->advance(0.2);
+	r.look(*b);
+	auto top = [&]() -> float {
+		const std::vector<IconUIOp> ops = IconRig::of(r.build({ b->getID() }, 0), b->getID());
+		REQUIRE(!ops.empty());
+		REQUIRE(ops[0].kind == IconUIOp::OPEN_RECT);
+		return ops[0].y;
+	};
+	const float withTower = top();
+	b->setGeometryActive("HighTowerGeom", false);
+	const float withoutTower = top();
+	CHECK(withTower == doctest::Approx(withoutTower).epsilon(0.01)); // tolerance: both tops are rounded to the same pixel grid; 1% absorbs the rounded top
+	b->setGeometryActive("HighTowerGeom", true);
+	CHECK(top() == doctest::Approx(withTower).epsilon(0.01)); // tolerance: both tops are rounded to the same pixel grid; 1% absorbs the rounded top
 }
 
 // RW 0x671FD5: a building under construction has the building frames and four rows blended from RW 0xC10EA8 (blue) to RW 0xC10EE8 (cyan) by its health ratio
@@ -656,4 +719,28 @@ TEST_CASE("hud5 icons: the acceptance stops are reported")
 	REQUIRE(stops.size() == 2);
 	CHECK(stops[0].rfind("[S-1950]", 0) == 0);
 	CHECK(stops[1].rfind("[S-1951]", 0) == 0);
+}
+
+TEST_CASE("hud5 icons retail: a complete WALL_UPGRADE shows its bar; an under-construction one does not (WallUpgradeUpdate proxy)")
+{
+	if (!haveWorld("hud5 icons wall upgrade"))
+	{
+		return;
+	}
+	IconRig r(shared());
+	Object *w = r.place("GondorCastleUpgrade", r.rig.local, 700.0f, 700.0f);
+	r.rig.game->advance(0.2);
+	r.look(*w);
+	REQUIRE(w->isKindOfName("WALL_UPGRADE"));
+	auto bars = [&]() {
+		int n = 0;
+		for (const IconUIOp &op : IconRig::of(r.build({ w->getID() }, 0), w->getID()))
+		{
+			n += op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u ? 1 : 0;
+		}
+		return n;
+	};
+	CHECK(bars() == 1); // complete/living: the port's proxy for WallUpgradeUpdate active
+	w->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, true);
+	CHECK(bars() == 0); // under construction: no bar
 }

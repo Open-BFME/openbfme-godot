@@ -8,9 +8,11 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "Common/Upgrade.h"
 #include "GameClient/GUI/GameTextSource.h"
+#include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/Economy.h"
 #include "GameLogic/ExperienceLevels.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
@@ -136,20 +138,46 @@ UnitHelpSource::Text UnitHelpSource::compose(const Object &obj, const GameTextSo
 	}
 	const KindOfMaskType &kind = logic.templateInfo(tt).kindOf;
 	const bool createAHero = kindOf(kind, "CREATE_A_HERO"); // + 0x11F bit 0x40
-	if (createAHero)
-	{
-		t.unported.push_back("the Create-a-Hero name and template (RW 0x69194E / 0x68FA0F, S-4612)");
-	}
-	// the title: the object's own name (+ 0x494, not ported: empty), else the template's DisplayName text
+	// the title: a TooltipUpgrade's DisplayName label (retail Drawable +0x348 / RW 0x8BBBCC; the port keeps it on Object),
+	// else a Create-a-Hero's record name (Object::getDisplayName RW 0x68FA0F), else Object +0x494 (the campaign statistics
+	// block's own name), else the template's DisplayName text.
 	t.title = CommandButtonHelp::templateText(*tt, "DisplayName", text);
+	if (!obj.tooltipDisplayName().empty())
+	{
+		t.title = fetchOrMissing(text, obj.tooltipDisplayName());
+	}
+	else if (createAHero)
+	{
+		if (const CreateAHeroHero *hero = logic.createAHeroes().heroOfObject(obj.getID()); hero && !hero->name.empty())
+		{
+			t.title = hero->name;
+		}
+	}
+	else if (!obj.ownName().empty())
+	{
+		t.title = u16(obj.ownName()); // Object +0x494 (the campaign statistics block's own name)
+	}
 	// a member of a HORDE container whose own name is set: retail formats "TOOLTIP:VerteranHordeMemberName"; the port's objects carry no own name (+ 0x494),
 	// so the horde's name is always empty and the title stays the member's (S-4612)
-	if (!CommandButtonHelp::templateLabel(*tt, "DisplayNameInvisibleForEnemy").empty())
+	// RW 0x691B15: a disguised / invisible object seen by an active local player that is not its ally shows the template's
+	// DisplayNameInvisibleForEnemy label instead (InvisibilityManager::isInvisible RW 0x68FC2F; the relationship test RW 0x7A3DAD)
+	if (localPlayer && !localPlayer->isObserver() && !localPlayer->isDefeated() && InvisibilityManager::isInvisible(obj) &&
+	    localPlayer->getRelationship(obj.getTeam()) != ALLIES)
 	{
-		t.unported.push_back("the disguise label DisplayNameInvisibleForEnemy (RW 0x691B15, S-4612)");
+		const UnicodeString disguised = CommandButtonHelp::templateText(*tt, "DisplayNameInvisibleForEnemy", text);
+		if (!disguised.empty())
+		{
+			t.title = disguised;
+		}
 	}
-	// the rank line (RW 0x8EBE3B .. 0x8EBE9C)
-	const ExperienceTracker *tracker = obj.getExperienceTracker();
+	// the rank line (RW 0x8EBE3B .. 0x8EBE9C). A horde member carries its rank on the horde object (owner report 2026-11-12: hovering a soldier
+	// showed no level): the container answers for the rank while the title and the health stay the soldier's.
+	const Object *rankOwner = &obj;
+	if (const Object *container = obj.getContainedBy(); container && container->isKindOfName("HORDE"))
+	{
+		rankOwner = container;
+	}
+	const ExperienceTracker *tracker = rankOwner->getExperienceTracker();
 	const bool multiplayer = logic.economy().isMultiplayerGame();
 	const int rank = createAHero ? 1 : (tracker ? levelRank(*tracker) : 0);
 	if (rank > 0)
@@ -199,10 +227,14 @@ UnitHelpSource::Text UnitHelpSource::compose(const Object &obj, const GameTextSo
 			}
 		}
 	}
-	// the battles fought (Object + 0x488): not ported (S-852)
-	t.unported.push_back("TOOLTIP:BattlesFought (Object + 0x488 is not ported, S-852)");
-	// the description (RW 0x8EC09C): the template's Description text
-	const UnicodeString description = CommandButtonHelp::templateText(*tt, "Description", text);
+	// the battles fought (Object + 0x488; the campaign carry-over record's statistics block)
+	if (obj.battlesFought() > 0)
+	{
+		append(t.text, format(fetchOrMissing(text, "TOOLTIP:BattlesFought"), { number(obj.battlesFought()) }));
+	}
+	// the description (RW 0x8EC09C): a TooltipUpgrade's Description label (retail Drawable +0x34C), else the template's Description text
+	const UnicodeString description = !obj.tooltipDescription().empty() ? fetchOrMissing(text, obj.tooltipDescription())
+	                                                                   : CommandButtonHelp::templateText(*tt, "Description", text);
 	if (!description.empty())
 	{
 		append(t.text, description);
@@ -217,8 +249,11 @@ std::vector<std::string> UnitHelpSource::acceptanceStops()
 		"help, a hero its UnitHelpSource RW 0x8EBC61 as an InGameSimpleHelp RW 0x9402E7: name, level, maximum health, damages with the modifiers, upgrades, "
 		"description), the Palantir portrait's (RW 0x93099D: an own or allied object's unit help), the spell book's (RW 0x930DC4: the slot's command button), "
 		"RW 0x807A81's revive / castle unpack / unit cost / science-disabled / multi-science / upgrade conflict and prerequisite branches (the repair costs "
-		"and the revive Create-a-Hero name: lane ROTWK-C); not ported: the drawable's script captions, Object + 0x494 names (the veteran horde member name), the disguise "
-		"label, the Create-a-Hero names and template, the battles fought (Object + 0x488, S-852); also not ported, named by the inventory of every tool tip "
+		"and the revive Create-a-Hero name: lane ROTWK-C); the Create-a-Hero title (Object::getDisplayName RW 0x68FA0F -> the record name RW 0x619562); the "
+		"TooltipUpgrade display name / description (RW 0x8BBBCC / 0x8BBC0A; the port keeps the labels on Object), the disguise label "
+		"(RW 0x691B15) and the campaign statistics block's two help fields: Object +0x494 own name and Object +0x488 TOOLTIP:BattlesFought (the "
+		"carry-over record +0xA4 subset; S-852 / S-4903); not ported: the veteran horde member name (Object +0x494 is the object's own name, not a "
+		"container's) and the statistics block's kills / second string / byte; also not ported, named by the inventory of every tool tip "
 		"source (tools/hover/hover_inventory.py, sources.csv): the in-game unit tips (TOOLTIP:AddSpecialAbilityNoPower, ClickToRenameThisUnit, DisbandUnit, "
 		"DisbandUnitDisabled, DisbandUnitDisabledHero, DisbandUnitDisabledLeader, SupplyWarehouse, YouMayNotRenameAHero) and the War of the Ring HUD's 23 "
 		"labels (STRATEGICHUD:*Tooltip, APT:StrategicBattlePromptSwapButton1Tooltip / 2Tooltip, BackButtonTooltip), "

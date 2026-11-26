@@ -269,7 +269,7 @@ TEST_CASE("hud2 palantir: nothing selected; the good side's PlayerMagic button s
 	CHECK(p->callErrors().empty());
 }
 
-TEST_CASE("hud2 palantir: widescreen panels preserve proportions and edge anchors through resizing")
+TEST_CASE("hud2 palantir: widescreen panels use the retail stage mapping and keep their edge anchors through resizing")
 {
 	if (!haveWorld("hud2 widescreen"))
 	{
@@ -291,10 +291,9 @@ TEST_CASE("hud2 palantir: widescreen panels preserve proportions and edge anchor
 	struct Viewport
 	{
 		int width, height;
-		float correction;
 	};
-	for (const Viewport &viewport : { Viewport{ 1024, 768, 1.0f }, Viewport{ 1280, 720, 0.75f }, Viewport{ 2560, 1080, 0.5625f },
-		Viewport{ 1280, 960, 1.0f }, Viewport{ 1280, 720, 0.75f } })
+	for (const Viewport &viewport : { Viewport{ 1024, 768 }, Viewport{ 1280, 720 }, Viewport{ 2560, 1080 },
+		Viewport{ 1280, 960 }, Viewport{ 1280, 720 } })
 	{
 		INFO(viewport.width, "x", viewport.height);
 		hud.hud->setWindowSize(viewport.width, viewport.height);
@@ -302,14 +301,14 @@ TEST_CASE("hud2 palantir: widescreen panels preserve proportions and edge anchor
 		CHECK(frame->matrix.tx == originalFrame.tx);
 		CHECK(side->matrix.a == originalSide.a);
 		CHECK(side->matrix.tx == originalSide.tx);
-		CHECK(frame->viewportTransform.a == viewport.correction);
+		// retail: the 1024x768 stage maps with its independent X/Y scale; no presentation-only correction
+		CHECK(frame->viewportTransform.a == 1.0f);
 		CHECK(frame->viewportTransform.tx == 0.0f);
-		CHECK(side->viewportTransform.a == viewport.correction);
-		CHECK(side->viewportTransform.tx == 1024.0f * (1.0f - viewport.correction));
+		CHECK(side->viewportTransform.a == 1.0f);
+		CHECK(side->viewportTransform.tx == 0.0f);
 		AptStageMapping mapping;
 		mapping.windowW = (float)viewport.width;
 		mapping.windowH = (float)viewport.height;
-		CHECK(frame->viewportTransform.a * mapping.scaleX() == mapping.scaleY());
 		float stageX, stageY, windowX, windowY;
 		frame->viewportTransform.apply(0, 768, stageX, stageY);
 		mapping.stageToWindow(stageX, stageY, windowX, windowY);
@@ -644,4 +643,52 @@ TEST_CASE("hud2 custom hero buttons: model-state icons distinguish Shield Maiden
 	CHECK(InGameHeroSelect::buttonImage(*captain) == "HICAHCaptainGondor");
 	maiden->setModelConditionState(ModelCondition::indexOf("MOUNTED"), true);
 	CHECK(InGameHeroSelect::buttonImage(*maiden) == "HICAHShieldMaiden");
+}
+
+TEST_CASE("hud2 palantir: a modal menu blocks the Palantir's level root")
+{
+	if (!haveWorld("hud2 modal input root"))
+	{
+		return;
+	}
+	PalantirRig h(shared());
+	h.frames(2);
+	const int palantirLevel = h.hud->palantir()->level();
+	REQUIRE(palantirLevel >= 0); // tolerance: the owned WindowManager chooses the first free level
+	AptSpriteInst *root = h.hud->apt().level(palantirLevel);
+	REQUIRE(root != nullptr);
+	AptButtonInst *button = firstButton(h.hud->apt().resolvePath(root, "PalantirButtons.Buttons.Options"));
+	REQUIRE(button != nullptr);
+	float left, top, right, bottom;
+	REQUIRE(button->contentBounds(left, top, right, bottom));
+	float hitX = 0, hitY = 0;
+	bool hit = false;
+	for (int row = 1; row < 16 && !hit; ++row)
+	{
+		for (int column = 1; column < 16 && !hit; ++column)
+		{
+			float stageX, stageY;
+			button->globalMatrix().apply(left + (right - left) * (float)column / 16.0f, top + (bottom - top) * (float)row / 16.0f, stageX, stageY);
+			if (h.hud->apt().input().hitTestButtons(stageX, stageY) == button)
+			{
+				hit = true;
+				hitX = stageX;
+				hitY = stageY;
+			}
+		}
+	}
+	REQUIRE(hit);
+	CHECK_FALSE(h.hud->apt().input().rootBlocked(root));
+	CHECK(h.hud->apt().input().hitTestButtons(hitX, hitY) != nullptr);
+	h.hud->setModal(true);
+	CHECK(h.hud->apt().input().rootBlocked(root));
+	CHECK(h.hud->apt().input().hitTestButtons(hitX, hitY) == nullptr);
+	h.hud->setModal(false);
+	CHECK_FALSE(h.hud->apt().input().rootBlocked(root));
+	CHECK(h.hud->apt().input().hitTestButtons(hitX, hitY) != nullptr);
+	// the retail top-screen filter: a top level other than the Palantir's hides every Palantir button from the hit test
+	h.hud->apt().input().setInputTopLevel(palantirLevel + 1);
+	CHECK(h.hud->apt().input().hitTestButtons(hitX, hitY) == nullptr);
+	h.hud->apt().input().setInputTopLevel(-1);
+	CHECK(h.hud->apt().input().hitTestButtons(hitX, hitY) != nullptr);
 }

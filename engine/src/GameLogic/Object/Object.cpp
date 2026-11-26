@@ -2864,13 +2864,32 @@ void Object::setScriptStatus(std::uint8_t bits, bool set)
 void Object::xfer(Xfer &x)
 {
 	// lane BFME2CAMP1: version 2 adds the campaign carry-over bit (Object + 0x458 bit 4). Lane THREATLEVEL-1: version 3 the script threat cache (+ 0x464 /
-	// + 0x468), written only once a refresh armed it (every other object keeps version 2's block)
-	// lane VISIONDEF-1: version 4 the vision ground reference (+ 0x1C4), written only once set (every other object keeps version 2's or 3's block)
+	// + 0x468), written only once a refresh armed it. Lane VISIONDEF-1: version 4 the vision ground reference (+ 0x1C4), written only once set.
+	// Lane HOVER-1: version 5 the help-only fields (the TooltipUpgrade labels and the campaign statistics own name / battles fought), written only
+	// when set (every other object keeps version 2's, 3's or 4's block)
 	const bool threatArmed = m_scriptThreatDeadline != 0 || m_scriptThreat != 0.0f;
-	XferVersion version{ 1, (std::uint8_t)(x.isLoading() || m_visionGroundRef != 0.0f ? 4 : threatArmed ? 3 : 2) };
+	const bool helpFieldsSet = !m_tooltipDisplayName.empty() || !m_tooltipDescription.empty() || !m_ownName.empty() || m_battlesFought != 0;
+	std::uint8_t currentVersion = 2;
+	if (threatArmed)
+	{
+		currentVersion = 3;
+	}
+	if (m_visionGroundRef != 0.0f)
+	{
+		currentVersion = 4;
+	}
+	if (helpFieldsSet)
+	{
+		currentVersion = 5;
+	}
+	XferVersion version{ 1, (std::uint8_t)(x.isLoading() ? 5 : currentVersion) };
 	x.xferVersion(version);
 	// a load never reads its destination: the save-side values are built from the members only when saving (SAVES.md, rules for xfer authors)
 	const bool saving = !x.isLoading();
+	if (x.isLoading())
+	{
+		m_helpFieldsRestored = false; // transient: set by the version 5 block below, read by TooltipUpgrade::xfer
+	}
 	ObjectID id = saving ? m_id : (ObjectID)INVALID_ID;
 	x.xferObjectID(&id);
 	std::string templateName = saving ? m_template->getName() : std::string();
@@ -2989,6 +3008,27 @@ void Object::xfer(Xfer &x)
 	else if (x.isLoading())
 	{
 		m_visionGroundRef = 0.0f;
+	}
+	// lane HOVER-1: the help fields the TooltipUpgrade writes and the campaign statistics block copies (Object +0x348 / +0x34C in
+	// retail's drawable, +0x488 / +0x494 here). They are not in the state hash, but a live carried unit must keep them across a load:
+	// the next mission's record copies them from the object, not from the campaign's saved state. Version 5 writes them.
+	if (version.current >= 5)
+	{
+		x.xferAsciiString(&m_tooltipDisplayName);
+		x.xferAsciiString(&m_tooltipDescription);
+		x.xferAsciiString(&m_ownName);
+		x.xferInt(&m_battlesFought);
+		if (x.isLoading())
+		{
+			m_helpFieldsRestored = true;
+		}
+	}
+	else if (x.isLoading())
+	{
+		m_tooltipDisplayName.clear();
+		m_tooltipDescription.clear();
+		m_ownName.clear();
+		m_battlesFought = 0;
 	}
 	x.xferBool(&m_scriptSelectable);
 	x.xferBool(&m_masked); // lane MODCOMPAT-MOD1: RW + 0x459 bit 1

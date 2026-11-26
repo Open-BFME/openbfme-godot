@@ -1039,6 +1039,11 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			// is a left click with the default (alternate) mouse
 			const CommandButton *pending = m_ctx.ui.getGUICommand();
 			const bool guiTarget = pending && pending->m_command != GUI_COMMAND_ATTACK_MOVE;
+			// RW 0x81FC57 .. 0x81FD40 / 0x81EBCD: a BLOODTHIRSTY target click ends the command whether or not the target is valid (the retail
+			// special-command switch clears the GUI command when the target is null). A SPECIAL_POWER keeps waiting on an invalid target, as its
+			// own tests pin (the hero leaps / Dain); only the types of that switch are cancelled here. ATTACK_MOVE's click roles stay in
+			// GUICommandTranslator.
+			const bool bloodthirstyClick = left && pending && pending->m_command == GUI_COMMAND_BLOODTHIRSTY;
 			if (left ? (m_alternateMouse && !guiTarget) : (!m_alternateMouse || guiTarget))
 			{
 				++m_clickOutcomes["other-button"];
@@ -1056,6 +1061,10 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			if (!m_ctx.view.screenToTerrain(region.lo, m_ctx.logic, pos))
 			{
 				++m_clickOutcomes["off-terrain"];
+				if (bloodthirstyClick && isPoint)
+				{
+					m_ctx.ui.setGUICommand(nullptr); // clicking the void ends the Bloodthirsty aim, as the right click does
+				}
 				break;
 			}
 			if (!isPoint)
@@ -1082,6 +1091,10 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 				++m_clickOutcomes[std::string(issued ? "command" : "no command") + (draw ? " on an object" : " on the ground")];
 				disp = MessageDisposition::Destroy;
 				m_ctx.ui.clearAttackMoveToMode();
+			}
+			if (bloodthirstyClick && isPoint)
+			{
+				m_ctx.ui.setGUICommand(nullptr); // a target click ends the Bloodthirsty aim, valid or not
 			}
 			break;
 		}

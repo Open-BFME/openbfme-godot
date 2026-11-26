@@ -51,6 +51,8 @@ HudInput::HudInput(GameLogic &logic, AIWorld *ai, TacticalView &view, CommandLis
 
 void HudInput::mouseMove(int x, int y, int keyState)
 {
+	m_lastMouse = { x, y }; // lane HOVER-1: the hover refresh of the frames without a mouse event
+	m_haveMouse = true;
 	ClientMessage &m = m_stream.append(CMSG_RAW_MOUSE_POSITION);
 	m.appendPixel({ x, y });
 	m.appendInteger(keyState);
@@ -215,6 +217,11 @@ size_t HudInput::update()
 	}
 	m_formation.frame();
 	m_place.frame(); // lane QA2-FIX: the placement update's line build step (RW 0x6A2D12) runs in InGameUI::update, before the stream (ZH GameEngine::update)
+	// lane HOVER-1: the pointer did not move, but the object under it may have: refresh the mouseover / cursor before the translators run
+	if (m_haveMouse)
+	{
+		m_selection.refreshHover(m_lastMouse);
+	}
 	const size_t n = flush();
 	// lane BUILD-5: the placement update's ghost step (RW 0x6A2AE5) runs in the client's draw, after this frame's input (it reads the live pointer); a device
 	// defers it until its displayed camera is set (setPlacementDeferred)

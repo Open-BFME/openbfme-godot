@@ -965,6 +965,51 @@ TEST_CASE("bfme1 main menu: returning hides the submenu background without chang
 	}
 }
 
+TEST_CASE("Load Game shows the front-end background after the main menu hid its root")
+{
+	ShellFx fx;
+	fx.addMovie("MainMenu", {});
+	fx.addMovie("Background", {});
+	fx.addMovie("SaveLoad", {});
+	registerAptScreenFactories(fx.factories);
+	fx.wm->init();
+	REQUIRE(fx.wm->loadBackground());
+	fx.shell->push("MainMenu.apt");
+	fx.tick();
+	fx.wm->setBackground(1);
+	const int background = fx.wm->backgroundLevel();
+	REQUIRE(background == fx.wm->findAptMovieIndex("Background.apt"));
+	REQUIRE(fx.wm->hideAptWindow(background)); // AptMainMenu::runInit's instant hide, with the mode left at 1
+	REQUIRE((fx.wm->aptWindow(background).flags & WindowManager::APTWIN_HIDDEN) == WindowManager::APTWIN_HIDDEN);
+	fx.shell->push("SaveLoad.apt");
+	fx.tick();
+	CHECK((fx.wm->aptWindow(background).flags & WindowManager::APTWIN_HIDDEN) == 0);
+}
+
+TEST_CASE("Skirmish shows the front-end background when the score screen's Continue re-pushes it")
+{
+	ShellFx fx;
+	fx.addMovie("MainMenu", {});
+	fx.addMovie("Background", {});
+	fx.addMovie("Skirmish", {});
+	registerAptScreenFactories(fx.factories);
+	fx.wm->init();
+	REQUIRE(fx.wm->loadBackground());
+	fx.shell->push("MainMenu.apt");
+	fx.tick();
+	fx.wm->setBackground(1);
+	const int background = fx.wm->backgroundLevel();
+	REQUIRE(background == fx.wm->findAptMovieIndex("Background.apt"));
+	// AptMainMenu::runInit: the main menu hides the submenu background root and keeps the mode
+	REQUIRE(fx.wm->hideAptWindow(background));
+	REQUIRE((fx.wm->aptWindow(background).flags & WindowManager::APTWIN_HIDDEN) == WindowManager::APTWIN_HIDDEN);
+	// the score screen's Continue pushes Skirmish.apt directly (S-1771), not through AptMainMenu::showSkirmish
+	fx.shell->push("Skirmish.apt");
+	fx.tick();
+	CHECK(fx.wm->backgroundMode() == 1);
+	CHECK((fx.wm->aptWindow(background).flags & WindowManager::APTWIN_HIDDEN) == 0);
+}
+
 TEST_CASE("stops S-175: handlers with no decompiled body report 'unported-command'; every main-menu action is still a request the engine can see")
 {
 	ShellFx fx;

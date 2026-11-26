@@ -104,6 +104,7 @@ std::vector<std::string> FloatingTextList::acceptanceStops()
 {
 	return { "[S-283] floating text: ported GUI:AddCash from the income log (InGameUIFloatingText.cpp, InGameUI_updateFloatingText.cpp, "
 			 "InGameUI_drawFloatingText.cpp); INFERENCE: FloatingTextTimeOut is milliseconds and FloatingTextMoveUpSpeed / FloatingTextVanishRate are taken "
-			 "as the INI writes them (the parsers' conversions were not read), both divisions use 30 client frames a second (GameEngine + 0x38 not read), "
-			 "and the text is drawn in the HUD's caption font at 15 stage pixels scaled with the window (the display string's font was not read)" };
+			 "as the INI writes them (the parsers' conversions were not read), and both divisions use 30 client frames a second (GameEngine + 0x38 not read); "
+			 "TARGET FACT: the caption font is InGameUI.ini's DrawableCaptionFont = Albertus MT, DrawableCaptionPointSize = 12, bold No (both editions), drawn "
+			 "at 12 stage pixels scaled with the window (the device loads Albertus MT; Godot's fallback font only when no shell is attached)" };
 }
