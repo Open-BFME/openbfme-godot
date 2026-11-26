@@ -60,7 +60,7 @@ void HeroSystem::initPlayer(GameLogic &logic, Player &player)
 // WOTR2 milestone 7: RW 0x6B16EC (kind != 3, the player's Living World id) -> RW 0x6E42DA: each entry of the War of the Ring player's list no queue holds
 // leaves that list and joins this one (RW 0x781861 -> push RW 0x6E40A6): the entry's fields (RW 0x6E267E), start frame -1, production id 0, UI factor 1,
 // army id (+ 0xB8) the player's garrison in the battle region; a dead entry's cost / seconds are its RespawnUpdate rule's of its rank (RW 0x6E2D92 ->
-// RW 0x8B3637 / 0x8B36B2). [S-1329 inference: the strategic list keeps only the experience, so the rank is 1 and the rule is level 1's]
+// RW 0x8B3637 / 0x8B36B2). RW 0x6E267E copies rank/base rank unchanged (BFME2 LivingWorldPlayerCreateRevival.cpp RVA 0x2E1AA0).
 void HeroSystem::initLivingWorldPlayer(GameLogic &logic, Player &player, const std::vector<LivingWorldHero> &heroes, int garrisonArmyId, std::vector<std::string> &errors)
 {
 	for (const LivingWorldHero &h : heroes)
@@ -72,11 +72,18 @@ void HeroSystem::initLivingWorldPlayer(GameLogic &logic, Player &player, const s
 			continue;
 		}
 		// the War of the Ring entry is a purchase record (InitBuildableHeroes builds it as RW 0x780713 does: the template's BuildCost (u16 + 0x5EA) and
-		// BuildTime, rank 1; review wotr2m7 (Sol): without them the hero was free and instant), its experience and dead flag the war's
-		HeroRecord r;
-		r.cost = BuildAssistant::buildCost(*tt);
-		r.seconds = SimMath::truncToInt32(BuildAssistant::buildTime(*tt));
-		r.rank = 1;
+		// BuildTime and the template's initial rank), then copies the strategic record's rank/base rank when that record already exists.
+		if ((h.rank < 0 && (h.dead || h.experience != 0.0f)) || h.rank < -1 || h.baseRank < -1 || ((h.rank == -1) != (h.baseRank == -1)))
+		{
+			errors.push_back("the War of the Ring hero " + h.templateName + " lacks its rank/base rank");
+			continue;
+		}
+		HeroRecord r = PlayerHeroList::recordFromTemplate(*tt);
+		if (h.rank >= 0)
+		{
+			r.rank = h.rank;
+			r.baseRank = h.baseRank;
+		}
 		r.experience = h.experience;
 		r.startFrame = -1;
 		r.productionID = 0;

@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "Common/LivingWorldArmySpawnPlan.h"
 #include "Common/RandomValue.h"
 #include "GameLogic/LivingWorld/LivingWorldData.h"
 #include "GameLogic/LivingWorld/SciencePurchasePointTracker.h"
@@ -131,6 +132,7 @@ struct GameSetup
 	std::string campaign; // the LivingWorldCampaign with the Scenario block
 	std::vector<SetupSlot> slots;
 	std::uint32_t seed = 0;
+	int hostPlayer = 0; // strategic player represented by lobby slot 0; -1 when that slot has no player
 	int victoryType = 0; // the Rules tab's victory type: an index into the campaign's LivingWorldVictoryType blocks (GetVictoryCondition)
 	// lane WOTR-2: TheRankInfoStore's ranks 1 .. n (RW 0x6BB459: AddPlayer gives each player rank 1's SciencePurchasePointsGranted as power points,
 	// nothing without rank 1; the autoresolve's SciencePurchasePointTracker reads them all, each with its campaign count)
@@ -213,6 +215,7 @@ struct RevivalUnit
 	std::string thing;       // + 0xE4: the hero's thing template (the lookup by thing, WB 0xDEA310)
 	float experience = 0.0f; // + 0x08: the hero's experience (a dead hero's is kept for its return)
 	bool dead = false;       // added by a death (AddRevivalUnit WB 0xDEAFB0), not by InitBuildableHeroes
+	int rank = -1, baseRank = -1; // RW record +0x0C/+0x10; -1 means a new purchase record resolves the template initial rank at tactical start
 };
 
 // WOTR2 milestone 5: LivingWorldScoreKeeper (LivingWorldPlayer + 0x348; ctor RW 0x8F352E, xfer RW 0x8F3A89; spec P): what the War of the Ring score
@@ -307,6 +310,7 @@ struct Battle
 	std::vector<Side> sides;
 	int winningSide = -1;       // + 0x38: the last side holding a player of the autoresolve's winning side
 	bool resultsCounted = false; // RW 0x7F6443 ran
+	std::vector<int> retreatedPlayers; // RW 0x7F5D46 / 0x7F5D5F: withdrawn players are outside the winning-side claimants
 };
 
 // What the real-time battle needs (RotWK's battle hand-off: the region's map, the players and the armies each brings)
@@ -348,15 +352,15 @@ struct BattleSetup
 	};
 	std::vector<PlayerStart> playerStarts;
 	// WOTR2 milestone 7 (step 5): PrepareBattleForLoading RW 0x6B851C pass 2, per battle army: on the field at the load (state 4) or a reinforcement counting
-	// down from frame 0 (state 2, arrival frame), and for a reinforcement where it walks on (getSpawnPositions RW 0x80F754's choices, in order: spawn and
-	// gather waypoint names; the battle takes the first pair its map has)
+	// down from frame 0 (state 2, arrival frame), with getSpawnPositions RW 0x80F754's strategic placement context; the loaded map supplies the coordinates.
 	struct ArmyStart
 	{
 		int armyId = 0;
 		int player = -1;
 		int state = 4;
 		int arrivalFrame = 0;
-		std::vector<std::pair<std::string, std::string>> spawnPoints;
+		std::vector<std::pair<std::string, std::string>> spawnPoints; // legacy recording choices
+		LivingWorldArmySpawnPlan placement;
 	};
 	std::vector<ArmyStart> armyStarts;
 };
@@ -383,6 +387,7 @@ struct BattleHeroRecord
 	float experience = 0.0f;
 	int rank = 0;
 	bool dead = false;
+	int baseRank = 0; // the copied revival record +0x10 (RW 0x6E267E)
 };
 struct BattleResult
 {
@@ -441,6 +446,14 @@ struct NetSaveOrder
 	std::uint32_t frame = 0;
 };
 
+// RotWK RegionAwardDispute RW 0x900F84 / GetResolvableBy RW 0x900E58;
+// BFME2 RegionAwardDispute.cpp RVA 0x4FC002 / 0x4FBED6. Claimant order is significant.
+struct RegionAwardDispute
+{
+	int region = -1;
+	std::vector<int> players;
+};
+
 struct StrategicEvent
 {
 	int turn = 0;
@@ -494,6 +507,9 @@ public:
 	// destination (RW 0x6B6ACC -> RW 0x6B3CC6); phase 0's END PHASE is endTurn
 	bool endPhase(int player, std::string *error);
 	bool canEndPhase(int player) const;
+	const std::vector<RegionAwardDispute> &regionAwardDisputes() const { return m_regionAwardDisputes; }
+	int regionAwardResolver(const RegionAwardDispute &dispute) const;
+	bool resolveRegionAwardDispute(int sender, int region, int winner, std::string *error);
 
 	// ---- battles (phase 2) ----
 	// The next battle a human must decide (index into battles()), -1 none.
@@ -748,6 +764,7 @@ private:
 	};
 	PlayerBonuses playerBonuses(int player) const;
 	void resolveOwnership();
+	void prepareOwnershipRetreats();
 	void endOfTurn();
 	void checkVictory();
 	void spawnArmy(int player, const SpawnArmy &spawn, int region, const std::string &spawnId = std::string());
@@ -786,6 +803,8 @@ private:
 	int m_nextBuildingId = 1;          // WOTR2 milestone 4: ++TheLivingWorldLogic + 0xA0 (the building ids)
 	std::vector<int> m_retreatList;    // + 0x10C
 	std::unique_ptr<LivingWorldAI> m_ai;
+	int m_hostPlayer = 0;
+	std::vector<RegionAwardDispute> m_regionAwardDisputes;
 	int m_settleCounter = 0;
 	bool m_started = false;
 	bool m_finished = false;

@@ -21,8 +21,8 @@ using namespace LivingWorld;
 
 // WOTR2 milestone 6: the battle's end as GameLogic::LivingWorldTacticalBattleComplete RW 0x626662 reads it.
 //   * the survivors (ArmySummarySystem::Save RW 0x811E1F): every live KindOf ARMY_SUMMARY object of a battle player, in object-list order, under its army:
-//     a spawned object's, else [S-1329 inference] its player's garrison (retail tags each made object with its maker's army id; what a porter or a region
-//     building makes is the garrison's), with its experience (tracker + 0x10), level (+ 0x24) and upgrade mask as names (Object::fillEntry RW 0x6917BB);
+//     a spawned or producer/builder-registered object's, else [S-1329 inference for creation sites not yet audited] its player's garrison,
+//     with its experience (tracker + 0x10), level (+ 0x24) and upgrade mask as names (Object::fillEntry RW 0x6917BB);
 //   * the victor (GetLivingWorldTacticalVictor RW 0x6265D2): the first player, in side order, that hasAchievedVictory accepts; -1 none.
 bool ReadBattleResult(const GameLogic &logic, const std::vector<BattleSeat> &battleSeats, const Player *left, BattleResult &out, std::string *error)
 {
@@ -150,6 +150,7 @@ bool ReadBattleResult(const GameLogic &logic, const std::vector<BattleSeat> &bat
 			h.spawnId = t ? t->spawnId : std::string();
 			h.experience = rec.experience;
 			h.rank = rec.rank;
+			h.baseRank = rec.baseRank;
 			h.dead = rec.dead;
 			out.heroes.push_back(h);
 		}

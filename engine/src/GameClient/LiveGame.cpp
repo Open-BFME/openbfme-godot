@@ -229,7 +229,13 @@ bool LiveGame::load(const Options &options, std::string *error)
 			return false;
 		}
 		progress(12); // the sides exist (RW 0x62FBC7)
-		m_players->setSpellGameMode(SpellGameMode{ options.start->message.mode == NewGameMode::Skirmish, false }); // SPELL-1 (GameLogic + 0x110 == 2)
+		if (options.start->message.livingWorldBattle.active && economySettings.initialMaxRingLevel < 0)
+		{
+			if (error) *error = "unverified: a negative InitialMaxRingLevel in a War of the Ring battle";
+			return false;
+		}
+		m_players->setSpellGameMode(SpellGameMode{ options.start->message.mode == NewGameMode::Skirmish, false,
+			options.start->message.livingWorldBattle.active ? economySettings.initialMaxRingLevel : -1 }); // RW 0x7827D9 -> 0x6B34EE
 		for (const std::string &n : built.slotPlayerNames)
 		{
 			if (!n.empty())
@@ -716,7 +722,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 					std::vector<HeroSystem::LivingWorldHero> heroes;
 					for (const LivingWorldBattleStart::SlotStart::Hero &h : st.heroes)
 					{
-						heroes.push_back({ h.templateName, h.spawnId, h.experience, h.dead });
+						heroes.push_back({ h.templateName, h.spawnId, h.experience, h.dead, h.rank, h.baseRank });
 					}
 					std::vector<std::string> heroErrors;
 					HeroSystem::initLivingWorldPlayer(*m_logic, *m_players->getNthPlayer(i), heroes, st.garrisonArmyId, heroErrors);

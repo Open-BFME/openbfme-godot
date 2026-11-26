@@ -43,6 +43,9 @@ struct EconomySettings
 	Pair goodMP[7], evilMP[7]; ///< players 2 .. 8
 	int goodBonus = 0, evilBonus = 0;
 	int goodLimit = 0, evilLimit = 0, powerLimit = 0;
+	// War of the Ring's rank ceiling: RW row 0xC00BC0 (+0xE84), constructor RW 0x6437F9;
+	// BFME2 row 0xBE9B60, constructor BFME2 0x637162. Both default to 2.
+	int initialMaxRingLevel = 2;
 	float resourceBonusMultiplier = 0.0f, resourceMultiplierLimit = 0.0f;
 	float multiPlayMoneyMult[20]; ///< MP1 .. MP8 as parsed; the rest 1.0 (INFERENCE: GlobalData's constructor value, S-255)
 	// lane XP-1: MultiPlayUnitXPMult (row RW 0xC00C8C, parse RW 0x6422D2, GlobalData + 0xEC4 + 0x50) and MultiPlayBuildingXPMult (RW 0xC00C9C, RW 0x642408,

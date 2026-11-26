@@ -164,6 +164,7 @@ FieldParse kFields[] = {
 	{ "GoodCommandPointLimit", parseNoting<INI::parseInt>, SEEN_DATA(SEEN_LIMIT_G), ES_OFF(goodLimit) },
 	{ "EvilCommandPointLimit", parseNoting<INI::parseInt>, SEEN_DATA(SEEN_LIMIT_E), ES_OFF(evilLimit) },
 	{ "PowerLimit", parseNoting<INI::parseInt>, SEEN_DATA(SEEN_POWER), ES_OFF(powerLimit) },
+	{ "InitialMaxRingLevel", INI::parseInt, nullptr, ES_OFF(initialMaxRingLevel) }, // RW 0xC00BC0 / BFME2 0xBE9B60
 	{ "ResourceBonusMultiplier", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_RESBONUS), ES_OFF(resourceBonusMultiplier) },
 	{ "ResourceMultiplierLimit", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_RESLIMIT), ES_OFF(resourceMultiplierLimit) },
 	{ "MultiPlayMoneyMult", parseMultiPlayMoneyMult, SEEN_DATA(SEEN_MONEYMULT), ES_OFF(multiPlayMoneyMult[0]) },

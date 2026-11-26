@@ -287,6 +287,8 @@ Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, c
 		return nullptr;
 	}
 	obj->setProducer(&plot); // RW 0x8587E7
+	// RW 0x858B43..0x858B55: the plot's army id follows the structure (not its region-building id).
+	logic.livingWorldTags().inheritArmy(obj->getID(), plot.getID());
 	const bool needsBase = templateKindOf(logic, what, "NEED_BASE_FOUNDATION"), isBase = templateKindOf(logic, what, "BASE_FOUNDATION");
 	// RW 0x8587EC ff: the angle
 	if (templateKindOf(logic, what, "FACE_AWAY_FROM_CASTLE_KEEP"))
@@ -401,6 +403,8 @@ Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what,
 	const bool structure = templateKindOf(logic, what, "STRUCTURE");
 	setModelConditions(*obj, {}, { "PHANTOM_STRUCTURE" });
 	obj->setProducer(&dozer);
+	// RW 0x88D40A..0x88D41C: a phantom structure joins the dozer's army summary.
+	logic.livingWorldTags().inheritArmy(obj->getID(), dozer.getID());
 	obj->setBuilder(&dozer); // RW 0x88D307
 	if (!isRebuild) // RW 0x88D2F9: the dozer's + 0x4D0 (lane BFME2CAMP1)
 	{
@@ -510,6 +514,8 @@ Object *Construction::buildObjectNow(GameLogic &logic, Object *builder, const Th
 	if (builder)
 	{
 		obj->setProducer(builder);
+		// RW 0x7978BE..0x7978CB: BuildAssistant's immediate creation copies the builder's army id.
+		logic.livingWorldTags().inheritArmy(obj->getID(), builder->getID());
 	}
 	Coord3D p = pos;
 	p.z = logic.getGroundHeight(p.x, p.y);

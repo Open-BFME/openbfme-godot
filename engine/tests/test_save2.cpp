@@ -434,8 +434,8 @@ TEST_CASE("save reader: sparse large and maximum replay frame numbers have bound
 	CHECK_MESSAGE(load.prepare(save, &error), error);
 }
 
-// WOTR2 milestone 6: replay format 12 carries a War of the Ring battle's start (NewGameMessage::livingWorldBattle); any other recording stays format 11
-TEST_CASE("replay wotr: a War of the Ring battle's start round-trips in format 12; other recordings stay format 11; a damaged battle block is refused")
+// Replay format 14 also carries hero rank/base rank; placement plans start in 13; format 12 remains readable; other recordings stay format 11
+TEST_CASE("replay wotr: a War of the Ring battle's start round-trips in format 14; other recordings stay format 11; a damaged battle block is refused")
 {
 	auto record = [](const ReplayHeader &h) {
 		ReplayWriter writer;
@@ -461,8 +461,10 @@ TEST_CASE("replay wotr: a War of the Ring battle's start round-trips in format 1
 	b.members.push_back({ 0, 9, 2, "MordorFighterHorde", 3 });
 	b.slotStarts.push_back({ 0, 2500, 9, {} });
 	b.slotStarts.push_back({ 1, 7600, 12, { "MenPorter", "MenInn" } });
+	b.armies.push_back({ 1, 7, 2, 1500, { { "WOTRSpawnPoint_Origin_1", "WOTRGatherPoint_Origin_1" }, { "Player_2_Start", "Player_2_Start_Rally" } } });
+	b.armies.back().placement = { LivingWorldArmySpawnPlan::NORMAL_NEUTRAL, 1, false, "Origin", { "A", "B", "C" } };
 	const std::vector<std::uint8_t> bytes = record(h);
-	CHECK(formatOf(bytes) == 12);
+	CHECK(formatOf(bytes) == 14);
 	ReplayFile back;
 	std::string error;
 	REQUIRE_MESSAGE(ReplayFile::parse(bytes, back, &error), error);
@@ -481,6 +483,91 @@ TEST_CASE("replay wotr: a War of the Ring battle's start round-trips in format 1
 	CHECK(r.slotStarts[1].garrisonArmyId == 12);
 	CHECK(r.slotStarts[1].bonusUnits == std::vector<std::string>{ "MenPorter", "MenInn" });
 	CHECK(back.hashes.at(3) == 77);
+	REQUIRE(r.armies.size() == 1);
+	CHECK(r.armies[0].placement.method == LivingWorldArmySpawnPlan::NORMAL_NEUTRAL);
+	CHECK(r.armies[0].placement.side == 1);
+	CHECK(r.armies[0].placement.friendlyOwner == false);
+	CHECK(r.armies[0].placement.originRegion == "Origin");
+	CHECK(r.armies[0].placement.connections == std::vector<std::string>{ "A", "B", "C" });
+	ReplayHeader damagedPlan = h;
+	damagedPlan.game.livingWorldBattle.armies[0].placement.method = 99;
+	ReplayFile invalidPlan;
+	CHECK_FALSE(ReplayFile::parse(record(damagedPlan), invalidPlan, &error));
+	CHECK(error == "the War of the Ring army's spawn plan is damaged");
+	ReplayHeader boundedPlan = h;
+	auto &boundedConnections = boundedPlan.game.livingWorldBattle.armies.front().placement.connections;
+	boundedConnections.clear();
+	for (int i = 0; i < 64; ++i)
+		boundedConnections.push_back("Region" + std::to_string(i));
+	ReplayFile boundedBack;
+	REQUIRE_MESSAGE(ReplayFile::parse(record(boundedPlan), boundedBack, &error), error);
+	CHECK(boundedBack.header.game.livingWorldBattle.armies.front().placement.connections == boundedConnections);
+	boundedConnections.push_back("Region64");
+	CHECK_FALSE(ReplayFile::parse(record(boundedPlan), invalidPlan, &error));
+	CHECK(error == "the War of the Ring army's spawn plan has more than 64 connections (OpenBFME input limit)");
+	boundedConnections = { "A", "Missing", "A" };
+	CHECK_FALSE(ReplayFile::parse(record(boundedPlan), invalidPlan, &error));
+	CHECK(error == "the War of the Ring army's spawn plan has duplicate connections (OpenBFME input policy)");
+	// Format 12's nonempty ArmyStart stores slot/id/state/arrival and named
+	// point pairs, followed immediately by the next army or owner slot. Build
+	// that old prefix independently, locate it, and remove only v13's plan.
+	NetByteWriter oldArmy;
+	oldArmy.i32(1);
+	oldArmy.i32(7);
+	oldArmy.i32(2);
+	oldArmy.i32(1500);
+	oldArmy.u32(2);
+	oldArmy.str("WOTRSpawnPoint_Origin_1");
+	oldArmy.str("WOTRGatherPoint_Origin_1");
+	oldArmy.str("Player_2_Start");
+	oldArmy.str("Player_2_Start_Rally");
+	auto legacy = bytes; // no hero entries: v14's rank fields add no bytes here
+	const auto oldPrefix = std::search(legacy.begin(), legacy.end(), oldArmy.data().begin(), oldArmy.data().end());
+	REQUIRE(oldPrefix != legacy.end());
+	const std::size_t planStart = (std::size_t)(oldPrefix - legacy.begin()) + oldArmy.data().size();
+	NetByteReader planReader(legacy.data() + planStart, legacy.size() - planStart);
+	CHECK(planReader.i32() == LivingWorldArmySpawnPlan::NORMAL_NEUTRAL);
+	CHECK(planReader.i32() == 1);
+	CHECK(planReader.u8() == 0);
+	CHECK(planReader.str() == "Origin");
+	REQUIRE(planReader.u32() == 3);
+	CHECK(planReader.str() == "A");
+	CHECK(planReader.str() == "B");
+	CHECK(planReader.str() == "C");
+	REQUIRE_FALSE(planReader.failed());
+	const std::size_t planEnd = legacy.size() - planReader.remaining();
+	legacy.erase(legacy.begin() + (std::ptrdiff_t)planStart, legacy.begin() + (std::ptrdiff_t)planEnd);
+	legacy[8] = 12;
+	ReplayFile legacyBack;
+	REQUIRE_MESSAGE(ReplayFile::parse(legacy, legacyBack, &error), error);
+	const auto &oldBattle = legacyBack.header.game.livingWorldBattle;
+	REQUIRE(oldBattle.armies.size() == 1);
+	CHECK(oldBattle.armies.front().slot == 1);
+	CHECK(oldBattle.armies.front().armyId == 7);
+	CHECK(oldBattle.armies.front().state == 2);
+	CHECK(oldBattle.armies.front().arrivalFrame == 1500);
+	CHECK(oldBattle.armies.front().spawnPoints == b.armies.front().spawnPoints);
+	CHECK(oldBattle.armies.front().placement.method == LivingWorldArmySpawnPlan::LEGACY);
+	CHECK(oldBattle.armies.front().placement.connections.empty());
+	CHECK(oldBattle.members.size() == 2);
+	CHECK(oldBattle.ownerSlot == 0);
+	CHECK(oldBattle.ownerBuildings == b.ownerBuildings);
+	CHECK(legacyBack.hashes.at(3) == 77);
+	for (const int rank : { 0, 4 })
+	{
+		ReplayHeader ranked = h;
+		ranked.game.livingWorldBattle.slotStarts.back().heroes.push_back({ "GondorAragornMP", "Hero#0", 300.0f, true, rank, 2 });
+		ReplayFile rankedBack;
+		REQUIRE_MESSAGE(ReplayFile::parse(record(ranked), rankedBack, &error), error);
+		const auto &hero = rankedBack.header.game.livingWorldBattle.slotStarts.back().heroes.front();
+		CHECK(hero.rank == rank);
+		CHECK(hero.baseRank == 2);
+	}
+	ReplayHeader missingRank = h;
+	missingRank.game.livingWorldBattle.slotStarts.back().heroes.push_back({ "GondorAragornMP", "Hero#0", 300.0f, true });
+	ReplayFile rejectedRank;
+	CHECK_FALSE(ReplayFile::parse(record(missingRank), rejectedRank, &error));
+	CHECK(error == "the War of the Ring battle's player start 1 is damaged");
 	// a member on slot 40 is refused by name
 	ReplayHeader bad = h;
 	bad.game.livingWorldBattle.members[0].slot = 40;

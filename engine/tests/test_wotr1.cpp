@@ -1611,12 +1611,15 @@ struct BattleRun
 	std::vector<int> startingArmies;               // and their army ids
 	std::vector<std::string> attackerTactical;     // FactionMen's StartingUnitTacticalWOTR
 	float heroExperience = -1.0f;                  // Aragorn's experience after the start (CarryoverUnit RW 0x780172)
-	int attackerHeroRecords = -1, attackerHeroCost = -1, attackerHeroArmy = -1, attackerRank = -1; // WOTR2 milestone 7
+	int attackerHeroRecords = -1, attackerHeroCost = -1, attackerHeroArmy = -1, attackerRank = -1;
+	int attackerHeroRank = -1, attackerHeroBaseRank = -1; // WOTR2 milestone 7
 	bool attackerHeroDead = false;
 	int attackerLiveHeroCost = -1, attackerLiveHeroSeconds = -1, attackerLiveHeroBuildCost = -2, attackerLiveHeroBuildSeconds = -2;
 	int tagObjects = -1;
 	int humanStateEarly = -1, humanStateLate = -1, humanStateCalled = -1, aiState = -1, reinforcementObjects = -1; // WOTR2 milestone 7 (step 5)
 	bool calledIn = false, secondCallIn = true;
+	std::string reinforcementSpawn;
+	Coord3D reinforcementPosition{};
 	std::vector<int> arrivals;
 	bool tagRoundTrip = false, tagDriftCaught = false;
 	float attackerHeroExperience = -1.0f, attackerSkillPoints = -1.0f;
@@ -1683,7 +1686,7 @@ void runBattleStart(starttest::Shared &s, BattleRun &out)
 	m.livingWorldBattle.slotStarts.push_back({ 0, 2500, 9, {} });
 	m.livingWorldBattle.slotStarts.push_back({ 1, 7500, 12, { out.attackerTactical.front() } });
 	// WOTR2 milestone 7: the attacker's war gives a dead hero record and its skill points (RW 0x6E42DA, RW 0x8125FC)
-	m.livingWorldBattle.slotStarts.back().heroes.push_back({ "GondorAragornMP", "LWB_MenFortress#0", 300.0f, true });
+	m.livingWorldBattle.slotStarts.back().heroes.push_back({ "GondorAragornMP", "LWB_MenFortress#0", 300.0f, true, 0, 0 });
 	m.livingWorldBattle.slotStarts.front().heroes.push_back({ "MordorFighterHorde", "LWB_MordorFortress#0", 0.0f, false }); // never recruited (any template: the record is what is checked)
 	m.livingWorldBattle.slotStarts.back().skillPoints = 2000.0f;
 	// WOTR2 milestone 7 (step 5): the attacker's army 21 and the owner's army 22 are reinforcements (frames 10 and 5); the first choice of points is missing
@@ -1692,6 +1695,12 @@ void runBattleStart(starttest::Shared &s, BattleRun &out)
 	m.livingWorldBattle.armies.push_back({ 1, 7, 4, 0, {} });
 	m.livingWorldBattle.armies.push_back({ 1, 21, 2, 10, { { "WOTRSpawnPoint_Nowhere_1", "WOTRGatherPoint_Nowhere_1" }, { "Player_2_Start", "Player_2_Start_Rally" } } });
 	m.livingWorldBattle.armies.push_back({ 0, 22, 2, 5, { { "Player_1_Start", "Player_1_Start_Rally" } } });
+	// RotWK's hostile one-on-one selection maximizes gather distance from
+	// the defender's rally. Rohan selects Gap_Of_Rohan, not the origin point.
+	const std::vector<std::string> connections{ "Cair_Andros", "Fangorn", "Gap_Of_Rohan", "Helms_Deep", "The_Brown_Lands" };
+	m.livingWorldBattle.armies[0].placement = { LivingWorldArmySpawnPlan::NORMAL_HOSTILE, 1, false, "Cair_Andros", connections };
+	m.livingWorldBattle.armies[1].placement = m.livingWorldBattle.armies[0].placement;
+	m.livingWorldBattle.armies[2].placement = { LivingWorldArmySpawnPlan::NORMAL_FRIENDLY, 0, true, "Rohan", connections };
 	NewGameStart start(RandomAlgorithm::ZH_CarryChain);
 	REQUIRE_MESSAGE(NewGame::prepareNewGame(m, s.world->playerTemplates(), s.settings, cache, RandomAlgorithm::ZH_CarryChain, start, &error), error);
 	CHECK(start.message.livingWorldBattle.members.size() == 5);
@@ -1733,6 +1742,8 @@ void runBattleStart(starttest::Shared &s, BattleRun &out)
 	{
 		const HeroRecord &rec = attackerPlayer->heroes().records().front();
 		out.attackerHeroDead = rec.dead;
+		out.attackerHeroRank = rec.rank;
+		out.attackerHeroBaseRank = rec.baseRank;
 		out.attackerHeroCost = (int)rec.cost;
 		out.attackerHeroExperience = rec.experience;
 	}
@@ -1741,6 +1752,8 @@ void runBattleStart(starttest::Shared &s, BattleRun &out)
 		out.attackerHeroArmy = t->armyId;
 	}
 	out.attackerRank = attackerPlayer->science().getRankLevel();
+	CHECK(attackerPlayer->science().mode().livingWorldMaxRank == 60);
+	CHECK(attackerPlayer->science().getMaxRankLevel() == 60);
 	{
 		// WOTR2 milestone 7: the army tags are in the snapshot (obfme:GameLogic version 4) and in the hash while in use: a save / load round trip gives
 		// them and the hash back; a drifted tag changes the hash
@@ -1811,6 +1824,12 @@ void runBattleStart(starttest::Shared &s, BattleRun &out)
 	out.aiState = tags.reinforcement(22) ? tags.reinforcement(22)->state : -1;
 	const size_t objectsBefore = tags.objects.size();
 	out.calledIn = StartingBase::callInLivingWorldArmy(game.logic(), 21);
+	if (const auto *r = tags.reinforcement(21); r && !r->spawnPoints.empty())
+		out.reinforcementSpawn = r->spawnPoints.front().first;
+	for (const auto &entry : tags.objects)
+		if (entry.second.armyId == 21)
+			if (const Object *object = game.logic().findObjectByID(entry.first))
+				out.reinforcementPosition = *object->getPosition();
 	out.humanStateCalled = tags.reinforcement(21) ? tags.reinforcement(21)->state : -1;
 	out.reinforcementObjects = (int)(tags.objects.size() - objectsBefore);
 	out.arrivals = tags.arrivals;
@@ -2038,6 +2057,8 @@ TEST_CASE("wotr1 retail: a War of the Ring battle starts without starting bases;
 	CHECK(a.attackerHeroRecords == 1);
 	CHECK(a.attackerHeroDead);
 	CHECK(a.attackerHeroExperience == 300.0f);
+	CHECK(a.attackerHeroRank == 0); // RW 0x6E42DA copies the record, including rank zero, without substituting rank one
+	CHECK(a.attackerHeroBaseRank == 0);
 	CHECK(a.attackerHeroCost > 0); // tolerance: the retail RespawnUpdate rule's cost (data), a revive is never free
 	CHECK(a.attackerLiveHeroCost == a.attackerLiveHeroBuildCost); // review wotr2m7: a living entry is a purchase at the template's BuildCost
 	CHECK(a.attackerLiveHeroSeconds == a.attackerLiveHeroBuildSeconds);
@@ -2054,6 +2075,11 @@ TEST_CASE("wotr1 retail: a War of the Ring battle starts without starting bases;
 	CHECK(a.calledIn);
 	CHECK(a.humanStateCalled == 4);
 	CHECK(a.reinforcementObjects == 1);
+	CHECK(a.reinforcementSpawn == "WOTRSpawnPoint_Gap_Of_Rohan_1");
+	// The four-abreast layout remains the named S-1329 approximation; the
+	// anchor is the actual selected walk-on point (-200, 2300).
+	CHECK(a.reinforcementPosition.x == -305.0f);
+	CHECK(a.reinforcementPosition.y == 2400.0f);
 	CHECK(a.arrivals == std::vector<int>{ 22, 21 });
 	CHECK_FALSE(a.secondCallIn);
 	MESSAGE("Aragorn's rank after 900 carried experience points: " << a.heroRank);
@@ -2340,6 +2366,9 @@ struct LivingWorldLogicTestAccess
 	static std::vector<Army> &armies(LivingWorldLogic &l) { return l.m_armies; }
 	static std::vector<Battle> &battles(LivingWorldLogic &l) { return l.m_battles; }
 	static std::vector<PlayerState> &players(LivingWorldLogic &l) { return l.m_players; }
+	static void setPhase(LivingWorldLogic &l, int phase) { l.m_phase = phase; }
+	static void retreat(LivingWorldLogic &l, int id) { l.prepareRetreat(id); }
+	static void prepareRetreatPhase(LivingWorldLogic &l) { l.m_phase = PHASE_OWNERSHIP; l.prepareOwnershipRetreats(); }
 };
 } // namespace LivingWorld
 
@@ -2663,8 +2692,11 @@ TEST_CASE("wotr7 logic: a fought battle's reinforcement schedule; an army never 
 	CHECK(first->state == 4);
 	CHECK(later->state == 2);
 	CHECK(later->arrivalFrame == 1500);
-	REQUIRE(later->spawnPoints.size() == 2); // a one-on-one battle: one choice (RW 0x80F754), then Player_2_Start
-	CHECK(later->spawnPoints.back().first == "Player_2_Start");
+	CHECK(later->spawnPoints.empty()); // the loaded map, not the strategic layer, selects its coordinates
+	CHECK(later->placement.method == LivingWorldArmySpawnPlan::NORMAL_HOSTILE);
+	CHECK(later->placement.side == 0);
+	CHECK(later->placement.friendlyOwner == false);
+	CHECK(later->placement.connections == std::vector<std::string>{ "C" });
 	for (const BattleSetup::ArmyStart &as : setup.armyStarts)
 	{
 		if (as.armyId != 500)
@@ -2796,4 +2828,487 @@ TEST_CASE("wotr8 messages: the strategic orders as MSG_LW_* messages play the wa
 			CHECK(direct.stateHash() == viaMessages.stateHash());
 		}
 	}
+}
+
+
+TEST_CASE("wotr battle awards: allied claimants choose a recipient through the saved strategic command path")
+{
+	LivingWorldStores stores;
+	std::string data = kRest;
+	data.replace(data.find("MaxPlayers = 2"), std::string("MaxPlayers = 2").size(), "MaxPlayers = 3");
+	parseText(stores, std::string(kPlayers) + data);
+	GameSetup setup = twoPlayers(true);
+	setup.slots[0].startRegion = "A";
+	setup.slots[1].startRegion = "C";
+	setup.slots[1].team = 1;
+	setup.slots[1].human = true;
+	SetupSlot enemy = setup.slots[0];
+	enemy.name = "Other";
+	enemy.team = 2;
+	enemy.startRegion = "D";
+	setup.slots.push_back(enemy);
+	LivingWorldLogic logic(stores, testUnits);
+	std::string error;
+	REQUIRE_MESSAGE(logic.start(setup, &error), error);
+	int first = 0, second = 0;
+	for (const Army &a : logic.armies())
+	{
+		if (a.owner == 0) first = a.id;
+		if (a.owner == 1) second = a.id;
+	}
+	REQUIRE(logic.orderMove(0, first, 1, &error));
+	REQUIRE(logic.orderMove(1, second, 1, &error));
+	for (int p = 0; p < 3; ++p) REQUIRE(logic.endTurn(p, &error));
+	logic.update();
+	CHECK(logic.phase() == PHASE_OWNERSHIP);
+	CHECK(logic.regions()[1].owner == -1); // the old code silently gave it to the first army
+	REQUIRE(logic.regionAwardDisputes().size() == 1);
+	CHECK(logic.regionAwardDisputes()[0].players == std::vector<int>{ 0, 1 });
+	CHECK(logic.regionAwardResolver(logic.regionAwardDisputes()[0]) == 0);
+	CHECK_FALSE(logic.canEndPhase(0));
+	const auto hash = logic.stateHash();
+	GameMessage choose(MSG_LW_RESOLVE_REGION_AWARD_DISPUTE, 0);
+	choose.appendIntegerArgument(1);
+	choose.appendIntegerArgument(1);
+	CHECK_FALSE(logic.dispatch(choose, 1, &error));
+	CHECK(error == "only the territory dispute's resolver may choose its owner");
+	CHECK(logic.stateHash() == hash);
+	GameMessage invalid(MSG_LW_RESOLVE_REGION_AWARD_DISPUTE, 0);
+	invalid.appendIntegerArgument(1);
+	invalid.appendIntegerArgument(2);
+	CHECK_FALSE(logic.dispatch(invalid, 0, &error));
+	CHECK(error == "the territory award must name one of its claimants");
+	CHECK(logic.stateHash() == hash);
+	std::vector<std::uint8_t> bytes;
+	REQUIRE_MESSAGE(logic.saveState(bytes, &error), error);
+	LivingWorldLogic loaded(stores, testUnits);
+	REQUIRE_MESSAGE(loaded.loadState(setup, bytes, &error), error);
+	CHECK(loaded.stateHash() == hash);
+	auto &loadedPlayers = const_cast<std::vector<PlayerState> &>(loaded.players());
+	loadedPlayers[1].defeated = true;
+	CHECK_FALSE(loaded.dispatch(choose, 0, &error));
+	loadedPlayers[1].defeated = false;
+	REQUIRE_MESSAGE(loaded.dispatch(choose, 0, &error), error);
+	CHECK(loaded.regionAwardDisputes().empty());
+	CHECK(loaded.regions()[1].owner == 1);
+	CHECK_FALSE(loaded.dispatch(choose, 0, &error));
+	CHECK(error == "no unresolved territory award for that region");
+}
+
+TEST_CASE("wotr battle awards: resolver selection follows retail human count and host participation")
+{
+	LivingWorldLogic logic(testStores(), testUnits);
+	std::string error;
+	GameSetup setup = twoPlayers(true);
+	setup.hostPlayer = 1; // lobby slot 0 need not be the first compacted strategic player
+	REQUIRE(logic.start(setup, &error));
+	RegionAwardDispute d;
+	d.players = { 1, 0 };
+	CHECK(logic.regionAwardResolver(d) == 0); // one human, even when not first
+	auto &players = const_cast<std::vector<PlayerState> &>(logic.players());
+	players[0].human = false;
+	CHECK(logic.regionAwardResolver(d) == 1); // no humans: first claimant, no random choice
+	players[0].human = true;
+	players[1].human = true;
+	CHECK(logic.regionAwardResolver(d) == 1); // multiple humans: actual host mapping
+	PlayerState third = players[1];
+	players.push_back(third);
+	d.players = { 0, 2 };
+	CHECK(logic.regionAwardResolver(d) == -1); // retail cannot nominate an absent host
+}
+
+// RW 0x6BCA3C uses the STLport sort at RW 0x6BC6BA (BFME2 ConsumeGarrisonUnitsFromRTS RVA 0x2BBD52).
+// Twenty equal entries cross its 16-entry threshold: the partition swaps both ends, so the lowest key ends up last.
+TEST_CASE("wotr battles: tied garrison entries use retail introsort order when filling a hero army")
+{
+    LivingWorldStores stores;
+    parseText(stores, std::string(kPlayers) + kRest);
+    for (LivingWorld::PlayerTemplate &pt : stores.playerTemplates)
+    {
+        if (pt.name == "PlayerGood") pt.maxHeroCP = 20;
+    }
+    LivingWorldLogic lw(stores, testUnits);
+    std::string err;
+    REQUIRE(lw.start(twoPlayers(true), &err));
+    const int good = lw.armies()[0].id;
+    int battleIndex = -1;
+    for (int t = 0; t < 8 && battleIndex < 0 && !lw.finished(); ++t)
+    {
+        const Army *a = lw.findArmy(good);
+        REQUIRE(a);
+        lw.orderMove(0, good, a->region + 1 < 4 ? a->region + 1 : a->region, nullptr);
+        REQUIRE(lw.endTurn(0, &err));
+        lw.update();
+        battleIndex = lw.pendingHumanBattle();
+    }
+    REQUIRE(battleIndex >= 0); // tolerance: the battle finder chooses its turn from the scripted march
+    // No missing same-template soldiers to refill before the sorted pass.
+    for (Army &a : LivingWorldLogicTestAccess::armies(lw))
+    {
+        if (a.id == good) a.members.resize(1);
+    }
+    BattleSetup setup;
+    REQUIRE_MESSAGE(lw.chooseRts(battleIndex, &setup, &err), err);
+    int garrison = 0;
+    for (const BattleSetup::PlayerStart &ps : setup.playerStarts)
+    {
+        if (ps.player == 0) garrison = ps.garrisonArmyId;
+    }
+    BattleResult result;
+    result.collected = true;
+    result.winner = 0;
+    result.survivors.push_back({ good, "GoodHero", 0.0f, 1, {}, "hero" });
+    for (int i = 0; i < 20; ++i)
+    {
+        result.survivors.push_back({ garrison, "GoodSoldiers", 0.0f, 1, {}, "built_" + std::to_string(i) });
+    }
+    REQUIRE_MESSAGE(lw.applyBattleResult(battleIndex, result, &err), err);
+    const Army *hero = lw.findArmy(good);
+    REQUIRE(hero);
+    REQUIRE(hero->members.size() == 2);
+    CHECK(hero->members[1].spawnId == "built_0"); // stable_sort incorrectly picks built_19
+    const Army *remaining = lw.findArmy(garrison);
+    REQUIRE(remaining);
+    CHECK(remaining->members.size() == 19);
+    CHECK(remaining->members.front().spawnId == "built_1");
+}
+
+// RW 0x6B68F3, with scenario/victory-type condition gate RW 0x90272D -> 0x9022AD;
+// BFME2 RVA 0x2B5CFB lacks the condition gate and always treats the home region as vital.
+TEST_CASE("wotr battles: retreat elimination checks the selected capital-loss condition and its team")
+{
+    LivingWorldStores stores;
+    parseText(stores, std::string(kPlayers) + kRest);
+    Campaign &campaign = *stores.campaigns.front();
+    Scenario &scenario = *campaign.scenario;
+    LivingWorldLogic lw(stores, testUnits);
+    std::string err;
+    REQUIRE(lw.start(twoPlayers(true), &err));
+    const int good = lw.armies()[0].id;
+    auto &regions = LivingWorldLogicTestAccess::regions(lw);
+    // Good owns only its capital A; B belongs to a friendly teammate, so a retreat is physically possible.
+    LivingWorldLogicTestAccess::players(lw)[1].team = 1;
+    regions[0].owner = 0;
+    regions[1].owner = 1;
+    regions[2].owner = 1;
+    regions[3].owner = 1;
+    Battle b;
+    b.region = 0;
+    b.armies = { good };
+    LivingWorldLogicTestAccess::battles(lw).push_back(b);
+    scenario.useMpRulesVictoryCondition = false;
+    CHECK(lw.resolutionOptions(0, 0) == (LivingWorldLogic::RESOLVE_AUTO | LivingWorldLogic::RESOLVE_REAL_TIME));
+    scenario.playerDefeat.front().loseIfCapitalLost = false;
+    CHECK(lw.resolutionOptions(0, 0) == (LivingWorldLogic::RESOLVE_AUTO | LivingWorldLogic::RESOLVE_REAL_TIME | LivingWorldLogic::RESOLVE_RETREAT)); // last region alone does not prohibit retreat
+    scenario.playerDefeat.front().loseIfCapitalLost = true;
+    scenario.playerDefeat.front().teams = { 2 };
+    CHECK(lw.resolutionOptions(0, 0) == (LivingWorldLogic::RESOLVE_AUTO | LivingWorldLogic::RESOLVE_REAL_TIME | LivingWorldLogic::RESOLVE_RETREAT));
+    VictoryType type;
+    Condition loseCapital;
+    loseCapital.loseIfCapitalLost = true;
+    loseCapital.teams = { 1 };
+    type.playerDefeat.push_back(loseCapital);
+    campaign.victoryTypes.push_back(type);
+    scenario.useMpRulesVictoryCondition = true;
+    CHECK(lw.resolutionOptions(0, 0) == (LivingWorldLogic::RESOLVE_AUTO | LivingWorldLogic::RESOLVE_REAL_TIME));
+    campaign.victoryTypes.front().playerDefeat.front().loseIfCapitalLost = false;
+    CHECK(lw.resolutionOptions(0, 0) == (LivingWorldLogic::RESOLVE_AUTO | LivingWorldLogic::RESOLVE_REAL_TIME | LivingWorldLogic::RESOLVE_RETREAT));
+}
+
+TEST_CASE("wotr battles: LoseCampaignIfLoseMap is refused before the battle changes strategic state")
+{
+    LivingWorldStores stores;
+    parseText(stores, std::string(kPlayers) + kRest);
+    LivingWorldLogic lw(stores, testUnits);
+    std::string err;
+    REQUIRE(lw.start(twoPlayers(true), &err));
+    const int region = lw.armies()[0].region;
+    stores.regionCampaigns.front().regions[(size_t)region].loseCampaignIfLoseMap = true;
+    Battle b;
+    b.region = region;
+    b.armies = { lw.armies()[0].id };
+    LivingWorldLogicTestAccess::battles(lw).push_back(b);
+    LivingWorldLogicTestAccess::setPhase(lw, PHASE_BATTLES);
+    const auto before = lw.stateHash();
+    BattleSetup setup;
+    CHECK_FALSE(lw.chooseRts(0, &setup, &err));
+    CHECK(err == "[S-1329] LoseCampaignIfLoseMap tactical defeat and campaign exit are not ported");
+    CHECK(lw.stateHash() == before);
+    CHECK(lw.battles()[0].resolution == Battle::PENDING);
+}
+
+TEST_CASE("wotr battles: a human heroless army with multiple retreat exits reports the unresolved destination")
+{
+    LivingWorldLogic lw(testStores(), testUnits);
+    std::string err;
+    REQUIRE(lw.start(twoPlayers(true), &err));
+    auto &armies = LivingWorldLogicTestAccess::armies(lw);
+    Army army = armies[0];
+    army.id = 500;
+    army.garrison = true;
+    army.heroTemplate.clear();
+    army.region = 1; // B connects to A and C
+    army.movedFrom = -1;
+    armies.push_back(army);
+    auto &regions = LivingWorldLogicTestAccess::regions(lw);
+    regions[0].owner = 0;
+    regions[1].owner = 1;
+    regions[2].owner = 0;
+    LivingWorldLogicTestAccess::retreat(lw, 500);
+    LivingWorldLogicTestAccess::prepareRetreatPhase(lw);
+    REQUIRE(lw.findArmy(500));
+    CHECK(lw.findArmy(500)->region == 1);
+    CHECK(lw.findArmy(500)->destination == -1);
+    CHECK(lw.retreatList() == std::vector<int>{ 500 });
+    CHECK_FALSE(lw.endPhase(0, &err));
+    CHECK(err == "[S-1329] a human's heroless army has several retreat regions; its destination rule is unverified");
+}
+
+TEST_CASE("wotr battle awards retail: original scenario armies contest a neutral region and resume after choosing the second ally")
+{
+	OPENBFME_REQUIRE_START(shared);
+	const LivingWorldStores &stores = shared->world->livingWorld();
+	const Campaign *campaign = stores.findCampaign("WOTRScenario001");
+	REQUIRE(campaign);
+	REQUIRE(campaign->scenario);
+	const RegionCampaign *regions = stores.findRegionCampaign(campaign->scenario->regionCampaign);
+	REQUIRE(regions);
+	const UnitInfoSource units = makeUnitInfoSource(*shared->world);
+	GameSetup setup;
+	setup.campaign = campaign->name;
+	setup.seed = 71;
+	setRankData(*shared->world, setup);
+	const char *factions[] = { "FactionMen", "FactionElves", "FactionMordor" };
+	for (int p = 0; p < 3; ++p)
+	{
+		SetupSlot slot;
+		slot.name = "P" + std::to_string(p);
+		slot.faction = factions[p];
+		slot.human = true;
+		slot.team = p == 2 ? 2 : 1;
+		setup.slots.push_back(slot);
+	}
+	auto enabled = [&](const std::string &name) {
+		return std::find(campaign->scenario->disableRegions.begin(), campaign->scenario->disableRegions.end(), name) == campaign->scenario->disableRegions.end();
+	};
+	std::unique_ptr<LivingWorldLogic> logic;
+	int target = -1;
+	std::string error;
+	// Pick the authored encounter from the original region graph; no installed
+	// INI/map is changed and no copied retail data is used as a fixture.
+	for (int r = 0; r < (int)regions->regions.size() && !logic; ++r)
+	{
+		const Region &to = regions->regions[(size_t)r];
+		if (!enabled(to.name)) continue;
+		std::vector<std::string> incoming;
+		for (const Region &from : regions->regions)
+		{
+			if (from.name == to.name || !enabled(from.name)) continue;
+			for (const RegionConnection &c : from.connections)
+			{
+				if (c.region == to.name) incoming.push_back(from.name);
+			}
+		}
+		if (incoming.size() < 2) continue;
+		setup.slots[0].startRegion = incoming[0];
+		setup.slots[1].startRegion = incoming[1];
+		for (const Region &remote : regions->regions)
+		{
+			if (enabled(remote.name) && remote.name != to.name && remote.name != incoming[0] && remote.name != incoming[1])
+			{
+				setup.slots[2].startRegion = remote.name;
+				break;
+			}
+		}
+		auto candidate = std::make_unique<LivingWorldLogic>(stores, units);
+		REQUIRE_MESSAGE(candidate->start(setup, &error), error);
+		if (candidate->regions()[(size_t)r].owner != -1) continue;
+		int armies[] = { 0, 0 };
+		for (const Army &a : candidate->armies())
+		{
+			if ((a.owner == 0 || a.owner == 1) && !a.garrison && armies[a.owner] == 0) armies[a.owner] = a.id;
+		}
+		if (!candidate->orderMove(0, armies[0], r, &error) || !candidate->orderMove(1, armies[1], r, &error)) continue;
+		target = r;
+		logic = std::move(candidate);
+	}
+	REQUIRE(logic != nullptr);
+	for (int p = 0; p < 3; ++p) REQUIRE_MESSAGE(logic->endTurn(p, &error), error);
+	logic->update();
+	REQUIRE(logic->phase() == PHASE_OWNERSHIP);
+	REQUIRE(logic->regionAwardDisputes().size() == 1);
+	CHECK(logic->regionAwardDisputes()[0].region == target);
+	CHECK(logic->regionAwardDisputes()[0].players == std::vector<int>{ 0, 1 });
+	CHECK(logic->regions()[(size_t)target].owner == -1);
+	std::vector<std::uint8_t> bytes;
+	REQUIRE(logic->saveState(bytes, &error));
+	LivingWorldLogic loaded(stores, units);
+	REQUIRE_MESSAGE(loaded.loadState(setup, bytes, &error), error);
+	CHECK(loaded.stateHash() == logic->stateHash());
+	GameMessage choice(MSG_LW_RESOLVE_REGION_AWARD_DISPUTE, 0);
+	choice.appendIntegerArgument(target);
+	choice.appendIntegerArgument(1);
+	REQUIRE_MESSAGE(loaded.dispatch(choice, 0, &error), error);
+	CHECK(loaded.regions()[(size_t)target].owner == 1);
+	loaded.update();
+	CHECK(loaded.turn() == 2);
+	CHECK(loaded.phase() == PHASE_ORDERS);
+}
+
+TEST_CASE("wotr battle awards: an ally that retreated is not a claimant when its side later wins")
+{
+	LivingWorldStores stores;
+	std::string data = kRest;
+	data.replace(data.find("MaxPlayers = 2"), std::string("MaxPlayers = 2").size(), "MaxPlayers = 3");
+	parseText(stores, std::string(kPlayers) + data);
+	GameSetup setup = twoPlayers(true);
+	setup.slots[0].startRegion = "A";
+	setup.slots[1].startRegion = "C";
+	setup.slots[1].team = 1;
+	setup.slots[1].human = true;
+	SetupSlot enemy = setup.slots[0];
+	enemy.name = "Other";
+	enemy.team = 2;
+	enemy.startRegion = "D";
+	setup.slots.push_back(enemy);
+	LivingWorldLogic logic(stores, testUnits);
+	std::string error;
+	REQUIRE(logic.start(setup, &error));
+	int first = 0, second = 0;
+	auto &armies = const_cast<std::vector<Army> &>(logic.armies());
+	for (Army &a : armies)
+	{
+		if (a.owner == 0) first = a.id;
+		if (a.owner == 1) second = a.id;
+		if (a.owner == 2) a.region = 1; // authored encounter, the third side already occupies the battlefield
+	}
+	REQUIRE(logic.orderMove(0, first, 1, &error));
+	REQUIRE(logic.orderMove(1, second, 1, &error));
+	for (int p = 0; p < 3; ++p) REQUIRE(logic.endTurn(p, &error));
+	logic.update();
+	REQUIRE(logic.pendingHumanBattle() == 0);
+	REQUIRE_MESSAGE(logic.chooseRetreat(0, 1, &error), error);
+	CHECK(logic.battles()[0].retreatedPlayers == std::vector<int>{ 1 });
+	REQUIRE(logic.battles()[0].resolution == Battle::PENDING);
+	std::vector<std::uint8_t> bytes;
+	REQUIRE(logic.saveState(bytes, &error));
+	LivingWorldLogic loaded(stores, testUnits);
+	REQUIRE_MESSAGE(loaded.loadState(setup, bytes, &error), error);
+	CHECK(loaded.battles()[0].retreatedPlayers == std::vector<int>{ 1 });
+	CHECK(loaded.stateHash() == logic.stateHash());
+	BattleSetup battle;
+	REQUIRE_MESSAGE(loaded.chooseRts(0, &battle, &error), error);
+	CHECK(std::find(battle.players.begin(), battle.players.end(), 1) == battle.players.end());
+	BattleResult result;
+	result.collected = true;
+	result.winner = 0;
+	REQUIRE_MESSAGE(loaded.applyBattleResult(0, result, &error), error);
+	loaded.update();
+	CHECK(loaded.regionAwardDisputes().empty());
+	CHECK(loaded.regions()[1].owner == 0);
+}
+
+TEST_CASE("wotr battle awards: surrender abandons departed claimants without trapping the remaining hostile teams")
+{
+	LivingWorldStores stores;
+	std::string data = kRest;
+	data.replace(data.find("MaxPlayers = 2"), std::string("MaxPlayers = 2").size(), "MaxPlayers = 4");
+	data.insert(data.find("\tRegion D\n"), "\tRegion E\n\t\tMapName = \"MAP E\"\n\tEnd\n");
+	parseText(stores, std::string(kPlayers) + data);
+	GameSetup setup = twoPlayers(true);
+	setup.slots[0].startRegion = "A";
+	setup.slots[1].startRegion = "C";
+	setup.slots[1].team = 1;
+	setup.slots[1].human = true;
+	SetupSlot enemy = setup.slots[0];
+	enemy.name = "Other";
+	enemy.team = 2;
+	enemy.startRegion = "D";
+	setup.slots.push_back(enemy);
+	enemy.name = "Third team";
+	enemy.team = 3;
+	enemy.startRegion = "E";
+	setup.slots.push_back(enemy);
+	LivingWorldLogic logic(stores, testUnits);
+	std::string error;
+	REQUIRE_MESSAGE(logic.start(setup, &error), error);
+	int first = 0, second = 0;
+	for (const Army &a : logic.armies())
+	{
+		if (a.owner == 0) first = a.id;
+		if (a.owner == 1) second = a.id;
+	}
+	REQUIRE(logic.orderMove(0, first, 1, &error));
+	REQUIRE(logic.orderMove(1, second, 1, &error));
+	for (int p = 0; p < 4; ++p) REQUIRE(logic.endTurn(p, &error));
+	logic.update();
+	REQUIRE(logic.regionAwardDisputes().size() == 1);
+	CHECK_FALSE(logic.resolveRegionAwardDispute(-1, 1, 1, &error));
+	CHECK(logic.regions()[1].owner == -1);
+	logic.surrender(0);
+	CHECK(logic.players()[0].defeated);
+	CHECK(logic.players()[1].defeated);
+	CHECK_FALSE(logic.finished());
+	CHECK(logic.regionAwardDisputes().empty());
+	CHECK(logic.regions()[1].owner == -1);
+	CHECK_FALSE(logic.resolveRegionAwardDispute(0, 1, 1, &error));
+	const std::string reported = "[S-1324] unverified: allied territory award abandoned after every claimant left in B";
+	CHECK(std::count_if(logic.events().begin(), logic.events().end(), [&](const StrategicEvent &e) { return e.text == reported; }) == 1);
+	logic.update();
+	CHECK(logic.turn() == 2);
+	CHECK(logic.phase() == PHASE_ORDERS);
+}
+
+TEST_CASE("wotr battles: strategic revival records preserve zero and veteran rank through save and load")
+{
+    for (const int rank : { 0, 4 })
+    {
+        LivingWorldLogic lw(testStores(), testUnits);
+        const GameSetup setup = twoPlayers(true);
+        std::string error;
+        REQUIRE(lw.start(setup, &error));
+        RevivalUnit r;
+        r.thing = "GoodHero";
+        r.spawnId = "Hero#0";
+        r.dead = true;
+        r.experience = 300.0f;
+        r.rank = rank;
+        r.baseRank = 2;
+        LivingWorldLogicTestAccess::players(lw)[0].buildableHeroes = { r };
+        std::vector<std::uint8_t> bytes;
+        REQUIRE(lw.saveState(bytes, &error));
+        LivingWorldLogic loaded(testStores(), testUnits);
+        REQUIRE_MESSAGE(loaded.loadState(setup, bytes, &error), error);
+        REQUIRE(loaded.players()[0].buildableHeroes.size() == 1);
+        CHECK(loaded.players()[0].buildableHeroes[0].rank == rank);
+        CHECK(loaded.players()[0].buildableHeroes[0].baseRank == 2);
+        CHECK(loaded.stateHash() == lw.stateHash());
+    }
+}
+
+TEST_CASE("wotr battles: an unbought legacy revival record retains its hash stream while explicit rank zero is hashed")
+{
+	LivingWorldLogic lw(testStores(), testUnits);
+	std::string error;
+	REQUIRE(lw.start(twoPlayers(true), &error));
+	RevivalUnit fresh;
+	fresh.thing = "GoodHero";
+	fresh.spawnId = "Hero#0";
+	LivingWorldLogicTestAccess::players(lw)[0].buildableHeroes = { fresh };
+	std::vector<std::uint32_t> legacyTape;
+	StateHasher legacyHasher(&legacyTape);
+	lw.hashInto(legacyHasher);
+	auto &record = LivingWorldLogicTestAccess::players(lw)[0].buildableHeroes[0];
+	record.rank = 0;
+	record.baseRank = 0;
+	std::vector<std::uint32_t> rankedTape;
+	StateHasher rankedHasher(&rankedTape);
+	lw.hashInto(rankedHasher);
+	const auto marker = std::find(rankedTape.begin(), rankedTape.end(), 0x52414E4Bu);
+	REQUIRE(marker != rankedTape.end());
+	REQUIRE(std::distance(marker, rankedTape.end()) >= 3); // tolerance: the rank marker is followed by its two integer fields
+	CHECK(marker[1] == 0);
+	CHECK(marker[2] == 0);
+	rankedTape.erase(marker, marker + 3);
+	CHECK(rankedTape == legacyTape); // removing only the new explicit-rank extension reproduces the pre-v9 field stream
 }

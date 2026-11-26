@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GodotDevice/GodotLivingWorld.h.  Lane WOTR-1.
 
+#include "GodotDevice/GodotGameStart.h"
 #include "GodotDevice/GodotLivingWorld.h"
 
 #include "GameLogic/LivingWorld/BattleResultCapture.h"
@@ -141,6 +142,7 @@ void LivingWorldGame::_bind_methods()
 	ClassDB::bind_method(D_METHOD("order_destroy_building", "player", "region", "building_slot"), &LivingWorldGame::order_destroy_building);
 	ClassDB::bind_method(D_METHOD("pending_human_battle"), &LivingWorldGame::pending_human_battle);
 	ClassDB::bind_method(D_METHOD("choose_auto_resolve", "battle"), &LivingWorldGame::choose_auto_resolve);
+	ClassDB::bind_method(D_METHOD("resolve_region_award", "region", "winner"), &LivingWorldGame::resolve_region_award);
 	ClassDB::bind_method(D_METHOD("choose_retreat", "battle", "player"), &LivingWorldGame::choose_retreat);
 	ClassDB::bind_method(D_METHOD("resolution_options", "battle", "player"), &LivingWorldGame::resolution_options);
 	ClassDB::bind_method(D_METHOD("choose_rts", "battle"), &LivingWorldGame::choose_rts);
@@ -665,6 +667,7 @@ Dictionary LivingWorldGame::start(const Dictionary &setup)
 	}
 	GameSetup gs;
 	gs.campaign = n(setup.get("campaign", ""));
+	gs.hostPlayer = (int)(int64_t)setup.get("host_player", 0);
 	gs.seed = (std::uint32_t)(int64_t)setup.get("seed", 0);
 	const Array slots = setup.get("slots", Array());
 	for (int i = 0; i < slots.size(); ++i)
@@ -1005,6 +1008,21 @@ Dictionary LivingWorldGame::get_strategic_state() const
 		battles.push_back(d);
 	}
 	out["battles"] = battles;
+	Array disputes;
+	for (const RegionAwardDispute &dispute : lw.regionAwardDisputes())
+	{
+		Dictionary d;
+		d["region"] = dispute.region;
+		d["resolver"] = lw.regionAwardResolver(dispute);
+		Array claimants;
+		for (int player : dispute.players)
+		{
+			claimants.push_back(player);
+		}
+		d["players"] = claimants;
+		disputes.push_back(d);
+	}
+	out["region_award_disputes"] = disputes;
 	Array events;
 	for (const StrategicEvent &e : lw.events())
 	{
@@ -1718,6 +1736,14 @@ int64_t LivingWorldGame::pending_human_battle() const
 	return m_logic ? m_logic->pendingHumanBattle() : -1;
 }
 
+Dictionary LivingWorldGame::resolve_region_award(int64_t region, int64_t winner)
+{
+	GameMessage m(MSG_LW_RESOLVE_REGION_AWARD_DISPUTE, m_localPlayer);
+	m.appendIntegerArgument((int)region);
+	m.appendIntegerArgument((int)winner);
+	return post(m, m_localPlayer);
+}
+
 Dictionary LivingWorldGame::choose_auto_resolve(int64_t battle)
 {
 	GameMessage m(MSG_LW_SET_CONFLICT_RESOLUTION_METHOD, m_localPlayer); // SendResolutionMethodMessage RW 0x9DF012: (method, battle)
@@ -1829,6 +1855,8 @@ void LivingWorldGame::battleSetupInto(Dictionary &out, const BattleSetup &setup)
 			hd["spawn_id"] = s(h.spawnId);
 			hd["experience"] = h.experience;
 			hd["dead"] = h.dead;
+			hd["rank"] = h.rank;
+			hd["base_rank"] = h.baseRank;
 			heroes.push_back(hd);
 		}
 		d["heroes"] = heroes;
@@ -1847,6 +1875,7 @@ void LivingWorldGame::battleSetupInto(Dictionary &out, const BattleSetup &setup)
 		ad["player"] = a.player;
 		ad["state"] = a.state;
 		ad["arrival_frame"] = a.arrivalFrame;
+		ad["placement"] = livingWorldArmySpawnToDictionary(a.placement);
 		Array points;
 		for (const auto &p : a.spawnPoints)
 		{
@@ -1894,6 +1923,7 @@ Dictionary LivingWorldGame::apply_battle_result(int64_t battle, const Dictionary
 		h.armyId = (int)d.get("army", 0);
 		h.experience = (float)(double)d.get("experience", 0.0);
 		h.rank = (int)d.get("rank", 0);
+		h.baseRank = (int)d.get("base_rank", 0);
 		h.dead = (bool)d.get("dead", false);
 		r.heroes.push_back(h);
 	}
@@ -1977,6 +2007,7 @@ Dictionary battleResultDict(const BattleResult &r)
 		hd["experience"] = h.experience;
 		hd["rank"] = h.rank;
 		hd["dead"] = h.dead;
+		hd["base_rank"] = h.baseRank;
 		heroes.push_back(hd);
 	}
 	Array backs;

@@ -673,6 +673,20 @@ and review counts describe those runs, not fixed counts for every build.
   templates' rank fields, ResourceMultiplierLimit) comes from the running
   world at load. Every name and index is checked against the data, and a
   mismatch is a named refusal.
+- **Battle audit extensions:** native strategic version 9 preserves pending allied
+  territory awards, host mapping, withdrawn battle participants, and revival
+  rank/base rank (including zero). Older fresh-purchase hero records retain their
+  previous hash stream; old dead or experienced records without rank information
+  are refused by name. Battle replay version 14 carries army placement context
+  and revival ranks; versions 12/13 remain readable where the missing metadata
+  does not require guessing. PlayerScience snapshot version 2 carries the Living
+  World `InitialMaxRingLevel` cap. An active tactical battle snapshot lacking that
+  cap is refused rather than applying its ordinary single-player rank limit.
+  These are known compatibility limits: not every pre-v9 strategic save,
+  pre-v14 battle replay or older active tactical snapshot can load. Ordinary
+  skirmish/campaign snapshots retain their version-1 science layout and hash
+  stream. See [the source audit](re/wotr-battles.md#known-native-save-and-replay-compatibility-limits)
+  for the exact refusal boundaries, edition scope and remaining stops.
 - **Loading:** like a campaign menu save, no log is replayed, so another build
   may load it when the data identity matches and the scenario exists
   (`GameWorld::wotrSaveVerdict`). The loaded state must hash as the header

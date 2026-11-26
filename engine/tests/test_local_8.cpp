@@ -227,14 +227,15 @@ TEST_CASE("LOCAL-8 respawn ButtonImage: Living World dead hero record populates 
 	REQUIRE(alice != nullptr);
 
 	std::vector<HeroSystem::LivingWorldHero> wotrHeroes = {
-		{ "Local8RecallHero", "hero_1", 50.0f, true },
-		{ "Local8NoObjButtonHero", "hero_2", 0.0f, true },
+		{ "Local8RecallHero", "hero_1", 50.0f, true, 0, 0 },
+		{ "Local8NoObjButtonHero", "hero_2", 0.0f, true, 0, 0 },
 	};
 	std::vector<std::string> errors;
 	HeroSystem::initLivingWorldPlayer(*f.logic, *alice, wotrHeroes, 1, errors);
 	CHECK(errors.empty());
 	REQUIRE(alice->heroes().size() == 2u);
 	CHECK(alice->heroes().at(0)->dead);
+	CHECK(alice->heroes().at(0)->rank == 0); // the authored strategic record supplies its rank; deadImage must not require substituting rank one
 	CHECK(alice->heroes().at(0)->deadImage == "HIHeroRecall");
 	CHECK(alice->heroes().at(1)->dead);
 	CHECK(alice->heroes().at(1)->deadImage == "HIWormtongueOnly");

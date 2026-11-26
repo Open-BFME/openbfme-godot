@@ -32,6 +32,7 @@ set(OPENBFME_WOTR1_SOURCES
     src/GameClient/GUI/AptScreens/StrategicHUDData.cpp
 )
 set(OPENBFME_WOTR1_TESTS
+    tests/test_wotr_spawn_positions.cpp
     tests/test_wotr1.cpp
     tests/test_wotr2.cpp
     tests/test_wotr4.cpp

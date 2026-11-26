@@ -8,6 +8,7 @@
 #include "Common/StateHash.h"
 #include "GameLogic/LivingWorld/LivingWorldAI.h"
 #include "GameLogic/LivingWorld/LivingWorldAutoResolveBattle.h"
+#include "GameLogic/LivingWorld/StlportAlgorithm.h"
 #include "GameLogic/SimMath.h"
 
 #include <algorithm>
@@ -58,25 +59,25 @@ const std::vector<std::string> &stopLines()
 		"[S-1321] unported Living World rows (RegionBonus, MapMatchPlayerWorldToMap, DelayCarryoverSpawningOf, the OnEnter / OnVictory upgrades, the Act scripting rows, Tutorial, AddPlayer, EyeTower) stop the parse",
 		"[S-1322] presentation fields are kept unvalidated (audio and Eva event names, icon Shadow / AnimMode) and the region effect curves are consumed",
 		"[S-1323] AutoResolve data: the Leadership Affects parser is inferred; the object AutoResolve rows are read from the raw template rows (S-071)",
-		"[S-1324] moves cost retail's path (1 friendly step, 2 other; garrison 1, hero army 2) and crossing hostile armies are repelled; a human's retreat order in phase 4 (WOTR2 milestone 6; a heroless army goes to the first friendly region: inferred); phase 3 and allied award disputes are not ported",
+		"[S-1324] moves, hero retreats and allied territory choices are ported; ownership still settles in phase 4; absent-host award resolution, legacy host mapping and surrender-time abandonment remain reported boundaries",
 		"[S-1325] the campaign start (ownership without an OwnershipSet, Act One's armies at the start region, the historical restrictions, the capital) is inferred",
 		"[S-1326] buildings: retail turn-end construction, the construction lock, the build queue, production and DestroyBuilding; the buildable-hero list; inferred: a hero's spawn ID on both spawn paths, a fought battle's dead hero returning at once; the IncreaseCommandPoints counters (WOTR2 milestone 4); UpgradeTroops (milestone 5: the marks, the automatic pass, the application leaving the orders phase; inferred: the plot byte RW 0x7F3F58 tests, the rank written by the application only); not ported: Create-a-Hero recruitment, the armory upgrades of units in a real-time battle",
 		"[S-1327] economy: retail income (fertile land + farms at turn end), CP counters and limit; the player bonus totals are inferred",
 		"[S-1328] autoresolve: retail's battle and its power point trackers; inferred: a killed unit's experience value, the player bonus totals, StrengthenArmy's range test, the strategic game's GameLogic mode (no player skill point scalar table, MaxLevelSP); not ported: rank scalars, kill notices",
-		"[S-1329] battles: retail resolution options, retreats, cash, starting units, rule 2, victor, survivor rosters, heroes, rank and powers, destroyed buildings, reinforcements and banners, garrison consumption; the army placement (ArmyPlacer) and the makers' army ids are inferred",
+		"[S-1329] battles: retail army anchors, rank ceiling and revival ranks, garrison sort, capital retreat gate and producer/builder army ids; WalkOnTemplate formation, other creation-site ids, quit aftermath and reinforcement client details remain unverified; LoseCampaignIfLoseMap RTS launch and human heroless multiple-exit retreats stop by name",
 		"[S-1330] the AI is retail's LivingWorldAI (troop producer, builder, garrison and army movers, retreats, the battle vote); inferred: a turn's AI steps run back to back before any human order, the order of chains and of a faction's buildings, the battle players' order of the vote; lookups retail reads unchecked are counted (LivingWorldAI::lookupMisses)",
 		"[S-1331] victory: retail order and conditions (victory type by index), RemovePlayer's regions and a team defeat ending the war, the defeats of one check collected before any is removed (WOTR2 milestone 5), the score keepers (retail's turns from 0: inferred); a player without a team, the Rules tab choice and the score screen's way back (the main menu, not the strategic lobby) are inferred or not ported",
 		"[S-1332] the War of the Ring map and its single player battles save and load (OpenBFME's block obfme:LivingWorld, not retail's CHUNK_LivingWorldLogic layout; a battle saves only while it is fought); not ported: reading retail .BfME2WotR saves, multiplayer War of the Ring (LanStrategic / OnlineStrategic)",
 		"[S-1333] the strategic setup: the map preview is drawn by the device (presentation), its picking, scenario and territory texts are retail's; the rule rows are not ported",
 		"[S-1334] strategic HUD: StrategicHUD.apt is the only interface (WOTR2 milestone 4 retires the provisional panel): stats, checklist, END PHASE, new turn, the battle prompt, the details tray's region, army and build queue panels, the radial menus, the palantir's command buttons and the help box; armies picked on the map, member moves; WOTR2 milestone 5: the unit swapper, the map rollover help, the palantir's region stats tray, the strategic notices (each client queues its local player's), the battle statistics after an autoresolve and the score screen (TimeLine type 6); not ported: the real-time battles' score statistics, the profile's strategic statistics, the unified-region notice (its dispatcher is not found), the defeated local player's camera flight",
 		"[S-1335] the strategic map's look is presentation: the region effects at their final intensity with the effect colour as the material's emissive (inference), lit by LivingWorldMapInfo's lights with an inferred Dir convention, the text layer at opacity 0.2; livingworld.txt's camera, sounds, the eye tower, army lines and banner house colours are not retail's; WaterShader.FX is its diffuse colour; IMPASSABLE overlays are hidden",
-		"[S-1336] the strategic orders are MSG_LW_* messages through LivingWorldLogic::dispatch (RW 0x6BE6A6) with the owner and phase checks kept (stricter than retail); PLAYER_SURRENDERED removes the player and its team; the session, exit-vote and battle-barrier messages, DISBAND_ARMY and the battle-line / award-dispute / auto-resolve pacing messages are not ported",
+		"[S-1336] the strategic orders are MSG_LW_* messages through LivingWorldLogic::dispatch (RW 0x6BE6A6) with the owner and phase checks kept (stricter than retail); PLAYER_SURRENDERED removes the player and its team; the session, exit-vote and battle-barrier messages, DISBAND_ARMY and the battle-line / auto-resolve pacing messages are not ported; allied award choices use MSG1719",
 		"[S-1337] a network War of the Ring's strategic map runs in the lockstep without an empty GameLogic under it (retail ticks one): the strategic state is the whole frame CRC; the clock and phase start are saved with the strategic block (v6)",
 		"[S-1338] the war start (CreatePlayers RW 0x932EB8): a random faction or colour and an observer slot are not resolved (refused by name); the handicap is passed as retail's -(slot + 0x20)",
 		"[S-1339] a LAN War of the Ring (the LanStrategic page, the war START, the phase timer, the wait message, the battle vote and real-time battles over the LAN: fought only when every live human of the war is in the battle, RW 0x6B5E3E vs the 0x6A7 tally); online War of the Ring is not available yet",
 		"[S-1340] a LAN War of the Ring is saved from its map (every peer writes its copy, GameState mode 6) and resumed from the LAN lobby's Load Game; a joiner without the copy, a copy that differs or a saved human's open seat refuses the start by name (stricter than retail); Load is disabled in network games as in retail (RW 0x921F83)",
 		"[S-1341] closed: a hung LAN peer that resumes after the others dropped it learns it was dropped (MPDROP-3: the DISCONNECTPLAYER is resent until acknowledged) and runs no further frame (MPDROP-2: LockstepDriver::acquire hands out none once Network::quitRequested(); the strategic session the same)",
-		"[S-1342] a War of the Ring battle with more sides than its map's start positions is refused by the battle start (retail's third-side placement RW 0x62D7EA is not read); a LAN war's vote auto-resolves it instead",
+		"[S-1342] a War of the Ring battle with more sides than its map starts is refused; inspected RW 0x62D7EA exhausts to -1 and establishes no safe third-side rule; LAN auto-resolution is a reported port containment policy",
 	};
 	return lines;
 }
@@ -142,6 +143,11 @@ bool LivingWorldLogic::start(const GameSetup &setup, std::string *error)
 	if (n < sc.minPlayers || n > sc.maxPlayers)
 	{
 		setError(error, "the scenario takes " + std::to_string(sc.minPlayers) + ".." + std::to_string(sc.maxPlayers) + " players, the setup has " + std::to_string(n));
+		return false;
+	}
+	if (setup.hostPlayer < -1 || setup.hostPlayer >= n)
+	{
+		setError(error, "the territory-award host is not a strategic player");
 		return false;
 	}
 	m_seed = setup.seed;
@@ -263,6 +269,7 @@ bool LivingWorldLogic::start(const GameSetup &setup, std::string *error)
 		m_players.push_back(p);
 		initBuildableHeroes((int)m_players.size() - 1); // AddPlayer WB 0xDA5590 -> InitBuildableHeroes WB 0xDEA3B0
 	}
+	m_hostPlayer = setup.hostPlayer;
 	m_turn = 1;
 	m_phase = PHASE_ORDERS;
 	// ownership, buildings and armies
@@ -521,6 +528,7 @@ void LivingWorldLogic::takeRevivalData(int player, const std::string &spawnId, A
 		return;
 	}
 	member.experience = it->experience; // GetRevivalUnitData WB 0xDEB6B0
+	if (it->rank >= 0) member.rank = it->rank;
 	member.spawnId = it->spawnId;       // entry + 0xD0 [inference S-1326: also on the first path, so a dead hero returns under its building's ID]
 	list.erase(it);
 }
@@ -537,6 +545,8 @@ void LivingWorldLogic::addRevivalUnit(int player, const ArmyMember &member, floa
 	r.spawnId = member.spawnId;
 	r.thing = member.thingTemplate;
 	r.experience = experience;
+	r.rank = member.rank; // CreateRevivalEntry RW 0x6E2E4E copies summary rank to record +0x0C/+0x10 (BFME2 RVA 0x2E1AA0)
+	r.baseRank = member.rank;
 	r.dead = true;
 	m_players[(size_t)player].buildableHeroes.push_back(r);
 }
@@ -1735,6 +1745,13 @@ bool LivingWorldLogic::canEndPhase(int player) const
 	{
 		return false;
 	}
+	for (const RegionAwardDispute &d : m_regionAwardDisputes)
+	{
+		if (regionAwardResolver(d) == player)
+		{
+			return false; // RW 0x6B68B3 tests unresolved disputes for this player (BFME2 RVA 0x2B5CBB).
+		}
+	}
 	for (int id : m_retreatList) // RW 0x6B3CC6: every army of the player in the list has a path
 	{
 		const Army *a = findArmy(id);
@@ -1750,7 +1767,20 @@ bool LivingWorldLogic::endPhase(int player, std::string *error)
 {
 	if (!canEndPhase(player))
 	{
-		setError(error, m_phase != PHASE_OWNERSHIP ? std::string("not the retreat phase") : std::string("an army still needs a retreat destination"));
+		setError(error, m_phase != PHASE_OWNERSHIP ? std::string("not the retreat phase")
+			: !m_regionAwardDisputes.empty() ? std::string("a territory award still needs a choice") : std::string("an army still needs a retreat destination"));
+		if (m_phase == PHASE_OWNERSHIP && m_regionAwardDisputes.empty())
+		{
+			for (int id : m_retreatList)
+			{
+				const Army *a = findArmy(id);
+				if (a && a->owner == player && a->garrison && a->destination < 0)
+				{
+					setError(error, "[S-1329] a human's heroless army has several retreat regions; its destination rule is unverified");
+					break;
+				}
+			}
+		}
 		return false;
 	}
 	m_players[(size_t)player].endedTurn = true; // the handler RW 0x6BE6A6 case 0x6A6: + 0x344
@@ -1783,6 +1813,10 @@ bool LivingWorldLogic::canAdvance() const
 			return true;
 		case PHASE_OWNERSHIP:
 		{
+			if (!m_regionAwardDisputes.empty())
+			{
+				return false;
+			}
 			// canAdvance RW 0x6B5F78 (every army in the list has a path) and the barrier (RW 0x6BE20A): with a human's army in the list every human
 			// sends END PHASE (0x6A6), unless the campaign has ForceAdvanceTurnPhase; otherwise the phase passes by itself
 			bool humanArmy = false;
@@ -1881,6 +1915,7 @@ void LivingWorldLogic::enterPhase(int previous)
 				a.movedFrom = -1;
 			}
 			m_battles.clear();
+			m_regionAwardDisputes.clear();
 			consolidateGarrisons(); // RW 0x6BDD98 entering phase 0: RW 0x6B546B
 			autoMarkUnitsForUpgrades(); // then AutoMarkUnitsForUpgrades RW 0x6B5F1C (every player)
 			m_ai->runOrdersPhase(); // the AI players' steps 0..4 and SubmitOrders (RW 0x900AA7, one AI after another in player order)
@@ -1916,34 +1951,9 @@ void LivingWorldLogic::enterPhase(int previous)
 			break;
 		case PHASE_OWNERSHIP:
 			resolveOwnership();
-			prepareRetreats(); // phase-enter 4 (RW 0x6BDD98 -> RW 0x6BABA8); retail applies the ownership on leaving phase 2 (RW 0x6BBBFD)
-			m_ai->runRetreatPhase(); // the AI players' dispatch with phase 4 (ProcessRetreats RW 0x900533)
-			for (PlayerState &p : m_players)
+			if (m_regionAwardDisputes.empty())
 			{
-				p.endedTurn = false; // the barrier cleared every player's done flag (+ 0x344) when phase 3 ended (RW 0x6BE20A)
-			}
-			// WOTR2 milestone 6: a human's hero army with several friendly regions waits in the list for its owner's move order (0x6A8 in phase 4, RW
-			// 0x6B5847) and END PHASE (canAdvance). INFERENCE [S-1329]: retail cannot order a heroless army there (its allowance 1 against the battle
-			// region's cost 2) and would wait forever; this port sends such an army to the first friendly region in connection order instead
-			for (int id : m_retreatList)
-			{
-				for (Army &a : m_armies)
-				{
-					if (a.id != id || a.destination >= 0 || !a.garrison || !m_players[(size_t)a.owner].human)
-					{
-						continue;
-					}
-					for (const RegionConnection &c : m_regionCampaign->regions[(size_t)a.region].connections)
-					{
-						const int r = m_regionCampaign->regionIndex(c.region);
-						const int o = r >= 0 ? m_regions[(size_t)r].owner : -1;
-						if (o >= 0 && (o == a.owner || !hostile(o, a.owner)))
-						{
-							moveArmyToRegion(a, r);
-							break;
-						}
-					}
-				}
+				prepareOwnershipRetreats();
 			}
 			break;
 		case PHASE_RETREAT:
@@ -2849,8 +2859,11 @@ void LivingWorldLogic::applyAutoResolve(const AutoResolveBattle &fight, const st
 int LivingWorldLogic::resolutionOptions(int battleIndex, int player) const
 {
 	// RW LivingWorldBattle::GetResolutionOptions (WorldBuilder 0x105B310), single player: a campaign map region (MapIsCampaignMap) is fought only in real
-	// time (8); otherwise autoresolve (2), real time (8) and, for a player in the battle with a friendly region next to it that it does not need to keep
-	// (0xD9E820, WillPlayerBeEliminatedIfHeOrSheLosesThisRegion: here its last region or a capital its defeat condition names [inference]), retreat (4)
+	// time (8); otherwise autoresolve (2), real time (8) and retreat (4) when a friendly neighbour exists.
+	// RW 0x7F6789 -> WillPlayerBeEliminatedIfHeOrSheLosesThisRegion RW 0x6B68F3 refuses a capital
+	// only when an applicable player defeat condition has LoseIfCapitalLost (RW 0x90272D -> 0x9022AD).
+	// BFME2 RVA 0x2B5CFB tests the player's home region unconditionally; the RotWK condition gate
+	// is an edition difference. Neither target tests whether this is the player's last owned region here.
 	if (battleIndex < 0 || battleIndex >= (int)m_battles.size())
 	{
 		return 0;
@@ -2878,12 +2891,11 @@ int LivingWorldLogic::resolutionOptions(int battleIndex, int player) const
 			friendlyNeighbour = friendlyNeighbour || (o >= 0 && (o == player || !hostile(o, player)));
 		}
 		bool vital = false;
-		if (m_regions[(size_t)b.region].owner == player)
+		if (m_players[(size_t)player].capital == b.region)
 		{
-			vital = regionCount(player) <= 1;
-			for (const Condition &c : m_campaign->scenario->playerDefeat)
+			for (const Condition &c : victoryConditions(0))
 			{
-				vital = vital || (c.loseIfCapitalLost && m_players[(size_t)player].capital == b.region);
+				vital = vital || (c.loseIfCapitalLost && std::find(c.teams.begin(), c.teams.end(), m_players[(size_t)player].team) != c.teams.end());
 			}
 		}
 		if (friendlyNeighbour && !vital)
@@ -2984,6 +2996,10 @@ bool LivingWorldLogic::regionDefended(int region) const
 void LivingWorldLogic::retreatFrom(int battleIndex, int player)
 {
 	Battle &b = m_battles[(size_t)battleIndex];
+	if (std::find(b.retreatedPlayers.begin(), b.retreatedPlayers.end(), player) == b.retreatedPlayers.end())
+	{
+		b.retreatedPlayers.push_back(player);
+	}
 	std::vector<AutoResolvePlayerSpec> specs = autoResolveSpecs(b);
 	for (AutoResolvePlayerSpec &s : specs)
 	{
@@ -2999,6 +3015,14 @@ void LivingWorldLogic::retreatFrom(int battleIndex, int player)
 	}
 	log(m_players[(size_t)player].name + " retreats from the battle in " + m_regionCampaign->regions[(size_t)b.region].name);
 	applyAutoResolve(fight, specs, b, player);
+	// RW 0x7F806F -> 0x7F7496 / 0x7F7414; BFME2 LivingWorldBattle.cpp
+	// calls side RVA 0x3F5E3F: move the player ID into the retreated list and
+	// erase its active 0x30-byte player record. It must not be launched again.
+	for (Battle::Side &side : b.sides)
+	{
+		side.players.erase(std::remove_if(side.players.begin(), side.players.end(),
+			[&](const Battle::SidePlayer &sp) { return sp.player == player; }), side.players.end());
+	}
 	// the tally after RetreatArmiesForPlayer (RW 0x6BE6A6): the battle ends only when its sides are no longer both present (RW 0x7F5BBD); otherwise it
 	// goes on without the retreating player's armies (review wotr2m4: an AI ally's retreat must not end a human's battle)
 	std::vector<int> remaining, sides;
@@ -3060,6 +3084,14 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 	}
 	Battle &b = m_battles[(size_t)battleIndex];
 	const Region &region = m_regionCampaign->regions[(size_t)b.region];
+	if (region.loseCampaignIfLoseMap)
+	{
+		// The local DEFEAT callback RW 0x62679C -> 0x6B4061 bypasses ArmySummarySystem::Save
+		// and clears the game with (false, true); BFME2 GameLogic RVA 0x23DA4E does the same.
+		// BattleResult currently carries a victor, not the local DEFEAT callback or its campaign-exit route.
+		setError(error, "[S-1329] LoseCampaignIfLoseMap tactical defeat and campaign exit are not ported");
+		return false;
+	}
 	if (region.mapName.empty())
 	{
 		setError(error, "the region " + region.name + " has no MapName");
@@ -3073,6 +3105,18 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 		}
 		return true;
 	}
+	// RetreatArmiesForPlayer removes the player's active battle record (RW 0x7F806F;
+	// BFME2 LivingWorldBattle.cpp, side RVA 0x3F5E3F). The original attacker/defender
+	// labels remain historical: only the surviving side records may enter the RTS game.
+	auto activePlayer = [&](int player) {
+		return std::any_of(b.sides.begin(), b.sides.end(), [&](const Battle::Side &side) {
+			return std::any_of(side.players.begin(), side.players.end(), [&](const Battle::SidePlayer &sp) { return sp.player == player; });
+		});
+	};
+	b.armies.erase(std::remove_if(b.armies.begin(), b.armies.end(), [&](int id) {
+		const Army *a = findArmy(id);
+		return a && (!activePlayer(a->owner) || a->retreating);
+	}), b.armies.end());
 	b.resolution = Battle::RTS_REQUESTED;
 	// WOTR2 milestone 6: PrepareBattleForLoading RW 0x6B851C pass 1: every battle player (side order, then player order) without a garrison army in the
 	// battle gets an empty one in the region (CreateEmptyGarrisonArmy RW 0x6B7664, battle.AddArmy RW 0x7F8588: appended to the battle's armies). Its
@@ -3138,30 +3182,26 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 						if (engaged >= 1 && spacing >= 1)
 						{
 							as.state = 2;
-							// [5.0f RW 0xD9F618]; x87 fild / fmul / ftol (PC24): exact for these ints
 							as.arrivalFrame = SimMath::truncToInt32(NumericState::pc24Mul(SimMath::sseFromInt32(offset), 5.0f));
-							// getSpawnPositions RW 0x80F754 for a reinforcement: the army's region (+ 0x2C: where it came from), the battle region's owner
-							const int from = a->movedFrom >= 0 ? a->movedFrom : a->region;
-							const std::string &fromName = m_regionCampaign->regions[(size_t)from].name;
-							const bool friendOwner = battleOwner >= 0 && !hostile(sp.player, battleOwner);
-							const std::pair<std::string, std::string> defender{ "WOTRSpawnPoint_DefenderReinforcements_1", "WOTRGatherPoint_DefenderReinforcements_1" };
-							const std::pair<std::string, std::string> walkOn{ "WOTRSpawnPoint_" + fromName + "_1", "WOTRGatherPoint_" + fromName + "_1" };
-							if (oneOnOne)
-							{
-								// owner -1: GetSpawnPointInFarthestPair RW 0x7824FD; a hostile owner: GetFarthestSpawnPointFromPlayerStart RW 0x781E6E [S-1329
-								// inference: both reduced to the army's own walk-on points]
-								as.spawnPoints.push_back(friendOwner ? defender : walkOn);
-							}
-							else
-							{
-								as.spawnPoints.push_back(from == b.region ? defender : walkOn);
-								as.spawnPoints.push_back(friendOwner ? defender : walkOn); // RotWK's second try
-							}
-							as.spawnPoints.push_back({ "Player_2_Start", "Player_2_Start_Rally" }); // StartPos(1)
 						}
 						++engaged;
 						offset += spacing;
 					}
+					// RotWK-only ArmySummary::getSpawnPositions RW 0x80F754. Keep the
+					// strategic side and all connections: tactical slot seating is not
+					// the side number, and the farthest point depends on the loaded map.
+					const int from = a->movedFrom >= 0 ? a->movedFrom : a->region;
+					LivingWorldArmySpawnPlan &plan = as.placement;
+					plan.side = (int)(&side - b.sides.data());
+					plan.friendlyOwner = battleOwner >= 0 && !hostile(sp.player, battleOwner);
+					plan.originRegion = m_regionCampaign->regions[(size_t)from].name;
+					for (const RegionConnection &link : region.connections)
+					{
+						plan.connections.push_back(link.region);
+					}
+					using P = LivingWorldArmySpawnPlan;
+					plan.method = oneOnOne ? (battleOwner < 0 ? P::NORMAL_NEUTRAL : plan.friendlyOwner ? P::NORMAL_FRIENDLY : P::NORMAL_HOSTILE)
+										  : (from == b.region ? P::AT_HOME : P::WALK_ON);
 					armyStarts.push_back(as);
 				}
 			}
@@ -3176,11 +3216,14 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 		setup->mapName = region.mapName;
 		setup->startingCash = m_campaign->startingCashRTS;
 		setup->startingCashWithFort = m_campaign->startingCashRTSWithFort;
-		setup->players.push_back(b.attacker);
-		if (b.defender >= 0)
-		{
-			setup->players.push_back(b.defender);
-		}
+		auto addPlayer = [&](int player) {
+			if (activePlayer(player) && std::find(setup->players.begin(), setup->players.end(), player) == setup->players.end())
+			{
+				setup->players.push_back(player);
+			}
+		};
+		addPlayer(b.attacker);
+		addPlayer(b.defender);
 		for (int id : b.armies)
 		{
 			const Army *a = findArmy(id);
@@ -3188,10 +3231,7 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 			{
 				continue;
 			}
-			if (std::find(setup->players.begin(), setup->players.end(), a->owner) == setup->players.end())
-			{
-				setup->players.push_back(a->owner);
-			}
+			addPlayer(a->owner);
 			for (size_t m = 0; m < a->members.size(); ++m)
 			{
 				BattleSpawn s;
@@ -3220,6 +3260,7 @@ bool LivingWorldLogic::chooseRts(int battleIndex, BattleSetup *setup, std::strin
 		const int owner = m_regions[(size_t)b.region].owner;
 		for (const std::pair<int, int> &g : garrisons)
 		{
+			addPlayer(g.first); // an active participant may defend with buildings alone
 			// Player::initFromDict RW 0x6B07EF tail: the region owner's battle player gets StartingCashRTSWithFort when the region has a fort, every other
 			// one StartingCashRTS (both deposited, RW 0x7B18B8); then its ExtraStartResources. ArmySummary::Load RW 0x812413 / 0x812492: FreeBuilder > 0
 			// and FreeInnUnits > 0 each add ONE object (LoadArmyEntry RW 0x811104 is called with count 1)
@@ -3394,6 +3435,8 @@ bool LivingWorldLogic::applyBattleResult(int battleIndex, const BattleResult &re
 		r.spawnId = h.spawnId;
 		r.thing = h.thingTemplate;
 		r.experience = h.experience;
+		r.rank = h.rank;
+		r.baseRank = h.baseRank;
 		r.dead = h.dead;
 		m_players[(size_t)h.player].buildableHeroes.push_back(r);
 	}
@@ -3477,7 +3520,7 @@ bool LivingWorldLogic::applyBattleResult(int battleIndex, const BattleResult &re
 //       the back while its points are under its limit, an entry that fits and is not a hero (template + 0x113 bit 4), each charged its cost (RotWK);
 //   (c) RotWK: per garrison of the player in the battle, its pre-battle entries take back the remaining entries of the same name; every other remaining
 //       entry stays in the garrison, charged its cost (the units built in the battle are bought) [BFME2 dropped them instead].
-// [S-1329 inference: std::sort is not stable in retail; ties keep the garrison's order here (stable), so every platform agrees]
+// The sort's ties follow retail's STLport partition order (RW 0x6BC6BA), shared by every host platform.
 void LivingWorldLogic::consumeGarrisonUnits(int garrisonId, const Battle &b, const std::map<int, std::vector<ArmyMember>> &preBattle, const std::vector<int> &undeployed)
 {
 	auto armyRef = [&](int id) -> Army * {
@@ -3586,7 +3629,10 @@ void LivingWorldLogic::consumeGarrisonUnits(int garrisonId, const Battle &b, con
 		}
 		return nullptr;
 	};
-	std::stable_sort(order.begin(), order.end(), [&](int ka, int kb) {
+	// RW 0x6BCA3C -> 0x6BC6BA: STLport introsort (threshold 16), then final insertion sort.
+	// BFME2 ConsumeGarrisonUnitsFromRTS RVA 0x2BBD52 also calls _STL::sort. Equal entries
+	// need not stay in roster order once introsort partitions them.
+	Stlport::sort(order, [&](int ka, int kb) {
 		const ArmyMember &a = *byKey(ka), &c = *byKey(kb);
 		const int d = SimMath::truncToInt32(SimMath::subf32(a.experience, c.experience)); // RW 0x6B4074: (int)(fsub)
 		return d != 0 ? d < 0 : cpOf(a) < cpOf(c);
@@ -3651,49 +3697,152 @@ void LivingWorldLogic::consumeGarrisonUnits(int garrisonId, const Battle &b, con
 	}
 }
 
+void LivingWorldLogic::prepareOwnershipRetreats()
+{
+	prepareRetreats(); // phase-enter 4 (RW 0x6BDD98 -> RW 0x6BABA8); retail applies the ownership on leaving phase 2 (RW 0x6BBBFD)
+	m_ai->runRetreatPhase(); // the AI players' dispatch with phase 4 (ProcessRetreats RW 0x900533)
+	for (PlayerState &p : m_players)
+	{
+		p.endedTurn = false; // the barrier cleared every player's done flag (+ 0x344) when phase 3 ended (RW 0x6BE20A)
+	}
+	// RW 0x6BABA8 leaves an army with several friendly exits in the retreat list. The
+	// phase-4 selector RW 0x6B6657 -> 0x6B568C only selects an army with a hero name.
+	// No source-backed destination rule for a human's heroless survivor was found.
+	// Keep the retail list boundary and report it instead of inventing the first exit.
+	for (int id : m_retreatList)
+	{
+		const Army *a = findArmy(id);
+		if (a && a->destination < 0 && a->garrison && m_players[(size_t)a->owner].human)
+		{
+			log("[S-1329] a human's heroless army has several retreat regions; its destination rule is unverified");
+		}
+	}
+}
+
+int LivingWorldLogic::regionAwardResolver(const RegionAwardDispute &dispute) const
+{
+	// RW 0x900E58; BFME2 RegionAwardDispute::GetResolvableBy, RVA 0x4FBED6:
+	// no humans: first claimant; one human: that human; several: lobby slot 0,
+	// only when it is a claimant. The host mapping comes from the actual lobby slot,
+	// not the compacted occupied-player order.
+	int humans = 0, human = -1;
+	for (int p : dispute.players)
+	{
+		if (!m_players[(size_t)p].defeated && m_players[(size_t)p].human)
+		{
+			++humans;
+			human = p;
+		}
+	}
+	if (dispute.players.empty())
+	{
+		return -1;
+	}
+	if (humans == 0)
+	{
+		const auto live = std::find_if(dispute.players.begin(), dispute.players.end(), [&](int p) { return !m_players[(size_t)p].defeated; });
+		return live == dispute.players.end() ? -1 : *live;
+	}
+	if (humans == 1)
+	{
+		return human;
+	}
+	return std::find(dispute.players.begin(), dispute.players.end(), m_hostPlayer) != dispute.players.end() && !m_players[(size_t)m_hostPlayer].defeated ? m_hostPlayer : -1;
+}
+
+bool LivingWorldLogic::resolveRegionAwardDispute(int sender, int region, int winner, std::string *error)
+{
+	// RW 0x6BB99F; BFME2 RegistryTransferRva002BAF01.cpp RVA 0x2BAF01:
+	// accept only a listed claimant, mark the dispute resolved, queue the award.
+	// Sender enforcement is the same stricter port boundary as the other strategic orders.
+	auto it = std::find_if(m_regionAwardDisputes.begin(), m_regionAwardDisputes.end(),
+		[&](const RegionAwardDispute &d) { return d.region == region; });
+	if (m_phase != PHASE_OWNERSHIP || it == m_regionAwardDisputes.end())
+	{
+		setError(error, "no unresolved territory award for that region");
+		return false;
+	}
+	if (sender < 0 || sender >= (int)m_players.size() || m_players[(size_t)sender].defeated || regionAwardResolver(*it) != sender)
+	{
+		setError(error, "only the territory dispute's resolver may choose its owner");
+		return false;
+	}
+	if (std::find(it->players.begin(), it->players.end(), winner) == it->players.end() || m_players[(size_t)winner].defeated)
+	{
+		setError(error, "the territory award must name one of its claimants");
+		return false;
+	}
+	setRegionOwner(region, winner);
+	log(m_players[(size_t)winner].name + " receives " + m_regionCampaign->regions[(size_t)region].name + " after the allied territory dispute");
+	m_regionAwardDisputes.erase(it);
+	if (m_regionAwardDisputes.empty())
+	{
+		prepareOwnershipRetreats(); // retreat paths must see all of the completed ownership awards
+	}
+	return true;
+}
+
 void LivingWorldLogic::resolveOwnership()
 {
 	for (int r = 0; r < (int)m_regions.size(); ++r)
 	{
-		int occupant = -1;
-		bool mixed = false;
+		std::vector<int> claimants;
 		for (const Army &a : m_armies)
 		{
-			if (a.region != r || a.retreating)
+			if (a.region == r && !a.retreating && std::find(claimants.begin(), claimants.end(), a.owner) == claimants.end())
 			{
-				continue; // a retreating army is leaving (RW: the battle's delayed region victory is awarded regardless)
-			}
-			if (occupant < 0)
-			{
-				occupant = a.owner;
-			}
-			else if (hostile(occupant, a.owner))
-			{
-				mixed = true;
+				claimants.push_back(a.owner);
 			}
 		}
-		RegionState &rs = m_regions[(size_t)r];
-		if (occupant < 0 || mixed || rs.owner == occupant || (rs.owner >= 0 && !hostile(rs.owner, occupant)))
-		{
-			continue;
-		}
-		// a region still defended by a building that won its battle stays with its owner
-		bool defended = false;
+		// RW OnBattleComplete 0x6BBA1C / BFME2 LivingWorldLogic.cpp RVA 0x2BAF7E:
+		// ownership is awarded to the winning side's players, including one whose army
+		// summaries were emptied by the battle. The owner keeps an allied victory.
 		for (const Battle &b : m_battles)
 		{
-			if (b.region == r && b.winner >= 0 && b.winner != occupant && !hostile(b.winner, rs.owner))
+			if (b.region != r || b.winner < 0)
 			{
-				defended = true;
+				continue;
 			}
+			claimants.clear();
+			for (const Battle::Side &side : b.sides)
+			{
+				if (side.team == m_players[(size_t)b.winner].team)
+				{
+					for (const Battle::SidePlayer &p : side.players)
+					{
+						if (std::find(b.retreatedPlayers.begin(), b.retreatedPlayers.end(), p.player) == b.retreatedPlayers.end())
+						{
+							claimants.push_back(p.player);
+						}
+					}
+				}
+			}
+			break;
 		}
-		if (defended)
+		RegionState &rs = m_regions[(size_t)r];
+		if (claimants.empty() || (rs.owner >= 0 && !hostile(rs.owner, claimants.front())) ||
+			std::any_of(claimants.begin(), claimants.end(), [&](int p) { return hostile(p, claimants.front()); }))
 		{
 			continue;
 		}
+		const bool human = std::any_of(claimants.begin(), claimants.end(), [&](int p) { return m_players[(size_t)p].human; });
+		if (claimants.size() > 1 && human)
+		{
+			// RW 0x6BA65D / BFME2 RVA 0x2B9A90 opens the choice; it never silently
+			// chooses the first ally. The existing phase-4 ownership timing remains S-1324.
+			RegionAwardDispute d;
+			d.region = r;
+			d.players = claimants;
+			m_regionAwardDisputes.push_back(d);
+			log("allied territory award pending in " + m_regionCampaign->regions[(size_t)r].name +
+				(regionAwardResolver(d) < 0 ? ": no claimant occupies the host slot [S-1324]" : std::string()));
+			continue;
+		}
+		// AI-only dispute: RW 0x6BB9FB / BFME2 LetAIResolveRegionAwardDispute RVA
+		// 0x2BAF5D awards the first claimant, without a random draw.
+		const int occupant = claimants.front();
 		const int previous = rs.owner;
 		setRegionOwner(r, occupant);
-		// lane WOTR-2: the region's buildings and their queues stay (Region SetOwner RW 0x7F30A3 and OnRegionChangedOwnership WorldBuilder 0xDA20C0
-		// touch neither: a queue produces for the new owner, its gold is not paid back)
 		log(m_players[(size_t)occupant].name + " takes " + m_regionCampaign->regions[(size_t)r].name + (previous >= 0 ? " from " + m_players[(size_t)previous].name : std::string()));
 	}
 }
@@ -3983,9 +4132,9 @@ bool LivingWorldLogic::networkVote(int battleIndex, int player, int method, std:
 			m_notices.push_back(n);
 			chosen = 2;
 		}
-		else if (starts >= 0 && (int)b.sides.size() > starts)
+		else if (starts >= 0 && (int)std::count_if(b.sides.begin(), b.sides.end(), [](const Battle::Side &side) { return !side.players.empty(); }) > starts)
 		{
-			log("[S-1342] the battle in " + region.name + " has " + std::to_string(b.sides.size()) + " sides for " + std::to_string(starts) +
+			log("[S-1342] the battle in " + region.name + " has " + std::to_string(std::count_if(b.sides.begin(), b.sides.end(), [](const Battle::Side &side) { return !side.players.empty(); })) + " sides for " + std::to_string(starts) +
 				" start positions on its map: auto-resolved instead of fought in real time");
 			StrategicNotice n;
 			n.kind = StrategicNotice::RTS_DEMOTED;
@@ -4073,6 +4222,24 @@ void LivingWorldLogic::surrender(int player)
 			log(m_players[(size_t)p].name + " leaves the war");
 			removePlayer(p);
 		}
+	}
+	// Port lifecycle boundary [S-1324]: retail RemovePlayer RW 0x6B89D4 / BFME2
+	// LivingWorldLogicRemovePlayer.cpp has no direct dispute-map cleanup. This
+	// port's phase-4 choice must not retain a request to departed claimants. A
+	// surrender removes an entire alliance: abandon its now-ownerless award,
+	// report the unverified cleanup, and never invent a replacement recipient.
+	const bool hadAwards = !m_regionAwardDisputes.empty();
+	m_regionAwardDisputes.erase(std::remove_if(m_regionAwardDisputes.begin(), m_regionAwardDisputes.end(), [&](const RegionAwardDispute &d) {
+		const bool abandoned = std::all_of(d.players.begin(), d.players.end(), [&](int p) { return m_players[(size_t)p].defeated; });
+		if (abandoned)
+		{
+			log("[S-1324] unverified: allied territory award abandoned after every claimant left in " + m_regionCampaign->regions[(size_t)d.region].name);
+		}
+		return abandoned;
+	}), m_regionAwardDisputes.end());
+	if (hadAwards && m_regionAwardDisputes.empty() && m_phase == PHASE_OWNERSHIP)
+	{
+		prepareOwnershipRetreats();
 	}
 	// WOTR2 milestone 8 (step 4): a player who leaves takes its part of a save with it, on every peer at this frame: the asker's request, a request no
 	// other live human is left to answer, its leave vote (the vote is settled again over the players still in)
@@ -4321,6 +4488,27 @@ void LivingWorldLogic::hashInto(StateHasher &h) const
 	{
 		h.addI32(id);
 	}
+	if (m_hostPlayer != 0)
+	{
+		h.addU32(0x41574853u); // "AWHS"
+		h.addI32(m_hostPlayer);
+	}
+	// Empty disputes add no hash bytes, retaining compatibility with earlier saves
+	// that could not represent an unresolved award.
+	if (!m_regionAwardDisputes.empty())
+	{
+		h.addU32(0x41574453u); // "AWDS"
+		h.addU32((std::uint32_t)m_regionAwardDisputes.size());
+		for (const RegionAwardDispute &d : m_regionAwardDisputes)
+		{
+			h.addI32(d.region);
+			h.addU32((std::uint32_t)d.players.size());
+			for (int p : d.players)
+			{
+				h.addI32(p);
+			}
+		}
+	}
 	h.addI32(m_settleCounter);
 	h.addBool(m_started);
 	h.addBool(m_finished);
@@ -4434,6 +4622,14 @@ void LivingWorldLogic::hashInto(StateHasher &h) const
 			h.addString(r.thing);
 			h.addFloat(r.experience);
 			h.addBool(r.dead);
+			// Fresh purchase records in accepted pre-v9 saves had no rank fields.
+			// Preserve their stored hash; explicit returned ranks (including zero) remain authoritative.
+			if (r.rank >= 0 || r.baseRank >= 0)
+			{
+				h.addU32(0x52414E4Bu); // "RANK"
+				h.addI32(r.rank);
+				h.addI32(r.baseRank);
+			}
 		}
 	}
 	h.addU32((std::uint32_t)m_regions.size());
@@ -4524,6 +4720,12 @@ void LivingWorldLogic::hashInto(StateHasher &h) const
 		}
 		h.addI32(b.winningSide);
 		h.addBool(b.resultsCounted);
+		if (!b.retreatedPlayers.empty())
+		{
+			h.addU32(0x41575254u); // "AWRT"
+			h.addU32((std::uint32_t)b.retreatedPlayers.size());
+			for (int p : b.retreatedPlayers) h.addI32(p);
+		}
 	}
 }
 

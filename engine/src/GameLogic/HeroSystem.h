@@ -45,6 +45,7 @@ struct LivingWorldHero
 	std::string spawnId;
 	float experience = 0.0f;
 	bool dead = false;
+	int rank = -1, baseRank = -1;
 };
 void initLivingWorldPlayer(GameLogic &logic, Player &player, const std::vector<LivingWorldHero> &heroes, int garrisonArmyId, std::vector<std::string> &errors);
 int addDeadHero(Player &player, Object &obj, const RespawnUpdate &respawn, bool autoSpawn);  ///< RW 0x781792
