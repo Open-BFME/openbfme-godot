@@ -199,7 +199,7 @@ public:
 	// slots 0xB0 / 0xC0 / 0x114 are OpenContain's RW 0x865C15 / 0x865B33 / 0x865CE3; Object::isAbleToAttack skips a HORDE container, so they are not ported)
 	bool isPassengerAllowedToFire() const override;
 	bool addToContain(Object *obj) override;
-	void removeFromContain(Object *obj) override;
+	void removeFromContain(Object *obj, bool exposeStealthUnits = false) override;
 	void containReactToTransformChange() override;
 	HordeContainInterface *getHordeContainInterface() override { return this; }
 	// CreateModuleInterface

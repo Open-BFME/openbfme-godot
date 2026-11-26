@@ -115,7 +115,7 @@ public:
 	virtual unsigned getContainCount() const = 0;
 	// true when the object was added
 	virtual bool addToContain(Object *obj) = 0;
-	virtual void removeFromContain(Object *obj) = 0;
+	virtual void removeFromContain(Object *obj, bool exposeStealthUnits = false) = 0;
 	// ZH ContainModuleInterface::containReactToTransformChange: the container moved or turned (Object::reactToTransformChange)
 	virtual void containReactToTransformChange() {}
 	// contain slot 0x64 onSelling: the contain hears of its container's sale (BuildAssistant::sellObject RW 0x796806: `mov ecx, [object + 0x258]`, `mov eax,
@@ -183,6 +183,8 @@ public:
 	virtual bool isExitBusy() const { return false; }
 	virtual int reserveDoorForExit(const Object &obj) { (void)obj; return -1; }
 	virtual void exitObjectViaDoor(Object *obj, int door) { (void)obj; (void)door; }
+	// RW 0x868759 OpenContain::exitObjectInAHurry (exit interface slot 5 / +0x14, called by AITNGuardIdleState RW 0x94CFF5)
+	virtual void exitObjectInAHurry(Object *obj) { (void)obj; }
 	// lane GARRISON-2: slot 0xD4, read by RW 0x68BF11 for the locomotor's speed (OpenContain RW 0x867A75: 1.0; SiegeEngineContain RW 0x87ED45: the crew count x
 	// SpeedPercentPerCrew, x87)
 	virtual float getCrewPowerMultiplier() const { return 1.0f; }

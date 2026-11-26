@@ -559,7 +559,7 @@ std::vector<std::string> GameLogic::objectSnapshotStopLines()
 		"obfme:Combat, obfme:SellList, obfme:Experience, obfme:Invisibility, obfme:DamageOverTime); the classes are the port's subsets of retail's "
 		"(Object::xfer RW 0x697F28 (1, 29), ActiveBody::xfer RW 0x8C3388, OpenContain::xfer RW 0x868FEF, Weapon::xfer RW 0x6CEA67, ...), so their fields "
 		"follow the port's own order; retail's layout is kept by the module base chain (RW 0x7082E2, 0x8CD4AA, 0x850C60), the upgrade mux (RW 0x8D27E8, "
-		"0x8D284A), TunnelTracker (RW 0x8FA569; its last two fields, the nemesis and its frame, INFERENCE, written 0: S-1107), DamageFilteredCreateObjectDie "
+		"0x8D284A), TunnelTracker (RW 0x8FA569; including the nemesis id and frame), DamageFilteredCreateObjectDie "
 		"(RW 0x88927E) and DeletionUpdate (RW 0x88B863); retail import (SAVE-7) needs a translator per class",
 		"[S-4191] snapshots: an object load makes every saved object again through its creation (its create modules and initObject run, ZH's load does the "
 		"same), without the BuildVariations draw (the saved template is the variation), then loads its state; objects those creations made on their own are "

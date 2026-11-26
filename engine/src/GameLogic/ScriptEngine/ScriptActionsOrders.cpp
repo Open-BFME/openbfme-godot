@@ -458,6 +458,20 @@ bool ScriptActions::executeOrderAction(ScriptEngine &engine, const ScriptActionR
 		}
 		return true;
 	}
+	if (name == "TEAM_GUARD_IN_TUNNEL_NETWORK")
+	{
+		if (Team *t = ScriptConditions::team(engine, param(a, 0).stringValue)) // RW 0x7CE522 -> RW 0x7CA692 -> RW 0x7C8154
+		{
+			for (Object *o : ScriptConditions::members(*t))
+			{
+				if (AIUpdateInterface *ai = o->getAIUpdateInterface())
+				{
+					ai->aiGuardTunnelNetwork(0, CMD_FROM_SCRIPT); // GUARDMODE_NORMAL
+				}
+			}
+		}
+		return true;
+	}
 	if (name == "UNIT_GUARD_POSITION" || name == "TEAM_GUARD_POSITION")
 	{
 		const Waypoint *w = terrain ? terrain->findWaypointByName(param(a, 1).stringValue) : nullptr; // RW 0x7C9400 / 0x7C01B1: the waypoint first

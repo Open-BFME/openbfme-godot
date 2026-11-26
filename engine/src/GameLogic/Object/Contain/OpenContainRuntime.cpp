@@ -604,7 +604,7 @@ void OpenContain::onDelete()
 	const std::vector<Object *> riders(m_contained.begin(), m_contained.end());
 	for (Object *r : riders)
 	{
-		removeFromContain(r);
+		removeFromContain(r, true); // RW 0x8670C7: contain slot 0xA4(rider, true)
 		r->friend_setContainedBy(nullptr);
 		if (r->isKindOf((unsigned)hero))
 		{
@@ -621,16 +621,16 @@ void OpenContain::onDelete()
 // leaving
 // ---------------------------------------------------------------------------------------------------------------------------------
 
-void OpenContain::removeFromContain(Object *obj)
+void OpenContain::removeFromContain(Object *obj, bool exposeStealthUnits)
 {
 	if (obj)
 	{
-		openContainRemove(obj);
+		openContainRemove(obj, exposeStealthUnits);
 	}
 }
 
 // RW 0x8665BE -> RW 0x865EB6
-void OpenContain::openContainRemove(Object *obj)
+void OpenContain::openContainRemove(Object *obj, bool exposeStealthUnits)
 {
 	if (!isContainedHere(*obj))
 	{
@@ -654,9 +654,20 @@ void OpenContain::openContainRemove(Object *obj)
 		obj->setStatus((unsigned)porterTagged, false);
 	}
 	removeFromContainList(obj); // main slot 0x34 (RW 0x865E78)
-	if (obj->isKindOf((unsigned)stealthGarrison) && m_stealthUnitsContained > 0)
+	if (obj->isKindOf((unsigned)stealthGarrison))
 	{
-		--m_stealthUnitsContained; // the exposed stealth units' detection (RW 0x865EE7 .. 0x865EFB) is not ported (S-1100)
+		if (m_stealthUnitsContained > 0)
+		{
+			--m_stealthUnitsContained;
+		}
+		if (exposeStealthUnits) // RW 0x865EF5 .. 0x865F22: expose STEALTH_GARRISON on removal when requested
+		{
+			if (StealthUpdate *su = StealthUpdate::of(*obj))
+			{
+				su->markAsDetected(0, 1, nullptr, true);
+			}
+			obj->logic().invisibility().markDetected(obj, nullptr, 0, 1);
+		}
 	}
 	obj->setStatus((unsigned)tagged, false); // RW 0x865F05
 	if (isEnclosingContainerFor(*obj))
@@ -671,15 +682,15 @@ void OpenContain::openContainRemove(Object *obj)
 }
 
 // RW 0x866675
-void OpenContain::removeAllContained()
+void OpenContain::removeAllContained(bool exposeStealthUnits)
 {
 	while (!m_contained.empty())
 	{
 		Object *r = m_contained.front();
-		removeFromContain(r);
+		removeFromContain(r, exposeStealthUnits);
 		if (!m_contained.empty() && m_contained.front() == r)
 		{
-			openContainRemove(r); // a derived removal that took another path: the list still holds it
+			openContainRemove(r, exposeStealthUnits); // a derived removal that took another path: the list still holds it
 		}
 		++m_openStats.ejectedOnDeath;
 	}
@@ -746,7 +757,7 @@ void OpenContain::onDie(const DieModuleInterface::Event &event)
 			processDamageToContained(); // RW 0x867182: contain slot 0x148
 		}
 		killRidersWhoAreNotFreeToExit(); // main slot 0x64 (OpenContain RW 0x63F3BF: nothing)
-		removeAllContained();            // slot 0xA8(false)
+		removeAllContained(false);       // RW 0x867120: slot 0xA8(false)
 		return;
 	}
 	// RW 0x86718A .. 0x8671D9: every rider is hidden and destroyed
@@ -972,13 +983,8 @@ bool OpenContain::tryToEvacuate(Object *entering)
 			continue;
 		}
 		// RW 0x867CE2 .. 0x867CEA: no AI: removeFromContain(rider, true), whose own exposure (RW 0x865EF5 .. 0x865F22) reveals the STEALTH_GARRISON
-		// rider the same way before the removal
-		if (StealthUpdate *su = StealthUpdate::of(*rider))
-		{
-			su->markAsDetected(0, 1, nullptr, true); // RW 0x865F0E
-		}
-		rider->logic().invisibility().markDetected(rider, nullptr, 0, 1); // RW 0x865F1B .. 0x865F22
-		removeFromContain(rider); // RW 0x867CEA (contain vslot 0xA4)
+		// rider before the removal
+		removeFromContain(rider, true); // RW 0x867CEA (contain vslot 0xA4)
 	}
 	return true; // RW 0x867D0F
 }
@@ -1080,6 +1086,71 @@ void OpenContain::exitObjectViaDoor(Object *obj, int door)
 		path.push_back(end);
 		path.push_back(end);
 		ai->aiFollowPath(path, container, CMD_FROM_AI, true);
+	}
+}
+
+// RW 0x868759 OpenContain::exitObjectInAHurry (exit interface slot 5 / +0x14; inherited by TunnelContain_ExitIface RW 0xC5DCAC)
+void OpenContain::exitObjectInAHurry(Object *obj)
+{
+	if (!obj)
+	{
+		return;
+	}
+	Object *container = getObject();
+	removeFromContain(obj, false); // RW 0x86876B .. 0x868775: contain slot 0xA4(obj, false)
+	// RW 0x86877E .. 0x8687AC: DoorOpenTime arms the door timer and raises DOOR_1_OPENING (clearing DOOR_1_CLOSING)
+	m_doorOpenFrames = openData().m_doorOpenTime;
+	if (m_doorOpenFrames != 0)
+	{
+		static const int opening = CombatNames::modelCondition("DOOR_1_OPENING");
+		static const int closing = CombatNames::modelCondition("DOOR_1_CLOSING");
+		if (container->testModelCondition(closing) || !container->testModelCondition(opening))
+		{
+			container->setModelConditionState(closing, false);
+			container->setModelConditionState(opening, true);
+		}
+	}
+	const int paths = openData().m_numberOfExitPaths; // RW 0x8687B4: data + 0x74
+	if (paths > 0)
+	{
+		std::string startBone = "ExitStart", endBone = "ExitEnd";
+		if (paths > 1)
+		{
+			char n[8];
+			std::snprintf(n, sizeof n, "%02d", m_nextExitPath);
+			startBone += n;
+			endBone += n;
+			m_nextExitPath = m_nextExitPath % paths + 1;
+		}
+		Coord3D start = *container->getPosition(), end = *container->getPosition();
+		boneWorldPosition(*container, startBone, start);
+		boneWorldPosition(*container, endBone, end);
+		obj->setPosition(&start);                         // RW 0x868890: RW 0x70C201
+		obj->setOrientation(container->getOrientation()); // RW 0x86889E: RW 0x70C31E
+		if (AIWorld *world = obj->logic().aiWorld())
+		{
+			world->addObjectToPathfindMap(*obj); // RW 0x8688E8: RW 0x6E85E9
+		}
+		if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
+		{
+			ai->mover().ignoreObstacle(PATHFIND_INVALID_ID); // RW 0x868924: RW 0x66831A(0)
+			if (ai->world().mapReady())
+			{
+				ai->world().pathfinder().adjustToPossibleDestination(ai->adapter(), ai->locomotorInfo(), &end); // RW 0x868957: RW 0x6F3C87
+			}
+			std::vector<Coord3D> path;
+			path.push_back(end);
+			if (m_rallyPointExists) // RW 0x868968
+			{
+				path.push_back(m_rallyPoint);
+			}
+			ai->aiFollowPath(path, container, CMD_FROM_AI, true); // RW 0x86898C
+		}
+		return;
+	}
+	if (AIWorld *world = obj->logic().aiWorld())
+	{
+		world->addObjectToPathfindMap(*obj); // RW 0x8689D6: RW 0x6E85E9
 	}
 }
 

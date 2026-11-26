@@ -89,7 +89,7 @@ public:
 	UpdateSleepTime update() override;
 	// ---- ContainModuleInterface ----
 	bool addToContain(Object *obj) override;
-	void removeFromContain(Object *obj) override;
+	void removeFromContain(Object *obj, bool exposeStealthUnits = false) override;
 	void containReactToTransformChange() override;
 	bool isGarrisonable() const override { return true; }
 	bool isPassengerAllowedToFire() const override { return true; } // slot 0xB4 RW 0x8BD372 (GarrisonContain, HordeGarrisonContain, TunnelContain; lane DECOMP-3)
@@ -124,7 +124,7 @@ public:
 	const Coord3D &exitRallyPoint() const { return m_exitRallyPoint; }
 	bool exitRallyValid() const { return m_rallyValid; }
 	// RW 0x87B4DC: every rider leaves (onDie with EjectPassengersOnDeath, the evacuation of a dying building)
-	void removeAllContained() override;
+	void removeAllContained(bool exposeStealthUnits = false) override;
 
 	// lane GARRISON-1 counters (reported)
 	struct Stats
