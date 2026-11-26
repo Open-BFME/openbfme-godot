@@ -71,6 +71,7 @@ struct ClientEvent
 		MODEL_CONDITIONS, ///< lane SAVE-4e: flags, the object's whole set stored (Drawable::replaceModelConditionFlags RW 0x679512 takes a whole set)
 		EVA_DAMAGED,      ///< lane EVADAMAGE-1 (RW 0x67B4B7's Eva half): position (the object's, + 0x38), eva (the logic's part of the choice)
 		DESELECT_LOCAL,   ///< lane POSTERNPLOT-1 (RW 0x85834C): ownerIndex = the object's controlling player at the call (-1: none)
+		SUPPLY_STATUS,    ///< RW 0x8AB623..0x8AB63A dispatches the supply look through RW 0x671948; event delivery is INFERENCE
 	};
 	std::string heroUniqueID;
 	std::vector<std::string> heroStatistics;
@@ -111,6 +112,8 @@ struct ClientEvent
 	int customKind = 0;                             ///< CUSTOM_COLORS (lane CAH-2)
 	std::uint32_t customColors[3] = { 0u, 0u, 0u }; ///< CUSTOM_COLORS: ARGB
 	EvaDamageNotice eva;                            ///< EVA_DAMAGED (lane EVADAMAGE-1)
+	int supplyCurrentBoxes = 0;                     ///< SUPPLY_STATUS
+	int supplyStartingBoxes = 0;                    ///< SUPPLY_STATUS
 };
 
 class ClientEventRecorder : public ObjectClientHooks
@@ -130,6 +133,7 @@ public:
 	bool showModule(Object &obj, const std::string &tag, bool visible, bool permanent) override;
 	void upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled) override;
 	void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) override;
+	void supplyStatusChanged(Object &obj, int currentBoxes, int startingBoxes) override;
 	void replaceDrawable(Object &obj, const ThingTemplate *tmpl, bool hasColor, std::uint32_t color) override;
 	void fadeIn(Object &obj, UnsignedInt frames) override;
 	void fadeOut(Object &obj, UnsignedInt frames) override;

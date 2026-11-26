@@ -141,6 +141,8 @@ public:
 	// RW 0x672823 Drawable::showSubObject
 	virtual void upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled) { (void)obj;(void)swap;(void)enabled; }
 	virtual void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) { (void)obj; (void)name; (void)visible; (void)permanent; }
+	// RW 0x8AB623..0x8AB63A -> drawable dispatcher RW 0x671948. This port records the same status on the existing ordered client-event path (INFERENCE).
+	virtual void supplyStatusChanged(Object &obj, int currentBoxes, int startingBoxes) { (void)obj; (void)currentBoxes; (void)startingBoxes; }
 	// lane STEALTH-2, RW 0x776F03 (StealthUpdate's disguise): the object's drawable is destroyed (TheGameClient vslot 0x74) and a new one of `tmpl` made
 	// (RW 0x6CFE8C) and bound (RW 0x625AA4) at the object's position and orientation with its model conditions, in `color` when `hasColor`
 	virtual void replaceDrawable(Object &obj, const ThingTemplate *tmpl, bool hasColor, std::uint32_t color) { (void)obj; (void)tmpl; (void)hasColor; (void)color; }

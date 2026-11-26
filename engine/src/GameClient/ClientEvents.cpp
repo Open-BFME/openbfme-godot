@@ -377,6 +377,15 @@ void ClientEventRecorder::createAHeroKill(Object &killer, Object &victim)
 	event.heroStatistics = std::move(names);
 }
 
+// RW 0x8AB623..0x8AB63A calls the drawable's supply dispatcher RW 0x671948, which walks draw modules and reaches W3DSupplyDraw vslot 8 / RW 0x4CA784.
+// INFERENCE: this client is split across logic/render threads, so encode that same ordered call on the existing ClientEvents stream.
+void ClientEventRecorder::supplyStatusChanged(Object &obj, int currentBoxes, int startingBoxes)
+{
+	ClientEvent &e = push(ClientEvent::SUPPLY_STATUS, obj);
+	e.supplyCurrentBoxes = currentBoxes;
+	e.supplyStartingBoxes = startingBoxes;
+}
+
 void ClientEventRecorder::upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled)
 {
 	auto &event = push(ClientEvent::UPGRADE_TEXTURE, obj);

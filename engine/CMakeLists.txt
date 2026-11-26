@@ -524,6 +524,7 @@ target_sources(openbfme_core PRIVATE
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.cpp # lane LOCAL-28 (object lights, both editions)
+    src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DSupplyDraw.cpp # W3DSupplyDraw's pile status (client side)
     src/GameClient/DrawableLight.cpp # lane LOCAL-28: the drawable's light step and bone position (client only, excluded from the sim audit)
     src/GameClient/MapObjectDrawables.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.cpp)
@@ -1018,6 +1019,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail_units.cpp
     # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
     tests/test_local_28.cpp
+    # W3DSupplyDraw (RW 0x4CA784)
+    tests/test_w3d_supply_draw.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp
