@@ -6,6 +6,7 @@ set(OPENBFME_MOD3_SOURCES
     src/GameLogic/AI/AIPathfindSafe.cpp
     src/GameLogic/AI/AIMoveSafe.cpp
     src/GameLogic/AI/AIEmotionStates.cpp
+    src/GameLogic/AI/AIRampageState.cpp
     src/GameLogic/Module/AIUpdateEmotion.cpp
     src/GameLogic/Object/Contain/HordeEmotion.cpp
     src/GameLogic/Module/NotifyCrushModules.cpp

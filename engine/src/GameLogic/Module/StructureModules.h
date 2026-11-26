@@ -241,6 +241,7 @@ public:
 	void internalChangeHealth(float delta) override;
 	// RW slot 0x26 (RW 0x8C57A1)
 	void setChecked(bool checked) { m_checked = checked; }
+	void setDelayedDeathChecked(bool on) override { m_checked = on; } // body vt[0x98] = slot 0x26 (RW 0x8C57A1)
 	bool checked() const { return m_checked; }
 	bool started() const { return m_started; }
 	void crc(StateHasher &hasher) const override;

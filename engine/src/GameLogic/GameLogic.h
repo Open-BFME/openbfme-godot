@@ -157,6 +157,9 @@ public:
 	// RW 0x69560B: profile statistics are recorded before the normal kill-score gates.
 	virtual void createAHeroKill(Object &, Object &) {}
 	virtual void heroAttacked(Object &obj) { (void)obj; }
+	// TOP20 rampage, RW 0x625759 GameLogic::deselectObject with affectClient: the object's drawable leaves the client's selection (TheInGameUI vslot 0x10C,
+	// deselectDrawable, RW 0x6257E5)
+	virtual void deselectDrawable(Object &obj) { (void)obj; }
 	// lane EVADAMAGE-1, RW 0x67B4B7's Eva half: a qualifying hit (ShouldPlayUnderAttackEva) on a local object, with the logic's part of the choice
 	// (GameLogic/Object/EvaDamageNotice.h); the client picks the event, keeps the drawable's far frame and reports it to TheEva
 	virtual void evaDamaged(Object &obj, const EvaDamageNotice &notice) { (void)obj; (void)notice; }
@@ -803,6 +806,11 @@ public:
 	typedef std::function<void(int slot, Object &self, const LuaEventArgs &args)> ScriptEventProc;
 	void setScriptEventProc(ScriptEventProc proc) { m_scriptEventProc = std::move(proc); }
 	void dispatchScriptEvent(int slot, Object &self, const LuaEventArgs &args);
+	// TOP20 rampage, RW 0x625759 deselectObject(obj, playerMask, affectClient): the object leaves the selected group of every player of the mask (bit i =
+	// player index i; RW 0x6A85EE walks the mask, RW 0x6AAB85 / 0x76EC79 / 0x6AD78F take it out of the player's current selection), then with affectClient
+	// its drawable leaves the client's selection (ObjectClientHooks::deselectDrawable). The per-player tail RW 0x690B8C (the SELECTED model condition and
+	// the horde interface's slot 0xD8) is not ported: the port never sets SELECTED on a selection (stop S-7181)
+	void deselectObject(Object &obj, std::uint32_t playerMask, bool affectClient);
 	unsigned long long scriptEventsWithoutDispatch() const { return m_scriptEventsWithoutDispatch; }
 	// lane NUGGET-1: LuaEventNugget's events by name (RW 0x911EDC): TheLuaScriptEvents' FindEvent (RW 0x735388) answers whether the name is an event (internal slot,
 	// scripted event, model condition or object status record); then each receiver gets the dispatch RW 0x735F53. The live game installs both; with none

@@ -39,7 +39,7 @@
 // lane LOGIC-1's HordeContain does, S-149); the client parts (the fades, the drawable bone attachment, the sounds); CanGrabStructure (the trolls' GrabObject body path; the entry test RW 0x86A07D and the GrabWeapon fire RW 0x86AA4B .. 0x86AAA2 with FireGrabWeaponOnVictim's UNATTACKABLE bracket are ported, lane PORT-62);
 // ShouldThrowOutPassengers' throw (RW 0x86A530, the physics shock RW 0x792A69); the AI
 // slot 0x1A8 of isSpecificRiderFreeToExit; the SHIP boarding AI (S-4160; lane SHIP-1 ported the pathfinder's shore spot RW 0x6EFBB8 for a SHIP's entries and exits); an indestructible container's payload (body slots 0x8C / 0x88); PassengersInTurret's turret bone
-// (RW 0x68E807); the payload creator's CREATE_DRAWABLE_WITH_LOW_DETAIL status (client); who arms the falling riders (slot 0xF8: no caller located).
+// (RW 0x68E807); the payload creator's CREATE_DRAWABLE_WITH_LOW_DETAIL status (client). The falling riders are armed by AIRampageState's update (contain slot 0xF8, RW 0x7518AF; TOP20 rampage).
 
 #pragma once
 
@@ -146,6 +146,7 @@ public:
 	void onDie(const DieModuleInterface::Event &event) override;                                  // RW 0x87AE0A
 	// slot 0xF8 RW 0x87A321: the riders start to fall off (the update's timers)
 	void armRidersFalling() { m_ridersFalling = true; }
+	void startRidersFalling() override { armRidersFalling(); } // the contain interface's slot 0xF8 (TOP20 rampage: AIRampageState RW 0x7518AF)
 	bool ridersFalling() const { return m_ridersFalling; }
 
 protected:

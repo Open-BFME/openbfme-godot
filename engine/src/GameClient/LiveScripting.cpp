@@ -3,6 +3,8 @@
 
 #include "GameClient/LiveScripting.h"
 #include "GameLogic/Module/EmotionModules.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
 
 #include "Common/Audio/AudioLog.h"
 #include "Common/Audio/AudioRequests.h"
@@ -305,6 +307,49 @@ void LiveScripting::enterEmotion(int id, int type, int otherId)
 	}
 	Object *other = otherId != 0 ? m_logic.findObjectByID((ObjectID)otherId) : nullptr;
 	EmotionTrackerUpdate::requestEmotion(*obj, type, other, 1); // RW 0x736AD5: push 1 (ebp), the other, the type
+}
+
+// TOP20 rampage: RW 0x738A24 (the binding found the object)
+void LiveScripting::enterRampageState(int id)
+{
+	Object *obj = m_logic.findObjectByID((ObjectID)id);
+	if (!obj)
+	{
+		return;
+	}
+	if (const PhysicsBehavior *phys = obj->physicsModule())
+	{
+		if (phys->isStunned())
+		{
+			return; // RW 0x738A5C .. 0x738A6A: physics (+ 0x264) + 0x5C
+		}
+	}
+	BodyModuleInterface *body = obj->getBodyModule();
+	if (!body)
+	{
+		return; // RW 0x738A74
+	}
+	body->setDelayedDeathChecked(true); // RW 0x738A7A: body vt[0x98](1)
+	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	if (!ai)
+	{
+		return; // RW 0x738A88
+	}
+	if (ai->stateMachineOrNull() && ai->stateMachineOrNull()->temporaryStateLocked())
+	{
+		ai->emotionLeaveAIState(); // RW 0x738A8C .. 0x738A97: RW 0x663082 -> 0x66309C
+	}
+	ai->aiRampage(CMD_FROM_SCRIPT); // RW 0x738A9C .. 0x738AA1: RW 0x738481(1), AI command 0x3A
+}
+
+// RW 0x736CC8
+void LiveScripting::setDelayedDeath(int id, bool on)
+{
+	Object *obj = m_logic.findObjectByID((ObjectID)id);
+	if (BodyModuleInterface *body = obj ? obj->getBodyModule() : nullptr)
+	{
+		body->setDelayedDeathChecked(on); // RW 0x736D1A .. 0x736D30: body vt[0x98](flag)
+	}
 }
 
 LuaGameHost::UpgradeLookup LiveScripting::findUpgrade(const std::string &name)

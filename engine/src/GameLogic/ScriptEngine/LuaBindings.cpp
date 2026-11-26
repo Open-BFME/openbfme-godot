@@ -638,7 +638,7 @@ int luaObjectEnterRampageState(lua_State *L)
 	LuaObjectInfo o;
 	if (objectArg(L, 1, 1, &id) && findObject(L, id, &o))
 	{
-		inferred(L, "ObjectEnterRampageState: the module at Object+0x25C vtable +0x98 and the AI command 0x3A are not identified (spec G9)");
+		// TOP20 rampage: body vt[0x98] (DelayedDeathBody's `checked`, RW 0x8C57A1) and AI command 0x3A (AIRampageState.h) are identified; the host runs them
 		hostOf(L).enterRampageState(id);
 	}
 	return 0;
@@ -840,7 +840,7 @@ int luaObjectSetDelayedDeath(lua_State *L)
 	{
 		return 0;
 	}
-	inferred(L, "ObjectSetDelayedDeath: the module at Object+0x25C vtable +0x98 is not identified (spec G9)");
+	// TOP20 rampage: body vt[0x98] is DelayedDeathBody's `checked` (RW 0x8C57A1; every other body: `ret 4` RW 0x9F3A3C); the host runs it
 	hostOf(L).setDelayedDeath(id, lua_toboolean(L, 2) != 0);
 	return 0;
 }

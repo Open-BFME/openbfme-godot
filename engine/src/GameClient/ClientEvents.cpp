@@ -142,6 +142,11 @@ void ClientEventRecorder::heroAttacked(Object &obj)
 	push(ClientEvent::HERO_ATTACKED, obj);
 }
 
+void ClientEventRecorder::deselectDrawable(Object &obj)
+{
+	push(ClientEvent::DESELECTED, obj); // TOP20 rampage: RW 0x6257E5
+}
+
 // lane EVADAMAGE-1: RW 0x67B4B7's Eva half, the logic's part (EvaDamageNotice.h); the report goes to TheEva at the object's position (+ 0x38)
 void ClientEventRecorder::evaDamaged(Object &obj, const EvaDamageNotice &notice)
 {

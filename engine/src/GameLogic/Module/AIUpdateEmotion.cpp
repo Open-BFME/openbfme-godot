@@ -107,7 +107,10 @@ bool AIUpdateInterface::allowedToRespondToCommand(CommandSourceType source, int 
 			return false;
 		}
 	}
-	// + 0x3C6 (the script lock) is never set in the port
+	if (m_scriptLock && source == CMD_FROM_SCRIPT)
+	{
+		return false; // RW 0x6671D5 .. 0x6671E1: the script lock (+ 0x3C6, AIRampageState) refuses a SCRIPT order
+	}
 	if (m_machine && m_machine->temporaryStateLocked())
 	{
 		return false;

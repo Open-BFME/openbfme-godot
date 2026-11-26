@@ -78,6 +78,11 @@ public:
 	// lane MODULES-2: Lua ObjectEnterRunAwayPanicState / CowerState / UncontrollableCowerState / AlertState (RW 0x736A69 / 0x736AE1 / 0x736BA0 / 0x736B59):
 	// RW 0x68F37F(type, other, 1), the request of the object's EmotionTrackerUpdate (GameLogic/Module/EmotionModules.h)
 	void enterEmotion(int id, int type, int otherId) override;
+	// TOP20 rampage: Lua ObjectEnterRampageState (RW 0x738A24): a stunned physics refuses, body vt[0x98](1), a locked temporary state leaves, AI command 0x3A
+	// from SCRIPT (AIUpdateInterface::aiRampage, GameLogic/AI/AIRampageState.h)
+	void enterRampageState(int id) override;
+	// Lua ObjectSetDelayedDeath (RW 0x736CC8): body vt[0x98](flag), DelayedDeathBody's `checked` (RW 0x8C57A1)
+	void setDelayedDeath(int id, bool on) override;
 	// lane HERO-2: the bindings' partition queries (RW 0xA39340 with each binding's filter chain; LiveScripting.cpp)
 	std::vector<int> objectsInRange(int id, float radius, LuaRangeOrder order, int relationship, bool notOfPlayer) override;
 

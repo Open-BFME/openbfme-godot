@@ -176,6 +176,11 @@ public:
 		std::string attackPriority = "DefaultAttackPriority"; ///< lane TARGET-1: + 0x44, the module data constructor RW 0x66E8FF
 		float holdGroundCloseRangeDistance = 0.0f; ///< lane TARGET-1: HoldGroundCloseRangeDistance (RW field table 0xC0F530, + 0x28, parseReal)
 		std::vector<std::string> specialContactPoints; ///< lane BUILD-3: SpecialContactPoints (RW field table 0xC0F640, + 0x58, RW 0x42E59E: every token appended)
+		// TOP20 rampage (RW field table 0xC0F530): RampageTime + 0x38 and TimeToEjectPassengersOnRampage + 0x48 (parseDurationUnsignedInt RW 0x73A429: ms ->
+		// ceil(ms * 0.005f)), RampageRequiresAflame + 0x3C (parseBool RW 0x42E558); read by AIRampageState::onEnter (RW 0x74D6EA, through RW 0x664D5D)
+		unsigned rampageTime = 0;
+		bool rampageRequiresAflame = false;
+		unsigned timeToEjectPassengersOnRampage = 0;
 	};
 	const CombatSettings &combatSettings() const { return m_combat; }
 	// lane BUILD-3, RW 0x667C76 AIUpdateInterface::findNearestLabeledContactPointOnTarget(target, out, callerPos, preferred): the SpecialContactPoints labels in order;
@@ -201,6 +206,11 @@ public:
 	void setAttitude(int attitude);
 	// lane SCRIPT-3: AI command 0x12 (RW 0x6AF150): aiDoCommand's gate, then privateHunt RW 0x6644E6 (AIHunt.cpp); false when nothing changed
 	bool aiHunt(CommandSourceType source);
+	// TOP20 rampage: AI command 0x3A (RW 0x738481, made only by Lua ObjectEnterRampageState): aiDoCommand's gate, then privateRampage (AI vslot 0x150, RW
+	// 0x662EB1: nothing when already in state 0x2D, else the machine cleared, the source kept, state 0x2D); false when nothing changed (AIRampageState.cpp)
+	bool aiRampage(CommandSourceType source);
+	// RW 0x664D5D getRampageTime: 0 when RampageRequiresAflame and the object is not AFLAME (status 10), else RampageTime (frames)
+	unsigned rampageTime() const;
 	// lane BFME2CAMP1: AI command 0x23 (RW 0x77145C aiAttackArea) -> aiDoCommand's gate, then privateAttackArea RW 0x66C24E (AIHunt.cpp): attack the enemies inside
 	// `area` (the state 0x1F, AIAttackAreaState); false when nothing changed
 	bool aiAttackArea(const TriggerArea &area, CommandSourceType source);
@@ -549,6 +559,10 @@ public:
 	void setVictimAutoAcquired() { m_victimAutoAcquired = true; }
 	void setPreventPlayerCommands(bool on) { m_preventPlayerCommands = on; } // RW + 0x3C5 (the nugget start / stop with PreventPlayerCommands)
 	bool preventPlayerCommands() const { return m_preventPlayerCommands; }
+	// TOP20 rampage: RW + 0x3C6, the script lock: aiDoCommand's gate (RW 0x6671D5 .. 0x6671E1) refuses a SCRIPT order while it is set; AIRampageState sets it on
+	// entry (RW 0x74D74E) and clears it on exit (RW 0x74D7F8)
+	void setScriptLock(bool on) { m_scriptLock = on; }
+	bool scriptLock() const { return m_scriptLock; }
 	// RW + 0x3C4: the panic cower's short cower (MinCowerTime / 4); its writer is not identified (S-1027), only state 21's exit clears it
 	bool fastCower() const { return m_fastCower; }
 	void setFastCower(bool on) { m_fastCower = on; }
@@ -692,6 +706,7 @@ private:
 	// lane MODULES-3
 	bool m_preventPlayerCommands = false; // RW + 0x3C5
 	bool m_victimAutoAcquired = false;    // RW + 0x3C7 (lane APPROACHGIVEUP-1)
+	bool m_scriptLock = false;            // RW + 0x3C6 (TOP20 rampage)
 	bool m_fastCower = false;             // RW + 0x3C4
 	unsigned m_minCowerTime = 0, m_maxCowerTime = 0;
 	bool m_animalInterface = false, m_animalAfraidOfCastles = true; ///< lane CASTLEAREA-1 (see hasAnimalInterface)
