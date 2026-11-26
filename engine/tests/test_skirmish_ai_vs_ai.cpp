@@ -956,7 +956,11 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// pin: lane FIRINGTRACKER-1 (the FiringTracker read on the bytes, RW 0x8E326D / 0x8E30DD: a weapon without ContinuousFireCoast keeps its shot count between shots instead of losing it on every AI update, so a PER_ATTACK pre-attack delay, RW 0x68C54E -> 0x8E2E12, is paid on the first shot at a target only; the tracker runs as the PHASE_FINAL FiringTrackerHelper; measured on the lane's tree): seed 2 ends with Mordor's defeat (start position 0) at 4671 (open before) with a new table from the first window on, seed 7 is open at 9000
 	// (Mordor's defeat at 5013 before; at 9000 the Men hold 23 structures with 2 units and 50 money, Mordor 15 units and 1426 money), seed 1234 stays open at
 	// 9000. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 8960 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// pin: merge queue q65 (measured once on the merged tree; APPROACHGIVEUP-1, the attack approach giving up an auto-acquired fleeing victim beyond StopChaseDistance
+	// and an unreachable one, RW 0x749D46, S-7162, moves the AIs' play, POSTERNPLOT-1 keeps it): seed 2 ends with Mordor's defeat at 6905 (8960), its table
+	// unchanged up to the 3000 window, seed 7 with the Men's defeat (start position 0) at 6952 (open before), seed 1234 stays open at 9000. Engine pins, not retail values.
+	// pin: merge queue q66 (measured once on the merged tree and at each merge point; #338's idle stance countdown, RW 0x7553AB / 0x743864: a Battle / HoldGround / Porcupine unit idle after a fight or a move guards where it stands again, moves the AI game, #363 keeps it): seed 2 ends with Mordor's defeat at 4431 (6905) with a new table from the first window on, seed 7 with the Men's defeat (start position 0) at 7083 (6952), seed 1234 with Mordor's defeat (start position 0) at 8724 (open before). Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 4431 }, Game{ "FactionMen", "FactionMordor", 7u, 0, 7083 }, Game{ "FactionMordor", "FactionMen", 1234u, 0, 8724 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -1022,15 +1026,13 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 			// 5000 window; the game stays open at 9000
 			// pin: lane FIRINGTRACKER-1 (measured on the lane's tree; see above): a new table from the first window on; the game ends with Mordor's defeat at 4671
 			// pin: merge queue q64 (measured once on the merged tree and at each merge point: #334's builders turn to face the site before they build or repair, RW 0x88DD3E / 0x88DA7A, so every AI build starts a few frames later and the AI game moves; #341 keeps it, FIRINGTRACKER-1 alone keeps its own lane values): a new table from the first window on, both sides attack all game; the game ends with Mordor's defeat at 8960 (the same loser)
+			// pin: merge queue q65 (measured once on the merged tree; see above): the table is unchanged up to the 3000 window; the game ends with Mordor's defeat at 6905
+			// pin: merge queue q66 (measured once on the merged tree and at each merge point; see above): a new table from the first window on; the game ends with Mordor's defeat at 4431
 			CHECK(run.progress ==
-		"frame 1000: [0 attacks 1 built 71u/7s destroyed 22u/1s] [1 attacks 1 built 76u/7s destroyed 23u/1s]\n"
-		"frame 2000: [0 attacks 3 built 263u/10s destroyed 242u/3s] [1 attacks 1 built 244u/9s destroyed 108u/2s]\n"
-		"frame 3000: [0 attacks 6 built 402u/12s destroyed 278u/3s] [1 attacks 3 built 372u/13s destroyed 282u/5s]\n"
-		"frame 4000: [0 attacks 8 built 590u/14s destroyed 363u/3s] [1 attacks 3 built 480u/16s destroyed 535u/5s]\n"
-		"frame 5000: [0 attacks 9 built 713u/16s destroyed 466u/3s] [1 attacks 5 built 569u/19s destroyed 611u/9s]\n"
-		"frame 6000: [0 attacks 13 built 849u/18s destroyed 621u/3s] [1 attacks 7 built 656u/23s destroyed 742u/11s]\n"
-		"frame 7000: [0 attacks 18 built 915u/21s destroyed 717u/3s] [1 attacks 8 built 809u/24s destroyed 845u/12s]\n"
-		"frame 8000: [0 attacks 22 built 984u/25s destroyed 873u/3s] [1 attacks 12 built 961u/24s destroyed 901u/16s]\n");;
+		"frame 1000: [0 attacks 2 built 91u/8s destroyed 27u/1s] [1 attacks 1 built 76u/8s destroyed 24u/1s]\n"
+		"frame 2000: [0 attacks 4 built 279u/10s destroyed 114u/1s] [1 attacks 2 built 182u/10s destroyed 258u/4s]\n"
+		"frame 3000: [0 attacks 6 built 442u/13s destroyed 218u/1s] [1 attacks 4 built 307u/12s destroyed 368u/8s]\n"
+		"frame 4000: [0 attacks 6 built 544u/16s destroyed 340u/1s] [1 attacks 5 built 439u/14s destroyed 531u/10s]\n");
 		}
 	}
 }
@@ -1236,7 +1238,9 @@ TEST_CASE("skirmish ai tactics: the offensive bodies make retail's draws in orde
 	// 1); a probe of seeds 72 .. 131 on the PR's tree (a CI host) found 74, 81, 100, 119, 124 (one each) and 99 (two)
 	// Lane WARG-1 (FindClosestPath RW 0x6FB869 and the unclamped cells RW 0x6E8CE6 move every game): none of these sixteen hands a Pincer team its waypoints
 	// within 2600 frames; a probe of twelve seeds on the lane's tree after the archive merge (74 .. 139 and 126, a CI host) found 126 (one)
-	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u, 37u, 41u, 53u, 71u, 83u, 107u, 126u })
+	// pin: merge queue q66 (#338's idle stance countdown moves every game): none of these seventeen hands a Pincer team its waypoints within 2600 frames;
+	// a probe of seeds 127 .. 150 on the merged tree found 133, 136, 145 and 150 (one each)
+	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u, 37u, 41u, 53u, 71u, 83u, 107u, 126u, 133u })
 	{
 		NewGameStart start(RandomAlgorithm::ZH_CarryChain);
 		REQUIRE_MESSAGE(NewGame::prepareNewGame(versusMessage(*s, "FactionMen", -1, "FactionMordor", 2, seed), s->world->playerTemplates(), s->settings, cache,

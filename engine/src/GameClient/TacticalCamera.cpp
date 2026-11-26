@@ -187,6 +187,8 @@ float CameraHeightField::sample(float x, float y) const
 TacticalCamera::TacticalCamera(const CameraSettings &gameData)
 	: m_gd(gameData)
 {
+	// lane PORT-439: GlobalData + 0x9A4, read by the script camera animations' step (RW 0x4866B4)
+	m_disableCameraMovements = m_gd.disableCameraMovements;
 	m_map = MapCameraValues::resolve(m_gd, nullptr);
 	m_minHeight = m_map.minHeight;
 	m_maxHeight = m_map.maxHeight;
@@ -727,6 +729,98 @@ int TacticalCamera::lockTarget(Coord3D &position) const
 	return 1;
 }
 
+// ---- lane PORT-439: FOCAL_LENGTH_CAMERA (script action 389) on the view ----
+
+// RW 0x8DAEEE: 12 / tan(radians / 2); the argument is halved in float (RW 0xBD869C), the tangent is the x87 double form (RW 0xA3D698), and a
+// zero tangent (fucompi) answers the pooled 1.0e10 (RW 0xBF7328) instead of dividing
+float TacticalCamera::fovToFocalLength(float radians)
+{
+	const float half = radians * 0.5f; // RW 0x8DAEF3 * the pooled 0.5
+	const double t = std::tan((double)half); // RW 0xA3D698, the msvcr71 double tan
+	if (t == 0.0)
+	{
+		return 1.0e10f; // RW 0x8DAF1B: fld [0xBF7328]
+	}
+	return (float)(12.0 / t); // RW 0x8DAF12: fdivr the pooled 12.0 (RW 0xBD88D0)
+}
+
+// RW 0x8DAF22: a focal length <= 0 answers the pooled pi / 2 (RW 0xBD89D0, 1.5707964); else 2 * atan(12 / mm) (x87 double atan RW 0xA3D854,
+// the doubling is fadd st0,st0, a float add of the result to itself)
+float TacticalCamera::focalLengthToFov(float mm)
+{
+	if (mm <= 0.0f) // RW 0x8DAF28: comiss against the pooled 0.0 (RW 0xC1B594), jbe
+	{
+		return 1.5707964f;
+	}
+	const double a = std::atan(12.0 / (double)mm); // RW 0x8DAF31 fld 12.0, fdiv [esp+8], RW 0xA3D854
+	const float f = (float)a;
+	return f + f; // RW 0x8DAF46: fadd st(0), st(0)
+}
+
+// RW 0x8DAF6C: the same angle in degrees: focalLengthToFov(mm) * 57.295776 (the pooled 180 / pi, RW 0xBD18FC)
+static float focalLengthToFovDegrees(float mm)
+{
+	return TacticalCamera::focalLengthToFov(mm) * 57.2957763671875f;
+}
+
+// RW 0x48885E View::setFocalLength(float focal, int msec, float easeInMs, float easeOutMs), called by RW 0x7BB627 from the action's case
+void TacticalCamera::setFocalLength(float focalLengthMm, int milliseconds, float easeInMs, float easeOutMs)
+{
+	const int ms = milliseconds < 1 ? 1 : milliseconds; // RW 0x488866: cmp edi, 1 / cmovl 1
+	m_focalActive = true;                               // RW 0x48886B: byte + 0x254 = 1
+	m_focalFrames = ms / 33;                            // RW 0x48887A: idiv TheW3DFrameLengthInMsec (RW 0xDC7A8C)
+	if (m_focalFrames < 1)
+	{
+		m_focalFrames = 1; // RW 0x488880: cmp eax, 1 / the floor of 1
+	}
+	m_focalFrame = 0; // RW 0x488898: and dword [esi + 0x230], 0
+	m_fovFromDegrees = m_fov * 57.2957763671875f; // RW 0x488888: View + 0x6C * the pooled 57.295776 (RW 0xBD18FC) -> + 0x23C
+	m_focalTo = focalLengthMm;                    // RW 0x4888E3: [ebp + 8] -> + 0x238
+	m_fovToDegrees = focalLengthToFovDegrees(focalLengthMm); // RW 0x4888B5: vslot 0x21C (RW 0x65EB68) -> + 0x240
+	m_focalFrom = fovToFocalLength(m_fov);                   // RW 0x4888CC: vslot 0x218 (RW 0x65EB57) -> + 0x234
+	// RW 0x488905: the ease's fractions are ease / the action's milliseconds (the constructor's third argument, cvtsi2ss of edi's ms): the
+	// argument order is (easeIn, easeOut, divisor) at [esp], [esp + 4], [esp + 8]
+	m_focalEase.setEaseTimes(easeInMs / (float)ms, easeOutMs / (float)ms);
+	if (m_focalFrames == 1)
+	{
+		updateFocalLength(); // RW 0x488911: frames == 1 runs one step at once
+	}
+}
+
+// RW 0x4866A7: one client frame of the focal-length animation, the + 0x254 branch of the view's update RW 0x48A953
+void TacticalCamera::updateFocalLength()
+{
+	if (!m_focalActive)
+	{
+		return; // the caller tests + 0x254
+	}
+	++m_focalFrame; // RW 0x4866AE: inc dword [esi + 0x230]
+	if (m_disableCameraMovements)
+	{
+		// RW 0x4866C7: GlobalData + 0x9A4 (DisableCameraMovements) set -> jl 0x486755 / jmp 0x48674E: no angle is written at all this frame; the wait
+		// frame (a >= frames) still ends the animation
+		if (m_focalFrame >= m_focalFrames)
+		{
+			m_focalActive = false;
+		}
+		return;
+	}
+	const int f = m_focalFrame;
+	if (f <= m_focalFrames) // RW 0x4866DD: cmp eax, ecx / jg 0x48672B (past the wait frame)
+	{
+		// RW 0x4866E1: the ease of the fraction frame / frames (cvtsi2ss, divss), RW 0x70FD72's parabolic form
+		const float p = (float)f / (float)m_focalFrames;
+		const float e = m_focalEase(p);
+		// RW 0x486701: from + (to - from) * e, in degrees, then * 0.017453292 (RW 0xBD1900) into View + 0x6C
+		m_fov = (m_fovFromDegrees + (m_fovToDegrees - m_fovFromDegrees) * e) * 0.01745329238474369f;
+	}
+	if (m_focalFrame >= m_focalFrames) // RW 0x48672B: the last frame writes the target angle exactly
+	{
+		m_fov = m_fovToDegrees * 0.01745329238474369f; // RW 0x486739: + 0x240 * 0.017453292
+		m_focalActive = false;                         // RW 0x48674E: byte + 0x254 = 0
+	}
+}
+
 void TacticalCamera::update(bool uiScrolling, bool gamePaused)
 {
 	// RW 0x48BCF2
@@ -735,6 +829,8 @@ void TacticalCamera::update(bool uiScrolling, bool gamePaused)
 		return;
 	}
 	++m_frame;
+	// lane PORT-439: the view's per-frame camera steps (RW 0x48A953's branches); the focal-length one is + 0x254 -> RW 0x4866A7
+	updateFocalLength();
 	bool recalc = false, scripted = false;
 	if (m_lockObject == INVALID_ID)
 	{

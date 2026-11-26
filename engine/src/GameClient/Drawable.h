@@ -34,6 +34,7 @@
 #include "GameClient/StealthLook.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawServices.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
@@ -52,6 +53,7 @@ typedef std::uint32_t DrawableID;
 // The services every draw module of a game shares (one per DrawableManager).
 class ModuleFactory;
 class AnimationSoundModuleManager;
+class LightPulsePool;
 
 // lane FX-2: the client effect player the draw modules call (GameClient/LiveFX). Read at call time, so drawables made before the player was installed use it too.
 class DrawableFXHost
@@ -80,6 +82,7 @@ struct DrawServices
 	W3DLuaDrawScriptHost host; ///< the real Lua of the drawable state (lane LUA-1): BeginScript bodies of every draw module
 	DrawableFXHost *fx = nullptr; ///< lane FX-2 (null: EnteringStateFX and ParticleSysBone stay S-095)
 	AnimationSoundModuleManager *animationSounds = nullptr; ///< lane AUDIO-4: TheAnimationSoundModuleManager of the game's drawables
+	LightPulsePool *lightPulses = nullptr; ///< lane FEAT-BLDFX-1 / LOCAL-28: the game's dynamic light pool (W3DLightDraw's and FXList LightPulse's lights), null before the client effects exist
 	// LOCAL-25: terrain height and normal sampler for presentation physics (calcPitchRoll / suspension)
 	std::function<float(float x, float y, Coord3D *normal)> groundHeight;
 	// LOCAL-25: TheGameClient's frame (30 a second, RW vslot 0x7C of 0xDE4388), the gate of the presentation physics step (RW 0x67BDF6 .. 0x67BE17).
@@ -97,6 +100,7 @@ struct DrawEntry
 	std::string staticModel;          ///< tree / prop / floor kinds: the model the module shows ("" when none)
 	std::string notDrawnReason;       ///< why a non-model entry draws nothing
 	std::unique_ptr<W3DScriptedModelDraw> draw; ///< MODEL kind
+	std::unique_ptr<W3DLightDraw> lightDraw;    ///< lane LOCAL-28: the W3DLightDraw runtime of a NOT_DRAWN entry whose data is a W3DLightDrawModuleData (lights are not a model)
 	bool animated = false;            ///< advance() would change the draw (W3DScriptedModelDraw::needsAdvance, set at creation and on every flag change, never lowered by an advance: the pose after a blend's promotion is still pushed): advance() each render frame
 	bool missingModel = false;        ///< the model is not in the mounted archives (a retail data defect): not drawn
 	std::string lastModel;            ///< the model last handed to the device layer (the device layer keeps its own handle)
@@ -143,10 +147,7 @@ struct DrawableLocoInfo
 	// Giant bird roll (retail +0x140, RW 0x670E09 / donor 0x00270B0F):
 	float m_giantBirdRoll = 0.0f;
 
-	void springStep(float &rate, float position, float stiffness, float damping)
-	{
-		rate += (-stiffness * (position * (1.0f - damping))) + (-damping * rate);
-	}
+	void springStep(float &rate, float position, float stiffness, float damping); // DrawablePhysics.cpp (client only)
 };
 
 // LOCAL-25: presentation physics transform angles and translation (retail Drawable::PhysicsXformInfo, RW 0x67BDC0)
@@ -240,6 +241,7 @@ public:
 	bool advanceIsLocal() const;
 	void advanceAnimationLocal(double elapsedMs); ///< advanceAnimation without the host's chunk name (nothing it runs reports through the host)
 	void advanceTires(DrawEntry &e, double elapsedMs); ///< lane COMBAT-4: W3DTruckDraw's tire spin (RW 0x4CBFFB)
+	void stepLightDraw(DrawEntry &e, double elapsedMs); ///< lane LOCAL-28: the W3DLightDraw entry's flicker / pulse step (DrawableLight.cpp)
 
 	// RW 0x6789B4 Drawable::showModule: the draw module whose tag is `name` (exact, case sensitive) takes the request (true: a module exists; the
 	// module-first rule: no fall through to a sub object of the same name) and its entry is hidden / shown (DrawEntry::moduleHidden).
@@ -251,6 +253,9 @@ public:
 	void scriptModuleVisible(const std::string &name, bool visible);
 	void showSubObject(const std::string &name, bool visible, bool permanent);
  void upgradeTexture(const TextureSwap &swap, bool enabled);
+	// lane LOCAL-28: the world position of the bone `boneName` of the first model entry that has it (RW 0x672B5B Drawable::getBonePosition: the pose of the
+	// current animation state, scaled by the instance scale and rotated by the drawable's orientation); false when no model entry has the bone
+	bool boneWorldPosition(const std::string &boneName, Coord3D &outPos) const;
 
 	// The render transform from the object's record in a completed logic frame's snapshot (SMOOTH-1: RenderInterpolation::retailPose, RW 0x6765B9;
 	// `interpolate` false: the record's current transform, the stepped look). Then the construction look (updateConstruction).

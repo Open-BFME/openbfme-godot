@@ -174,6 +174,10 @@ func _process(delta: float) -> void:
 		# lane CAMP-2: ScriptActions::executeAction (RW 0x7CAFA5): cases 118 / 119 doLetterBoxMode (RW 0x7BC8B7: HideControlBar(true) or ShowControlBar(false),
 		# then the display's letterbox), cases 347 / 348 HIDE_UI / SHOW_UI (HideControlBar(true) / ShowControlBar(false)); in the requests' order
 		# lane OWNERFIX-1: DISABLE_INPUT / ENABLE_INPUT (RW 0x7BC586 / 0x7BC5E9): the HUD's input flag, the selection and the pointer (InGameHud::scriptInput)
+		if r.action == "FOCAL_LENGTH_CAMERA" and hud != null and r.params.size() >= 4:
+			# lane PORT-439: RW 0x7CAFA5 case 0x185 -> RW 0x7CB6FB -> RW 0x7BB627(focal, seconds * 1000, easeIn * 1000, easeOut * 1000) -> TheTacticalView
+			# vslot 0xF0 = View::setFocalLength RW 0x48885E: the view's own camera animation, stepped once per client frame (RW 0x48A953 -> RW 0x4866A7)
+			hud.camera_set_focal_length(float(r.params[0].real), float(r.params[1].real), float(r.params[2].real), float(r.params[3].real))
 		if r.action == "SET_CAMERA_CLIP_DEPTH_MULTIPLIER" and hud != null and r.params.size() > 0:
 			hud.camera_set_clip_depth_multiplier(float(r.params[0].real)) # lane MODCOMPAT-AI: GlobalData + 0x950, the far plane's multiplier (RW 0x48B7B1)
 		if input_hook.is_valid():
@@ -214,6 +218,12 @@ func _process(delta: float) -> void:
 		distance = _base_distance * float(st.get("zoom", 1.0))
 		pitch = _base_pitch * float(st.get("pitch", 1.0))
 		_place_camera()
+		# lane PORT-439: FOCAL_LENGTH_CAMERA's horizontal angle (RW 0x48885E / 0x4866A7 write View + 0x6C, which the display draws with); the viewer's
+		# camera is a perspective one whose keeper is the width (as the HUD's applyCamera sets the drawn W3D view). Only a map whose scripts ran the
+		# action takes the angle: before it the viewer's own framing stands (the game's camera reads its own + 0x6C the same way)
+		if bool(st.get("focal_started", false)):
+			camera.keep_aspect = Camera3D.KEEP_WIDTH
+			camera.fov = float(st.get("focal_degrees", 50.0))
 	if _audio != null and not hud_mode: # lane CAMPUI-1: in the game the listener is the game's (it follows the HUD camera); here only the caption's click
 		_audio.set_listener(Vector3(target.x, target.y, target.z), Vector3(sin(angle), cos(angle), 0.0))
 	var size := get_viewport().get_visible_rect().size

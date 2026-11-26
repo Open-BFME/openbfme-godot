@@ -71,6 +71,15 @@ bool placePhantomStructure(Object &dozer, Object &structure, bool isRebuild = fa
 // BuildAssistant slot 0x38 for a builder that is neither a dozer nor a plot (the script engine, the AI): the structure appears complete at once (RW 0x7978A1 ff)
 Object *buildObjectNow(GameLogic &logic, Object *builder, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
 
+// lane POSTERNPLOT-1: the FoundationAIUpdate interface's slot 2 (RW 0x8582DE, tier A = BFME2 0x85527A, decomp FoundationAIUpdate.cpp
+// FoundationAIUpdate::rva0045527A; reached through the this - 0x20 thunks RW 0x79AA54 (CastleBehavior's interface vtable RW 0xC30DE8 + 8) and RW 0x8583DA):
+// the foundation's occupant (RW + 0x28) becomes `id`; an unchanged id does nothing. With an id: a foundation that is no WALL_UPGRADE (template + 0x11A bit 6)
+// gets the status UNSELECTABLE (3, RW 0x62684D) and its drawable fades out over 10 frames (RW 0x670A50); a WALL_UPGRADE one leaves the local player's
+// selection (MSG_REMOVE_FROM_SELECTED_GROUP 0x3ED + InGameUI::deselectDrawable, client). With 0: a foundation that is no WALL_UPGRADE loses UNSELECTABLE and
+// fades in over 30 frames (RW 0x670AA2). INFERENCE (S-952): the port keeps the occupant on the foundation's CastleMemberBehavior (what
+// CastleBehavior::occupantOf reads); a foundation without one, or a castle (whose occupant is its keep), keeps none: false (the caller reports it, S-4855) and nothing changes; true otherwise
+bool setFoundationOccupant(Object &foundation, ObjectID id);
+
 // the model condition flag index by the binary's name (-1: not in the table; a logic error to ask for such a name)
 int modelConditionIndex(const char *name);
 void setModelConditions(Object &obj, const std::vector<const char *> &clear, const std::vector<const char *> &set);

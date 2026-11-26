@@ -381,6 +381,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 		case ClientEvent::EVA_DAMAGED: // lane EVADAMAGE-1 (RW 0x67B4B7's Eva half)
 			EvaDamage::apply(ev, *this, m_evaDamage);
 			break;
+		case ClientEvent::DESELECT_LOCAL: // lane POSTERNPLOT-1 (RW 0x85834C)
+			if (m_deselectLocalHandler)
+			{
+				m_deselectLocalHandler(ev.object, ev.ownerIndex);
+			}
+			break;
 		}
 	}
 }
@@ -461,20 +467,7 @@ void DrawableManager::advance(double elapsedMs)
 		}
 	}
 
-	// LOCAL-25: RotWK's shared 30 Hz client frame counter (RW 0x6487D6 via GameClient::update RW 0x64849E); the presentation physics steps once per frame
-	m_clientClockMs += elapsedMs;
-	int clientTicks = 0;
-	static constexpr double kClientTickMs = 1000.0 / 30.0;
-	while (m_clientClockMs >= kClientTickMs - 1e-6 && clientTicks < 8)
-	{
-		m_clientClockMs -= kClientTickMs;
-		++clientTicks;
-		++m_clientFrame;
-	}
-	if (clientTicks >= 8 || m_clientClockMs < 0.0)
-	{
-		m_clientClockMs = 0.0; // clamp a stall
-	}
+	advanceClientFrame(elapsedMs); // LOCAL-25: DrawablePhysics.cpp (client only)
 }
 
 void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha, bool interpolate)

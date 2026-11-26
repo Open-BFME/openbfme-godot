@@ -189,6 +189,7 @@ class AIGateUpdate : public UpdateModule
 public:
 	OBFME_MODULE_XFER(AIGateUpdate) // lane SAVE-4b
 	AIGateUpdate(Thing *thing, const AIGateUpdateModuleData *data);
+	~AIGateUpdate() override;
 	UpdateSleepTime update() override;
 	void crc(StateHasher &hasher) const override;
 	// the trigger's callback (RW 0x8B4AF4)

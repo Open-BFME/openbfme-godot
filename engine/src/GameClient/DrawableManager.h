@@ -45,6 +45,8 @@ public:
 	// lane EVADAMAGE-1: what the EVA_DAMAGED events did (EvaDamage::apply)
 	const EvaDamage::Stats &evaDamageStats() const { return m_evaDamage; }
 	void setHeroFlashHandler(std::function<void(const std::string &, int)> handler) { m_heroFlashHandler = std::move(handler); }
+	// lane POSTERNPLOT-1: DESELECT_LOCAL (object id, the owner's player index at the call)
+	void setDeselectLocalHandler(std::function<void(ObjectID, int)> handler) { m_deselectLocalHandler = std::move(handler); }
 	size_t eventsApplied() const { return m_eventsApplied; }
 
 	Drawable *find(DrawableID id) const { return id >= 1 && id < m_slots.size() ? m_slots[id].get() : nullptr; }
@@ -146,9 +148,11 @@ private:
 	std::function<void(ObjectID)> m_heroAttackedHandler;
 	EvaDamage::Stats m_evaDamage; ///< lane EVADAMAGE-1
 	std::function<void(const std::string &, int)> m_heroFlashHandler;
+	std::function<void(ObjectID, int)> m_deselectLocalHandler;
 	size_t m_dependencyUpdates = 0; ///< lane COMBAT-4: dependent drawables whose shared flags changed (RW 0x4BF2D8)
 	std::uint32_t m_nextSeq = 0;
 	size_t m_eventsApplied = 0;
+	void advanceClientFrame(double elapsedMs); ///< LOCAL-25: the 30 Hz client frame step (DrawablePhysics.cpp, client only)
 	double m_clientClockMs = 0.0;
 	unsigned m_clientFrame = 0; ///< LOCAL-25: the shared client frame counter the presentation physics steps by
 	std::vector<std::unique_ptr<Drawable>> m_slots; ///< index = drawable id

@@ -22,8 +22,8 @@
 //   * the registration add RW 0x8E4456 pushes the id onto + 4 and inserts it; the OFFENSIVE BUILDINGS of the army definition (+ 0x98) are
 //     filtered by the caller RW 0x8E3EF8, not here.
 //
-// DONOR (reading aid, not the authority): Open-BFME-2 Rva00283114GroupMerge.cpp / Rva00282B26.cpp / Rva004DFA43Sphere.cpp /
-// Rva004DFCE6SphereMerge.cpp; the port follows the RW disassembly above. The same class is upstream PR #151's AIPositionSampler (BFME2 donor).
+// DONOR (reading aid, not the authority): Open-BFME-2 Rva00283114GroupMerge.cpp / TerrainLogic.cpp (rva00282B26) / AIStatCollector.cpp
+// (rva004DFA43, rva004DFCE6); the port follows the RW disassembly above. The same class is upstream PR #151's AIPositionSampler (BFME2 donor).
 
 #pragma once
 
