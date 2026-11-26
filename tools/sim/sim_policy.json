@@ -553,6 +553,10 @@
    "reason": "CHAT-1, the multiplayer beacon's ClientUpdate module: decides on the client when a shown beacon pulses on the minimap and keeps an enemy's beacon hidden; never read by the logic (the beacon object itself is BeaconCommands.cpp, a simulation source)"
   },
   {
+   "glob": "src/GameClient/RadarMarkerClientUpdate.cpp",
+   "reason": "RadarMarkerClientUpdate's ClientUpdate module (RW 0x8CE116 / BFME2 0x4C9CF7): asks the radar for a marker of its MarkerType and moves it to the drawable's position; reads the drawable and writes only the client radar's marker, never simulation state"
+  },
+  {
    "glob": "src/GameClient/InGameChat.cpp",
    "reason": "CHAT-1, the in-game chat window's rules (recipient masks, labels, line formats, scroll-back): client state and direct network commands, never frame data or logic state"
   },

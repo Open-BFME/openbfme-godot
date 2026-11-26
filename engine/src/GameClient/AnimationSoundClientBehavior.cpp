@@ -8,6 +8,7 @@
 #include "GameClient/AnimationSoundClientBehavior.h"
 #include "GameClient/BeaconClientUpdate.h"
 #include "GameClient/ClientBehaviorModules.h"
+#include "GameClient/RadarMarkerClientUpdate.h"
 #include "GameClient/SoundSelectorClientBehavior.h"
 
 #include "Common/AsciiString.h"
@@ -658,4 +659,5 @@ void ClientBehaviorModules::registerAll(ModuleFactory &modules)
 	AnimationSoundClientBehavior::registerClass(modules);
 	SoundSelectorClientBehavior::registerClasses(modules); // lane DECOMP-2: the three sound selectors (S-701)
 	BeaconClientUpdate::registerClass(modules);            // lane CHAT-1: the multiplayer beacon's minimap pulse
+	RadarMarkerClientUpdate::registerClass(modules);       // both editions: RW 0x65287A / BFME2 0x652B1F, the radar marker / ping
 }
