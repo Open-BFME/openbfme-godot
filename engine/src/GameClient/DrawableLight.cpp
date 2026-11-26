@@ -7,6 +7,9 @@
 
 #include "GameClient/Drawable.h"
 #include "Common/AsciiString.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "GameClient/LaserUpdate.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawBones.h"
 #include "GameLogic/SimMath.h"
@@ -15,6 +18,30 @@
 void Drawable::stepLightDraw(DrawEntry &e, double elapsedMs)
 {
 	e.lightDraw->stepFlicker((float)(elapsedMs * 0.001));
+}
+
+// RW 0x6747C2 / BFME2 0x27449C: find the LaserUpdate client update module on the drawable
+LaserUpdate *Drawable::findLaserUpdate() const
+{
+	for (const auto &m : m_clientModules)
+	{
+		if (auto *lu = dynamic_cast<LaserUpdate *>(m.get()))
+		{
+			return lu;
+		}
+	}
+	return nullptr;
+}
+
+// RW 0xAD1920: the maximum geometry height above the position for the drawable's template
+float Drawable::geometryHeight() const
+{
+	if (m_geometryHeight < 0.0f)
+	{
+		const ThingTemplate *tt = getTemplate();
+		m_geometryHeight = tt ? ObjectGeometry::maxHeightAbovePosition(ObjectGeometry::shapesOf(*tt)) : 0.0f;
+	}
+	return m_geometryHeight;
 }
 
 // lane LOCAL-28, RW 0x672B5B (Drawable::getBonePosition, DONOR BFME2 0x272835): the world position of a named bone of this drawable's current pose.

@@ -9,6 +9,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DStreakDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLaserDraw.h"
 
 namespace
 {
@@ -68,6 +69,7 @@ void W3DDrawModules::registerTypedDrawModuleData(ModuleFactory &modules)
 	modules.bindTypedData<W3DTankDrawModuleData>("W3DTankDraw", MODULETYPE_DRAW);
 	modules.bindTypedData<W3DSupplyDrawModuleData>("W3DSupplyDraw", MODULETYPE_DRAW);
 	modules.bindTypedData<W3DStreakDrawModuleData>("W3DStreakDraw", MODULETYPE_DRAW); // RENDER-1: RW 0x46473E / 0xBE39F8
+	modules.bindTypedData<W3DLaserDrawModuleData>("W3DLaserDraw", MODULETYPE_DRAW); // RW 0x464BC3 (name in the factory table) / RW 0x464159 module data / RW 0xBE1798 fields
 	modules.bindTypedData<W3DLightDrawModuleData>("W3DLightDraw", MODULETYPE_DRAW); // LOCAL-28, both editions: RW 0x464626 / 0x00BDBB08, BFME2 0x464E2F / 0x00BCD918
 }
 
@@ -78,6 +80,11 @@ std::vector<std::string> W3DDrawModules::notDrawnClasses()
 	{
 		if (c.kind == W3D_DRAWKIND_NOT_DRAWN)
 		{
+			if (std::string(c.name) == "W3DLaserDraw")
+			{
+				out.push_back("W3DLaserDraw: no model; its beam geometry is computed by W3DLaserDrawState (S-113), the SegmentedLine render object is not ported");
+				continue;
+			}
 			if (std::string(c.name) == "W3DLightDraw")
 			{
 				// lane LOCAL-28: no model, its light lives in the game's dynamic light pool (Drawable::addEntry builds the W3DLightDraw runtime)

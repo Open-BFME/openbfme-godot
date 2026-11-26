@@ -8,6 +8,7 @@
 #include "GameClient/AnimationSoundClientBehavior.h"
 #include "GameClient/BeaconClientUpdate.h"
 #include "GameClient/ClientBehaviorModules.h"
+#include "GameClient/LaserUpdate.h"
 #include "GameClient/SoundSelectorClientBehavior.h"
 
 #include "Common/AsciiString.h"
@@ -658,4 +659,5 @@ void ClientBehaviorModules::registerAll(ModuleFactory &modules)
 	AnimationSoundClientBehavior::registerClass(modules);
 	SoundSelectorClientBehavior::registerClasses(modules); // lane DECOMP-2: the three sound selectors (S-701)
 	BeaconClientUpdate::registerClass(modules);            // lane CHAT-1: the multiplayer beacon's minimap pulse
+	LaserUpdate::registerClass(modules);                   // both editions: RW 0x64D1FB / BFME2 0x64D56A, the laser beam client update
 }
