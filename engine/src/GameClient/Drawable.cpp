@@ -166,6 +166,10 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 					e.draw.reset(new W3DScriptedModelDraw(*data, services.drawAssets, services.random, &services.host, o));
 				}
 				e.animated = e.draw->needsAdvance(); // W3DScriptedModelDraw::needsAdvance: a blend runs whatever track 0's mode (S-090)
+				if (const auto *supplyData = dynamic_cast<const W3DSupplyDrawModuleData *>(data))
+				{
+					e.supply.reset(new W3DSupplyDraw(*m_template, *supplyData, services.drawAssets));
+				}
 				// the draw runtime's errors and stops are collected by DrawableManager (DrawEntry::draw->errors() / stops()), after the script hooks ran
 			}
 			catch (const std::exception &ex)
@@ -241,6 +245,10 @@ void Drawable::setModelConditionFlags(const ModelConditionFlags &flags)
 		{
 			e.draw->setModelConditionFlags(flags);
 			e.animated = e.draw->needsAdvance();
+			if (e.supply)
+			{
+				e.supply->refresh(*e.draw, flags, m_scale); // model-state changes clear plain sub-object ops; reapply the live supply status
+			}
 		}
 	}
 }
@@ -329,6 +337,22 @@ void Drawable::showSubObject(const std::string &name, bool visible, bool permane
 		}
 	}
 	++m_changeCount;
+}
+
+void Drawable::setSupplyStatus(int currentBoxes, int startingBoxes)
+{
+	bool changed = false;
+	for (DrawEntry &e : m_entries)
+	{
+		if (e.supply && e.draw)
+		{
+			changed = e.supply->setSupplyStatus(*e.draw, m_flags, m_scale, currentBoxes, startingBoxes) || changed;
+		}
+	}
+	if (changed)
+	{
+		++m_changeCount;
+	}
 }
 
 void Drawable::setModelCondition(int bit, bool on)

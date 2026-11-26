@@ -37,6 +37,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DSupplyDraw.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 #include <memory>
@@ -93,6 +94,7 @@ struct DrawEntry
 	std::string notDrawnReason;       ///< why a non-model entry draws nothing
 	std::unique_ptr<W3DScriptedModelDraw> draw; ///< MODEL kind
 	std::unique_ptr<W3DLightDraw> lightDraw;    ///< lane LOCAL-28: the W3DLightDraw runtime of a NOT_DRAWN entry whose data is a W3DLightDrawModuleData (lights are not a model)
+	std::unique_ptr<W3DSupplyDraw> supply;      ///< a W3DSupplyDraw's pile status alongside the shared model runtime (RW 0x4CA784)
 	bool animated = false;            ///< advance() would change the draw (W3DScriptedModelDraw::needsAdvance, set at creation and on every flag change, never lowered by an advance: the pose after a blend's promotion is still pushed): advance() each render frame
 	bool missingModel = false;        ///< the model is not in the mounted archives (a retail data defect): not drawn
 	std::string lastModel;            ///< the model last handed to the device layer (the device layer keeps its own handle)
@@ -204,6 +206,8 @@ public:
 	// request waits until all exist
 	void scriptModuleVisible(const std::string &name, bool visible);
 	void showSubObject(const std::string &name, bool visible, bool permanent);
+	// RW 0x8AB623..0x8AB63A -> the drawable's supply dispatcher RW 0x671948: applied only to W3DSupplyDraw entries (RW 0x4CA784)
+	void setSupplyStatus(int currentBoxes, int startingBoxes);
  void upgradeTexture(const TextureSwap &swap, bool enabled);
 	// lane LOCAL-28: the world position of the bone `boneName` of the first model entry that has it (RW 0x672B5B Drawable::getBonePosition: the pose of the
 	// current animation state, scaled by the instance scale and rotated by the drawable's orientation); false when no model entry has the bone

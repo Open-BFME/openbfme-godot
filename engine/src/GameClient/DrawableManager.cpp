@@ -263,6 +263,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 		{
 		case ClientEvent::CREATED: created(ev); break;
 		case ClientEvent::DESTROYED: destroyed(ev); break;
+		case ClientEvent::SUPPLY_STATUS: // RW 0x8AB623..0x8AB63A -> drawable supply dispatcher RW 0x671948 (event bridge: INFERENCE)
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->setSupplyStatus(ev.supplyCurrentBoxes, ev.supplyStartingBoxes);
+			}
+			break;
 		case ClientEvent::REPLACED: // lane STEALTH-2 (RW 0x776F03): the old drawable goes, a new one of the event's template comes
 			destroyed(ev);
 			created(ev);
