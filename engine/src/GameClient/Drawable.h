@@ -109,6 +109,7 @@ struct DrawEntry
 	const ModuleData *truckData = nullptr;
 	bool truckChecked = false;
 	bool isTruck = false;
+	std::string attachToBone; ///< AttachToBoneInAnotherModule (RW 0x4B6A6F..0x4B6B26): the bone of another module the model is placed on ("" none)
 };
 
 class Drawable : public Thing
@@ -208,6 +209,13 @@ public:
 	// lane LOCAL-28: the world position of the bone `boneName` of the first model entry that has it (RW 0x672B5B Drawable::getBonePosition: the pose of the
 	// current animation state, scaled by the instance scale and rotated by the drawable's orientation); false when no model entry has the bone
 	bool boneWorldPosition(const std::string &boneName, Coord3D &outPos) const;
+	// RW 0x672B5B with the whole transform: the object's transform (basis times instance scale, position) times the pose matrix of the bone `boneName`
+	// of the first model entry that has it; false (outTransform untouched) when no model entry has the bone (DrawableAttach.cpp)
+	bool boneTransform(const std::string &boneName, Matrix3D &outTransform) const;
+	// RW 0x4B6A6F..0x4B6B26: the world transform of the model of entry `e`. With AttachToBoneInAnotherModule and a bone found it is that bone's
+	// transform, after the draw's slot +0x104 (adjustAttachedTransform, once per call: the sail steps its damping per draw); true. Otherwise the
+	// ordinary object transform with the entry's construction offset; false.
+	bool entryTransform(const DrawEntry &e, Matrix3D &outMatrix) const;
 
 	// The render transform from the object's record in a completed logic frame's snapshot (SMOOTH-1: RenderInterpolation::retailPose, RW 0x6765B9;
 	// `interpolate` false: the record's current transform, the stepped look). Then the construction look (updateConstruction).

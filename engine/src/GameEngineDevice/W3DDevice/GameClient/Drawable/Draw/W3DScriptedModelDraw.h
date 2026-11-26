@@ -62,6 +62,8 @@
 #include <string>
 #include <vector>
 
+class Matrix3D;
+
 // One of the three animation tracks (RW 0x4B349F fills one: slot, anim, mustCompleteBlend (+0x19), mode (+0x10), blendTime (+0xC),
 // frame (+4), prevFrame (+8), completed (+0x18), direction (+0x14); stride 0x1C from the draw object's +0x110).
 struct W3DDrawTrack
@@ -264,6 +266,10 @@ public:
 	float constructionHeightOffset(float objectPercent, bool refreshPercent, float buildRate, float alpha, float height);
 	float cachedConstructionPercent() const { return m_constructionPercent; }
 	bool adjustsHeightByConstruction() const { return m_curAnimState && m_curAnimState->testFlag(W3D_ACF_ADJUST_HEIGHT_BY_CONSTRUCTION_PERCENT); }
+
+	// RW 0x4B6B26: the shared transform's vtable +0x104 call, made only after the AttachToBoneInAnotherModule bone of another module was found
+	// (Drawable::entryTransform), with the placed transform. Base RW 0x9F3A3C (`ret 4`): no-op. W3DSailModelDraw overrides it (RW 0x4D00CD).
+	virtual void adjustAttachedTransform(Matrix3D &) {}
 
 	// Speed multiplier of every track (RW +0x9C: the movement speed sync, recomputed at the end of every advance). Exposed for tests.
 	void setSpeedMultiplier(float m) { m_speedSync = m; }
