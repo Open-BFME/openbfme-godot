@@ -26,6 +26,7 @@ struct ModelTriangles
 	std::vector<int> subObject;  // per triangle
 	float centre[3] = { 0.0f, 0.0f, 0.0f };
 	float radius = 0.0f;
+	float lo[3] = { 0.0f, 0.0f, 0.0f }, hi[3] = { 0.0f, 0.0f, 0.0f }; // lane BLOBSHADOW-2: the triangles' bounds (bindPoseBounds)
 	// lane SELECT-1: the first oriented box of the top LOD (RotWK HLodClass::Cast_Ray, RW 0x59C680: with the pick flag (+0x42) set, the first top-LOD
 	// child of class 0x1B (OBBoxRenderObjClass) answers the ray alone); its pivot's bind-pose transform, centre and half extents in that pivot's space
 	int boxSubObject = -1;
@@ -129,6 +130,8 @@ std::shared_ptr<const ModelTriangles> buildTriangles(const RenderObjPrototype &p
 		for (int k = 0; k < 3; ++k)
 		{
 			out->centre[k] = (lo[k] + hi[k]) * 0.5f;
+			out->lo[k] = lo[k];
+			out->hi[k] = hi[k];
 		}
 		for (size_t i = 0; i < out->xyz.size(); i += 3)
 		{
@@ -162,6 +165,25 @@ std::shared_ptr<const ModelTriangles> trianglesOf(const RenderObjPrototype &prot
 	return t;
 }
 
+} // namespace
+
+bool DrawablePick::bindPoseBounds(const RenderObjPrototype &proto, float lo[3], float hi[3])
+{
+	const std::shared_ptr<const ModelTriangles> tris = trianglesOf(proto);
+	if (tris->subObject.empty())
+	{
+		return false;
+	}
+	for (int k = 0; k < 3; ++k)
+	{
+		lo[k] = tris->lo[k];
+		hi[k] = tris->hi[k];
+	}
+	return true;
+}
+
+namespace
+{
 // Moller-Trumbore, both faces: the ray parameter of the hit, false for a miss
 bool rayTriangle(const float *o, const float *d, const float *a, const float *b, const float *c, float &t)
 {

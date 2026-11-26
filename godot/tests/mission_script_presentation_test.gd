@@ -75,10 +75,11 @@ func _assert_opening_reveal(world: Node) -> void:
 		if checked: break
 	_check(checked, "The scripted opening reveal must reach the terrain's shroud texture")
 
-func _spotlight_node(world: Node, object_id: int) -> Decal:
-	for node in world.find_children("DrawableAdditiveDecal_*", "Decal", false, false):
-		if int(node.get_meta("object_id", 0)) == object_id: return node
-	return null
+## lane DRAWDECAL-1: the object's decal shadow in this frame's list for the HUD's selection decal grid (empty: none)
+func _spotlight(world: Node, object_id: int) -> Dictionary:
+	for e in world.get_decal_shadows():
+		if int(e.object) == object_id: return e
+	return {}
 
 func _assert_spotlight(game: Node) -> void:
 	var world: Node = game._world
@@ -90,17 +91,21 @@ func _assert_spotlight(game: Node) -> void:
 	for i in 3: await process_frame
 	var marker: Dictionary = world.debug_script_unit("Test Spotlight")
 	_check(marker.ok, str(marker))
-	var decal := _spotlight_node(world, marker.id)
-	_check(decal != null, "The retail marker's additive shadow must create a ground decal")
-	if decal == null: return
-	_check(decal.visible)
-	_check(decal.size == Vector3(135.0, 200.0, 135.0))
-	_check(decal.position == Vector3(marker.x, marker.z, -marker.y))
-	_check(decal.cull_mask == 524288) # terrain layer, bit 19
-	_check(decal.get_texture(Decal.TEXTURE_EMISSION) != null)
-	_check(decal.get_texture(Decal.TEXTURE_ALBEDO) == null)
-	_check(decal.get_meta("shadow_texture") == "EXSpotLight.tga")
-	_check(decal.get_meta("acceptance_stop") == "[S-3304] additive drawable decals: projection/blend and ShadowOpacity timing are unverified")
+	var decal := _spotlight(world, marker.id)
+	_check(not decal.is_empty(), "The retail marker's additive shadow must be a ground decal")
+	if decal.is_empty(): return
+	_check(decal.size == 135.0 and decal.size_y == 135.0)
+	_check(decal.x == marker.x and decal.y == marker.y) # no ShadowOffsetX / Y
+	_check(decal.texture == "EXSpotLight.tga")
+	_check(int(decal.style) == 0x800) # SHADOW_ADDITIVE_DECAL_DYNAMIC: added to the surface (sel_alpha_at)
+	# SHADOW_ADDITIVE_DECAL_DYNAMIC fades in: ShadowOpacityStart 0 to Peak 255 over FadeInTime 1000 ms (RW 0x7323CE), white throughout
+	_check((int(decal.color) & 0xFFFFFF) == 0xFFFFFF)
+	_check((int(decal.color) >> 24) < 255, "The marker's spotlight must still be fading in (alpha %d)" % (int(decal.color) >> 24))
+	for i in 8:
+		world.advance(0.2)
+		await process_frame
+	decal = _spotlight(world, marker.id)
+	_check(not decal.is_empty() and int(decal.color) == 0xFFFFFFFF, "The faded-in spotlight is white at Peak 255 (%s)" % str(decal))
 	var shot := OS.get_environment("SPOTLIGHT_TEST_SHOT")
 	if not shot.is_empty():
 		game._hud.camera_look_at(Vector2(waypoint.x, waypoint.y))
@@ -114,10 +119,10 @@ func _assert_spotlight(game: Node) -> void:
 	world.advance(0.2)
 	for i in 3: await process_frame
 	marker = world.debug_script_unit("Test Spotlight")
-	_check(decal.position == Vector3(marker.x, marker.z, -marker.y))
+	decal = _spotlight(world, marker.id)
+	_check(not decal.is_empty() and decal.x == marker.x and decal.y == marker.y)
 	_check(world.debug_script_action("NAMED_KILL", [{"type":14, "string":"Test Spotlight"}]).ok)
 	for i in 10:
 		world.advance(0.2)
 		await process_frame
-	var remaining := _spotlight_node(world, marker.id)
-	_check(remaining == null or not remaining.visible, "Removing the scripted marker must remove its ground spotlight")
+	_check(_spotlight(world, marker.id).is_empty(), "Removing the scripted marker must remove its ground spotlight")

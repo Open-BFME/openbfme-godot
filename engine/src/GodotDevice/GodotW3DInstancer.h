@@ -163,10 +163,24 @@ public:
 	Dictionary get_occlusion_pass_counts() const;
 	// Presentation only. Shadow-only batches share the posed mesh and palette, but contain only eligible instances.
 	void set_instance_cast_shadow(int64_t instance, bool enabled);
+	// lane MAPCAST-1: 0 none, 1 casts whenever shadow maps are drawn (the volume shadows' substitute, ShadowLOD Medium and up), 2 casts only while
+	// retail's own shadow map is on (ShadowLOD High / UltraHigh, set_retail_shadow_mapping): RotWK's map draws every visible object (ObjectShadow.h)
+	void set_instance_shadow_caster(int64_t instance, int kind);
 	// Set before adding models. UI / standalone model viewers default to no shadow reception.
 	void set_shadow_receiving(bool enabled) { ShadowReceiving = enabled; }
 	// Engine-wide, set with the w3d_shadow global (object_shadows.gd): while no shadow map is drawn, casters are pose-culled like any instance.
 	static void set_shadow_maps_enabled(bool enabled) { ShadowMapsEnabled = enabled; }
+	// lane MAPCAST-1: retail's shadow mapping (GlobalData + 0x62, ShadowLOD High / UltraHigh): the kind-2 casters join the shadow batches. A change makes
+	// every instancer pack its shadow batches again on its next frame (an instancer without automatic updates too)
+	static void set_retail_shadow_mapping(bool enabled)
+	{
+		if (RetailShadowMapping != enabled)
+		{
+			RetailShadowMapping = enabled;
+			++ShadowMappingEpoch;
+		}
+	}
+	static bool get_retail_shadow_mapping() { return RetailShadowMapping; }
 	// lane PROJ-2: the drawable's opacity (RW Drawable +0xB0, the fade of DrawableFade): multiplies every pivot's fade of the instance; 0 draws nothing
 	void set_instance_opacity(int64_t instance, double opacity);
 	// A scene that needs no per-frame work (every instance static) turns the automatic update off and calls update_now() itself after
@@ -328,6 +342,7 @@ private:
 		bool Occluder = false;                // lane OCCLUDE-1: set_instance_occlusion (INSTANCE_CUSTOM.w += W3D_OCCLUSION_OCCLUDER_BIT)
 		int OcclusionSlot = 0;                // lane OCCLUDE-1: (INSTANCE_CUSTOM.w += slot << W3D_OCCLUSION_SLOT_SHIFT)
 		bool CastShadow = false;
+		bool CastShadowMapped = false;        // lane MAPCAST-1: casts only while RetailShadowMapping (set_instance_shadow_caster kind 2)
 		std::vector<std::uint8_t> HiddenSubs; // by sub object index; empty = none hidden (set_instance_hidden_subobjects)
 		bool Removed = false;                 // remove_instance: skipped by the pose and buffer passes
 		float Opacity = 1.0f;                 // set_instance_opacity (lane PROJ-2)
@@ -391,6 +406,10 @@ private:
 	std::vector<Instance> Instances;
 	bool ShadowReceiving = false;
 	static inline bool ShadowMapsEnabled = false;
+	static inline bool RetailShadowMapping = false; // lane MAPCAST-1
+	static inline int ShadowMappingEpoch = 0;       // lane MAPCAST-1: bumped by set_retail_shadow_mapping
+	int SeenMappingEpoch = 0;                       // lane MAPCAST-1: the epoch this instancer's shadow batches were packed for
+	bool casts_shadow(const Instance &inst) const { return inst.CastShadow || (inst.CastShadowMapped && RetailShadowMapping); }
 	std::vector<Ref<ShaderMaterial>> AllMaterials;
 	std::vector<W3DMapperBinding> Mappers;
 

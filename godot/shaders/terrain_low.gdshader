@@ -15,6 +15,7 @@ render_mode ambient_light_disabled, specular_disabled, cull_back;
 #include "res://shaders/selection_decals.gdshaderinc"
 #include "res://shaders/radius_cursor.gdshaderinc"
 #include "res://shaders/object_shadow.gdshaderinc"
+#include "res://shaders/blob_shadows.gdshaderinc"
 
 varying vec2 v_sage_xy; // lane SELPERF-1: the world point of the pixel (SAGE x, y) for the selection's merge decals
 varying vec4 v_weather_vcol; // lane WEATHER-1: the vertex colour relit with the cloud effect's darkening (weather_relit)
@@ -46,6 +47,12 @@ void vertex() {
 
 void fragment() {
 	ALBEDO = terrain_output(UV, weather_relit ? v_weather_vcol : COLOR);
+	// lane BLOBSHADOW-1: the SHADOW_DECAL blobs multiply the terrain's gamma colour before the decal lists (retail draws the shadow list ahead of the
+	// alpha and merge decals, BFME2 flushDecals 0x109E11) and before the shadow map's split
+	vec3 blob = blob_shadow_at(v_sage_xy);
+	if (blob.r < 1.0 || blob.g < 1.0 || blob.b < 1.0) {
+		ALBEDO = retail_output(clamp(output_gamma == 1.0 ? ALBEDO : shadow_to_gamma(ALBEDO), 0.0, 1.0) * blob);
+	}
 	vec3 ground = ALBEDO;
 	float ground_weight = 1.0;
 	// lane HERORING-1: the ground the object shadows darken (gamma) and the alpha decals' colour over it: light() draws them over the shadowed ground,

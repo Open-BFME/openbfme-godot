@@ -443,6 +443,9 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_effects_lod", "lod"), &GameWorld::set_effects_lod); // lane GLOW-1
 	ClassDB::bind_method(D_METHOD("get_glow_host"), &GameWorld::get_glow_host);
 	ClassDB::bind_static_method("GameWorld", D_METHOD("set_texture_reduction", "reduction"), &GameWorld::set_texture_reduction); // lane OPTS-2
+	ClassDB::bind_static_method("GameWorld", D_METHOD("set_shadow_decals", "decals", "volumes"), &GameWorld::set_shadow_decals); // lane BLOBSHADOW-1
+	ClassDB::bind_method(D_METHOD("get_blob_report"), &GameWorld::get_blob_report);
+	ClassDB::bind_method(D_METHOD("get_decal_shadows"), &GameWorld::get_decal_shadows); // lane DRAWDECAL-1
 	ClassDB::bind_static_method("GameWorld", D_METHOD("get_texture_reduction"), &GameWorld::get_texture_reduction);
 	ClassDB::bind_method(D_METHOD("order_attack", "ids", "target"), &GameWorld::order_attack);
 }
@@ -792,6 +795,10 @@ void GameWorld::clear_scene()
 	m_cahCameraOffsetValid = false;
 	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset(); // the objects (and through them the drawables) first
+	m_blobSpecs.clear(); // lane BLOBSHADOW-1 (review): keyed by template, module and state addresses, which the next map's data may reuse
+	m_decalSpecs.clear(); // lane DRAWDECAL-1: the same keys
+	m_decalShadows.clear();
+	m_decalFades.clear();
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
 	for (uint32_t id = 0; id < m_views.size(); ++id) remove_view(id);
@@ -936,8 +943,8 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		if (p.kind != W3D_DRAWKIND_FLOOR)
 		{
 			const auto *module = p.module < d.draws.size() ? dynamic_cast<const W3DModelDrawModuleData *>(d.draws[p.module].data) : nullptr;
-			staticInst->set_instance_cast_shadow(instance, ObjectShadow::castsMap(d.info ? d.info->tmpl : nullptr, module,
-				p.draw ? p.draw->currentModelState() : nullptr));
+			staticInst->set_instance_shadow_caster(instance, ObjectShadow::casterKind(d.info ? d.info->tmpl : nullptr, module,
+				p.draw ? p.draw->currentModelState() : nullptr)); // lane MAPCAST-1
 		}
 		if (d.fate == MAPOBJ_CLIENT_SHRUB || d.fate == MAPOBJ_CLIENT_PROP)
 		{
@@ -1669,11 +1676,6 @@ void GameWorld::remove_view(uint32_t drawableId)
 	W3DInstancer *dyn = instancerOf(m_dynamicId);
 	for (EntryView &e : m_views[drawableId].entries)
 	{
-		if (auto *decal = e.shadowDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(e.shadowDecalId))) : nullptr)
-		{
-			decal->set_visible(false);
-			decal->queue_free();
-		}
 		if (e.instance >= 0 && dyn)
 		{
 			dyn->remove_instance(e.instance);
@@ -1746,11 +1748,6 @@ bool GameWorld::view_is_local(size_t id, const W3DInstancer &dyn, const LogicSna
 	{
 		const DrawEntry &e = entries[k];
 		const EntryView &ev = v.entries[k];
-		const ModelConditionInfo *state = e.draw ? e.draw->currentModelState() : nullptr;
-		if (ev.shadowDecalId || (state && state->hasShadow && (state->shadow.type == 0x40 || state->shadow.type == 0x800)))
-		{
-			return false; // Godot decal lifecycle/resource access belongs to the main thread.
-		}
 		if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
 		{
 			if (ev.instance >= 0 && !(e.frontTireBones.empty() && e.rearTireBones.empty()) && !(ev.tireChanges == e.tireChanges && ev.tireInstance == ev.instance))
@@ -1853,65 +1850,13 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 	v.occlusionEligible = stealthRec && !fogHidden ? stealthRec->occlusion : 0;
 	const bool fogChanged = fogHidden != v.fogHidden;
 	v.fogHidden = fogHidden;
+	v.fogLook = fogLook; // lane BLOBSHADOW-1
 	const bool flagsChanged = d->getChangeCount() != v.seenChange || fogChanged;
 	std::vector<DrawEntry> &entries = d->entries();
 	for (size_t k = 0; k < entries.size() && k < v.entries.size(); ++k)
 	{
 		DrawEntry &e = entries[k];
 		EntryView &ev = v.entries[k];
-		// BFME2 W3DShadowManagerAddShadow routes 0x40 / 0x800 to projected
-		// shadows; W3DProjectedShadowManagerFlushDecals uses the additive preset.
-		// Device inference (S-3304): Godot emission projects the texture onto terrain.
-		// Exact retail ShadowOpacity* timing and projected-shadow blend parity remain open.
-		Decal *shadow = ev.shadowDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(ev.shadowDecalId))) : nullptr;
-		const ModelConditionInfo *state = e.draw ? e.draw->currentModelState() : nullptr;
-		const ModelShadowInfo *info = state && state->hasShadow ? &state->shadow : nullptr;
-		const auto *modelData = dynamic_cast<const W3DModelDrawModuleData *>(e.data);
-		const bool additive = info && (info->type == 0x40 || info->type == 0x800) && !info->texture.empty() &&
-			info->sizeX > 0.0f && info->sizeY > 0.0f && (!modelData || !modelData->m_shadowForceDisable);
-		if (additive && !fogHidden && !e.moduleHidden && !e.conditionHidden && d->drawOpacity() > 0.0f)
-		{
-			const std::string file = info->texture.find('.') == std::string::npos ? info->texture + ".tga" : info->texture;
-			if (ev.shadowDecalTexture != file)
-			{
-				Ref<W3DModelBuilder> loader;
-				loader.instantiate();
-				const Ref<Texture2D> texture = loader->load_texture(m_fs, toGodot(file));
-				if (texture.is_valid())
-				{
-					if (!shadow)
-					{
-						shadow = memnew(Decal);
-						shadow->set_name(String("DrawableAdditiveDecal_") + String::num_int64(id) + "_" + String::num_int64(k));
-						add_child(shadow);
-						ev.shadowDecalId = shadow->get_instance_id();
-						shadow->set_meta("object_id", (int64_t)d->getObjectID());
-						shadow->set_cull_mask(1u << 19); // GodotMapTerrain only
-						shadow->set_albedo_mix(0.0f);
-						shadow->set_upper_fade(0.0f);
-						shadow->set_lower_fade(0.0f);
-						shadow->set_meta("acceptance_stop", "[S-3304] additive drawable decals: projection/blend and ShadowOpacity timing are unverified");
-					}
-					shadow->set_texture(Decal::TEXTURE_EMISSION, texture);
-					shadow->set_meta("shadow_texture", toGodot(file));
-				}
-				else
-				{
-					if (shadow) shadow->set_texture(Decal::TEXTURE_EMISSION, Ref<Texture2D>());
-					UtilityFunctions::push_error(String("Drawable additive decal: ") + String(Variant(loader->get_report())));
-				}
-				ev.shadowDecalTexture = file; // a missing texture is reported once per state, never retried every frame
-			}
-			if (shadow)
-			{
-				// Match the existing placement decal's SAGE -> Godot ground projection.
-				shadow->set_position(Vector3(SimMath::addf32(shownAt.x, info->offsetX), shownAt.z, -SimMath::addf32(shownAt.y, info->offsetY))); // the audited file's float rule
-				shadow->set_size(Vector3(info->sizeX, 200.0f, info->sizeY));
-				shadow->set_emission_energy(1.0f);
-				shadow->set_visible(shadow->get_texture(Decal::TEXTURE_EMISSION).is_valid());
-			}
-		}
-		else if (shadow) shadow->set_visible(false);
 		// RENDER-2: a structure being built moves along its own Z by the draw's construction offset (RW 0x4B686D)
 		Transform3D entryXf = xf;
 		if (e.constructionOffsetZ != 0.0f)
@@ -2121,8 +2066,8 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				if (ev.shadowInstance != ev.instance || ev.shadowState != shadowState || ev.shadowData != e.data || ev.shadowOn != d->shadowsEnabled()) // S-3304: not every frame
 				{
 					// TOP20 #24: a drawable whose shadows were switched off (RW 0x672D28, ShadowWhenDead No) casts none
-					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() &&
-						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState));
+					dyn->set_instance_shadow_caster(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() ?
+						ObjectShadow::casterKind(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState) : ObjectShadow::CASTER_NONE);
 					ev.shadowOn = d->shadowsEnabled();
 					ev.shadowState = shadowState;
 					ev.shadowData = e.data;
@@ -2259,8 +2204,8 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 					ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
 					ev.model = model;
 					ev.opacity = 1.0f; // a new instance starts opaque
-					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() &&
-						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr));
+					dyn->set_instance_shadow_caster(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() ?
+						ObjectShadow::casterKind(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr) : ObjectShadow::CASTER_NONE);
 				}
 			}
 			else if (entryXfChanged && ev.instance >= 0)
@@ -2461,6 +2406,8 @@ void GameWorld::refresh_views(double deltaMs)
 		m_occlusionOn = occlusionOn ? 1 : 0;
 		W3D_Set_Occlusion(occlusionOn, m_occlusionColors);
 	}
+	update_blob_shadows(); // lane BLOBSHADOW-1: the drawables' SHADOW_DECAL blobs (client only)
+	update_decal_shadows(deltaMs); // lane DRAWDECAL-1: their alpha / additive decal shadows, for the HUD
 	const double ts = nowMs();
 	refresh_streaks(true);
 	m_lastStreakMs = timing::elapsedMs(ts);
@@ -2509,6 +2456,8 @@ void GameWorld::advance(double delta)
 			}
 		}
 		refresh_streaks(false);
+		update_blob_shadows(); // lane BLOBSHADOW-1 (review): the blob layer covers the camera's ground footprint, and the camera moves while paused
+		update_decal_shadows(0.0); // lane DRAWDECAL-1 (review): turning the shadows off in the paused game's options applies at once; the fades' clock stands
 		refresh_shroud(false, timing::secondsToMs(delta)); // lane FOGFX-1: a pending fade goes on while paused (retail's is wall clock)
 		m_game->endClientWindow(); // RENDERWAIT-1: no frames are queued while paused
 		return;

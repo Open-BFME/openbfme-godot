@@ -44,6 +44,30 @@ TEST_CASE("object shadows: template, state override and force-disable eligibilit
 	CHECK_FALSE(ObjectShadow::castsMap(w.get("Volume"), nullptr, &state));
 }
 
+TEST_CASE("mapcast1: retail's shadow map draws every visible model: volume casters always, the rest only while retail maps (RW 0x47D5C9)")
+{
+	World w;
+	REQUIRE(w.load("Object Volume\n Shadow = SHADOW_VOLUME\nEnd\nObject Decal\n Shadow = SHADOW_DECAL\nEnd\nObject Absent\nEnd\n").empty());
+	// the volume shadows' substitute: drawn at every map level
+	CHECK(ObjectShadow::casterKind(w.get("Volume"), nullptr, nullptr) == ObjectShadow::CASTER_ALWAYS);
+	// SHADOW_DECAL infantry and trees, and objects without a Shadow field: in RotWK's own map (ShadowLOD High / UltraHigh)
+	CHECK(ObjectShadow::casterKind(w.get("Decal"), nullptr, nullptr) == ObjectShadow::CASTER_MAPPING);
+	CHECK(ObjectShadow::casterKind(w.get("Absent"), nullptr, nullptr) == ObjectShadow::CASTER_MAPPING);
+	CHECK(ObjectShadow::casterKind(nullptr, nullptr, nullptr) == ObjectShadow::CASTER_MAPPING);
+	// a model state's shadow decides like the template's; an aura decal state still casts its model in retail's map
+	ModelConditionInfo state;
+	state.hasShadow = true;
+	state.shadow.type = 1 << 6; // ADDITIVE_DECAL
+	CHECK(ObjectShadow::casterKind(w.get("Volume"), nullptr, &state) == ObjectShadow::CASTER_MAPPING);
+	state.shadow.type = 1 << 15; // SHADOW_VOLUME_NEW_OR_DECAL
+	CHECK(ObjectShadow::casterKind(w.get("Decal"), nullptr, &state) == ObjectShadow::CASTER_ALWAYS);
+	// ShadowForceDisable: none (INFERENCE, S-3304)
+	W3DModelDrawModuleData module;
+	module.m_shadowForceDisable = true;
+	CHECK(ObjectShadow::casterKind(w.get("Volume"), &module, nullptr) == ObjectShadow::CASTER_NONE);
+	CHECK(ObjectShadow::casterKind(w.get("Decal"), &module, nullptr) == ObjectShadow::CASTER_NONE);
+}
+
 namespace
 {
 // A default template like retail's Data\INI\Default\Object.ini, trimmed: a dummy body and one die module,

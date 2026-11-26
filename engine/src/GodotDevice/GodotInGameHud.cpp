@@ -343,6 +343,8 @@ struct HudDevice : public AptNativeHook
 	uint64_t selExtrasKey = 0;             ///< lane PLACEDECAL-1: what the last grid's other decals were (0: none)
 	unsigned extraDecalsDrawn = 0;         ///< lane PLACEDECAL-1: the ghost's decal shadows in the grid
 	unsigned shadowCount = 0;              ///< lane PLACEDECAL-1: the last build's counts (the grid it built stays until the next)
+	unsigned liveShadowCount = 0;          ///< lane DRAWDECAL-1: the live drawables' decal shadows of that build
+	unsigned liveDecalsDrawn = 0;          ///< lane DRAWDECAL-1: the live drawables' decal shadows in the grid
 	int claimCount = 0, arcCount = 0, placeCount = 0;
 	double decalsLateMs = 0.0;             ///< lane PLACEDECAL-1: drawSelectionDecals' time (it runs after the ghost, inside the camera part)
 	bool placeTextDrawn = false;
@@ -1502,10 +1504,19 @@ void HudDevice::drawSelectionDecals()
 	const TerrainResourceUiSettings &resourceUi = hud->radiusCursorTemplates().resourceUi();
 	const TerrainResourceFeedback &resources = hud->resourceFeedback();
 	extraDecalsDrawn = 0;
+	liveDecalsDrawn = 0;
 	selExtras.clear();
 	if (ghost && world && world->hud_game())
 	{
 		ghost->appendShadowDecals(selExtras);
+	}
+	const size_t ghostShadows = selExtras.size();
+	// lane DRAWDECAL-1: the live drawables' alpha / additive decal shadows (GameWorld::update_decal_shadows) on the same list after the ghost's (the order
+	// of retail's drawable shadow list is the shadows' creation order: INFERENCE S-3304)
+	if (world)
+	{
+		const std::vector<SelectionDecal> &live = world->decal_shadows();
+		selExtras.insert(selExtras.end(), live.begin(), live.end());
 	}
 	const size_t shadows = selExtras.size();
 	const TerrainResourceDecalCounts appended = resources.appendDecals(resourceUi.claimDecal, resourceUi.placeDecal, selExtras);
@@ -1581,12 +1592,13 @@ void HudDevice::drawSelectionDecals()
 		resourceDecalError.clear();
 		claimCount = arcCount = placeCount = 0;
 		shadowCount = 0;
+		liveShadowCount = 0;
 		for (size_t i = 0; extras && i < selList.size(); ++i)
 		{
 			const bool in = built && i < selGrid.drawn.size() && selGrid.drawn[i] != 0;
 			if (i < shadows)
 			{
-				shadowCount += in ? 1u : 0u;
+				(i < ghostShadows ? shadowCount : liveShadowCount) += in ? 1u : 0u;
 				continue;
 			}
 			if (i >= selExtras.size())
@@ -1621,6 +1633,7 @@ void HudDevice::drawSelectionDecals()
 	claimArcsDrawn = arcCount;
 	placeDecalDrawn = placeCount > 0;
 	extraDecalsDrawn = shadowCount;
+	liveDecalsDrawn = liveShadowCount;
 	const int mode = SelectionDecalShaderMode(selGrid); // lane HERORING-1: + 4 when there are alpha decals (sel_alpha_at)
 	if (mode != 0 && rs)
 	{
@@ -1667,7 +1680,7 @@ void HudDevice::drawSelectionDecals()
 			rs->global_shader_parameter_set("sel_alpha_ref", (float)selGrid.alphaRef);
 			selAlphaSet = selGrid.alphaRef;
 		}
-		decalsDrawn += (unsigned)(selGrid.decals + selGrid.alphaDecals) - extraDecalsDrawn - (unsigned)claimDecalsDrawn - (unsigned)claimArcsDrawn - (placeDecalDrawn ? 1u : 0u);
+		decalsDrawn += (unsigned)(selGrid.decals + selGrid.alphaDecals) - extraDecalsDrawn - liveDecalsDrawn - (unsigned)claimDecalsDrawn - (unsigned)claimArcsDrawn - (placeDecalDrawn ? 1u : 0u);
 	}
 	else if (mode != selMode && rs)
 	{
@@ -2312,6 +2325,7 @@ Dictionary InGameHudNode::get_state() const
 		s["selection_decals"] = decals;
 		s["selection_decals_drawn"] = (int64_t)d->decalsDrawn;
 		s["ghost_shadow_decals_drawn"] = (int64_t)d->extraDecalsDrawn; // lane PLACEDECAL-1: the placement ghost's decal shadows in the same grid
+		s["drawable_shadow_decals_drawn"] = (int64_t)d->liveDecalsDrawn; // lane DRAWDECAL-1: the live drawables' decal shadows in it
 		d->composeMergeReport(); // lane SELPERF-1: composed here only (the terrain shader draws the merge decals)
 		Dictionary m;
 		m["decals"] = (int64_t)d->merged.decals;
@@ -2321,7 +2335,7 @@ Dictionary InGameHudNode::get_state() const
 		m["composes"] = d->mergeComposes; // lane SELPERF-1
 		m["gpu_decals"] = (int64_t)d->selGrid.decals;
 		m["gpu_alpha_decals"] = (int64_t)d->selGrid.alphaDecals; // lane HERORING-1 (lane PLACEDECAL-1: with the extra decals below)
-		m["gpu_extra_decals"] = (int64_t)(d->extraDecalsDrawn + (unsigned)d->claimDecalsDrawn + (unsigned)d->claimArcsDrawn + (d->placeDecalDrawn ? 1u : 0u)); // the ghost's and the resource decals
+		m["gpu_extra_decals"] = (int64_t)(d->extraDecalsDrawn + d->liveDecalsDrawn + (unsigned)d->claimDecalsDrawn + (unsigned)d->claimArcsDrawn + (d->placeDecalDrawn ? 1u : 0u)); // the ghost's and the resource decals
 		m["gpu_max_alpha_per_cell"] = (int64_t)d->selGrid.maxAlphaPerCell;
 		m["gpu_cells"] = (int64_t)d->selGrid.cellsX * d->selGrid.cellsY;
 		m["gpu_max_per_cell"] = (int64_t)d->selGrid.maxPerCell;
