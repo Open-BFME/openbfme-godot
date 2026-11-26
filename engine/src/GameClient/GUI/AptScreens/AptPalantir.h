@@ -20,6 +20,7 @@
 
 #include "GameClient/ControlBar.h"
 #include "GameClient/GUI/AptScreen.h"
+#include "GameClient/GUI/AptScreens/AptWidescreen.h"
 #include "GameClient/GUI/AptScreens/InGameCommandButtonSubMenu.h"
 
 #include <functional>
@@ -297,6 +298,7 @@ private:
 	int m_sideCount = 0;                 ///< + 0xD8: the frames shown (SetButtonState "_show")
 	int m_sideKey[16] = {};              ///< slot + 8: the control bar window each shown frame belongs to (-1 none)
 	bool m_bfme1 = false;
+	AptWidescreen::SqueezeCache m_squeeze; // a mod's Palantir.apt authored for 16:9 (AptWidescreen.h)
 	bool m_sideBarGate = false;
 	std::vector<std::string> m_sideBarCalls;
 	std::function<void(const std::string &, bool)> m_helpBoxHandler;
