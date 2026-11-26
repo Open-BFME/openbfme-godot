@@ -525,6 +525,8 @@ target_sources(openbfme_core PRIVATE
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.cpp # lane LOCAL-28 (object lights, both editions)
     src/GameClient/DrawableLight.cpp # lane LOCAL-28: the drawable's light step and bone position (client only, excluded from the sim audit)
+    src/GameClient/DrawableAttach.cpp # AttachToBoneInAnotherModule placement (client only, excluded from the sim audit)
+    src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DSailModelDraw.cpp # W3DSailModelDraw's attached-bone turn (client only)
     src/GameClient/MapObjectDrawables.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.cpp)
 # ---- LUA-1 sources (Lua scripting: XML reader, event registry, engine, bindings) ----
@@ -1018,6 +1020,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail_units.cpp
     # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
     tests/test_local_28.cpp
+    # W3DSailModelDraw and the AttachToBoneInAnotherModule placement (RW 0x4B6B26 / 0x4D00CD)
+    tests/test_w3d_sail_draw.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp

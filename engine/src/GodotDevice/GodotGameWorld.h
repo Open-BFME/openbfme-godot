@@ -754,6 +754,8 @@ private:
 		bool streakKnown = false;
 		bool posed = false;
 		float offsetZ = 0.0f;           ///< RENDER-2: the construction offset the instance's transform carries (DrawEntry::constructionOffsetZ)
+		bool entryAttached = false;     ///< the entry sat on another module's bone (DrawEntry::attachToBone) when the instance's transform was last set
+		Transform3D lastEntryXf;        ///< that transform
 		float opacity = 1.0f;           ///< PROJ-2: the drawable's fade the instance shows (Drawable::drawOpacity)
 		unsigned tireChanges = 0xFFFFFFFFu; ///< lane COMBAT-4: DrawEntry::tireChanges the instance's bone spins show
 		int64_t tireInstance = -1;          ///< the instance they were handed to

@@ -13,6 +13,7 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DSailModelDraw.h"
 #include "Common/ModelState.h"
 #include "GameLogic/SimMath.h"
 
@@ -161,10 +162,15 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 				{
 					e.draw.reset(new W3DHordeModelDraw(*hd, 2, services.drawAssets, services.random, &services.host, o)); // LOD HIGH (S-114)
 				}
+				else if (const W3DSailModelDrawModuleData *sail = dynamic_cast<const W3DSailModelDrawModuleData *>(data))
+				{
+					e.draw.reset(new W3DSailModelDraw(*sail, services.drawAssets, services.random, &services.host, o)); // RW 0x46478F
+				}
 				else
 				{
 					e.draw.reset(new W3DScriptedModelDraw(*data, services.drawAssets, services.random, &services.host, o));
 				}
+				e.attachToBone = data->m_attachToDrawableBone; // RW 0x4B6A6F
 				e.animated = e.draw->needsAdvance(); // W3DScriptedModelDraw::needsAdvance: a blend runs whatever track 0's mode (S-090)
 				// the draw runtime's errors and stops are collected by DrawableManager (DrawEntry::draw->errors() / stops()), after the script hooks ran
 			}
