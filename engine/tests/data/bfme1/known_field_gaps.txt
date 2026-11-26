@@ -26,7 +26,6 @@ CommandButton UnitSpecificSoundGroup2
 CommandButton UnsetAutoAbilityUnitSound2
 CommandButton UnsetAutoAbilityUnitSoundGroup
 CommandButton UnsetAutoAbilityUnitSoundGroup2
-DamageFieldUpdate Weapon
 DeflectSpecialPower GroupInitiateSound
 DeflectSpecialPower GroupInitiateSound2
 FellBeastSwoopPower SpecialWeapon
