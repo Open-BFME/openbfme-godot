@@ -10,6 +10,7 @@
 #include "Common/XferSave.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/SpecialEnemySenseUpdate.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/PartitionManager.h"
 
@@ -196,4 +197,31 @@ TEST_CASE("SpecialEnemySenseUpdate: the snapshot keeps the next scan's frame (RW
 	truncated.pop_back();
 	XferLoad shortLoad(truncated);
 	CHECK_THROWS_AS(m->xfer(shortLoad), XferException);
+}
+
+TEST_CASE("SpecialEnemySenseUpdate: a save from before the port (the unported shell's version 1 block) still loads, asleep; a version 3 is refused")
+{
+	SenseWorld e;
+	Object *seer = e.unit("Seer", 'A', 300, 300);
+	e.frames(12);
+	SpecialEnemySenseUpdate *m = const_cast<SpecialEnemySenseUpdate *>(e.moduleOf(seer));
+	REQUIRE(m->friend_getNextCallFrame() != (UnsignedInt)UPDATE_SLEEP_FOREVER);
+	// the block UnportedUpdateModule::xfer wrote for this module: version 1, the UpdateModule block (asleep for good), the call count
+	UnportedUpdateModule shell(seer, m->getModuleData(), MODULEINTERFACE_UPDATE);
+	shell.update();
+	REQUIRE(shell.calls() == 1u);
+	XferSave old;
+	shell.xfer(old);
+	REQUIRE(old.data().front() == 1);
+	XferLoad load(old.data());
+	m->xfer(load);
+	CHECK(load.atEnd()); // the call count is read, nothing is left over
+	CHECK(m->friend_getNextCallFrame() == (UnsignedInt)UPDATE_SLEEP_FOREVER);
+	XferSave now;
+	m->xfer(now);
+	CHECK(now.data().front() == 2);
+	std::vector<std::uint8_t> future = now.data();
+	future.front() = 3;
+	XferLoad bad(future);
+	CHECK_THROWS_AS(m->xfer(bad), XferException);
 }

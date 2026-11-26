@@ -15,7 +15,7 @@
 //     cleared in the same way. Only a change is told the drawable (RW 0x68B53C). It returns ScanInterval.
 //   * xfer RW 0x89D7C5: UpdateModule (RW 0x850C60), then version 1.
 //   * BFME2 1.06: the same update, instruction for instruction (0x89A037; only the contain's Object offset, 0x250, differs).
-// WHAT IS INFERENCE (OpenBFME): the snapshot is OpenBFME native (S-4190).
+// WHAT IS INFERENCE (OpenBFME): the snapshot is OpenBFME native (S-4190): version 2; version 1, the unported shell's block, still loads.
 
 #pragma once
 

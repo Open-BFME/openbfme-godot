@@ -16,6 +16,7 @@
 #include "GameLogic/SnapshotXfer.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -105,9 +106,16 @@ UpdateSleepTime SpecialEnemySenseUpdate::update()
 	return UPDATE_SLEEP((int)m_data->m_scanInterval);
 }
 
-// RW 0x89D7C5 (OpenBFME native snapshot, S-4190)
+// RW 0x89D7C5 (OpenBFME native snapshot, S-4190). Version 2 is the port's block. Version 1 is the block an OpenBFME build wrote while the class was an unported shell (UnportedUpdateModule::xfer: the UpdateModule block, asleep for good, and the shell's call count, a report counter that is dropped): such a module keeps the
+// shell's sleep (the save's scheduler block holds it in the sleeping vector)
 void SpecialEnemySenseUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x); // RW 0x850C60
+	if (v.current < 2)
+	{
+		std::uint32_t shellCalls = 0;
+		x.xferUnsignedInt(&shellCalls);
+	}
 }
