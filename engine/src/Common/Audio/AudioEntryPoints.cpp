@@ -294,13 +294,17 @@ std::uint64_t callsWithoutEva()
 	return g_withoutEva.load(std::memory_order_relaxed);
 }
 
-bool reportEva(const std::string &n, const Coord3D *position)
+bool reportEva(const std::string &n, const Coord3D *position, const Coord3D *position2)
 {
 	// lane CAMP-1H: a report from the logic worker (AttachUpdate's cues, RW 0x8952BD / 0x895448) is queued for the audio owner like the other S-814
 	// requests (the Eva belongs to the manager's thread)
 	const bool hasPosition = position != nullptr;
 	const Coord3D at = hasPosition ? *position : Coord3D{ 0.0f, 0.0f, 0.0f };
-	switch (route(Binding::Manager, [n, hasPosition, at]() { reportEva(n, hasPosition ? &at : nullptr); }))
+	const bool hasPosition2 = position2 != nullptr;
+	const Coord3D at2 = hasPosition2 ? *position2 : Coord3D{ 0.0f, 0.0f, 0.0f };
+	switch (route(Binding::Manager, [n, hasPosition, at, hasPosition2, at2]() {
+		reportEva(n, hasPosition ? &at : nullptr, hasPosition2 ? &at2 : nullptr);
+	}))
 	{
 	case Route::Run:
 		break;
@@ -323,13 +327,17 @@ bool reportEva(const std::string &n, const Coord3D *position)
 		return false;
 	}
 	// Eva runs on the audio manager's client clock (presentation time, never the logic clock)
-	return eva->reportEventByName(n, position, mgr->nowMs());
+	return eva->reportEventByName(n, position, mgr->nowMs(), position2);
 }
-bool reportEva(int event, const Coord3D *position)
+bool reportEva(int event, const Coord3D *position, const Coord3D *position2)
 {
 	const bool hasPosition = position != nullptr;
 	const Coord3D at = hasPosition ? *position : Coord3D{ 0.0f, 0.0f, 0.0f };
-	switch (route(Binding::Manager, [event, hasPosition, at]() { reportEva(event, hasPosition ? &at : nullptr); }))
+	const bool hasPosition2 = position2 != nullptr;
+	const Coord3D at2 = hasPosition2 ? *position2 : Coord3D{ 0.0f, 0.0f, 0.0f };
+	switch (route(Binding::Manager, [event, hasPosition, at, hasPosition2, at2]() {
+		reportEva(event, hasPosition ? &at : nullptr, hasPosition2 ? &at2 : nullptr);
+	}))
 	{
 	case Route::Run:
 		break;
@@ -351,7 +359,7 @@ bool reportEva(int event, const Coord3D *position)
 		g_withoutEva.fetch_add(1, std::memory_order_relaxed);
 		return false;
 	}
-	return eva->reportEvent(event, position, mgr->nowMs());
+	return eva->reportEvent(event, position, mgr->nowMs(), position2);
 }
 
 std::string reportEvaDamage(const std::string &event, const std::string &second, bool farFrameDue, const Coord3D &position)

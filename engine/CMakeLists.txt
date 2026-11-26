@@ -1018,6 +1018,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail_units.cpp
     # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
     tests/test_local_28.cpp
+    # EvaAnnounceClientCreate (RW 0x8CDED6 / 0x8CDF07, BFME2 0x4C9A51 / 0x4C9A82)
+    tests/test_eva_announce_client_create.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp

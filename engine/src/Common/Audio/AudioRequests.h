@@ -16,9 +16,9 @@ namespace AudioApi
 {
 // lane CAMP-1H: an Eva event by name at a position (or none) for TheEva (RW 0x5DD9EE); from the logic worker it is queued for the audio owner (S-814).
 // false: unknown / no Eva / dropped (the logic never reads it). Also declared in AudioEntryPoints.h
-bool reportEva(const std::string &eventName, const Coord3D *position);
+bool reportEva(const std::string &eventName, const Coord3D *position, const Coord3D *position2 = nullptr);
 // Parsed EvaEventStore index (RW 0x5DD9EE); -1 is None. Uses the same audio-owner queue as named reports.
-bool reportEva(int eventIndex, const Coord3D *position);
+bool reportEva(int eventIndex, const Coord3D *position, const Coord3D *position2 = nullptr);
 std::uint32_t playSoundForObject(const std::string &eventName, std::uint32_t objectId, int owningPlayerIndex = -1);
 std::uint32_t playSoundForDrawable(const std::string &eventName, std::uint32_t drawableId, int owningPlayerIndex = -1);
 // lane SPELL-3: an event at a world position with the player it belongs to (SpecialPowerModule::aboutToDoSpecialPower RW 0x89713F: the

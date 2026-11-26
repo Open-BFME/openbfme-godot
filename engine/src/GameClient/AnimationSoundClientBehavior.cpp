@@ -8,6 +8,7 @@
 #include "GameClient/AnimationSoundClientBehavior.h"
 #include "GameClient/BeaconClientUpdate.h"
 #include "GameClient/ClientBehaviorModules.h"
+#include "GameClient/EvaAnnounceClientCreate.h"
 #include "GameClient/SoundSelectorClientBehavior.h"
 
 #include "Common/AsciiString.h"
@@ -658,4 +659,5 @@ void ClientBehaviorModules::registerAll(ModuleFactory &modules)
 	AnimationSoundClientBehavior::registerClass(modules);
 	SoundSelectorClientBehavior::registerClasses(modules); // lane DECOMP-2: the three sound selectors (S-701)
 	BeaconClientUpdate::registerClass(modules);            // lane CHAT-1: the multiplayer beacon's minimap pulse
+	EvaAnnounceClientCreate::registerClass(modules);       // both editions: RW 0x8CDED6 / 0x8CDF07, BFME2 0x4C9A51 / 0x4C9A82
 }

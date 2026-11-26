@@ -553,6 +553,10 @@
    "reason": "CHAT-1, the multiplayer beacon's ClientUpdate module: decides on the client when a shown beacon pulses on the minimap and keeps an enemy's beacon hidden; never read by the logic (the beacon object itself is BeaconCommands.cpp, a simulation source)"
   },
   {
+   "glob": "src/GameClient/EvaAnnounceClientCreate.cpp",
+   "reason": "EvaAnnounceClientCreate's ClientUpdate module (RW 0x8CDED6 / 0x8CDF07): the delay after build-complete, the visibility test and the choice of the Eva event run on the client from the presented snapshot; it reports to TheEva and never writes logic state"
+  },
+  {
    "glob": "src/GameClient/InGameChat.cpp",
    "reason": "CHAT-1, the in-game chat window's rules (recipient masks, labels, line formats, scroll-back): client state and direct network commands, never frame data or logic state"
   },

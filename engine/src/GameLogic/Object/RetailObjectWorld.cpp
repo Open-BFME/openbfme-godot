@@ -163,6 +163,7 @@ bool RetailObjectWorld::audioEventExists(const std::string &name) const
 namespace
 {
 using AudioExists = std::function<bool(const std::string &)>;
+using EvaIndex = std::function<int(const std::string &)>;
 
 // one chain per thread; the main thread's is never destroyed (a world may outlive static destruction order), a worker's goes with it
 GlobalOwnerChain<LocomotorStore *> &locomotorChain()
@@ -220,6 +221,11 @@ GlobalOwnerChain<AudioExists> &audioChain()
 	static thread_local ThreadOwnerChain<AudioExists> chain(TheContainParseHooks().audioEventExists);
 	return chain.get();
 }
+GlobalOwnerChain<EvaIndex> &evaEventChain()
+{
+	static thread_local ThreadOwnerChain<EvaIndex> chain(TheContainParseHooks().evaEventIndex);
+	return chain.get();
+}
 GlobalOwnerChain<AudioExists> &weaponTemplateChain()
 {
 	static thread_local ThreadOwnerChain<AudioExists> chain(TheContainParseHooks().weaponTemplateExists);
@@ -242,6 +248,7 @@ void RetailObjectWorld::registerContext()
 	// AUDIO-1: object parsing (OpenContain / HordeContain sound fields) asks whether an audio event exists. No AudioManager exists at INI time,
 	// so the predicate is AudioApi::isValidEvent's own (a non-empty name present in the parsed event table), applied to THIS world's table.
 	audioChain().install(this, [this](const std::string &name) { return !name.empty() && m_s->m_audio->infos.contains(name); });
+	evaEventChain().install(this, [this](const std::string &name) { return m_s->m_audio->eva.findIndex(name, false); });
 	m_s->m_weaponStores.install(); // WEAPON-1
 	m_s->m_spellStores->install(); // SPELL-1
 	// GARRISON-2: TransportContain's GrabWeapon / ThrowOutPassengersLandingWarhead resolve through TheWeaponStore (RW 0x73AE79 -> 0x6CC5DF: an unknown name is a
@@ -262,6 +269,7 @@ void RetailObjectWorld::unregisterContext()
 	createAHeroChain().remove(this);
 	fxListChain().remove(this);
 	audioChain().remove(this);
+	evaEventChain().remove(this);
 	weaponTemplateChain().remove(this);
 	m_s->m_weaponStores.uninstall();
 	m_s->m_spellStores->uninstall();

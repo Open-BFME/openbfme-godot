@@ -71,6 +71,7 @@ struct ClientEvent
 		MODEL_CONDITIONS, ///< lane SAVE-4e: flags, the object's whole set stored (Drawable::replaceModelConditionFlags RW 0x679512 takes a whole set)
 		EVA_DAMAGED,      ///< lane EVADAMAGE-1 (RW 0x67B4B7's Eva half): position (the object's, + 0x38), eva (the logic's part of the choice)
 		DESELECT_LOCAL,   ///< lane POSTERNPLOT-1 (RW 0x85834C): ownerIndex = the object's controlling player at the call (-1: none)
+		BUILD_COMPLETE,   ///< RW 0x68D27A: the drawable's create interfaces, after the object's own (EvaAnnounceClientCreate's delay starts here)
 	};
 	std::string heroUniqueID;
 	std::vector<std::string> heroStatistics;
@@ -124,6 +125,7 @@ public:
 	const ObserverTimeline &observerTimeline() const { return m_timeline; }
 
 	void objectCreated(Object &obj) override;
+	void objectBuildComplete(Object &obj) override;
 	void objectDestroyed(Object &obj) override;
 	void modelConditionChanged(Object &obj, int bit, bool on) override;
 	void flushModelConditions(Object &obj) override;

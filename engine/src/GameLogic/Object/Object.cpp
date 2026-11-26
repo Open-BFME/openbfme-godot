@@ -1236,6 +1236,10 @@ void Object::friend_onBuildComplete()
 			c->onBuildComplete();
 		}
 	}
+	if (m_client)
+	{
+		m_client->objectBuildComplete(*this); // RW 0x68D27A: the drawable's create interfaces
+	}
 }
 
 void Object::friend_onMapPlacement(const Dict *properties)

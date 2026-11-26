@@ -85,6 +85,7 @@ public:
 	// render side: animations by elapsed render milliseconds, then the interpolated poses (alpha in [0, 1))
 	void advance(double elapsedMs);
 	void syncTransforms(const LogicSnapshot &snapshot, double alpha, bool interpolate);
+	void updateEvaAnnounces(const LogicSnapshot &snapshot);
 
 	struct Report
 	{

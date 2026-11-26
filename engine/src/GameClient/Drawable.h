@@ -264,6 +264,8 @@ public:
 	// port's renderer reads shadowsEnabled() for each module's instance)
 	void setShadowsEnabled(bool on) { m_shadowsEnabled = on; }
 	bool shadowsEnabled() const { return m_shadowsEnabled; }
+	void markEvaFirstSighted() { m_evaFirstSighted = true; }
+	bool evaFirstSighted() const { return m_evaFirstSighted; }
 	const ObjectSnapshot *syncedRecord(const LogicSnapshot &snapshot, bool &found) const
 	{
 		found = m_syncSnapshot == &snapshot && m_syncFrame == snapshot.frame;
@@ -340,6 +342,7 @@ private:
 	float m_geometryHeight = -1.0f;          ///< RENDER-2: RW 0xAD1920 of the template's shapes (computed on first use)
 	std::vector<DrawEntry> m_entries;
 	std::vector<std::unique_ptr<DrawableModule>> m_clientModules;
+	bool m_evaFirstSighted = false; // RW Drawable +0x114 bit 0x80; sighting consumer remains S-709
 	bool m_clientHidden = false; ///< lane CHAT-1
 	bool m_shadowsEnabled = true; ///< RW Drawable +0x114 bit 2 (TOP20 #24)
 	bool m_phantomLook = false;  ///< lane FBSIM-1: drawn as a dozer's phantom structure (0.4 opacity)

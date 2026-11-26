@@ -44,8 +44,8 @@ public:
 
 	// The event `index` (EvaEventStore) / `name` happened. false: the event is unknown, Eva is disabled or the event was dropped on the spot (an identical
 	// event inside its TimeBetweenEventsMS).
-	bool reportEvent(int index, const Coord3D *position, double nowMs);
-	bool reportEventByName(const std::string &name, const Coord3D *position, double nowMs);
+	bool reportEvent(int index, const Coord3D *position, double nowMs, const Coord3D *jumpPosition = nullptr);
+	bool reportEventByName(const std::string &name, const Coord3D *position, double nowMs, const Coord3D *jumpPosition = nullptr);
 	void update(double nowMs);
 	void reset();
 
