@@ -318,6 +318,26 @@ TEST_CASE("audio manager: Delay holds the request; Attack, Sound and Decay play 
 	CHECK_FALSE(r.mgr->isCurrentlyPlaying(h));
 }
 
+TEST_CASE("audio manager: the first sound's handle is 5 (RW 0x45C754) and removing it stops that sound, not the music (RW 0x456F4D: only a lower handle is ignored)")
+{
+	Rig r("AudioEvent Loopy\n  Sounds = a\n  Control = loop\n  Type = ui\n  Limit = 0\nEnd\nMusicTrack T1\n  Filename = t1.mp3\nEnd\n", { { snd("a"), 200.0 } });
+	r.fx.mount({ { "data\\audio\\tracks\\t1.mp3", "x" } });
+	r.device->setFileLength("Data\\Audio\\Tracks\\t1.mp3", 100000.0);
+	const AudioHandle first = r.mgr->playSound("Loopy");
+	CHECK(first == 5u);
+	r.mgr->playMusic("T1");
+	r.run(100.0);
+	CHECK(r.mgr->isCurrentlyPlaying(first));
+	CHECK(r.mgr->isMusicPlaying());
+	r.mgr->removeAudioEvent(first);
+	r.run(100.0);
+	CHECK_FALSE(r.mgr->isCurrentlyPlaying(first));
+	CHECK(r.mgr->isMusicPlaying());
+	r.mgr->removeAudioEvent(4); // RW 0x456F53: a lower handle does nothing
+	r.run(100.0);
+	CHECK(r.mgr->isMusicPlaying());
+}
+
 TEST_CASE("audio manager: positional distance falloff is linear between MinRange and MaxRange; beyond MaxRange the sound is culled unless MinVolume > 0")
 {
 	Rig r("AudioEvent Boom\n  Sounds = a\n  Volume = 100\n  MinRange = 100\n  MaxRange = 500\n  Type = world everyone\n  SubmixSlider = None\n  Limit = 0\nEnd\n"

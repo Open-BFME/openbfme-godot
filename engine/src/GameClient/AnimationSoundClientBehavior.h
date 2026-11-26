@@ -48,6 +48,7 @@
 
 class AudioManager;
 class Drawable;
+class ModelConditionAudioLoopClientBehavior;
 class ModuleFactory;
 struct W3DDrawTrack;
 
@@ -138,6 +139,13 @@ public:
 	// RW 0x83F321, once per client frame after the animations advanced
 	void update();
 
+	// stop S-6024: the ModelConditionAudioLoopClientBehavior modules share this attachment; they select again when the audio arrives (retail's TheAudio is always there)
+	void addAudioLoop(ModelConditionAudioLoopClientBehavior *m);
+	void removeAudioLoop(ModelConditionAudioLoopClientBehavior *m);
+	// LiveGameAudio's teardown: the handles die with the attachment's sounds
+	void audioLoopsDetached();
+	size_t audioLoopCount() const { return m_audioLoops.size(); }
+
 	struct Stats
 	{
 		std::uint64_t updates = 0, moduleUpdates = 0, played = 0, refused = 0, cleaned = 0, redirtied = 0;
@@ -165,4 +173,6 @@ private:
 	size_t m_count = 0;                                                          // + 0x1C
 	Coord3D m_storedMicrophone{ 3.4028234663852886e+38f, 3.4028234663852886e+38f, 3.4028234663852886e+38f }; // + 0x20 (RW 0xBD1910)
 	Stats m_stats;
+	std::vector<ModelConditionAudioLoopClientBehavior *> m_audioLoops;
+	AudioManager *m_audioLoopsAudio = nullptr; ///< the audio m_audioLoops last selected on
 };

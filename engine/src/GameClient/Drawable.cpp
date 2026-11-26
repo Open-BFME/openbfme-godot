@@ -59,6 +59,7 @@ Drawable::Drawable(DrawServices &services, const ThingTemplate *tt, DrawableID i
 		}
 		mod.release();
 		m_clientModules.push_back(std::unique_ptr<DrawableModule>(dm));
+		trackAudioLoop(dm); // RW 0x67449C: the list + 0x158 the flush walks
 	}
 	for (std::unique_ptr<DrawableModule> &m : m_clientModules)
 	{
@@ -243,6 +244,7 @@ void Drawable::setModelConditionFlags(const ModelConditionFlags &flags)
 			e.animated = e.draw->needsAdvance();
 		}
 	}
+	notifyAudioLoops(flags); // RW 0x67449C -> 0x8D04CA
 }
 
 ModelConditionFlags Drawable::dependencySharedModelFlags() const

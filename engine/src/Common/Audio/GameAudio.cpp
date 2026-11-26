@@ -1939,14 +1939,9 @@ void AudioManager::stopAudioEvent(AudioHandle handle)
 
 void AudioManager::removeAudioEvent(AudioHandle handle)
 {
-	if (handle == AHSV_StopTheMusic || handle == AHSV_StopTheMusicFade)
-	{
-		stopMusic(handle == AHSV_StopTheMusicFade);
-		return;
-	}
 	if (handle < AHSV_FirstHandle)
 	{
-		return;
+		return; // RW 0x456F4D: no sound; handle 5 is the first sound's, and removing it never stopped the music (ZH's AHSV_StopTheMusicFade had that value here)
 	}
 	stopAudioEvent(handle);
 	auto group = m_multisoundGroups.find(handle);

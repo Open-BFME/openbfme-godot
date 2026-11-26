@@ -8,7 +8,10 @@ list(APPEND OPENBFME_SIM_SOURCES ${OPENBFME_AUDIO4_SOURCES})
 # client presentation (listed in tools/sim/sim_policy.json's exclusions)
 set(OPENBFME_AUDIO4_CLIENT_SOURCES
     src/GameClient/AnimationSoundClientBehavior.cpp
+    src/GameClient/ModelConditionAudioLoopClientBehavior.cpp
+    src/GameClient/DrawableAudioLoop.cpp
 )
 set(OPENBFME_AUDIO4_TESTS
     tests/test_audio4.cpp
+    tests/test_modgap2_audio_loop.cpp
 )

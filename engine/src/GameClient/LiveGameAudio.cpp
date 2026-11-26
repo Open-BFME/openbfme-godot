@@ -386,6 +386,7 @@ LiveGameAudio::~LiveGameAudio()
 		m_game.logic().largeGroupAudio().setSink(nullptr); // lane AUDIO-4
 	}
 	m_game.drawables().animationSounds().audio = nullptr; // lane AUDIO-4: the footsteps stop with this attachment
+	m_game.drawables().animationSounds().audioLoopsDetached(); // stop S-6024
 	m_game.drawables().animationSounds().objectPosition = nullptr;
 	// review r1 fix 1: the manager's own lifetime decides, not whether it is the installed one. A destroyed manager is not touched; a surviving one (even
 	// when another manager is installed now) loses exactly this attachment's resolver, queries and sounds
