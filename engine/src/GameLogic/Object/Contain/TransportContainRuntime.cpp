@@ -43,7 +43,7 @@ const char *const kStopTransport =
 	"off, GameLogicRandomValue(5, 10)), the exits RW 0x8682D9 / 0x87A89E and GoAggressiveOnExit's attitude (RW 0x86AD06, lane GATEPUSH-1). Inference: the payload is made when the object is created (RW's caller of main slot 0x70 "
 	"is not located). Not ported: the fades and the drawable bone attachment (client), CanGrabStructure (the trolls' GrabObject body path; the entry test RW 0x86A07D and the GrabWeapon fire RW 0x86AA4B .. 0x86AAA2 are ported, lane PORT-62), ShouldThrowOutPassengers' "
 	"throw (RW 0x86A530), the AI slot 0x1A8 of the exit test, the SHIP boarding AI (S-4160; lane SHIP-1 ported the shore spot RW 0x6EFBB8 of the entries and exits), an indestructible container's payload, "
-	"PassengersInTurret, the arming of the falling riders (slot 0xF8: no caller located)";
+	"PassengersInTurret";
 
 const char *const kHordeTransportCpp = "HordeTransportContain.cpp"; // RW 0xC5C568
 const char *const kOpenContainCpp = "OpenContain.cpp";             // RW 0xC59A10

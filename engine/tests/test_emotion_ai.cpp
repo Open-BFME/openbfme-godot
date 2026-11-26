@@ -14,6 +14,8 @@
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIEmotionStates.h"
+#include "GameLogic/AI/AIRampageState.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
@@ -39,6 +41,27 @@ const char kExtraObjects[] =
 	"  GeometryMinorRadius = 8\n"
 	"  GeometryHeight = 20\n"
 	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = WalkerLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 55\n"
+	"  End\n"
+	"End\n"
+	// TOP20 rampage: RampageTime 1000 ms = 5 frames, TimeToEjectPassengersOnRampage 400 ms = 2 frames (parseDurationUnsignedInt RW 0x73A429: ceil(ms * 0.005))
+	"Object Rampager\n"
+	"  KindOf = INFANTRY SELECTABLE\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 100\n"
+	"  End\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"    RampageTime = 1000\n"
+	"    RampageRequiresAflame = Yes\n"
+	"    TimeToEjectPassengersOnRampage = 400\n"
 	"  End\n"
 	"  LocomotorSet\n"
 	"    Locomotor = WalkerLoco\n"
@@ -726,4 +749,66 @@ TEST_CASE("emotion AI retail: the taunt scan finds an enemy within TauntAndPoint
 		hashes[run] = g.logic.computeStateHash();
 	}
 	CHECK(hashes[0] == hashes[1]);
+}
+
+// TOP20 rampage: AI command 0x3A (privateRampage RW 0x662EB1) and AIRampageState (RW 0x74D6EA / 0x75187A / 0x74D7C7); the numbers are RW's
+TEST_CASE("TOP20 rampage: an aflame unit's command 0x3A enters state 0x2D (RAMPAGING, UNSELECTABLE, weapon set flag 8, both locks), refuses script and player orders, and dies after RampageTime")
+{
+	EmoAI f;
+	Object *u = f.spawn("Rampager", 500.0f, 500.0f);
+	AIUpdateInterface *ai = f.aiOf(u);
+	CHECK(ai->combatSettings().rampageTime == 5u);                     // ceil(1000 * 0.005)
+	CHECK(ai->combatSettings().timeToEjectPassengersOnRampage == 2u); // ceil(400 * 0.005)
+	CHECK(ai->rampageTime() == 0u); // RW 0x664D5D: RampageRequiresAflame and not AFLAME
+	u->setStatus((unsigned)CombatNames::status("AFLAME"), true);
+	CHECK(ai->rampageTime() == 5u);
+	const unsigned start = f.logic->getFrame();
+	REQUIRE(ai->aiRampage(CMD_FROM_SCRIPT));
+	CHECK(ai->currentStateId() == (unsigned)AI_RAMPAGE);
+	CHECK(ai->lastCommandSource() == CMD_FROM_SCRIPT); // AI + 0x48
+	CHECK(u->testStatus((unsigned)CombatNames::status("RAMPAGING")));
+	CHECK(u->testStatus((unsigned)CombatNames::status("UNSELECTABLE")));
+	CHECK(BitFlagsTest(u->getWeaponSetFlags(), (size_t)CombatNames::weaponSetBit("RAMPAGE")));
+	CHECK(ai->preventPlayerCommands()); // + 0x3C5
+	CHECK(ai->scriptLock());            // + 0x3C6
+	CHECK_FALSE(ai->allowedToRespondToCommand(CMD_FROM_SCRIPT, 0x3A)); // RW 0x6671D5 .. 0x6671E1
+	CHECK_FALSE(ai->allowedToRespondToCommand(CMD_FROM_PLAYER, 0));
+	CHECK(ai->allowedToRespondToCommand(CMD_FROM_AI, 0));
+	CHECK_FALSE(ai->aiRampage(CMD_FROM_SCRIPT));
+	const AIRampageState *st = dynamic_cast<const AIRampageState *>(ai->stateMachine().currentState());
+	REQUIRE(st != nullptr);
+	CHECK(st->endFrame() == start + 5u);
+	CHECK(st->ejectFrame() == start + 2u);
+	f.frames(4);
+	CHECK(ai->currentStateId() == (unsigned)AI_RAMPAGE);
+	CHECK_FALSE(u->isEffectivelyDead());
+	f.frames(2);
+	// RW 0x74D7C7: the exit clears RAMPAGING, the weapon set flag and the locks, sets CHARGING and kills the unit (RW 0x698EC3(8, 0)); the kill is made inside
+	// the unit's own AI update (status UPDATING_AI), so it lands one frame later (Object::attemptDamage, RW 0x695031)
+	f.frames(1);
+	CHECK(u->isEffectivelyDead());
+	CHECK_FALSE(u->testStatus((unsigned)CombatNames::status("RAMPAGING")));
+	CHECK_FALSE(BitFlagsTest(u->getWeaponSetFlags(), (size_t)CombatNames::weaponSetBit("RAMPAGE")));
+	CHECK_FALSE(ai->scriptLock());
+	CHECK_FALSE(ai->preventPlayerCommands());
+	CHECK(u->testModelCondition(CombatNames::modelCondition("CHARGING")));
+}
+
+TEST_CASE("TOP20 rampage: without AFLAME a RampageRequiresAflame unit's rampage ends at once (getRampageTime 0, eject now) and it dies; a unit that never rampages keeps its locks clear")
+{
+	EmoAI f;
+	Object *u = f.spawn("Rampager", 500.0f, 500.0f);
+	Object *other = f.spawn("Rampager", 700.0f, 500.0f);
+	AIUpdateInterface *ai = f.aiOf(u);
+	const unsigned start = f.logic->getFrame();
+	REQUIRE(ai->aiRampage(CMD_FROM_AI));
+	const AIRampageState *st = dynamic_cast<const AIRampageState *>(ai->stateMachine().currentState());
+	REQUIRE(st != nullptr);
+	CHECK(st->endFrame() == start);   // + 0x24 = now + 0
+	CHECK(st->ejectFrame() == start); // RW 0x74D7B0 .. 0x74D7BE: an eject time with rampage time 0 -> now
+	f.frames(3);                   // the kill lands the frame after the AI update that made it (UPDATING_AI, RW 0x695031)
+	CHECK(u->isEffectivelyDead()); // RW 0x699282 without RunOffMapBehavior: kill(UNRESISTABLE)
+	CHECK_FALSE(other->isEffectivelyDead());
+	CHECK_FALSE(f.aiOf(other)->scriptLock());
+	CHECK(f.aiOf(other)->allowedToRespondToCommand(CMD_FROM_SCRIPT, 0));
 }

@@ -75,6 +75,9 @@ public:
 	virtual bool isIndestructible() const { return false; }
 	// RW vt[0x90]: the body's DodgePercent (a fraction)
 	virtual float getDodgePercent() const { return 0.0f; }
+	// TOP20 rampage: RW vt[0x98], called by Lua ObjectEnterRampageState (RW 0x738A7A, with 1) and ObjectSetDelayedDeath: ActiveBody and every body of 2.01 but
+	// DelayedDeathBody answer `ret 4` (RW 0x9F3A3C); DelayedDeathBody (vtable RW 0xC72678) sets its `checked` byte + 0xF1 (RW 0x8C57A1)
+	virtual void setDelayedDeathChecked(bool on) { (void)on; }
 	// lane FX-4: RW vt[0x40], the last damage record (ActiveBody RW 0x715914: + 0x40); false = null (a body without one). `type` = the record's damage type
 	virtual bool lastDamageRecordType(int &type) const
 	{
@@ -189,6 +192,14 @@ public:
 	// lane IDLE-1: contain vslot 0xB8, asked by the idle mood scan (RW 0x66844A) of the object that owns this contain when that object is itself contained:
 	// false for OpenContain, its plain heirs and HordeContain (RW 0x9188EB), SiegeEngineContain's CrewAllowedToFire (RW 0x87EDA9: data + 0x1A0)
 	virtual bool moodScanWhileContained() const { return false; }
+	// TOP20 S-321: slot 0xF4, the passenger a HitPassengerPercentage shot at the container hits instead (Weapon RW 0x6CCEA4, with the victim's position):
+	// OpenContain RW 0x8663B6 the contained object nearest to `pos`; the horde garrison / tunnel / slaughter house (RW 0x87CE79) and the horde transport (RW
+	// 0x87A38E) RW 0x990D14 the nearest shown member of a contained horde; null: the container itself is hit. HordeContain's slot 0x7C (its horde interface,
+	// RW 0x872A6F) keeps a horde out of the roll
+	virtual Object *passengerToHit(const Coord3D &pos) const { (void)pos; return nullptr; }
+	// TOP20 rampage: slot 0xF8, called by AIRampageState::update (RW 0x7518AF) once TimeToEjectPassengersOnRampage ran out: `ret` (RW 0x63F3BF) in every
+	// contain table of 2.01 but HordeTransportContain's two (RW 0xC5C370 / 0xC5DA10: RW 0x87A321, the riders start to fall off)
+	virtual void startRidersFalling() {}
 };
 
 // ZH CreateModuleInterface: onCreate runs for every create module, in list order, after the object's constructor (spec 5.3 step 3;

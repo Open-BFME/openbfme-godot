@@ -190,6 +190,7 @@ InGameHud::~InGameHud()
 		m_palantirRef->setHeroSelectHandler(nullptr); // lane UI-4
 	}
 	m_config.game.drawables().setHeroAttackedHandler(nullptr);
+	m_config.game.drawables().setDeselectHandler(nullptr);
 	m_config.game.drawables().setHeroFlashHandler(nullptr);
 	m_config.game.drawables().setDeselectLocalHandler(nullptr);
 	m_heroSelect.reset();
@@ -311,6 +312,7 @@ bool InGameHud::boot(std::string *error)
 	// lane UI-4: the hero bar (InGameHeroSelect.h): AptPalantir::OnHeroSelectLoaded hands the movie's clip path (InGameHeroSelectInterface ctor RW 0x92DDE7)
 	m_heroSelect = std::make_unique<InGameHeroSelect>(m_input->context(), builderCycleTimeoutMs);
 	m_config.game.drawables().setHeroAttackedHandler([this](ObjectID id) { m_heroSelect->onHeroAttacked(id); });
+	m_config.game.drawables().setDeselectHandler([this](ObjectID id) { m_input->ui().deselectObject(id); }); // TOP20 rampage (RW 0x6257E5)
 	m_config.game.drawables().setHeroFlashHandler([this](const std::string &name, int frames) { m_heroSelect->flashHeroButton(name, frames); });
 	// lane POSTERNPLOT-1, RW 0x85834C .. 0x858389: the local player's object leaves the selection (the message, then TheInGameUI's deselectDrawable)
 	m_config.game.drawables().setDeselectLocalHandler([this](ObjectID id, int ownerIndex) {

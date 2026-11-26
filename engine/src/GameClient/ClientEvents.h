@@ -66,6 +66,7 @@ struct ClientEvent
 		SET_OPACITY,     ///< lane PORT-46 (RW 0x8B11F0 / 0x8B44F0 / 0x8B1219 / 0x8B125F): opacity, the drawable's + 0xB0
 		CUSTOM_COLORS,   ///< lane CAH-2 (RW 0x80AF0B -> 0x6727B0): customKind and customColors, the drawable's house colour set
 		HERO_ATTACKED,   ///< RW 0x67B78C: the local hero-select bar's attacked effect
+		DESELECTED,      ///< TOP20 rampage, RW 0x625759 -> 0x6257E5: the drawable leaves the client's selection (TheInGameUI deselectDrawable)
 		HERO_FLASH,      ///< RW 0x7BDD7A: name = exact template name, flashFrames = signed client-frame duration
 		CAH_STATISTICS,   ///< hero unique id and the matching statistic names, client profile data
 		MODEL_CONDITIONS, ///< lane SAVE-4e: flags, the object's whole set stored (Drawable::replaceModelConditionFlags RW 0x679512 takes a whole set)
@@ -138,6 +139,7 @@ public:
 	void setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2) override; // lane CAH-2
 	void createAHeroKill(Object &killer, Object &victim) override;
 	void heroAttacked(Object &obj) override;
+	void deselectDrawable(Object &obj) override;
 	void evaDamaged(Object &obj, const EvaDamageNotice &notice) override; // lane EVADAMAGE-1
 	void flashHeroButton(const std::string &templateName, int frames) override;
 	void deselectLocal(Object &obj) override; // lane POSTERNPLOT-1 (RW 0x85834C)

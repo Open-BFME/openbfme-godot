@@ -136,6 +136,16 @@ void AIUpdateInterface::readCombatSettings(const ModuleData *data)
 		{
 			m_combat.moodAttackCheckRate = NumericState::ceilScaled((std::uint32_t)std::strtoul(tok[0].c_str(), nullptr, 10), 0.005f);
 		}
+		else if (ieq(name, "RampageTime") || ieq(name, "TimeToEjectPassengersOnRampage"))
+		{
+			// TOP20 rampage: RW 0xC0F530 offsets 0x38 / 0x48, parseDurationUnsignedInt RW 0x73A429 (ms -> ceil(ms * 0.005f))
+			const unsigned frames = NumericState::ceilScaled((std::uint32_t)std::strtoul(tok[0].c_str(), nullptr, 10), 0.005f);
+			(ieq(name, "RampageTime") ? m_combat.rampageTime : m_combat.timeToEjectPassengersOnRampage) = frames;
+		}
+		else if (ieq(name, "RampageRequiresAflame"))
+		{
+			m_combat.rampageRequiresAflame = ieq(tok[0], "Yes") || ieq(tok[0], "True") || tok[0] == "1"; // + 0x3C, parseBool RW 0x42E558 (as StandGround)
+		}
 		else if (ieq(name, "AutoAcquireEnemiesWhenIdle"))
 		{
 			unsigned flags = 0;

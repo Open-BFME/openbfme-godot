@@ -357,6 +357,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				m_heroAttackedHandler(ev.object);
 			}
 			break;
+		case ClientEvent::DESELECTED: // TOP20 rampage (RW 0x6257E5)
+			if (m_deselectHandler)
+			{
+				m_deselectHandler(ev.object);
+			}
+			break;
 		case ClientEvent::HERO_FLASH:
 			if (m_heroFlashHandler)
 			{

@@ -42,6 +42,8 @@ public:
 	// the simulation's client events, in order: creation, destruction, model conditions, module / sub object visibility, placement
 	void applyEvents(const std::vector<ClientEvent> &events);
 	void setHeroAttackedHandler(std::function<void(ObjectID)> handler) { m_heroAttackedHandler = std::move(handler); }
+	// TOP20 rampage: ClientEvent::DESELECTED goes to the client's selection (the HUD installs InGameUI::deselectObject)
+	void setDeselectHandler(std::function<void(ObjectID)> handler) { m_deselectHandler = std::move(handler); }
 	// lane EVADAMAGE-1: what the EVA_DAMAGED events did (EvaDamage::apply)
 	const EvaDamage::Stats &evaDamageStats() const { return m_evaDamage; }
 	void setHeroFlashHandler(std::function<void(const std::string &, int)> handler) { m_heroFlashHandler = std::move(handler); }
@@ -146,6 +148,7 @@ private:
 	static constexpr ObjectID kDenseObjectIds = 1u << 22;
 	void bindObject(ObjectID object, DrawableID id); ///< id 0 unbinds
 	std::function<void(ObjectID)> m_heroAttackedHandler;
+	std::function<void(ObjectID)> m_deselectHandler;
 	EvaDamage::Stats m_evaDamage; ///< lane EVADAMAGE-1
 	std::function<void(const std::string &, int)> m_heroFlashHandler;
 	std::function<void(ObjectID, int)> m_deselectLocalHandler;
