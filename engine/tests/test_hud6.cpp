@@ -1276,7 +1276,7 @@ TEST_CASE("hud6 module offered template retail")
 	REQUIRE(data);
 	REQUIRE_FALSE(data->m_unitName.empty());
 	CHECK(module->getUnitName() == data->m_unitName);
-	CHECK(module->isUnported()); // automatic spawning is a separate S-140 gap
+	CHECK_FALSE(module->isUnported()); // the update RW 0x8BC9B0 is ported (test_spawn_unit_behavior.cpp)
 	const ThingTemplate *offered = s.world->things().findTemplate(data->m_unitName);
 	REQUIRE(offered);
 	producer->setCommandSetOverride("Hud6S207MissingCommandSet");
