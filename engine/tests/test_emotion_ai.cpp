@@ -14,6 +14,11 @@
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIEmotionStates.h"
+#include "GameLogic/AI/AIBurningDeathState.h"
+#include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Damage.h"
+#include "GameLogic/FXEvents.h"
+#include "GameLogic/Locomotor.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
@@ -68,7 +73,96 @@ const char kExtraObjects[] =
 	"    Condition = SET_NORMAL\n"
 	"    Speed = 50\n"
 	"  End\n"
-	"End\n";
+	"End\n"
+	// TOP20 #21: the burning death. The locomotors are RotWK's locomotor.ini BurningDeathLocomotorInfantry (BurningDeathRadius 120) and
+	// BurningDeathLocomotorCavalry (BurningDeathIsCavalry Yes, radius 20000); BurningDeathTime 1000 ms = 5 frames (the mod's infantry has 5000, cavalry 2500)
+	"Locomotor BurnInfantryLoco\n"
+	"  Surfaces = GROUND\n"
+	"  TurnTime = 500\n"
+	"  Acceleration = 300\n"
+	"  Braking = 300\n"
+	"  ZAxisBehavior = NO_Z_MOTIVE_FORCE\n"
+	"  Appearance = TWO_LEGS\n"
+	"  StickToGround = Yes\n"
+	"  BurningDeathRadius = 120\n"
+	"End\n"
+	"Locomotor BurnCavalryLoco\n"
+	"  Surfaces = GROUND\n"
+	"  ZAxisBehavior = NO_Z_MOTIVE_FORCE\n"
+	"  Appearance = TWO_LEGS\n"
+	"  StickToGround = Yes\n"
+	"  BurningDeathIsCavalry = Yes\n"
+	"  BurningDeathRadius = 20000\n"
+	"End\n"
+	"Object Burner\n"
+	"  KindOf = INFANTRY SELECTABLE\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 100\n"
+	"    BurningDeathBehavior = Yes\n"
+	"    BurningDeathFX = FX_InfantryBurningFlame\n"
+	"  End\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"    BurningDeathTime = 1000\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = WalkerLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 55\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = BurnInfantryLoco\n"
+	"    Condition = SET_BURNINGDEATH\n"
+	"    Speed = 50\n"
+	"  End\n"
+	"End\n"
+	"Object BurnRider\n"
+	"  KindOf = CAVALRY SELECTABLE\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 100\n"
+	"    BurningDeathBehavior = Yes\n"
+	"    BurningDeathFX = FX_CavalryBurningFlame\n"
+	"  End\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"    BurningDeathTime = 1000\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = WalkerLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 55\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = BurnCavalryLoco\n"
+	"    Condition = SET_BURNINGDEATH\n"
+	"    Speed = 80\n"
+	"  End\n"
+	"End\n"
+	"Object BurnHorde\n"
+	"  KindOf = HORDE MELEE_HORDE LARGE_RECTANGLE_PATHFIND SELECTABLE\n"
+	"  Geometry = BOX\n"
+	"  GeometryMajorRadius = 30\n"
+	"  GeometryMinorRadius = 45\n"
+	"  GeometryHeight = 20\n"
+	"  Behavior = HordeAIUpdate ModuleTag_AI\n"
+	"  End\n"
+	"  Behavior = HordeContain ModuleTag_Contain\n"
+	"    RankInfo = RankNumber:1 UnitType:Burner Position:X:50 Y:0 Position:X:50 Y:20 Position:X:50 Y:-20\n"
+	"    InitialPayload = Burner 3\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = HordeLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 50\n"
+	"  End\n"
+	"End\n"
+;
 
 struct EmoAI : movetest::MoveWorld
 {
@@ -726,4 +820,124 @@ TEST_CASE("emotion AI retail: the taunt scan finds an enemy within TauntAndPoint
 		hashes[run] = g.logic.computeStateHash();
 	}
 	CHECK(hashes[0] == hashes[1]);
+}
+
+namespace
+{
+void burnHit(Object *o, int type, float amount)
+{
+	DamageInfo info;
+	info.m_input.m_sourceID = INVALID_ID;
+	info.m_input.m_damageType = type;
+	info.m_input.m_amount = amount;
+	o->attemptDamage(info);
+}
+int countFX(GameLogic &logic, const char *fx)
+{
+	int n = 0;
+	for (const FXEvent &e : logic.fxEvents().frameEvents())
+	{
+		if (std::string(e.site) == "BurningDeathFX" && *e.fxList == fx)
+		{
+			++n;
+		}
+	}
+	return n;
+}
+} // namespace
+
+TEST_CASE("TOP20 burning death: a FLAME hit that would kill a BurningDeathBehavior body leaves 1 health, enters state 0x4A and plays BurningDeathFX once; the unit dies after BurningDeathTime")
+{
+	EmoAI f;
+	Object *u = f.spawn("Burner", 500.0f, 500.0f);
+	AIUpdateInterface *ai = f.aiOf(u);
+	CHECK(ai->combatSettings().burningDeathTime == 5u); // ceil(1000 * 0.005)
+	const unsigned start = f.logic->getFrame();
+	f.logic->fxEvents().beginFrame();
+	burnHit(u, DAMAGE_FLAME, 500.0f);
+	// RW 0x8C41DF .. 0x8C4214: amount = min(health - 1, amount)
+	CHECK(u->getBodyModule()->getHealth() == 1.0f);
+	CHECK_FALSE(u->isEffectivelyDead());
+	CHECK(countFX(*f.logic, "FX_InfantryBurningFlame") == 1); // RW 0x8C47B5: doFXObj(BurningDeathFX, obj, 0)
+	// RW 0x8C479E: AI command 0x53 from CMD_FROM_AI -> privateBurningDeath RW 0x6648B6 -> state 0x4A
+	REQUIRE(ai->currentStateId() == (unsigned)AI_BURNING_DEATH);
+	CHECK(ai->lastCommandSource() == CMD_FROM_AI);
+	// RW 0x751BE5: BURNINGDEATH, the statuses of RW 0xDE7850, LOCOMOTORSET_BURNINGDEATH
+	CHECK(u->testModelCondition(CombatNames::modelCondition("BURNINGDEATH")));
+	CHECK(u->testStatus((unsigned)CombatNames::status("NO_ATTACK")));
+	CHECK(u->testStatus((unsigned)CombatNames::status("NO_AUTO_ACQUIRE")));
+	CHECK(u->testStatus((unsigned)CombatNames::status("UNATTACKABLE")));
+	CHECK(u->testStatus((unsigned)CombatNames::status("UNSELECTABLE")));
+	CHECK(ai->curLocomotorSet() == LOCOMOTORSET_BURNINGDEATH);
+	const AIBurningDeathState *st = dynamic_cast<const AIBurningDeathState *>(ai->stateMachine().currentState());
+	REQUIRE(st != nullptr);
+	CHECK(st->deathFrame() == start + 5u);
+	CHECK(st->deathPosition().x == 500.0f);
+	CHECK(st->deathPosition().y == 500.0f);
+	// RW 0x7484FC .. 0x74857B: infantry n = floor(120 * 0.1 + 0.5) = 12 cells of 10 around the death position
+	const float gx = st->goal().x - 500.0f, gy = st->goal().y - 500.0f;
+	CHECK(std::fabs(gx) <= 120.0f); // tolerance: the goal is GameLogicRandomValue(-12, 12) * 10 (RW 0x74853A), the bound is that range
+	CHECK(std::fabs(gy) <= 120.0f); // tolerance: GameLogicRandomValue(-12, 12) * 10 (RW 0x74855A), the bound is that range
+	CHECK(std::fmod(gx, 10.0f) == 0.0f);
+	CHECK(std::fmod(gy, 10.0f) == 0.0f);
+	// UNATTACKABLE (step 3) takes only UNRESISTABLE: a second fire hit changes nothing and plays nothing
+	f.logic->fxEvents().beginFrame();
+	burnHit(u, DAMAGE_FLAME, 500.0f);
+	CHECK(u->getBodyModule()->getHealth() == 1.0f);
+	CHECK(countFX(*f.logic, "FX_InfantryBurningFlame") == 0);
+	f.frames(4);
+	CHECK(ai->currentStateId() == (unsigned)AI_BURNING_DEATH);
+	CHECK_FALSE(u->isEffectivelyDead());
+	// RW 0x751CE6 .. 0x751CF4: at the death frame runOffMapOrDie (RW 0x699282: no RunOffMapBehavior -> kill(UNRESISTABLE)); the kill is made in the unit's AI
+	// update (UPDATING_AI), so it lands a frame later (RW 0x695031)
+	f.frames(3);
+	CHECK(u->isEffectivelyDead());
+}
+
+TEST_CASE("TOP20 burning death: no cap without BurningDeathBehavior, for other damage types, a hit that leaves more than 1 health, or INSIDE_GARRISON; LOGICAL_FIRE caps; a horde member leaves its horde; cavalry runs BurningDeathRadius away")
+{
+	EmoAI f;
+	// no BurningDeathBehavior (+ 0x51): the fire kills
+	Object *plain = f.spawn("Scarer", 300.0f, 300.0f);
+	burnHit(plain, DAMAGE_FLAME, 500.0f);
+	CHECK(plain->isEffectivelyDead());
+	// not type 6 / 0x17: kills
+	Object *slashed = f.spawn("Burner", 340.0f, 300.0f);
+	burnHit(slashed, DAMAGE_SLASH, 500.0f);
+	CHECK(slashed->isEffectivelyDead());
+	// a hit below health - 1: no change of state
+	Object *singed = f.spawn("Burner", 380.0f, 300.0f);
+	burnHit(singed, DAMAGE_FLAME, 50.0f);
+	CHECK(singed->getBodyModule()->getHealth() == 50.0f);
+	CHECK(f.aiOf(singed)->currentStateId() != (unsigned)AI_BURNING_DEATH);
+	CHECK_FALSE(singed->testModelCondition(CombatNames::modelCondition("BURNINGDEATH")));
+	// INSIDE_GARRISON (RW 0xDE9B14): kills
+	Object *garrisoned = f.spawn("Burner", 420.0f, 300.0f);
+	garrisoned->setStatus((unsigned)CombatNames::status("INSIDE_GARRISON"), true);
+	burnHit(garrisoned, DAMAGE_FLAME, 500.0f);
+	CHECK(garrisoned->isEffectivelyDead());
+	// LOGICAL_FIRE (0x17, the terrain fire's type) caps
+	Object *grassFire = f.spawn("Burner", 460.0f, 300.0f);
+	burnHit(grassFire, DAMAGE_LOGICAL_FIRE, 500.0f);
+	CHECK(grassFire->getBodyModule()->getHealth() == 1.0f);
+	CHECK(f.aiOf(grassFire)->currentStateId() == (unsigned)AI_BURNING_DEATH);
+	// a horde member: the horde interface's slot 0x38 lets it go (RW 0x8C4779)
+	Object *horde = f.spawn("BurnHorde", 900.0f, 900.0f);
+	f.frames(2);
+	ContainModuleInterface *hc = horde->getContain();
+	REQUIRE(hc != nullptr);
+	REQUIRE(hc->getContainCount() == 3u);
+	Object *member = hc->getContainedItemsList()->front();
+	REQUIRE(member->getContainedBy() == horde);
+	burnHit(member, DAMAGE_FLAME, 500.0f);
+	CHECK(member->getContainedBy() == nullptr);
+	CHECK(hc->getContainCount() == 2u);
+	CHECK(f.aiOf(member)->currentStateId() == (unsigned)AI_BURNING_DEATH);
+	// cavalry (BurningDeathIsCavalry): the goal is BurningDeathRadius from the death position at a random angle (RW 0x74845E .. 0x7484F2)
+	Object *rider = f.spawn("BurnRider", 1000.0f, 400.0f);
+	burnHit(rider, DAMAGE_FLAME, 500.0f);
+	const AIBurningDeathState *st = dynamic_cast<const AIBurningDeathState *>(f.aiOf(rider)->stateMachine().currentState());
+	REQUIRE(st != nullptr);
+	const float dx = st->goal().x - st->deathPosition().x, dy = st->goal().y - st->deathPosition().y;
+	CHECK(std::sqrt(dx * dx + dy * dy) == doctest::Approx(20000.0f).epsilon(1e-5)); // tolerance: float sin / cos of a random angle times 20000, added to the position (SSE, RW 0x7484A8 .. 0x7484DE)
 }

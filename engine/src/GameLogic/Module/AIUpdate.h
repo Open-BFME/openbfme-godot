@@ -175,7 +175,8 @@ public:
 		bool canAttackWhileContained = false; ///< lane IDLE-1: CanAttackWhileContained (RW field table 0xC0F530, + 0x25, parseBool RW 0x42E558)
 		std::string attackPriority = "DefaultAttackPriority"; ///< lane TARGET-1: + 0x44, the module data constructor RW 0x66E8FF
 		float holdGroundCloseRangeDistance = 0.0f; ///< lane TARGET-1: HoldGroundCloseRangeDistance (RW field table 0xC0F530, + 0x28, parseReal)
-		std::vector<std::string> specialContactPoints; ///< lane BUILD-3: SpecialContactPoints (RW field table 0xC0F640, + 0x58, RW 0x42E59E: every token appended)
+		std::vector<std::string> specialContactPoints;
+		unsigned burningDeathTime = 0; // RW 0xC0F530 +0x40 (ms -> ceil(ms * 0.005f)) ///< lane BUILD-3: SpecialContactPoints (RW field table 0xC0F640, + 0x58, RW 0x42E59E: every token appended)
 	};
 	const CombatSettings &combatSettings() const { return m_combat; }
 	// lane BUILD-3, RW 0x667C76 AIUpdateInterface::findNearestLabeledContactPointOnTarget(target, out, callerPos, preferred): the SpecialContactPoints labels in order;
@@ -201,6 +202,9 @@ public:
 	void setAttitude(int attitude);
 	// lane SCRIPT-3: AI command 0x12 (RW 0x6AF150): aiDoCommand's gate, then privateHunt RW 0x6644E6 (AIHunt.cpp); false when nothing changed
 	bool aiHunt(CommandSourceType source);
+	// TOP20 #21: AI command 0x53 (RW 0x8C3EC3, made only by ActiveBody::attemptDamage's burning death): aiDoCommand's gate, then privateBurningDeath (AI vslot
+	// 0x134, RW 0x6648B6: an immobile object nothing, else the machine cleared, the source kept, state 0x4A); false when nothing changed (AIBurningDeathState.cpp)
+	bool aiBurningDeath(CommandSourceType source);
 	// lane BFME2CAMP1: AI command 0x23 (RW 0x77145C aiAttackArea) -> aiDoCommand's gate, then privateAttackArea RW 0x66C24E (AIHunt.cpp): attack the enemies inside
 	// `area` (the state 0x1F, AIAttackAreaState); false when nothing changed
 	bool aiAttackArea(const TriggerArea &area, CommandSourceType source);
