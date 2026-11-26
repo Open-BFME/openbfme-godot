@@ -3,6 +3,7 @@
 // 48 of DBKASERN_SKL's 35; the port dropped those 14 parts and the building was drawn almost empty.
 
 #include "doctest.h"
+#include "RetailTestMount.h"
 #include "W3dSynth.h"
 
 #include "Common/ArchiveFile.h"
@@ -126,4 +127,47 @@ TEST_CASE("hlod bone data: Edain's dwarven barracks keeps all 25 parts, 14 of th
 	}
 	CHECK(onRoot == 14);
 	CHECK(highest == 48);
+}
+
+// Retail has such HLODs too (the archives in RotWK's order, the top LOD): 12 in RotWK 2.01, 10 in BFME2 1.06, among them the Hobbit
+// porter and the destroyed Rohan forge. Their parts past the hierarchy were dropped as well.
+TEST_CASE("hlod bone retail: RotWK's porter and destroyed forge keep their parts past the hierarchy, on bone 0")
+{
+	retailtest::Mount *mount = retailtest::pureMount();
+	if (!mount)
+	{
+		retailtest::printSkip("hlod bone retail");
+		return;
+	}
+	REQUIRE_MESSAGE(mount->fs, mount->error);
+	ArchiveW3DFileSource source(*mount->fs);
+	WW3DAssetManager am(source);
+	struct Expect
+	{
+		const char *name;
+		int pivots, parts, onRoot, highest;
+	};
+	for (const Expect &e : { Expect{ "RUPORTER_SKN", 24, 16, 7, 30 }, Expect{ "KBFORGE_D3L", 27, 4, 4, 27 } })
+	{
+		INFO(e.name);
+		std::string error;
+		const RenderObjPrototype *proto = am.Create_Render_Obj(e.name, &error);
+		REQUIRE_MESSAGE(proto, error);
+		REQUIRE(proto->Tree);
+		CHECK(proto->Tree->Num_Pivots() == e.pivots);
+		REQUIRE(proto->SubObjects.size() == (size_t)e.parts);
+		int onRoot = 0, highest = -1;
+		for (const RenderSubObject &sub : proto->SubObjects)
+		{
+			if (sub.BoneOutsideSkeleton >= 0)
+			{
+				++onRoot;
+				CHECK(sub.BoneIndex == 0);
+				highest = std::max(highest, sub.BoneOutsideSkeleton);
+			}
+			CHECK(sub.Reason.find("outside the hierarchy") == std::string::npos);
+		}
+		CHECK(onRoot == e.onRoot);
+		CHECK(highest == e.highest);
+	}
 }
