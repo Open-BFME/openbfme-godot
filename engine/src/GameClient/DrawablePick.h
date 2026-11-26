@@ -25,6 +25,7 @@
 #include <cstddef>
 
 class Drawable;
+struct RenderObjPrototype;
 
 namespace DrawablePick
 {
@@ -41,6 +42,10 @@ Result rayTest(const Drawable &drawable, const Coord3D &o, const Coord3D &d, flo
 
 // The cached model-space triangles of the prototypes seen so far (tests, reports).
 size_t cachedModels();
+
+// Lane BLOBSHADOW-2: the model-space bounds (SAGE x, y, z) of the prototype's drawn meshes in the hierarchy's bind pose, from the pick's cached
+// triangles (the highest LOD and the aggregates, hidden meshes skipped). False when it draws no triangle
+bool bindPoseBounds(const RenderObjPrototype &proto, float lo[3], float hi[3]);
 
 // "[S-1200] ...": what this pick does not take from the target (InGameHud::stops)
 const char *stopLine();
