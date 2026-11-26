@@ -169,10 +169,18 @@ void EvacuateDamage::crc(StateHasher &h) const
 }
 
 // RW 0x8BEDCC saves the base class only (OpenBFME native snapshot, S-4190: the list too)
+// Version 2 is the port's block. Version 1 is the block an OpenBFME build wrote while the class was an unported shell (UnportedBehaviorModule::xfer: the
+// BehaviorModule block alone): such a module tracked no hits, so it loads with an empty list
 void EvacuateDamage::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferBehaviorModule(x);
+	if (v.current < 2)
+	{
+		m_hits.clear();
+		return;
+	}
 	SnapshotXfer::each(x, m_hits, 8, [&x](Hit &hit) {
 		x.xferReal(&hit.amount);
 		x.xferInt(&hit.frame);

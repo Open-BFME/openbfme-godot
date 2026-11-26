@@ -14,6 +14,7 @@
 #include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/EvacuateDamage.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
 
 #include <cstdint>
@@ -297,4 +298,30 @@ TEST_CASE("EvacuateDamage: the snapshot and the hash take the tracked hits; an e
 	truncated.pop_back();
 	XferLoad shortLoad(truncated);
 	CHECK_THROWS_AS(m->xfer(shortLoad), XferException);
+}
+
+TEST_CASE("EvacuateDamage: a save from before the port (the unported shell's version 1 block) still loads, with no tracked hits; a version 3 is refused")
+{
+	EvacWorld e;
+	Object *tower = e.unit("NoAITower", 'A', 300, 300);
+	Object *archer = e.unit("Archer", 'B', 500, 300);
+	EvacuateDamage *m = e.moduleOf(tower);
+	e.hit(tower, archer, DAMAGE_SLASH, 7.0f);
+	REQUIRE(m->hits().size() == 1u);
+	// the block UnportedBehaviorModule::xfer wrote for this module: version 1 and the BehaviorModule block
+	UnportedBehaviorModule shell(tower, m->getModuleData(), 0);
+	XferSave old;
+	shell.xfer(old);
+	REQUIRE(old.data().front() == 1);
+	XferLoad load(old.data());
+	m->xfer(load);
+	CHECK(load.atEnd());
+	CHECK(m->hits().empty());
+	XferSave now;
+	m->xfer(now);
+	CHECK(now.data().front() == 2);
+	std::vector<std::uint8_t> future = now.data();
+	future.front() = 3;
+	XferLoad bad(future);
+	CHECK_THROWS_AS(m->xfer(bad), XferException);
 }
