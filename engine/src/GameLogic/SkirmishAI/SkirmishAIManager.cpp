@@ -579,6 +579,7 @@ void SkirmishAIManager::objectRemoved(Object &obj)
 		if (AISkirmishPlayer *ai = lists ? listenerAI(r->playerIndex()) : nullptr)
 		{
 			AIUpgrade::onUnRegister(m_logic, *ai, obj, lists);
+			AIBaseBuilder::onEconomyObjectUnRegistered(m_logic, *ai, obj, lists); // RW 0x8EE8CD
 		}
 	}
 }

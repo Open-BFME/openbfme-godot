@@ -255,6 +255,7 @@ void crc(const AIBuildState &s, StateHasher &h);
 // disabled AI) and the dozer / structure notifications
 void onObjectEntered(GameLogic &logic, AISkirmishPlayer &ai, Object &obj);   // RW 0x8F069A
 void onObjectLeft(GameLogic &logic, AISkirmishPlayer &ai, Object &obj);      // RW 0x8F0C47
+void onEconomyObjectUnRegistered(GameLogic &logic, AISkirmishPlayer &ai, const Object &obj, unsigned lists); // RW 0x8EE8CD
 void onDozerIdle(GameLogic &logic, AISkirmishPlayer &ai, Object &dozer);     // RW 0x8F0660 (DozerAIInterface vslot 0x7C, RW 0x88BF4E)
 void onStructureBuilt(GameLogic &logic, AISkirmishPlayer &ai, const Object &builder, const Object &structure, bool built); // RW 0x8F06FF
 // RW 0x9A21DB / 0x9A2129 / 0x9A20C4: retail's descending sort of the dozer factories (16-entry cutoff, equal keys exchanged); exposed for tests
