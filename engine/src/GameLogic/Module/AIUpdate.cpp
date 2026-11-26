@@ -1082,6 +1082,8 @@ bool AIUpdateInterface::aiAttackMoveToPosition(const Coord3D &pos, CommandSource
 	command.maxShots = 0x7fffffff;
 	if (routeCommand(command)) return true;
 	Object *obj = getObject();
+	static const int rampage = CombatNames::weaponSetBit("RAMPAGE");
+	if (m_mover->isAiDead() || !GarrisonRules::isMobile(*obj) || BitFlagsTest(obj->getWeaponSetFlags(), (size_t)rampage)) return false;
 	Coord3D goal;
 	goalPositionClipped(pos, source, goal);
 	m_machine->clear();
@@ -1134,7 +1136,10 @@ void AIUpdateInterface::privateMoveToPosition(const Coord3D &pos, CommandSourceT
 	Object *obj = getObject();
 	// lane BUGS-1: RW 0x66B3FD .. 0x66B425 (BFME2 decomp AIUpdateInterfacePrivateCommands.cpp:privateMoveToPosition, tier B for RW 0x66B3FD): nothing when
 	// Object::isMobile (RW 0x690E97) says no (IMMOBILE, any DISABLED type but 8, among them DISABLED_HELD, STONED, a deployed SIEGE_TOWER) or the weapon set
+	// flags (Object + 0x38C, RW 0x68BE7D) hold bit 8 (RAMPAGE). A unit held through its BuildFadeInOnCreateTime (RW 0x8A2AB5) takes no move: the exit
 	// (RW 0x8A3DD5) puts it back at the door anyway (FACT-B: the catapult of Mordor's Siege Works drove off, then jumped back)
+	static const int kRampage = CombatNames::weaponSetBit("RAMPAGE");
+	if (!GarrisonRules::isMobile(*obj) || BitFlagsTest(obj->getWeaponSetFlags(), (size_t)kRampage))
 	{
 		return;
 	}
