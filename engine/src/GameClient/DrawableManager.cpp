@@ -548,6 +548,7 @@ void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha
 			}
 		}
 		m_animationSounds.update();
+		syncSway(snapshot);
 		return;
 	}
 	if (m_syncScratch.size() < slots)
@@ -607,6 +608,25 @@ void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha
 	}
 	// lane AUDIO-4: TheAnimationSoundModuleManager's client update (RW 0x83F321), after the animations advanced and the drawables moved
 	m_animationSounds.update();
+	syncSway(snapshot);
+}
+
+// RW 0x008CD675: the client update of the SwayClientUpdate modules, from the presented snapshot's breeze
+void DrawableManager::syncSway(const LogicSnapshot &snapshot)
+{
+	const size_t slots = m_slots.size();
+	for (size_t i = 1; i < slots; ++i)
+	{
+		Drawable *d = m_slots[i].get();
+		if (!d || d->clientModules().empty())
+		{
+			continue;
+		}
+		const ObjectSnapshot *rec = snapshot.find(d->getObjectID());
+		const Drawable::PresentedLook look = d->presentedLook(&snapshot, false); // the logic's hidden flags and stealth; the shroud is not read here (as the shadow pass above)
+		const bool burnedOrDead = rec && (rec->burned || rec->effectivelyDead);
+		d->updateSway(snapshot.breeze, !look.hidden, burnedOrDead);
+	}
 }
 
 void DrawableManager::applyPlacement(Object &obj, const MapObjectDrawable &placement)

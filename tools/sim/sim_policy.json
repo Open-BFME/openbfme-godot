@@ -553,6 +553,14 @@
    "reason": "CHAT-1, the multiplayer beacon's ClientUpdate module: decides on the client when a shown beacon pulses on the minimap and keeps an enemy's beacon hidden; never read by the logic (the beacon object itself is BeaconCommands.cpp, a simulation source)"
   },
   {
+   "glob": "src/GameClient/SwayClientUpdate.cpp",
+   "reason": "SwayClientUpdate's ClientUpdate module (RW 0x008CD55F / 0x008CD675): sways a drawable by pre-rotating its instance matrix from the script engine's breeze; client random only, never simulation state"
+  },
+  {
+   "glob": "src/GameClient/DrawableSway.cpp",
+   "reason": "the drawable's instance matrix (RW 0x006714C0) and the call that steps its SwayClientUpdate modules (RW 0x008CD675): reads the drawable's transform and the presented snapshot's breeze, writes only the instance matrix, never simulation state"
+  },
+  {
    "glob": "src/GameClient/InGameChat.cpp",
    "reason": "CHAT-1, the in-game chat window's rules (recipient masks, labels, line formats, scroll-back): client state and direct network commands, never frame data or logic state"
   },
