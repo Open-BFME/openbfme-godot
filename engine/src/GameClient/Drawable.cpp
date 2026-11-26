@@ -95,6 +95,7 @@ void Drawable::reactToTransformChange(const Coord3D *oldPos, float oldAngle)
 			e.lightDraw->reactToTransformChange(oldPos, oldAngle);
 		}
 	}
+	tornadoTransformChanged(oldPos, oldAngle); // RW 0x4D1000: the decals follow the drawable
 }
 
 void Drawable::friend_boundToObject()
@@ -103,6 +104,7 @@ void Drawable::friend_boundToObject()
 	{
 		m->onDrawableBoundToObject();
 	}
+	tornadoBound(); // RW 0x4D120A
 }
 
 void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nugget, std::vector<std::string> &problems)
@@ -203,6 +205,7 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 			e.lightDraw = std::make_unique<W3DLightDraw>(this, ld);
 			e.animated = true; // the flicker / pulse steps every client frame (stepFlicker)
 		}
+		makeTornadoEntry(e, nugget); // W3DTornadoDraw draws no model: its runtime keeps the spiral ground decals (RW 0x4D102E / DONOR BFME2 0x4D181D)
 	}
 	m_entries.push_back(std::move(e));
 }
@@ -211,7 +214,7 @@ bool Drawable::hasAnimatedEntry() const
 {
 	for (const DrawEntry &e : m_entries)
 	{
-		if (e.animated && (e.draw || e.lightDraw))
+		if (e.animated && (e.draw || e.lightDraw || e.tornadoDraw))
 		{
 			return true;
 		}

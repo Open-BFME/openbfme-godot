@@ -51,6 +51,7 @@ typedef std::uint32_t DrawableID;
 class ModuleFactory;
 class AnimationSoundModuleManager;
 class LightPulsePool;
+class W3DTornadoDraw;
 
 // lane FX-2: the client effect player the draw modules call (GameClient/LiveFX). Read at call time, so drawables made before the player was installed use it too.
 class DrawableFXHost
@@ -93,6 +94,7 @@ struct DrawEntry
 	std::string notDrawnReason;       ///< why a non-model entry draws nothing
 	std::unique_ptr<W3DScriptedModelDraw> draw; ///< MODEL kind
 	std::unique_ptr<W3DLightDraw> lightDraw;    ///< lane LOCAL-28: the W3DLightDraw runtime of a NOT_DRAWN entry whose data is a W3DLightDrawModuleData (lights are not a model)
+	std::unique_ptr<W3DTornadoDraw> tornadoDraw; ///< W3DTornadoDraw's spiral ground decals on a NOT_DRAWN entry (RW 0x4D102E)
 	bool animated = false;            ///< advance() would change the draw (W3DScriptedModelDraw::needsAdvance, set at creation and on every flag change, never lowered by an advance: the pose after a blend's promotion is still pushed): advance() each render frame
 	bool missingModel = false;        ///< the model is not in the mounted archives (a retail data defect): not drawn
 	std::string lastModel;            ///< the model last handed to the device layer (the device layer keeps its own handle)
@@ -109,6 +111,11 @@ struct DrawEntry
 	const ModuleData *truckData = nullptr;
 	bool truckChecked = false;
 	bool isTruck = false;
+	// out of line (DrawableTornado.cpp, where W3DTornadoDraw is complete): the unique_ptr above holds a type this header only names
+	DrawEntry();
+	~DrawEntry();
+	DrawEntry(DrawEntry &&);
+	DrawEntry &operator=(DrawEntry &&);
 };
 
 class Drawable : public Thing
@@ -204,6 +211,10 @@ public:
 	// request waits until all exist
 	void scriptModuleVisible(const std::string &name, bool visible);
 	void showSubObject(const std::string &name, bool visible, bool permanent);
+	// W3DTornadoDraw (DrawableTornado.cpp, client only): its runtime on a NOT_DRAWN entry, the follow of the drawable's transform (RW 0x4D1000), the bind (RW 0x4D120A)
+	void makeTornadoEntry(DrawEntry &e, const ThingTemplate::Nugget &nugget);
+	void tornadoTransformChanged(const Coord3D *oldPos, float oldAngle);
+	void tornadoBound();
  void upgradeTexture(const TextureSwap &swap, bool enabled);
 	// lane LOCAL-28: the world position of the bone `boneName` of the first model entry that has it (RW 0x672B5B Drawable::getBonePosition: the pose of the
 	// current animation state, scaled by the instance scale and rotated by the drawable's orientation); false when no model entry has the bone
