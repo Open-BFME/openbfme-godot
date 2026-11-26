@@ -849,8 +849,8 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			case CMSG_META_ORDERMODE_IMMEDIATE:
 			{
 				// lane INPUT-1 r2: RW 0x820249 / 0x820265 (Alt down / up): MSG_CHANGE_ORDERMODE (1129) with the new order mode and the mode it
-				// replaces: (1, 0) for queued orders, (0, 1) back to immediate; the logic stores the player's order mode (RW 0x77BCA4). RotWK's
-				// AiOrdersManager queue that reads the mode is not ported (stop S-281, lane INPUT-1 r3): the orders ignore it
+				// replaces: (1, 0) for queued orders, (0, 1) back to immediate; the logic stores the player's order mode (RW 0x77BCA4) and the group
+				// manager queues the move orders with it (P-9, AIGroupOrders.h)
 				const bool queued = t == CMSG_META_ORDERMODE_WAYPOINT;
 				ClientMessage &m = m_ctx.stream.append(MSG_CHANGE_ORDERMODE);
 				m.appendInteger(queued ? 1 : 0);

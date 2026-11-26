@@ -12,6 +12,7 @@
 
 #include "GameLogic/AI/AIWorld.h"
 
+#include "GameLogic/AI/AIGroupOrders.h"
 #include "GameLogic/AI/AIXfer.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/GameLogic.h"
@@ -31,7 +32,8 @@ void AIWorld::xferBody(Xfer &x)
 {
 	// version 2 (lane FLANK-1): the next formation id (AI + 0x20, lane BACKLOG-8) is saved: it is hashed once a formation was made, and a fresh game's 1 made a
 	// loaded snapshot's hash differ from the saved one (save2 retail T1); a version 1 snapshot keeps 1
-	XferVersion v{ 1, 2 };
+	// version 3 (P-9): the group order manager's orders and queues (AIGroupOrders); an older snapshot has none queued
+	XferVersion v{ 1, 3 };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	if (loading)
@@ -168,9 +170,26 @@ void AIWorld::xferBody(Xfer &x)
 	{
 		nextFormation = 1;
 	}
+	AIGroupOrders::Image orders;
+	if (v.current >= 3)
+	{
+		if (!loading)
+		{
+			orders = AIGroupOrders::capture(m_orders);
+		}
+		AIGroupOrders::xfer(x, orders, m_logic);
+	}
 	AIXfer::blockReadToEnd(x, "ai world"); // inside the transaction: a block with bytes after its state is refused before anything stays changed
 	if (loading)
 	{
+		if (v.current >= 3)
+		{
+			AIGroupOrders::install(m_orders, std::move(orders), m_logic); // refuses an inconsistent image before it changes anything
+		}
+		else
+		{
+			m_orders.reset();
+		}
 		m_noted = decltype(m_noted)(noted.begin(), noted.end());
 		m_notedFast.clear(); // its pointers were into the set's old nodes
 		m_nextFormationId = nextFormation; // lane FLANK-1 (version 2)

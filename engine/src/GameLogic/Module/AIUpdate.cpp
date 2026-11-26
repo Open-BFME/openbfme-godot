@@ -825,6 +825,10 @@ int AIUpdateInterface::modelConditionBit(const char *name)
 UpdateSleepTime AIUpdateInterface::update()
 {
 	m_isInUpdate = true;
+	// RW 0x66E58F: the object's order queue runs twice before anything else, RW 0x66E5B0 and (past the pending-command block RW 0x66E5C3 .. 0x66E653, not
+	// ported: S-1831) RW 0x66E65D, each AiOrdersManager::process(object id) (RW 0x756CD7 -> 0x94EF1A)
+	processOrderQueue();
+	processOrderQueue();
 	getObject()->setStatus((unsigned)CombatNames::statuses().updatingAI, true); // RW: damage dealt to this object during its own update waits a frame
 	// lane EXIT-1: RW 0x66E6E1 .. 0x66E70C: a horde member that is busy or has an explicit / angle goal runs the member update RW 0x66C748 instead of RW 0x6695EF
 	// (which holds the script condition events, the machine, the movement-complete block, the turret and doLocomotor)
@@ -972,6 +976,11 @@ void AIUpdateInterface::doMovementCompleteBookkeeping()
 bool AIUpdateInterface::reactToTransformChange()
 {
 	return m_world->mapReady() && m_world->pathfinder().updatePos(*m_adapter);
+}
+
+void AIUpdateInterface::processOrderQueue()
+{
+	m_world->ordersManager().process(getObject()->getID());
 }
 
 void AIUpdateInterface::wakeUpNow()

@@ -399,6 +399,9 @@ public:
 	const AIStateMachine *stateMachineOrNull() const { return m_machine.get(); }
 	AIWorld &world() const { return *m_world; }
 	ObjectPathfindAdapter &adapter() const { return *m_adapter; }
+	// RW 0x756CD7 (AiOrdersManager::process): the completion test and the next activation of this object's order queue. The AI update runs it (RW 0x66E5B0,
+	// 0x66E65D); so does GiantBirdAIUpdate's (RW 0x76CE1F)
+	void processOrderQueue();
 	// B1 :2513 wakeUpNow
 	void wakeUpNow();
 	// observation only (tests, lane STEALTHFLY1): the frame this AI's update is next due (UpdateModule::getWakeFrame)

@@ -2365,6 +2365,7 @@ UpdateSleepTime GiantBirdAIUpdate::update()
 {
 	Object &o = *getObject();
 	const BirdNames &n = names();
+	processOrderQueue(); // RW 0x76CE1F: the bird's own update runs the queue once, before anything else
 	o.setStatus((unsigned)n.updatingAI, true);
 	if (!m_attacking && m_deferredValid)
 	{

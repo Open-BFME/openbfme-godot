@@ -106,16 +106,9 @@ bool AICommands::move(GameLogic &logic, const GameMessage &m)
 		if (type != MSG_DO_FORCEMOVETO && logic.aiWorld() && logic.aiWorld()->config().pathfind.planningModeEnabled)
 		{
 			// lane MOVE-3: RW 0x77BAAA (MSG_DO_MOVETO) and RW 0x77AA7A (MSG_DO_ATTACKMOVETO) hand the group to the group manager's move order (RW 0x75748C) while
-			// GameData + 0x11CA (PlanningModeEnabled) is set, which retail always is; MSG_DO_FORCEMOVETO (RW 0x77AAF8) takes the generic group command (RW 0x774897)
-			group.planningMoveToPosition(dest->location, type == MSG_DO_ATTACKMOVETO, CMD_FROM_PLAYER);
-			if (type == MSG_DO_ATTACKMOVETO)
-			{
-				group.cohereMoveSpeed(false); // RW 0x77AAEB .. 0x77AAEE, after either move order
-			}
-			else
-			{
-				group.clearTemporarySpeedCaps(); // MSG_DO_MOVETO: RW 0x77BB14 -> 0x77B00A -> 0x77A342 -> RW 0x76FD04
-			}
+			// GameData + 0x11CA (PlanningModeEnabled) is set, which retail always is; MSG_DO_FORCEMOVETO (RW 0x77AAF8) takes the generic group command (RW 0x774897).
+			// P-9: the order goes into the members' queues with the player's order mode (Player + 0x770: Alt held is 1, RW 0x77BB09 / 0x77AAD1 push it)
+			group.planningMoveToPosition(dest->location, type == MSG_DO_ATTACKMOVETO, logic.players().getNthPlayer(m.getPlayerIndex())->orderMode());
 			return true;
 		}
 		if (type == MSG_DO_ATTACKMOVETO)
@@ -214,6 +207,7 @@ bool AICommands::stop(GameLogic &logic, const GameMessage &m)
 		return false;
 	}
 	AIGroup group(logic, selection(logic, m.getPlayerIndex()));
+	group.clearOrders(); // RW 0x77ABF7: the group manager's stop first (RW 0x756E5C(manager, 3, group): every member's queue), then groupIdle
 	group.groupIdle(CMD_FROM_PLAYER);
 	++m_stats.stops;
 	return true;

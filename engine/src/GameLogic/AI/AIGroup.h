@@ -67,12 +67,18 @@ public:
 	const Coord3D &pathEnd() const { return m_pathEnd; }
 	static const char *marchStopLine();
 	// lane MOVE-3: MSG_DO_MOVETO / MSG_DO_ATTACKMOVETO with GameData + 0x11CA (PlanningModeEnabled, set by the GameData constructor RW 0x643982 and cleared only
-	// by a command-line switch RW 0x7B9F93; retail INI never names it): the group manager's move order (RW 0x75748C -> order RW 0x94E232, vtable 0xC81430)
-	// executed at once for every object of the group in group order (RW 0x7572FA -> 0x94ED4C -> slot 0x10 RW 0x94E184): an object that is not a horde member
-	// (RW 0x6939DF) and has an AI gets its own destination (RW 0x94DF97: a ground mover's is the point adjusted by adjustDestination RW 0x6FE456 with the
-	// point as the group destination, its goal reserved there, a LARGE_RECTANGLE_PATHFIND unit's with its heading to it) and the move (RW 0x94DF1B ->
-	// aiMoveToPosition RW 0x66C4CA) or attack-move (RW 0x696266) to it. Every unit is sent to the one point: the destinations spread only by the reservations
-	void planningMoveToPosition(const Coord3D &pos, bool attackMove, CommandSourceType source);
+	// by a command-line switch RW 0x7B9F93; retail INI never names it): the group manager's move order (RW 0x75748C -> order RW 0x94E232, vtable 0xC81430,
+	// MoveToGroupOrder in AIGroupOrders.h) is registered in the queues of the group's members with the player's order mode (Player + 0x770, RW 0x7572FA: 0 replaces
+	// the immediate orders, 1 queues behind them, 2 plans). A queue that takes the order as its first runs it at once: every object of the group in group order
+	// gets its own destination (RW 0x94DF97: a ground mover's is the point adjusted by adjustDestination RW 0x6FE456 with the point as the group destination,
+	// its goal reserved there, a LARGE_RECTANGLE_PATHFIND unit's with its heading to it) and the move (RW 0x94DF1B -> aiMoveToPosition RW 0x66C4CA) or
+	// attack-move (RW 0x696266) to it. Every unit is sent to the one point: the destinations spread only by the reservations
+	void planningMoveToPosition(const Coord3D &pos, bool attackMove, int orderMode);
+	// RW 0x756E5C(manager, 3, group) (MSG_DO_STOP): every member's queue is cleared whole
+	void clearOrders();
+	// Calculate and reserve one member's destination (RW 0x94DF97; BFME2
+	// MoveToGroupOrder::rva005476C8). The future queued order keeps the result.
+	static Coord3D planningDestination(GameLogic &logic, Object &object, const Coord3D &pos);
 	// the stop line S-1831 (raised by every planning move)
 	static const char *planningStopLine();
 	// ZH AIGroup::groupIdle

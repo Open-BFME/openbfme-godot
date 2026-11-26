@@ -28,6 +28,7 @@
 
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/AI/AIMove.h"
+#include "GameLogic/AI/AIOrdersManager.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindHost.h"
 #include "GameLogic/Locomotor.h"
@@ -206,6 +207,9 @@ public:
 	bool mapReady() const { return m_mapReady; }
 	// lane BACKLOG-8: RW 0x6FF265, the AI's next formation id (AI + 0x20: 1 after the reset RW 0x70038D; the value is returned, then incremented)
 	int allocFormationId() { return m_nextFormationId++; }
+	// TheAiOrdersManager (RW 0xDE7860): the group orders and the queue of every object they name (AIGroupOrders.h; the AI update runs it, RW 0x66E5B0)
+	AIOrdersManager &ordersManager() { return m_orders; }
+	const AIOrdersManager &ordersManager() const { return m_orders; }
 
 	// ---- objects ----
 	ObjectPathfindAdapter &adapterFor(Object &obj);
@@ -314,6 +318,7 @@ private:
 	std::map<std::string, unsigned> m_failures; // "template: text" -> count
 	bool m_mapReady = false;
 	int m_nextFormationId = 1; ///< AI + 0x20 (hashed once a formation was made)
+	AIOrdersManager m_orders;  ///< hashed and saved once an order was queued (AIGroupOrders)
 	bool m_attached = false;
 	int m_hooksToken = 0, m_hashToken = 0; // the logic's removable registrations of the world hooks and the hash contributor
 	unsigned long long m_collisionPairs = 0;

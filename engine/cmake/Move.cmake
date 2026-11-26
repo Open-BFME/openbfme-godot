@@ -4,6 +4,7 @@
 set(OPENBFME_MOVE_SOURCES
     src/GameLogic/AI/AIStateMachine.cpp
     src/GameLogic/AI/AIGroup.cpp
+    src/GameLogic/AI/AIGroupOrders.cpp
     src/GameLogic/AI/AICommands.cpp
     src/GameLogic/AI/AIWorld.cpp
     src/GameLogic/Module/AmbientAIUpdate.cpp

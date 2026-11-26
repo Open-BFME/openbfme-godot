@@ -380,7 +380,7 @@ std::vector<std::string> HudInput::acceptanceStops()
 		"select next / previous unit and worker have no case in RotWK and do nothing (S-1673); CommandTranslator::unportedMeta() counts the cases whose effect is not "
 		"ported (chat, control bar toggle, cheer, beacon, order synchronize, planning, fast forward, the camera key flags); TOGGLE_ATTACKMOVE has no case in RotWK (a retail no-op: "
 		"A is the Attack Move button's hotkey); BEGIN_ / END_FORCEATTACK set the force-attack mode as ZH does, an OpenBFME addition: RotWK's table sends them to the default case (S-1675; its Ctrl + left press is S-4360); ORDERMODE sends MSG_CHANGE_ORDERMODE, the "
-		"logic stores the order mode, whose AiOrdersManager queue is not ported (S-281: the orders ignore it)",
+		"logic stores the order mode, which the group manager's queue reads for the move orders (P-9; S-1831: the other order classes, patrol and planning are not ported)",
 
 		"[S-288] selection filters: a click picks only what the device layer draws (QA-1's pickRay: not SHROUDED, FOGGED, invisible or hidden by a container); a drag box "
 		"leaves out an enemy / neutral object the local player sees FOGGED or worse (lane VISUAL-2 r2: addDrawableToList's rule from the ZH / BFME2 decomp source, "

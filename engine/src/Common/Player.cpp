@@ -166,6 +166,10 @@ void Player::crc(StateHasher &h) const
 	{
 		h.addI32(m_createAHeroSurcharge);
 	}
+	if (m_orderMode != 0) // P-9: the order mode moves orders into the queues (AIGroup::planningMoveToPosition); only a player in a non-immediate mode adds it
+	{
+		h.addI32(m_orderMode);
+	}
 	h.addString(m_name);
 	h.addString(m_displayName);
 	h.addString(m_side);

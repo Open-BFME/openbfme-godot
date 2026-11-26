@@ -228,8 +228,7 @@ public:
 	std::vector<ObjectID> &hotkeySquad(int n) { return m_hotkeySquads.at((size_t)n); }
 	const std::vector<ObjectID> &hotkeySquad(int n) const { return m_hotkeySquads.at((size_t)n); }
 	// lane INPUT-1 r2: the order mode (RotWK Player + 0x770, set by MSG_CHANGE_ORDERMODE RW 0x77BCA4 -> RW 0x6AAC78): 0 immediate orders, 1 queued
-	// orders (Alt held), 2 the War of the Ring planning. Not in the state hash: stored bookkeeping that
-	// no simulation code reads yet (lane INPUT-1 r4; AiOrdersManager is not ported, S-281); hash it once orders consume it
+	// orders (Alt held), 2 the War of the Ring planning. Read by AIGroup::planningMoveToPosition (the order queue, P-9) and hashed once it is not 0
 	int orderMode() const { return m_orderMode; }
 	void setOrderMode(int mode) { m_orderMode = mode; }
 

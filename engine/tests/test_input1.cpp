@@ -6,15 +6,23 @@
 #include "doctest.h"
 
 #include "HudTestUtil.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "PeImage.h"
 
 #include "Common/INI.h"
 #include "Common/INIException.h"
+#include "Common/StateHash.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameClient/CameraSettings.h"
 #include "GameClient/HudObjects.h"
 #include "GameClient/TacticalCamera.h"
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/GameMessage.h"
+#include "GameLogic/AI/AIGroupOrders.h"
+#include "GameLogic/AI/AIOrdersManager.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AI/ObjectOrderQueue.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/PlayerCommands.h"
@@ -510,6 +518,363 @@ TEST_CASE("input1 r2 groups: recall and the camera skip what RW 0x8DB103 getLive
 	b->friend_setEffectivelyDead(false);
 }
 
+TEST_CASE("P-9 queue core: immediate, queued and planned orders activate in their original order")
+{
+	struct Owner : ObjectOrderQueue::Owner
+	{
+		std::vector<unsigned> activated, cancelled, finished, patrolPrepared;
+		bool ready = false;
+		unsigned clone = 0;
+		void activate(unsigned id, unsigned) override { activated.push_back(id); }
+		bool complete(unsigned, unsigned) override { return ready; }
+		void removed(unsigned id, unsigned, bool cancel) override { (cancel ? cancelled : finished).push_back(id); }
+		unsigned cloneForPatrol(unsigned) override { return clone; }
+		void preparePatrol(unsigned id, unsigned) override { patrolPrepared.push_back(id); }
+	} owner;
+	ObjectOrderQueue q(7);
+	// The manager maps immediate mode 0 to clear(1)/insert(1), and queued
+	// mode 1 to clear(2)/insert(1), RW 0x7572FA / BFME2 0x7557B7.
+	q.clear(1, owner);
+	q.insert(1, 10, owner);
+	q.clear(2, owner);
+	q.insert(1, 20, owner);
+	CHECK(owner.activated == std::vector<unsigned>{ 10 });
+	CHECK(q.orders() == std::list<unsigned>{ 10, 20 });
+	q.process(owner);
+	CHECK(owner.activated == std::vector<unsigned>{ 10 });
+	owner.ready = true;
+	q.process(owner);
+	CHECK(owner.finished == std::vector<unsigned>{ 10 });
+	CHECK(owner.activated == std::vector<unsigned>{ 10, 20 });
+	q.clear(1, owner);
+	q.insert(1, 30, owner);
+	CHECK(owner.cancelled == std::vector<unsigned>{ 20 });
+	CHECK(owner.activated == std::vector<unsigned>{ 10, 20, 30 });
+	// Planning mode 2 does not activate an order until it is committed.
+	q.insert(2, 40, owner);
+	CHECK(q.planned() == 40);
+	q.process(owner);
+	CHECK(owner.finished == std::vector<unsigned>{ 10, 30 });
+	CHECK(owner.activated == std::vector<unsigned>{ 10, 20, 30 });
+	q.commitPlanned(owner);
+	CHECK(owner.activated == std::vector<unsigned>{ 10, 20, 30, 40 });
+	CHECK(q.planned() == 0);
+	ObjectOrderQueue patrol(8);
+	owner.activated.clear();
+	owner.finished.clear();
+	patrol.insert(1, 50, owner);
+	patrol.insert(1, 60, owner);
+	patrol.setPatrolStart(50, 1, owner);
+	CHECK(owner.patrolPrepared == std::vector<unsigned>{ 50, 60 });
+	owner.clone = 70;
+	patrol.process(owner);
+	CHECK(owner.finished == std::vector<unsigned>{ 50 });
+	CHECK(patrol.orders() == std::list<unsigned>{ 60, 70 });
+	CHECK(patrol.patrolStart() == 60);
+	CHECK(owner.activated == std::vector<unsigned>{ 50, 60 });
+	ObjectOrderQueue restored;
+	const auto saved = patrol.state();
+	REQUIRE(restored.restore(saved));
+	CHECK(restored.state().object == 8);
+	CHECK(restored.orders() == std::list<unsigned>{ 60, 70 });
+	CHECK(restored.patrolStart() == 60);
+	auto damaged = saved;
+	damaged.patrolStart = 99;
+	CHECK_FALSE(restored.restore(damaged));
+	CHECK(restored.orders() == std::list<unsigned>{ 60, 70 });
+	CHECK(restored.patrolStart() == 60);
+}
+
+TEST_CASE("P-9 order manager: changing one unit's orders preserves its former group's other members")
+{
+	struct Event { unsigned order, object; };
+	struct Group : AIOrdersManager::GroupOrder
+	{
+		unsigned label;
+		std::vector<Event> &events;
+		bool &ready;
+		Group(unsigned labelIn, std::vector<unsigned> objects, std::vector<Event> &eventsIn, bool &readyIn)
+			: GroupOrder(std::move(objects)), label(labelIn), events(eventsIn), ready(readyIn) {}
+		void activate(unsigned object) override { events.push_back({ label, object }); }
+		bool complete(unsigned) override { return ready; }
+		void removed(unsigned) override {}
+		void preparePatrol(unsigned) override {}
+		std::unique_ptr<GroupOrder> clone() const override { return std::make_unique<Group>(label, objects(), events, ready); }
+	};
+	AIOrdersManager manager;
+	std::vector<Event> events;
+	bool ready = false;
+	const auto first = manager.submit(0, std::make_unique<Group>(1, std::vector<unsigned>{ 11, 12 }, events, ready));
+	const auto second = manager.submit(1, std::make_unique<Group>(2, std::vector<unsigned>{ 11, 12 }, events, ready));
+	REQUIRE(events.size() == 2);
+	CHECK(events[0].order == 1);
+	CHECK(events[0].object == 11);
+	CHECK(events[1].order == 1);
+	CHECK(events[1].object == 12);
+	ready = true;
+	manager.process(11);
+	REQUIRE(manager.order(first) != nullptr);
+	CHECK(manager.order(first)->objects() == std::vector<unsigned>{ 12 });
+	REQUIRE(events.size() == 3);
+	CHECK(events[2].order == 2);
+	CHECK(events[2].object == 11);
+	const auto third = manager.submit(0, std::make_unique<Group>(3, std::vector<unsigned>{ 12 }, events, ready));
+	CHECK(manager.order(first) == nullptr);
+	REQUIRE(manager.order(second) != nullptr);
+	CHECK(manager.order(second)->objects() == std::vector<unsigned>{ 11 });
+	REQUIRE(manager.order(third) != nullptr);
+	REQUIRE(events.size() == 4);
+	CHECK(events[3].order == 3);
+	CHECK(events[3].object == 12);
+}
+
+TEST_CASE("P-9 order manager: discarding the last order releases its group membership")
+{
+	struct Group : AIOrdersManager::GroupOrder
+	{
+		using GroupOrder::GroupOrder;
+		void activate(unsigned) override {}
+		bool complete(unsigned) override { return false; }
+		void removed(unsigned) override {}
+		void preparePatrol(unsigned) override {}
+		std::unique_ptr<GroupOrder> clone() const override { return std::make_unique<Group>(objects()); }
+	};
+	AIOrdersManager manager;
+	const auto immediate = manager.submit(0, std::make_unique<Group>(std::vector<unsigned>{ 11, 12 }));
+	manager.setPatrolStart(11, immediate, 3);
+	manager.discardLastOrder(11);
+	REQUIRE(manager.order(immediate) != nullptr);
+	CHECK(manager.order(immediate)->objects() == std::vector<unsigned>{ 12 });
+	REQUIRE(manager.queue(11) != nullptr);
+	CHECK(manager.queue(11)->orders().empty());
+	CHECK(manager.queue(11)->patrolStart() == 0);
+	CHECK(manager.queue(11)->nextPatrolStart() == 0);
+	manager.discardLastOrder(12);
+	CHECK(manager.order(immediate) == nullptr);
+
+	const auto first = manager.submit(2, std::make_unique<Group>(std::vector<unsigned>{ 11, 12 }));
+	const auto last = manager.submit(2, std::make_unique<Group>(std::vector<unsigned>{ 11, 12 }));
+	manager.discardLastOrder(11);
+	REQUIRE(manager.order(last) != nullptr);
+	CHECK(manager.order(last)->objects() == std::vector<unsigned>{ 12 });
+	CHECK(manager.queue(11)->planned() == first);
+	manager.discardLastOrder(11);
+	CHECK(manager.queue(11)->planned() == 0);
+	REQUIRE(manager.order(first) != nullptr);
+	CHECK(manager.order(first)->objects() == std::vector<unsigned>{ 12 });
+	manager.discardLastOrder(12);
+	CHECK(manager.order(last) == nullptr);
+	manager.discardLastOrder(12);
+	CHECK(manager.order(first) == nullptr);
+}
+
+TEST_CASE("P-9 order manager: discarding a planned order leaves immediate orders intact")
+{
+	struct Group : AIOrdersManager::GroupOrder
+	{
+		using GroupOrder::GroupOrder;
+		void activate(unsigned) override {}
+		bool complete(unsigned) override { return false; }
+		void removed(unsigned) override {}
+		void preparePatrol(unsigned) override {}
+		std::unique_ptr<GroupOrder> clone() const override { return std::make_unique<Group>(objects()); }
+	};
+	AIOrdersManager manager;
+	const auto immediate = manager.submit(0, std::make_unique<Group>(std::vector<unsigned>{ 11 }));
+	manager.discardLastPlanned(11);
+	REQUIRE(manager.queue(11) != nullptr);
+	CHECK(manager.queue(11)->orders() == std::list<unsigned>{ immediate });
+	REQUIRE(manager.order(immediate) != nullptr);
+	CHECK(manager.order(immediate)->objects() == std::vector<unsigned>{ 11 });
+
+	const auto planned = manager.submit(2, std::make_unique<Group>(std::vector<unsigned>{ 22 }));
+	manager.discardLastPlanned(22);
+	REQUIRE(manager.queue(22) != nullptr);
+	CHECK(manager.queue(22)->orders().empty());
+	CHECK(manager.queue(22)->planned() == 0);
+	REQUIRE(manager.order(planned) != nullptr);
+	CHECK(manager.order(planned)->objects() == std::vector<unsigned>{ 22 });
+}
+
+TEST_CASE("P-9: Alt queues a second move without replacing the active destination")
+{
+	if (!haveWorld("P-9 queued move")) return;
+	SharedWorld &s = shared();
+	Rig r(s);
+	const Coord3D c = r.freeSpot(mapCenter(r).x, mapCenter(r).y, 260.0f);
+	Object *unit = r.make(templates(s).infantry.front(), c.x, c.y);
+	AIUpdateInterface *ai = unit->getAIUpdateInterface();
+	REQUIRE(ai != nullptr);
+	r.lookAt(c, 300.0f, 380.0f);
+	r.frame(2);
+	const ICoord2D unitPixel = r.screenOf({ c.x, c.y, 6.0f });
+	r.leftClick(unitPixel.x, unitPixel.y);
+	r.frame(1);
+	const ICoord2D firstPixel = r.screenOf({ c.x + 180.0f, c.y + 80.0f, 0.0f });
+	const ICoord2D secondPixel = r.screenOf({ c.x - 180.0f, c.y + 80.0f, 0.0f });
+	r.leftClick(firstPixel.x, firstPixel.y);
+	r.frame(1);
+	const Coord3D firstGoal = ai->stateMachine().goalPosition();
+	REQUIRE(firstGoal.x != c.x); // the first order actually set a destination
+	r.setModifier(KEY_LALT, KEY_STATE_LALT, true);
+	r.frame(1);
+	REQUIRE(r.local->orderMode() == 1);
+	r.leftClick(secondPixel.x, secondPixel.y);
+	r.frame(1);
+	CHECK(ai->stateMachine().goalPosition().x == firstGoal.x);
+	CHECK(ai->stateMachine().goalPosition().y == firstGoal.y);
+	r.setModifier(KEY_LALT, KEY_STATE_LALT, false);
+	// The second order must eventually run as well: merely ignoring it would
+	// satisfy the checks above. Allow the first move time to finish.
+	Coord3D secondTarget{};
+	REQUIRE(r.view.screenToTerrain(secondPixel, r.logic(), secondTarget));
+	for (int frame = 0; frame < 600 && ai->stateMachine().goalPosition().x == firstGoal.x; ++frame)
+	{
+		r.frame(1);
+	}
+	const Coord3D secondGoal = ai->stateMachine().goalPosition();
+	const float dx = secondGoal.x - secondTarget.x, dy = secondGoal.y - secondTarget.y;
+	CHECK(dx * dx + dy * dy < 400.0f); // tolerance: pathfinder adjusts the clicked terrain position to a nearby walkable point.
+}
+
+TEST_CASE("P-9: an immediate order replaces the queued ones whole and Stop clears the queue")
+{
+	if (!haveWorld("P-9 queue clearing")) return;
+	SharedWorld &s = shared();
+	Rig r(s);
+	const Coord3D c = r.freeSpot(mapCenter(r).x, mapCenter(r).y, 260.0f);
+	Object *unit = r.make(templates(s).infantry.front(), c.x, c.y);
+	REQUIRE(unit->getAIUpdateInterface() != nullptr);
+	AIOrdersManager &queue = r.logic().aiWorld()->ordersManager();
+	r.lookAt(c, 300.0f, 380.0f);
+	r.frame(2);
+	const ICoord2D unitPixel = r.screenOf({ c.x, c.y, 6.0f });
+	r.leftClick(unitPixel.x, unitPixel.y);
+	r.frame(1);
+	const ICoord2D first = r.screenOf({ c.x + 180.0f, c.y + 80.0f, 0.0f });
+	const ICoord2D second = r.screenOf({ c.x - 180.0f, c.y + 80.0f, 0.0f });
+	const ICoord2D third = r.screenOf({ c.x, c.y - 200.0f, 0.0f });
+	r.leftClick(first.x, first.y);
+	r.frame(1);
+	r.setModifier(KEY_LALT, KEY_STATE_LALT, true);
+	r.frame(1);
+	r.leftClick(second.x, second.y);
+	r.frame(1);
+	r.leftClick(third.x, third.y);
+	r.frame(1);
+	r.setModifier(KEY_LALT, KEY_STATE_LALT, false);
+	r.frame(1);
+	REQUIRE(queue.queue(unit->getID()) != nullptr);
+	const std::vector<unsigned> queued(queue.queue(unit->getID())->orders().begin(), queue.queue(unit->getID())->orders().end());
+	REQUIRE(queued.size() == 3); // RW 0x7572FA mode 1: each order goes behind the others
+	// an immediate order (mode 0, RW 0x94EBD1 flags 1) takes every earlier order of the unit away, the active one too
+	r.leftClick(second.x, second.y);
+	r.frame(1);
+	REQUIRE(queue.queue(unit->getID())->orders().size() == 1);
+	for (unsigned id : queued)
+	{
+		CHECK(queue.order(id) == nullptr); // the old orders had no other member: they are gone
+	}
+	// Alt again, one more order behind it, then Stop (RW 0x77ABF7 -> 0x756E5C(manager, 3, group)): the whole queue goes
+	r.setModifier(KEY_LALT, KEY_STATE_LALT, true);
+	r.frame(1);
+	r.leftClick(third.x, third.y);
+	r.frame(1);
+	r.setModifier(KEY_LALT, KEY_STATE_LALT, false);
+	r.frame(1);
+	CHECK(queue.queue(unit->getID())->orders().size() == 2);
+	r.pressKey(KEY_S);
+	r.frame(1);
+	CHECK(queue.queue(unit->getID())->orders().empty());
+	CHECK(queue.orders().empty());
+}
+
+TEST_CASE("P-9: the order queues round-trip through the native save, keep the hash, and an inconsistent image is refused")
+{
+	if (!haveWorld("P-9 queue save")) return;
+	SharedWorld &s = shared();
+	Rig r(s);
+	const Coord3D c = r.freeSpot(mapCenter(r).x, mapCenter(r).y, 260.0f);
+	Object *a = r.make(templates(s).infantry.front(), c.x, c.y);
+	Object *b = r.make(templates(s).infantry.front(), c.x + 40.0f, c.y);
+	REQUIRE(a->getAIUpdateInterface() != nullptr);
+	REQUIRE(b->getAIUpdateInterface() != nullptr);
+	AIWorld &world = *r.logic().aiWorld();
+	AIOrdersManager &manager = world.ordersManager();
+	const std::vector<ObjectID> both{ a->getID(), b->getID() };
+	manager.submit(0, std::make_unique<MoveToGroupOrder>(r.logic(), both, Coord3D{ c.x + 150.0f, c.y + 60.0f, 0.0f }, false));
+	manager.submit(1, std::make_unique<MoveToGroupOrder>(r.logic(), std::vector<ObjectID>{ a->getID() }, Coord3D{ c.x - 150.0f, c.y + 60.0f, 0.0f }, true));
+	r.frame(3);
+	REQUIRE(manager.orders().size() == 2);
+	REQUIRE(manager.queue(a->getID())->orders().size() == 2);
+	REQUIRE(manager.queue(b->getID())->orders().size() == 1);
+
+	// the manager alone
+	AIGroupOrders::Image image = AIGroupOrders::capture(manager);
+	XferSave save;
+	AIGroupOrders::xfer(save, image, r.logic());
+	XferLoad load(save.data());
+	AIGroupOrders::Image loaded;
+	AIGroupOrders::xfer(load, loaded, r.logic());
+	AIOrdersManager other;
+	AIGroupOrders::install(other, std::move(loaded), r.logic());
+	StateHasher h1, h2;
+	AIGroupOrders::crc(manager, h1);
+	AIGroupOrders::crc(other, h2);
+	CHECK(h1.value() == h2.value());
+	CHECK(other.nextId() == manager.nextId());
+	CHECK(other.orders().size() == 2);
+
+	// the whole AI world: a save and a load of the same game keep the world's hash
+	StateHasher before;
+	world.crc(before);
+	XferSave worldSave;
+	world.xfer(worldSave);
+	XferLoad worldLoad(worldSave.data());
+	world.xfer(worldLoad);
+	StateHasher after;
+	world.crc(after);
+	CHECK(before.value() == after.value());
+	CHECK(manager.queue(a->getID())->orders().size() == 2);
+
+	// an image whose queue holds an order that does not exist is refused before anything changes
+	AIGroupOrders::Image bad = AIGroupOrders::capture(manager);
+	REQUIRE_FALSE(bad.queues.empty());
+	bad.queues.front().orders.push_back(bad.nextId + 7);
+	AIOrdersManager untouched;
+	CHECK_THROWS_AS(AIGroupOrders::install(untouched, std::move(bad), r.logic()), XferException);
+	CHECK(untouched.empty());
+	// ... and so is a queue of an object the game lacks
+	AIGroupOrders::Image gone = AIGroupOrders::capture(manager);
+	gone.queues.front().object = 0x7FFFF000u;
+	CHECK_THROWS_AS(AIGroupOrders::install(untouched, std::move(gone), r.logic()), XferException);
+	CHECK(untouched.empty());
+}
+
+TEST_CASE("P-9: an object that leaves the world takes its queue and its place in the orders with it")
+{
+	if (!haveWorld("P-9 queue forget")) return;
+	SharedWorld &s = shared();
+	Rig r(s);
+	const Coord3D c = r.freeSpot(mapCenter(r).x, mapCenter(r).y, 260.0f);
+	Object *a = r.make(templates(s).infantry.front(), c.x, c.y);
+	Object *b = r.make(templates(s).infantry.front(), c.x + 40.0f, c.y);
+	AIOrdersManager &manager = r.logic().aiWorld()->ordersManager();
+	const unsigned id = manager.submit(0, std::make_unique<MoveToGroupOrder>(r.logic(), std::vector<ObjectID>{ a->getID(), b->getID() },
+		Coord3D{ c.x + 150.0f, c.y + 60.0f, 0.0f }, false));
+	REQUIRE(manager.order(id) != nullptr);
+	const ObjectID aId = a->getID(), bId = b->getID();
+	r.logic().destroyObject(a);
+	r.frame(2);
+	CHECK(manager.queue(aId) == nullptr);
+	REQUIRE(manager.order(id) != nullptr);
+	CHECK(manager.order(id)->objects() == std::vector<unsigned>{ bId });
+	r.logic().destroyObject(b);
+	r.frame(2);
+	CHECK(manager.order(id) == nullptr);
+	CHECK(manager.empty());
+}
+
 TEST_CASE("input1 r2 orders: A makes no mode (RotWK has no case), Alt sends MSG_CHANGE_ORDERMODE and the logic stores the mode, a move stays a move (r3); the German Y / Z swap")
 {
 	if (!haveWorld("input1 order modes"))
@@ -535,7 +900,7 @@ TEST_CASE("input1 r2 orders: A makes no mode (RotWK has no case), Alt sends MSG_
 	r.frame(1);
 	CHECK(r.local->orderMode() == 1);
 	CHECK_FALSE(r.input->ui().isInWaypointMode()); // RotWK keeps the UI's waypoint flag for BEGIN_WAYPOINTS (unbound)
-	// r3: the AiOrdersManager queue that reads the mode is not ported (stop S-281): a move given in mode 1 is a move, not a waypoint
+	// r3: a move given in mode 1 is a move message, not a waypoint; the order queue (P-9) holds it behind the active order
 	const auto before = r.game->aiCommands().stats();
 	r.leftClick(p.x + 150, p.y + 80); // the standard setup of the rig: the left click orders
 	r.frame(1);
