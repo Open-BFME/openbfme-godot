@@ -324,7 +324,8 @@ public:
 	~WeaponFireSpecialAbilityUpdate() override;
 	void finishAbility(bool ownerDying, bool aborted) override; // RW 0x896033
 	unsigned shotsFired() const { return m_shots; }
-	Weapon *ownedWeapon() { return specialWeapon(); } // the special weapon (made on first use), for tests
+	Weapon *ownedWeapon() { return m_weapon.get(); } // RW +0x88: made and loaded in the constructor (RW 0x895DE1 .. 0x895E22)
+	const Weapon *ownedWeapon() const { return m_weapon.get(); }
 	void crc(StateHasher &h) const override;
 
 protected:
@@ -334,11 +335,9 @@ protected:
 
 private:
 	int specialWeaponCondition() const;
-	Weapon *specialWeapon();
 	ObjectWeapons *weaponHost(); // the object's ObjectWeapons, else m_ownHost
 	const WeaponFireSpecialAbilityUpdateModuleData *m_wf;
 	std::unique_ptr<Weapon> m_weapon; // + 0x88
-	bool m_weaponMade = false;
 	unsigned m_shots = 0;
 	// lane WALL-1: the weapon host of an object without a weapon set (the deployed mine's Detonate): retail's Object embeds its WeaponSet and the special
 	// weapon's status and fire (RW 0x6CDCE7, RW 0x6CF3D2) are the Weapon's own, so the shot needs no set; the port's shot needs an ObjectWeapons host, made

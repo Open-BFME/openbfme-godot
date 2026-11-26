@@ -186,6 +186,7 @@ include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Port166.cmake) # PORT-166: the ordered slot lock survives the shot that starts the reload (fork issue 395; OPENBFME_PORT166_TESTS)
 include(cmake/Port302.cmake) # retail 2.01 InactiveBody armor flags and damage
 include(cmake/Port226.cmake) # OPENBFME_PORT226_TESTS: the idle state's stance countdown
+include(cmake/Port212.cmake) # PORT-212: a plot's construction applies no MaxSimultaneousOfType (OPENBFME_PORT212_TESTS)
 include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
@@ -353,6 +354,7 @@ include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-object
 include(cmake/Bldgdebris1.cmake) # BLDGDEBRIS-1: the DamageCreationList debris and the siege side damage of ActiveBody (OPENBFME_BLDGDEBRIS1_TESTS)
 include(cmake/Port294.cmake)    # PORT-294: ObjectCreationUpgrade's own mux slots — wouldUpgrade, postUpgradeCheck, isPermanent (OPENBFME_PORT294_TESTS)
 include(cmake/Port198.cmake) # PORT-198: the SpawnBehavior order slots and Player::onUnitCreated (OPENBFME_PORT198_TESTS)
+include(cmake/Port301.cmake)    # PORT-301: ShareExperienceBehavior — the hero-experience-sharing switch (TheGameLogic + 0x9F) and the share counter's snapshot layout (OPENBFME_PORT301_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -774,6 +776,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_PORT166_TESTS}
     ${OPENBFME_PORT226_TESTS}
+    ${OPENBFME_PORT212_TESTS}
     ${OPENBFME_PORT54_TESTS}
     ${OPENBFME_PORT4_TESTS}
     ${OPENBFME_PORT8_TESTS}
@@ -950,6 +953,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT302_TESTS}
     ${OPENBFME_PORT294_TESTS}
     ${OPENBFME_PORT198_TESTS}
+    ${OPENBFME_PORT301_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
@@ -1070,6 +1074,8 @@ add_executable(openbfme_tests
     tests/test_local_17.cpp
     # lane LOCAL-25 (locomotor ground motion presentation: calcPitchRoll / calcPhysicsXform, RW 0x670570 / 0x67BDC0)
     tests/test_local_25.cpp
+    # lane LOCAL-59 (WeaponFireSpecialAbilityUpdate makes and loads weapon in ctor, fork issue 418)
+    tests/test_local_59.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy
