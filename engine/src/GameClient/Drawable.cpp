@@ -13,6 +13,7 @@
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DQuadrupedDraw.h"
 #include "Common/ModelState.h"
 #include "GameLogic/SimMath.h"
 
@@ -135,6 +136,7 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 			{
 				W3DScriptedModelDraw::Options o;
 				o.scale = m_scale;
+				o.instanceScale = [this]() { return m_scale; }; // the live scale after Drawable::setInstanceScale
 				o.buildBones = false; // turrets, barrels and particle bones are not drawn (S-095 / S-097)
 				// AUDIO-2: Lua CurDrawablePlaySound (RW 0x73529F) plays for this drawable through the installed audio manager
 				const DrawableID drawableId = m_id;
@@ -160,6 +162,10 @@ void Drawable::addEntry(DrawServices &services, const ThingTemplate::Nugget &nug
 				if (const W3DHordeModelDrawModuleData *hd = dynamic_cast<const W3DHordeModelDrawModuleData *>(nugget.data.get()))
 				{
 					e.draw.reset(new W3DHordeModelDraw(*hd, 2, services.drawAssets, services.random, &services.host, o)); // LOD HIGH (S-114)
+				}
+				else if (const W3DQuadrupedDrawModuleData *qd = dynamic_cast<const W3DQuadrupedDrawModuleData *>(nugget.data.get()))
+				{
+					e.draw.reset(new W3DQuadrupedDraw(*qd, services.drawAssets, services.random, &services.host, o));
 				}
 				else
 				{

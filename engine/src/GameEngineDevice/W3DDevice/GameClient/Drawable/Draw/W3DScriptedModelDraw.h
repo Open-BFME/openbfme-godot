@@ -56,6 +56,8 @@
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawBones.h"
 #include "Libraries/WWVegas/WW3D2/w3dstops.h"
 
+#include "Libraries/WWVegas/WWMath/matrix3d.h"
+
 #include <functional>
 #include <limits>
 #include <set>
@@ -126,6 +128,9 @@ struct W3DDrawPoseView
 struct W3DScriptedModelDrawOptions
 {
 	float scale = 1.0f;
+	// Live instance scale callback (set by Drawable::addEntry so a Drawable::setInstanceScale after construction reaches the draw; used by
+	// W3DQuadrupedDraw::getFootLocations in world space). Unset: falls back to the fixed scale above.
+	std::function<float()> instanceScale;
 	std::vector<std::string> standardPublicBones; ///< GameData StandardPublicBone, supplied by the caller
 	bool buildBones = true;                        ///< compute pristine bones / barrels / turrets on every model change
 	// What the object's current attack target looks like, for the scripts that ask (CurDrawableIsCurrentTargetKindof,
@@ -171,6 +176,22 @@ public:
 	void upgradeTexture(const TextureSwap &swap, bool enabled);
 	// lane COMBAT-4: the module data's DependencySharedModelFlags (+ 0xBC, RW table row 0xBE1420): the flags the module's dependents share (RW 0x4BF2D8)
 	const ModelConditionFlags &dependencySharedModelFlags() const { return m_data.m_dependencySharedModelFlags; }
+	const ModelConditionFlags &pendingFlags() const { return m_pendingFlags; } // RW +0x17C (getModelConditionFlags)
+
+	// ObjectDrawInterface slot 47 (+0xBC; RW 0x8F8014 returns false in the base W3DScriptedModelDraw). Overridden by W3DQuadrupedDraw
+	// (RW 0x4C9A39). When worldSpace is false (the physics transform of a huge four-legged beast, RW 0x67B7AA -> RW 0x67B8AE), evaluates the
+	// current animated client foot bone positions transformed by renderTransform (RW 0x4B2F19). When worldSpace is true, evaluates the
+	// pristine foot bone positions for conditionFlags transformed by *objectTransform (RW 0x4C3731).
+	virtual bool getFootLocations(std::vector<Coord3D> &feet, bool worldSpace, const Matrix3D &renderTransform, const Matrix3D *objectTransform = nullptr,
+		const ModelConditionFlags *conditionFlags = nullptr) const
+	{
+		(void)feet;
+		(void)worldSpace;
+		(void)renderTransform;
+		(void)objectTransform;
+		(void)conditionFlags;
+		return false;
+	}
 
 	// Advances the animations by `elapsedMs` of render time (RW 0x4BF560). Call it once per render frame; logic frames (5 per second)
 	// only change the flags.
