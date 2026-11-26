@@ -160,6 +160,9 @@ public:
 	// RW 0x8F06FF(builder, structure, 1)
 	void dozerIdle(Object &dozer);
 	void structureBuilt(Object &builder, Object &structure);
+	// PORT-198: RW 0x6AA688 -> RW 0x6C77C9 -> RW 0x8F06FF(builder, unit, 0) for a unit that has just been created by another object
+	// (a SpawnBehavior spawner or a builder); same disabled-AI gate as structureBuilt.
+	void unitCreated(Object &builder, Object &unit);
 
 	const std::vector<std::unique_ptr<AISkirmishGroup>> &groups() const { return m_groups; }
 	const AISkirmishPlayer *findAI(int playerIndex) const;

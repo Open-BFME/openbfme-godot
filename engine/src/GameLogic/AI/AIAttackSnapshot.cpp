@@ -12,6 +12,7 @@
 #include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIXfer.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Object/Object.h"
 
 void AIAttackState::xfer(Xfer &x)
 {
@@ -72,7 +73,7 @@ void AIAttackState::xfer(Xfer &x)
 
 void AIAttackApproachState::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 2 }; // 2: the wait of an owner that cannot move
+	XferVersion v{ 1, 3 }; // 2: the wait of an owner that cannot move; 3 (lane APPROACHGIVEUP-1): the owner's position at the approach's start (RW + 0x58)
 	x.xferVersion(v);
 	xferMove(x, ai().mover(), m_move);
 	AIXfer::coord(x, m_prevVictimPos);
@@ -81,6 +82,15 @@ void AIAttackApproachState::xfer(Xfer &x)
 	{
 		x.xferBool(&m_waiting);
 		x.xferUnsignedInt(&m_waitFrame);
+	}
+	if (v.current >= 3)
+	{
+		AIXfer::coord(x, m_ownerPosition);
+	}
+	else if (x.isLoading())
+	{
+		// INFERENCE: a version 2 save predates the field; the owner's current position (the AI states load in obfme:AIWorld, after obfme:Objects) stands in for it
+		m_ownerPosition = *owner().getPosition();
 	}
 }
 

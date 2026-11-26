@@ -641,6 +641,10 @@
    "reason": "the LookAt translator: raw input to camera movement, client state; it emits no GameMessage (CAM-1)"
   },
   {
+   "glob": "src/GameClient/DrawableLight.cpp",
+   "reason": "lane LOCAL-28 (#331): W3DLightDraw's drawable side (the flicker / pulse step by render time, RW 0x4CE930; the bone position an AttachToBoneInAnotherModule light follows, RW 0x672B5B): reads the draw frames and the drawable's transform, writes only the client light pool, never simulation state"
+  },
+  {
    "glob": "src/GameClient/DrawableFade.cpp",
    "reason": "lane PROJ-2: the drawable's fade (RW 0x85EE00 / 0x67309D / 0x675AB7: a launched projectile hidden for InvisibleFrames, then faded in; the fog fades): reads a completed frame's snapshot and template data, writes only the drawable's opacity and hidden flag, never simulation state"
   },

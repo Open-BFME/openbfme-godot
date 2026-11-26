@@ -1018,8 +1018,10 @@ int DozerAIUpdate::updateDoAction(int t)
 	if (m_buildSubTask == DOZER_MOVING_TO_BUILD_DOCK_LOCATION && isIdle())
 	{
 		m_buildSubTask = DOZER_FACING_BUILD;
-		// RW 0x88DD3E: AI command 0x26 (face the goal, AI state 36) is not ported (S-1282): the dozer does not turn
-		logic.noteStop("[S-1282] dozer: the face command 0x26 before the work (RW 0x7C81B9 -> AI vslot 0x114, state 36) is not ported");
+		// RW 0x88DD38 .. 0x88DD3E: the builder turns to the structure before (and, for a repair, while) it works — the AI's face command 0x26
+		// (phaseFaceObject body RW 0x7C81B9, AI state 36) with the goal object and CMD_FROM_AI. The work sub task starts only once that command
+		// ended, i.e. the AI is idle again (RW 0x88DD53 .. 0x88DD65, the same in the repair branch RW 0x88DA8F .. 0x88DAA1).
+		aiFaceObject(goal, CMD_FROM_AI);
 	}
 	if (m_buildSubTask == DOZER_FACING_BUILD && isIdle())
 	{

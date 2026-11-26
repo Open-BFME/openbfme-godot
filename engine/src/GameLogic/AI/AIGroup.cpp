@@ -12,6 +12,7 @@
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/SpawnBehavior.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -480,8 +481,9 @@ void AIGroup::groupIdle(CommandSourceType source)
 const char *AIGroup::forceAttackStopLine()
 {
 	return "[S-2480] force attack (lane PLAY-2): MSG_DO_FORCE_ATTACK_GROUND (RW 0x77AF93) and MSG_DO_FORCE_ATTACK_OBJECT (RW 0x77AED3) run with the group's "
-		"weapon locks, groupAttackPosition and aiAttackPosition (state 9); not ported: the passengers of a container that lets them fire and the slaves of a "
-		"spawner in groupAttackPosition (RW 0x77229A: the container's allowed-to-fire test, its passenger list and SpawnBehaviorInterface slot 4 have no port), the contain module's "
+		"weapon locks, groupAttackPosition and aiAttackPosition (state 9); not ported: the passengers of a container that lets them fire "
+		"(RW 0x77229A: the container's allowed-to-fire test and its passenger list have no port); PORT-198 ported the spawner's slaves through "
+		"SpawnBehaviorInterface slot 4 (RW 0x863807), the contain module's "
 		"weapon lock pass-through (Object::setWeaponLock / releaseWeaponLock, contain slots 0x168 / 0x16C) and the AI hook of the lock, the object form's "
 		"reserved-id branch (victim id 99999999 with the GameData flag + 0xBC: TerrainLogic RW 0x68449B makes a real object of the terrain prop at the click "
 		"and attacks it), the outside-the-playable-area refusal (Object + 0x458 bit 3 is never set); INFERENCE: PartitionFilterPossibleToAttack of the "
@@ -550,6 +552,12 @@ void AIGroup::groupAttackPosition(const Coord3D &pos, int maxShotsToFire, Comman
 		{
 			ai->aiAttackPosition(pos, maxShotsToFire, source);
 		}
+		// PORT-198: RW 0x772357 .. 0x772375 gives the spawner's position order to its slaves through the interface's slot 4
+		// (RW 0x863807), which walks the spawn list itself; an AI-less spawner (SPAWNS_ARE_THE_WEAPONS) stays in the group.
+		if (SpawnBehaviorInterface *spawn = SpawnBehaviorInterface::of(*o))
+		{
+			spawn->orderSlavesToAttackPosition(pos, maxShotsToFire, source); // RW 0x772380 -> vtable + 0x10
+		}
 	}
 }
 
@@ -587,7 +595,7 @@ void AIGroup::groupAttackMoveToPosition(const Coord3D &pos, int maxShots, Comman
 	}
 }
 
-// ---- stop S-1301: RW 0x77005F, the group's speed matching (read from the RotWK binary; the BFME2 decomp's AIGroup_cohereMoveSpeed.cpp,
+// ---- stop S-1301: RW 0x77005F, the group's speed matching (read from the RotWK binary; the BFME2 decomp's AIGroup.cpp AIGroup::cohereMoveSpeed,
 // retail 0x0036DF92, is the one-pass ancestor without the leader bands) ----
 namespace
 {

@@ -155,6 +155,14 @@ void ClientEventRecorder::evaDamaged(Object &obj, const EvaDamageNotice &notice)
 	e.eva = notice;
 }
 
+// lane POSTERNPLOT-1 (RW 0x85834C .. 0x858389): retail tests the local player at the call; the event keeps the owner of that moment for the client's test
+void ClientEventRecorder::deselectLocal(Object &obj)
+{
+	ClientEvent &e = push(ClientEvent::DESELECT_LOCAL, obj);
+	const Player *owner = obj.getControllingPlayer();
+	e.ownerIndex = owner ? owner->getPlayerIndex() : -1;
+}
+
 void ClientEventRecorder::flashHeroButton(const std::string &templateName, int frames)
 {
 	m_events.emplace_back();

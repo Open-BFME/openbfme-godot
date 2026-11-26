@@ -774,7 +774,7 @@ void GarrisonContain::onRemoving(Object *obj)
 }
 
 
-// RW 0x87C6CE GarrisonContain::recalcApparentControllingPlayer (BFME2 0x00479432, GarrisonContainRecalcApparentControllingPlayer.cpp, tier B same shape),
+// RW 0x87C6CE GarrisonContain::recalcApparentControllingPlayer (BFME2 0x00479432, GarrisonContain.cpp, tier B same shape),
 // the ported part. Lane GARRISON-4 (the owner's 2026-10-22 report: a neutral stone tower's exit button stayed greyed after his units went in):
 // RW 0x87C6D7 .. 0x87C71C: the original team's id (contain + 0xDC) is taken from the object's team (+ 0x31C, the team's id + 0x34) when it is 0 or
 // TeamFactory::findTeamByID (RW 0x7A1EEE) no longer finds it, and cleared when the object has no team. With riders, the first one in the list (RW 0x865598)

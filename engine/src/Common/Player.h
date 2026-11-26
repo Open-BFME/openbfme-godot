@@ -103,6 +103,9 @@ public:
 	void setHandicap(int h) { m_handicap = h; }
 	// lane CAMP-1H: RW 0x6AC32D, the difficulty bonus of `obj` (Object::setReceivingDifficultyBonus); defined in GameLogic/Object/Object.cpp (it reads the logic)
 	void applyDifficultyBonusesForObject(Object &obj, bool apply);
+	// PORT-198: RW 0x6AA688 Player::onUnitCreated(factory, unit), called by SpawnBehavior::createSpawn (RW 0x862BC5) and by the builder
+	// (RW 0x62B147). Defined in Common/Player.cpp; forwards the pair to the player's skirmish AI as RW 0x6C77C9 -> RW 0x8F06FF(..., 0).
+	void onUnitCreated(Object *factory, Object *unit);
 	// the colour tints the player's models: the map or the lobby chose it, or the faction is one that can be played (a template with a
 	// StartingBuilding; Civilian, Neutral and Observer have no team colour). MAPOBJ-1's rule for side colours (stop S-119).
 	bool hasTeamColor() const { return m_colorExplicit || (m_template && m_template->hasStartingBuilding()); }

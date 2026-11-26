@@ -787,7 +787,8 @@ void GameLogic::runModules(int phase)
 				{
 					sleep = (int)UPDATE_SLEEP_FOREVER; // RW 0x62EA85 `test byte [obj + 0x94], 1`
 				}
-				else if (p == (int)PHASE_FINAL && (size_t)i < m_weaponStatusWork.size() && m_weaponStatusWork[(size_t)i].module == u)
+				else if (p == (int)PHASE_FINAL && (size_t)i < m_weaponStatusWork.size() && m_weaponStatusWork[(size_t)i].module == u &&
+					!m_weaponStatusWork[(size_t)i].weapons->firingTrackerRanOn(m_frame))
 				{
 					// lane PERF-WS: the module's update is its WeaponStatusHelper's: the conditions computed on the pool before the pass are applied
 					// here, where update would have computed them (nothing of the pass so far changed what they read), and the sleep is update's,
@@ -815,7 +816,7 @@ void GameLogic::runModules(int phase)
 	}
 }
 
-// lane PERF-WS: the final list is the WeaponStatusHelpers (the FiringTrackerHelper shell sleeps forever; nothing wakes it). A helper's update
+// lane PERF-WS: the final list is the WeaponStatusHelpers and the FiringTrackerHelpers (lane FIRINGTRACKER-1: awake after a shot; the pre-pass gives them no entry). A helper's update
 // reads its own object alone (its statuses, its weapons' timers and ammo) and writes its own weapons' slot conditions and model conditions, so
 // no module of the pass changes what a later one computes: the conditions of every module the pass will update are computed here on the logic
 // job pool, against the list at the pass's start, with the pass's own tests, and the pass applies them in list order (the model conditions are
@@ -844,6 +845,11 @@ void GameLogic::prepareWeaponStatusWork(const std::vector<UpdateModule *> &vec)
 			if (!(disabled == DISABLEDMASK_NONE || (disabled & u->getDisabledTypesToProcess()) != 0) || obj->testStatus(OBJECT_STATUS_DESTROYED))
 			{
 				continue; // the pass skips it, or sleeps it forever
+			}
+			if (u->isFiringTrackerHelper())
+			{
+				continue; // lane FIRINGTRACKER-1: no entry, the pass runs its update (it writes its own object alone; a later WeaponStatusHelper entry
+				          // of the same object is recomputed in the pass: firingTrackerRanOn)
 			}
 			ObjectWeapons *weapons = u->weaponStatusWeapons();
 			if (!weapons)
@@ -1760,7 +1766,7 @@ GameLogic::Report GameLogic::report() const
 	{
 		helpers += kv.second;
 	}
-	r.stops.push_back("[S-141] helper modules: " + std::to_string(helpers) + " live helper modules (SMC, Recovery, Repulsor, Defection, Guarding, WeaponStatus, FiringTracker) created in the retail order; the Recovery, Repulsor, Defection, Guarding and FiringTracker shells do nothing (the SMCHelper and the WeaponStatusHelper act: lanes PROD-1, PROJ-2)");
+	r.stops.push_back("[S-141] helper modules: " + std::to_string(helpers) + " live helper modules (SMC, Recovery, Repulsor, Defection, Guarding, WeaponStatus, FiringTracker) created in the retail order; the Recovery, Repulsor, Defection and Guarding shells do nothing (the SMCHelper, the WeaponStatusHelper and the FiringTrackerHelper act: lanes PROD-1, PROJ-2, FIRINGTRACKER-1)");
 	r.stops.push_back("[S-142] objects: creation steps not ported: the special power mask and "
 		"what else initObject (RW 0x693D0C, tier B edited, no decomp source) does beyond Object::friend_initObject; ported since (lane BACKLOG2 audit): the experience tracker (XP-1, RW 0x69A606), "
 		"partition registration (MODULES-2, the world entry RW 0x69A6C6), the radar step (RW 0x69A66D -> Radar::addObject RW 0x6D9042: RADAR-1 applies its rules to the live objects at "

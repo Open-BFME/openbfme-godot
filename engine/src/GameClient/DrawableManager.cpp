@@ -370,6 +370,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 		case ClientEvent::EVA_DAMAGED: // lane EVADAMAGE-1 (RW 0x67B4B7's Eva half)
 			EvaDamage::apply(ev, *this, m_evaDamage);
 			break;
+		case ClientEvent::DESELECT_LOCAL: // lane POSTERNPLOT-1 (RW 0x85834C)
+			if (m_deselectLocalHandler)
+			{
+				m_deselectLocalHandler(ev.object, ev.ownerIndex);
+			}
+			break;
 		}
 	}
 }

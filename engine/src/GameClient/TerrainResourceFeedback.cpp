@@ -195,7 +195,7 @@ void computeUncoveredRanges(std::vector<ResourceClaimCircle> &circles)
 
 bool TerrainResourceClaimView::claimable(const GameLogic &logic, int x, int y, std::uint32_t mask, ObjectID ownId, bool force, int player)
 {
-	// RW 0x75C02D (BFME2 decomp TerrainResourceManagerCellClaim.cpp TerrainResourceManager::isCellClaimable)
+	// RW 0x75C02D (BFME2 decomp TerrainResourceManager.cpp TerrainResourceManager::isCellClaimable)
 	const TerrainResourceManager &grid = logic.economy().resources();
 	const TerrainResourceManager::Cell *cell = grid.cellAt(x, y);
 	if (!cell)

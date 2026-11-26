@@ -2519,3 +2519,86 @@ TEST_CASE("bfme1 ai: object snapshot versions preserve native fields and the sha
 		}
 	}
 }
+
+TEST_CASE("bfme1 ai: acquisition dispatch and version-six trailers retain each edition's state")
+{
+	for (bool bfme1 : {false, true})
+	{
+		movetest::MoveWorld f(100, 100, "", bfme1);
+		Object *obj = f.make("Walker", f.teamOf("Alice")); REQUIRE(obj);
+		AIUpdateInterface *ai = obj->getAIUpdateInterface(); REQUIRE(ai);
+		CHECK(ai->combatSettings().stopChaseDistance == (bfme1 ? 0.0f : 500.0f));
+		ai->setVictimAutoAcquired(false); // main sets +0x3C7 even after rejection; BFME1 0x00188090 / 0x001886AD does not set +0x335
+		CHECK_FALSE(ai->nativeMeleeState().autoTarget);
+		CHECK(ai->victimAutoAcquired() == !bfme1);
+		ai->setVictimAutoAcquired(true);
+		CHECK(ai->nativeMeleeState().autoTarget == bfme1);
+		CHECK(ai->victimAutoAcquired() == !bfme1); // the shared chase reader never consumes the native bit
+		XferSave six; ai->xferAIState(six);
+		REQUIRE_FALSE(six.data().empty());
+		CHECK(six.data().front() == 6);
+		CHECK(six.data().back() == 1);
+		if (bfme1)
+		{
+			ai->nativeMeleeState().stopRetaliation = true;
+			XferSave seven; ai->xferAIState(seven);
+			CHECK(seven.data().front() == 7);
+			CHECK(seven.data().size() == six.data().size() + 1);
+			ai->nativeMeleeState().allowedToChase = true;
+			XferSave eight; ai->xferAIState(eight);
+			CHECK(eight.data().front() == 8);
+			CHECK(eight.data().size() == seven.data().size() + 1);
+			StateHasher before; ai->crc(before);
+			ai->nativeMeleeState() = {};
+			XferLoad restore(eight.data()); ai->xferAIState(restore);
+			StateHasher after; ai->crc(after); CHECK(after.value() == before.value());
+			CHECK(ai->nativeMeleeState().autoTarget);
+			CHECK(ai->nativeMeleeState().stopRetaliation);
+			CHECK(ai->nativeMeleeState().allowedToChase);
+		}
+		ai->aiIdle(CMD_FROM_AI);
+		CHECK_FALSE(ai->victimAutoAcquired());
+		CHECK_FALSE(ai->nativeMeleeState().autoTarget);
+		XferLoad loadSix(six.data()); ai->xferAIState(loadSix);
+		CHECK(ai->victimAutoAcquired() == !bfme1);
+		CHECK(ai->nativeMeleeState().autoTarget == bfme1);
+		CHECK_FALSE(ai->nativeMeleeState().stopRetaliation);
+		CHECK_FALSE(ai->nativeMeleeState().allowedToChase);
+		XferSave again; ai->xferAIState(again); CHECK(again.data() == six.data());
+		// The common body includes different edition-specific state machines. In either edition the v6 extension is exactly its final single bool.
+		auto legacy = six.data(); legacy.front() = 5; legacy.pop_back();
+		XferLoad old(legacy); ai->xferAIState(old);
+		CHECK_FALSE(ai->victimAutoAcquired());
+		CHECK_FALSE(ai->nativeMeleeState().autoTarget);
+		XferLoad restoreSix(six.data()); ai->xferAIState(restoreSix);
+		if (!bfme1)
+		{
+			for (std::uint8_t version : {7, 8})
+			{
+				auto wrong = six.data(); wrong.front() = version;
+				XferLoad rejected(wrong);
+				CHECK_THROWS_WITH(ai->xferAIState(rejected), version == 7 ? "Don't know how to load version 7 (most recent is 6)" : "Don't know how to load version 8 (most recent is 6)");
+				XferSave unchanged; ai->xferAIState(unchanged); CHECK(unchanged.data() == six.data());
+			}
+		}
+	}
+}
+
+#include "GameLogic/AI/AIAttack.h"
+TEST_CASE("bfme1 ai: the shared approach chase query cannot clear a native team's stale target")
+{
+	NativeMeleeFixture fx;
+	Object *source = fx.spawn("NativeSoldier", 100, 500);
+	Object *victim = fx.spawn("NativeSoldier", 800, 500, "Alice");
+	AIUpdateInterface *ai = source->getAIUpdateInterface(); REQUIRE(ai);
+	Team *team = source->getTeam(); REQUIRE(team); REQUIRE(team->getPrototype());
+	const_cast<Dict &>(team->getPrototype()->getDict()).setBool("teamAttackCommonTarget", true);
+	team->setTeamTargetId(0x12345678u); // no such object: the shared AIHunt query would clear this stored ID
+	AIStateMachine machine(*ai, "NativeApproachProbe");
+	machine.setGoalObject(victim->getID());
+	AIAttackState parent(machine, false, true, false);
+	AIAttackApproachState approach(machine, &parent, false);
+	REQUIRE(approach.onEnter() == STATE_CONTINUE);
+	CHECK(approach.update() == STATE_CONTINUE);
+	CHECK(team->teamTargetId() == 0x12345678u);
+}

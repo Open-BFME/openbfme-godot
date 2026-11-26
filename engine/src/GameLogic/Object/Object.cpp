@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/Object/Object.h for the creation order and its sources.
 
+#include "Common/SpecialPower.h"
 #include "Common/Upgrade.h"
 #include "Common/ModEngineFeatures.h"
 #include "GameClient/ControlBarCommands.h"
@@ -62,6 +63,7 @@
 #include "GameClient/Drawable.h"
 #include "GameLogic/Module/SMCHelper.h"
 #include "GameLogic/Module/WeaponStatusHelper.h"
+#include "GameLogic/Module/FiringTrackerHelper.h"
 #include "GameLogic/Module/UpdateModule.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/AttributeModifiers.h"
@@ -374,7 +376,11 @@ void Object::buildModules()
 		// PROJ-2: the WeaponStatusHelper acts (the weapon model conditions, PHASE_FINAL, GameLogic/Module/WeaponStatusHelper.h)
 		m_modules.push_back(std::make_unique<WeaponStatusHelper>(this));
 		++m_helperCount;
-		helper("FiringTrackerHelper", "ModuleTag_FiringTrackerHelper");
+		// FIRINGTRACKER-1: the FiringTrackerHelper acts (the tracker's update, PHASE_FINAL, GameLogic/Module/FiringTrackerHelper.h); RW 0x8E2EB2, Object + 0x248
+		auto ft = std::make_unique<FiringTrackerHelper>(this);
+		m_firingTrackerHelper = ft.get();
+		m_modules.push_back(std::move(ft));
+		++m_helperCount;
 	}
 	// ---- the behaviors, in template list order (RW 0x69A32F - 0x69A4AC) -----------------------------------------------------
 	ModuleFactory &factory = m_logic.modules();
@@ -1522,6 +1528,25 @@ BehaviorModule *Object::findModuleByTag(NameKeyType tagKey) const
 		if (m->getModuleTagNameKey() == tagKey)
 		{
 			return m.get();
+		}
+	}
+	return nullptr;
+}
+
+const SpecialPowerModuleInterface *Object::findSpecialPowerModuleInterface(int powerType) const
+{
+	// RW 0x691526: iterates modules, finds first with SpecialPowerModuleInterface whose template has powerType
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		const SpecialPowerModuleInterface *sp = m->getSpecialPower();
+		if (!sp)
+		{
+			continue;
+		}
+		const SpecialPowerTemplate *spt = sp->getSpecialPowerTemplate();
+		if (spt && spt->getSpecialPowerType() == powerType)
+		{
+			return sp;
 		}
 	}
 	return nullptr;

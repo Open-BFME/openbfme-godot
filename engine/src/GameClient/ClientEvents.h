@@ -71,6 +71,7 @@ struct ClientEvent
 		MODEL_CONDITIONS, ///< lane SAVE-4e: flags, the object's whole set stored (Drawable::replaceModelConditionFlags RW 0x679512 takes a whole set)
 		RELEASE_CONTAINER_BONE, ///< BFME1 only: scale holds ReleaseSnappyness
 		EVA_DAMAGED,      ///< lane EVADAMAGE-1 (RW 0x67B4B7's Eva half): position (the object's, + 0x38), eva (the logic's part of the choice)
+		DESELECT_LOCAL,   ///< lane POSTERNPLOT-1 (RW 0x85834C): ownerIndex = the object's controlling player at the call (-1: none)
 	};
 	std::string heroUniqueID;
 	std::vector<std::string> heroStatistics;
@@ -78,6 +79,7 @@ struct ClientEvent
 	UnsignedInt frame = 0;   ///< the logic frame that made it (0 during the load)
 	std::uint32_t seq = 0;   ///< call order over the whole game
 	ObjectID object = INVALID_ID;
+	int ownerIndex = -1;     ///< DESELECT_LOCAL: the controlling player's index when the logic made the call
 	const ThingTemplate *tmpl = nullptr;
 	ModelConditionFlags flags;
 	bool hasHouseColor = false;
@@ -140,6 +142,7 @@ public:
 	void heroAttacked(Object &obj) override;
 	void evaDamaged(Object &obj, const EvaDamageNotice &notice) override; // lane EVADAMAGE-1
 	void flashHeroButton(const std::string &templateName, int frames) override;
+	void deselectLocal(Object &obj) override; // lane POSTERNPLOT-1 (RW 0x85834C)
 	// MapObjectLoop's afterCreate for a map object (DrawableManager::applyPlacement): the client part of the placement
 	void placement(Object &obj, const MapObjectDrawable &placement);
 	// lane SAVE-4e: a snapshot load set the object's model conditions without the hooks (Object::xfer): its whole set goes to the drawable

@@ -2,6 +2,7 @@
 // AIUpdateInterface, lane COMBAT-1 part: the attack commands, the victim, the mood scan, death. See GameLogic/Module/AIUpdate.h and GameLogic/AI/AIAttack.h.
 
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/AI/AIEditionRules.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 
 #include "Common/GameCommon.h"
@@ -115,6 +116,8 @@ bool ieq(const std::string &a, const char *b)
 void AIUpdateInterface::readCombatSettings(const ModuleData *data)
 {
 	m_combat = CombatSettings();
+	// APPROACHGIVEUP-1 establishes the 500 default for BFME2/RotWK; BFME1 retains this port's previous generic-approach baseline (S-5017).
+	if (!AIEditionRules::forObject(*getObject()).usesSharedApproachGiveUp()) m_combat.stopChaseDistance = 0.0f;
 	m_attackInfoGeneration = 0xFFFFFFFFu; // lane TARGET-1: AI + 0x70 is looked up again from the (new) name
 	m_minCowerTime = m_maxCowerTime = 0; // lane MODULES-3: RW ctor 0x66E8FF (+ 0x34 / + 0x30 = 0)
 	m_animalInterface = false; // lane CASTLEAREA-1: RW 0x64BB5B (AfraidOfCastles 1)

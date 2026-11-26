@@ -547,6 +547,20 @@ AIGateUpdate::AIGateUpdate(Thing *thing, const AIGateUpdateModuleData *data)
 {
 }
 
+// RW 0x008B490F (~AIGateUpdate), RW 0x008B4A33 (scalar deleting dtor), RW 0x006E4A7F (PolygonTrigger::getPolygonTriggerByID):
+// when the gate is destroyed, remove its runtime polygon trigger from the global list (RW 0x6E4ABE) and clear every object's trigger entries (RW 0x6263AF).
+AIGateUpdate::~AIGateUpdate()
+{
+	if (m_trigger >= 0)
+	{
+		if (Object *obj = getObject())
+		{
+			obj->logic().scriptEngine().removePolygonTrigger(m_trigger);
+		}
+		m_trigger = -1;
+	}
+}
+
 // RW 0x8B4BB7 (the corners RW 0x8B4B31). lane CASTLEAREA-1: savedIndex >= 0 is a snapshot load's (the trigger goes back at the index it had)
 void AIGateUpdate::loadTrigger(int savedIndex)
 {
@@ -616,7 +630,7 @@ void AIGateUpdate::onTrigger(Object &obj, bool entered)
 UpdateSleepTime AIGateUpdate::update()
 {
 	Object *obj = getObject();
-	GateOpenAndCloseBehavior *gate = obj ? GateOpenAndCloseBehavior::findGate(*obj) : nullptr; // RW 0x89BEE0
+	GateOpenAndCloseBehavior *gate = obj ? GateOpenAndCloseBehavior::findGate(*obj) : nullptr; // RW 0x008B4A4F (getGateInterface) -> RW 0x89BEE0
 	if (!m_enabled)
 	{
 		const Player *owner = obj ? obj->getControllingPlayer() : nullptr;
@@ -661,6 +675,7 @@ void AIGateUpdate::crc(StateHasher &hasher) const
 void GateModules::registerAll(ModuleFactory &modules)
 {
 	bind<GateOpenAndCloseBehavior, GateOpenAndCloseBehaviorModuleData>(modules, "GateOpenAndCloseBehavior");
+	// RW 0x008B4983 (getModuleName -> "AIGateUpdate"), RW 0x008B4989 (getModuleNameKey)
 	bind<AIGateUpdate, AIGateUpdateModuleData>(modules, "AIGateUpdate");
 }
 
@@ -729,6 +744,7 @@ void GateOpenAndCloseBehavior::xfer(Xfer &x)
 	SnapshotXfer::strings(x, m_sounds);
 }
 
+// RW 0x008B4A69 (AIGateUpdate::xfer, retail version 1..2; OpenBFME native layout S-4190)
 void AIGateUpdate::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);

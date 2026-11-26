@@ -338,7 +338,16 @@ The force flag clears only after a member pass finishes without further work
 (`0x0023FA80`). The auto-acquisition byte (AI +0x335) is saved/hashed only when
 set, through AI-module version 6. Idle, attack-move, attack-follow-waypoint
 and giant-bird attack-move acquisition set it (`0x001881DF`, `0x001886AD`,
-`0x00188DCF`, `0x002BF9F7`); accepted orders clear it. Turret retargeting in
+`0x00188DCF`, `0x002BF9F7`); accepted orders clear it. The shared BFME2/RotWK
+AI version 6 also appends one bool (+0x3C7), matching the native version 6
+extension. Each edition's common body retains its own state-machine layout.
+Transfer selects the edition's storage; native versions 7/8
+retain their extra retaliation/chase fields and later editions reject them.
+Native acquisition after idle/attack-move still requires an accepted command;
+shared acquisition records a scan even if its command was rejected. The shared
+APPROACHGIVEUP-1 chase/wall/blocked-path rules and formation-march flag are gated
+to BFME2/RotWK. BFME1 keeps its previous generic approach, including its existing
+zero default when StopChaseDistance is absent, under the S-5017 boundary. Turret retargeting in
 the pursue/approach states remains part of the general attack-machine boundary
 (S-325). The transient
 reciprocal callback guard is cleared on load and is not persistent state.

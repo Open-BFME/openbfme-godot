@@ -33,6 +33,8 @@
 #include "GameLogic/WeaponNugget.h"
 #include "GameLogic/WeaponSet.h"
 #include "GameLogic/Module/SiegeModules.h"
+#include "GameLogic/Module/FiringTrackerHelper.h"
+#include "GameLogic/Construction.h"
 
 #include <cstring>
 #include <stdexcept>
@@ -337,13 +339,54 @@ public:
 	std::uint32_t weaponBonusConditionMask() override { return m_w.owner().weaponBonusConditionMask(); }
 	void setWeaponBonusConditionMask(std::uint32_t mask) override
 	{
-		// RW 0x8E3174 sets / clears the CONTINUOUS_FIRE_MEAN / FAST bits (2, 3) of the owner's weapon bonus mask
+		// RW 0x8E302A / 0x8E3174 set / clear the CONTINUOUS_FIRE_MEAN / FAST bits (2, 3) of the owner's weapon bonus mask (Object + 0x39C)
 		for (int bit : { (int)FiringTracker::CONDITION_CONTINUOUS_FIRE_MEAN, (int)FiringTracker::CONDITION_CONTINUOUS_FIRE_FAST })
 		{
 			m_w.owner().setWeaponBonusCondition(bit, (mask >> bit) & 1u);
 		}
 	}
 	void reloadAllWeapons() override { m_w.reloadAllAmmo(false); }
+	void clearAndSetFireConditions(unsigned clear, unsigned set) override
+	{
+		// RW 0x8E302A / 0x8E3174: two 0x4C-byte flag sets, byte 0xE bits 3 / 4 / 5 = model conditions 115 / 116 / 117, then RW 0x68D607(clear, set)
+		static const int kBits[3] = { Construction::modelConditionIndex("CONTINUOUS_FIRE_SLOW"), Construction::modelConditionIndex("CONTINUOUS_FIRE_MEAN"),
+			Construction::modelConditionIndex("CONTINUOUS_FIRE_FAST") };
+		Object::ModelConditionBits c{}, st{};
+		for (int i = 0; i < 3; ++i)
+		{
+			if (clear & (1u << i))
+			{
+				c[(size_t)kBits[i] >> 5] |= 1u << (kBits[i] & 31);
+			}
+			if (set & (1u << i))
+			{
+				st[(size_t)kBits[i] >> 5] |= 1u << (kBits[i] & 31);
+			}
+		}
+		m_w.owner().clearAndSetModelConditionFlags(c, st);
+	}
+	bool victimHordeID(unsigned victimID, unsigned &hordeID) override
+	{
+		const Object *victim = victimID != 0 ? m_w.owner().logic().findObjectByID(victimID) : nullptr;
+		if (!victim || !victim->testStatus((unsigned)CombatNames::statuses().hordeMember))
+		{
+			return false;
+		}
+		const Object *horde = victim->getHordeObject(false); // RW 0x693A1A(0)
+		hordeID = horde ? horde->getID() : 0u;
+		return true;
+	}
+	void postSpeedUpVoice() override { AudioApi::postUnitVoice(0x7DC, m_w.owner().getID()); } // RW 0x8E31F9: client (the drawable's voice)
+	void setWakeFrame(std::uint32_t sleep) override
+	{
+		// RW 0x8E34ED: the helper is made with the weapons (Object + 0x248, the template can possibly have a weapon); an object that fires without one is a bug
+		FiringTrackerHelper *h = m_w.owner().firingTrackerHelper();
+		if (!h)
+		{
+			throw std::logic_error("FiringTracker: '" + m_w.owner().getTemplate()->getName() + "' fired without a FiringTrackerHelper");
+		}
+		h->wakeAfterShot((UpdateSleepTime)sleep);
+	}
 
 private:
 	ObjectWeapons &m_w;
@@ -1803,6 +1846,7 @@ void ObjectWeapons::resetFiringTracker(bool hard)
 
 std::uint32_t ObjectWeapons::updateFiringTracker()
 {
+	m_trackerRanFrame = m_owner->logic().getFrame();
 	return m_tracker.update(*m_trackerHost);
 }
 
