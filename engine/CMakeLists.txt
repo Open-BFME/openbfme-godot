@@ -224,6 +224,7 @@ include(cmake/Mod2.cmake)       # MODULES-2: partition manager, emotions, area-s
 include(cmake/Mod3.cmake)       # MODULES-3: the emotion AI states, the safe path, the crush warning (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOD3_TESTS)
 include(cmake/Stealth.cmake)    # STEALTH-1: invisibility and detection (appends to OPENBFME_SIM_SOURCES; OPENBFME_STEALTH_TESTS)
 include(cmake/Garrison.cmake)   # GARRISON-1: garrisons (appends to OPENBFME_SIM_SOURCES; OPENBFME_GARRISON_TESTS)
+include(cmake/GiantBirdSlowDeath.cmake) # GiantBirdSlowDeathBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_GIANTBIRDSLOWDEATH_TESTS)
 include(cmake/Transport.cmake)  # GARRISON-2: transports, siege carriers, turrets (appends to OPENBFME_SIM_SOURCES; OPENBFME_TRANSPORT_TESTS)
 include(cmake/Hud2.cmake)       # OPENBFME_HUD2_SOURCES / OPENBFME_HUD2_TESTS (lane HUD-2: radar terrain picture, Palantir globe and power cap)
 include(cmake/Radar1.cmake)     # OPENBFME_RADAR1_TESTS (lane RADAR-1: the radar's objects and view box as RotWK draws them)
@@ -784,6 +785,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT24_TESTS}
     ${OPENBFME_PORT1_TESTS}
     ${OPENBFME_PORT6_TESTS}
+    ${OPENBFME_GIANTBIRDSLOWDEATH_TESTS}
     ${OPENBFME_PORT55_TESTS}
     ${OPENBFME_PORT62_TESTS}
     ${OPENBFME_PORT40_TESTS}

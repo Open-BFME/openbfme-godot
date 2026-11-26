@@ -195,6 +195,13 @@ public:
 	bool hasLanded() const { return (m_flags & kLanded) != 0; }
 	bool fadeBegun() const { return m_fadeBegun; }
 
+protected:
+	virtual void beginSlowDeath(const DieModuleInterface::Event &event); // RW 0x860E93 (SlowDeathBehaviorInterface slot 0)
+	void setHitGroundPending() { m_hitGroundPending = true; } // + 0x40
+	// MOVING when the death began. RW clears it after the die modules (Object::onDie, RW 0x69903E .. 0x69904D), the port's AI already in onDie; set for the length of
+	// beginSlowDeath, no state
+	bool m_movingAtDeath = false;
+
 private:
 	enum : unsigned
 	{
@@ -203,7 +210,6 @@ private:
 		kFlung = 4,     ///< bit 2: FlingForce threw the body (its timers wait while it flies)
 		kLanded = 8     ///< bit 3: the flung body is down
 	};
-	void beginSlowDeath(const DieModuleInterface::Event &event); // RW 0x860E93 (SlowDeathBehaviorInterface slot 0)
 	void doPhase(SlowDeathPhase phase);
 	float heightAboveTerrain() const;
 	const SlowDeathBehaviorModuleData *m_data;
