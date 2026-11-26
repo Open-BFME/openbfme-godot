@@ -599,6 +599,8 @@ public:
 	void xfer(class Xfer &x);
 
 	// Acceptance-stop lines raised by the moves made so far (S-081, S-084); empty when none applied.
+	float getCloseEnoughDist() const { return m_closeEnoughDist; }
+	void setCloseEnoughDist(float d) { m_closeEnoughDist = d; } // RW 0x7C10C0 (+0x3C)
 	const std::vector<std::string> &unverified() const { return m_unverified; }
 	// The stops this component can raise at all (tests pin the exact text).
 	static const std::vector<std::string> &allStops();
@@ -615,7 +617,7 @@ private:
 	float m_accelerationCap = 99999.0f; // +0x30
 	float m_brakingCap = 99999.0f;      // +0x34
 	float m_turnRateCap = 99999.0f;     // +0x38
-	float m_closeEnoughDist;            // +0x3C
+	float m_closeEnoughDist;            // +0x3C (set by RW 0x7C10C0 when >= 0.5f)
 	float m_speed = 0.0f;               // +0x40
 	unsigned m_flags = 0;               // +0x44
 	float m_desiredSpeedCap = 0.0f;     // +0x5C
