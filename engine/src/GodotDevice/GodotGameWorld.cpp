@@ -443,6 +443,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_effects_lod", "lod"), &GameWorld::set_effects_lod); // lane GLOW-1
 	ClassDB::bind_method(D_METHOD("get_glow_host"), &GameWorld::get_glow_host);
 	ClassDB::bind_static_method("GameWorld", D_METHOD("set_texture_reduction", "reduction"), &GameWorld::set_texture_reduction); // lane OPTS-2
+	ClassDB::bind_static_method("GameWorld", D_METHOD("set_shadow_decals", "decals", "volumes"), &GameWorld::set_shadow_decals); // lane BLOBSHADOW-1
+	ClassDB::bind_method(D_METHOD("get_blob_report"), &GameWorld::get_blob_report);
 	ClassDB::bind_static_method("GameWorld", D_METHOD("get_texture_reduction"), &GameWorld::get_texture_reduction);
 	ClassDB::bind_method(D_METHOD("order_attack", "ids", "target"), &GameWorld::order_attack);
 }
@@ -792,6 +794,7 @@ void GameWorld::clear_scene()
 	m_cahCameraOffsetValid = false;
 	restoreClientPool(); // lane PERF-CLIENT: the client job pool has its full size again
 	m_game.reset(); // the objects (and through them the drawables) first
+	m_blobSpecs.clear(); // lane BLOBSHADOW-1 (review): keyed by template, module and state addresses, which the next map's data may reuse
 	m_clientRuntime.reset();
 	m_treeTopple.reset(); // lane SPELL-3
 	for (uint32_t id = 0; id < m_views.size(); ++id) remove_view(id);
@@ -936,8 +939,8 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		if (p.kind != W3D_DRAWKIND_FLOOR)
 		{
 			const auto *module = p.module < d.draws.size() ? dynamic_cast<const W3DModelDrawModuleData *>(d.draws[p.module].data) : nullptr;
-			staticInst->set_instance_cast_shadow(instance, ObjectShadow::castsMap(d.info ? d.info->tmpl : nullptr, module,
-				p.draw ? p.draw->currentModelState() : nullptr));
+			staticInst->set_instance_shadow_caster(instance, ObjectShadow::casterKind(d.info ? d.info->tmpl : nullptr, module,
+				p.draw ? p.draw->currentModelState() : nullptr)); // lane MAPCAST-1
 		}
 		if (d.fate == MAPOBJ_CLIENT_SHRUB || d.fate == MAPOBJ_CLIENT_PROP)
 		{
@@ -1853,6 +1856,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 	v.occlusionEligible = stealthRec && !fogHidden ? stealthRec->occlusion : 0;
 	const bool fogChanged = fogHidden != v.fogHidden;
 	v.fogHidden = fogHidden;
+	v.fogLook = fogLook; // lane BLOBSHADOW-1
 	const bool flagsChanged = d->getChangeCount() != v.seenChange || fogChanged;
 	std::vector<DrawEntry> &entries = d->entries();
 	for (size_t k = 0; k < entries.size() && k < v.entries.size(); ++k)
@@ -2121,8 +2125,8 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 				if (ev.shadowInstance != ev.instance || ev.shadowState != shadowState || ev.shadowData != e.data || ev.shadowOn != d->shadowsEnabled()) // S-3304: not every frame
 				{
 					// TOP20 #24: a drawable whose shadows were switched off (RW 0x672D28, ShadowWhenDead No) casts none
-					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() &&
-						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState));
+					dyn->set_instance_shadow_caster(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() ?
+						ObjectShadow::casterKind(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), shadowState) : ObjectShadow::CASTER_NONE);
 					ev.shadowOn = d->shadowsEnabled();
 					ev.shadowState = shadowState;
 					ev.shadowData = e.data;
@@ -2259,8 +2263,8 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 					ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
 					ev.model = model;
 					ev.opacity = 1.0f; // a new instance starts opaque
-					dyn->set_instance_cast_shadow(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() &&
-						ObjectShadow::castsMap(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr));
+					dyn->set_instance_shadow_caster(ev.instance, e.kind != W3D_DRAWKIND_FLOOR && d->shadowsEnabled() ?
+						ObjectShadow::casterKind(d->getTemplate(), dynamic_cast<const W3DModelDrawModuleData *>(e.data), nullptr) : ObjectShadow::CASTER_NONE);
 				}
 			}
 			else if (entryXfChanged && ev.instance >= 0)
@@ -2461,6 +2465,7 @@ void GameWorld::refresh_views(double deltaMs)
 		m_occlusionOn = occlusionOn ? 1 : 0;
 		W3D_Set_Occlusion(occlusionOn, m_occlusionColors);
 	}
+	update_blob_shadows(); // lane BLOBSHADOW-1: the drawables' SHADOW_DECAL blobs (client only)
 	const double ts = nowMs();
 	refresh_streaks(true);
 	m_lastStreakMs = timing::elapsedMs(ts);
@@ -2509,6 +2514,7 @@ void GameWorld::advance(double delta)
 			}
 		}
 		refresh_streaks(false);
+		update_blob_shadows(); // lane BLOBSHADOW-1 (review): the blob layer covers the camera's ground footprint, and the camera moves while paused
 		refresh_shroud(false, timing::secondsToMs(delta)); // lane FOGFX-1: a pending fade goes on while paused (retail's is wall clock)
 		m_game->endClientWindow(); // RENDERWAIT-1: no frames are queued while paused
 		return;

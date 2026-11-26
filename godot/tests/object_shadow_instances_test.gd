@@ -56,6 +56,29 @@ func _run() -> void:
 	for shadow in shadow_nodes:
 		_check(shadow.multimesh.visible_instance_count == 1, "toggling eligibility does not duplicate batches")
 		_check(shadow.multimesh.get_instance_transform(0).origin == Vector3(100, 0, 0), "the other instance now casts")
+	# lane MAPCAST-1: a kind-2 caster (SHADOW_DECAL infantry, trees, SHADOW_NONE) joins the batch only while retail's own shadow map is on
+	# (ShadowLOD High / UltraHigh); switching it repacks the batch on the next update
+	ClassDB.class_call_static("W3DInstancer", "set_retail_shadow_mapping", false)
+	inst.set_instance_shadow_caster(a, 2)
+	inst.update_now()
+	for shadow in shadow_nodes:
+		_check(shadow.multimesh.visible_instance_count == 1, "a mapping-only caster casts nothing while retail does not map")
+	ClassDB.class_call_static("W3DInstancer", "set_retail_shadow_mapping", true)
+	inst.update_now()
+	for shadow in shadow_nodes:
+		_check(shadow.multimesh.visible_instance_count == 2, "retail's shadow map adds the mapping-only caster")
+	# review of #407: the boolean form ends a mapping-only caster too
+	inst.set_instance_cast_shadow(a, false)
+	inst.update_now()
+	for shadow in shadow_nodes:
+		_check(shadow.multimesh.visible_instance_count == 1, "set_instance_cast_shadow(false) ends a mapping-only caster")
+	inst.set_instance_shadow_caster(a, 2)
+	inst.update_now()
+	ClassDB.class_call_static("W3DInstancer", "set_retail_shadow_mapping", false)
+	inst.update_now()
+	for shadow in shadow_nodes:
+		_check(shadow.multimesh.visible_instance_count == 1, "leaving retail's shadow map removes it again")
+	inst.set_instance_shadow_caster(a, 0)
 	var camera := Camera3D.new()
 	root.add_child(camera)
 	camera.position = Vector3(0, 0, 10000)
