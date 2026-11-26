@@ -31,7 +31,7 @@ inline std::vector<std::string> lines()
 		"[S-206] command points: production asks the economy (Economy::canAffordCommandPoints, lane ECON-1: one model, RW 0x6A7C86 / 0x6A7B9F / 0x6A7F79, tier records ported); what the economy "
 		"does not do is its own stops S-252 (upgrades), S-253 (attribute modifier of a bonus) and S-254 (that game kind 3 is the skirmish is not verified, the Living World branches are not ported)",
 		"[S-207] closed: typed prerequisite parsing, satisfaction and help formatting, script/construction gates, and SpawnUnitBehavior's exact UnitName offer "
-		"before command-set lookup (RW 0x794F69 / 0x8BC992) are ported. SpawnUnitBehavior's automatic production update remains separately unported (S-140)",
+		"before command-set lookup (RW 0x794F69 / 0x8BC992) are ported, and its update (RW 0x8BC9B0: the UnitCommand press); TOGGLE_AUTO_BUILD (Player + 0x755) is not, its flag stays set",
 		"[S-209] SpawnPointProductionExitUpdate takes its spawn bones from the logic's bone provider (lane PRODUCTION1) and, without one (no W3D assets), keeps no door and "
 		"reports it; SupplyCenterProductionExitUpdate's setForceWantingState is ported (lane LUMBER1, RW 0x8A9FC4)" };
 }

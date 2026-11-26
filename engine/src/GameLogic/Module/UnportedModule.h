@@ -3,7 +3,6 @@
 // Unported modules (lane LOGIC-1, stop S-140). The binary registers 329 module classes; the live object layer ports the few the
 // creation path needs. Every other class is created as one of these instances so an object of any template is complete: its module
 // list has the same length and order as retail's, the scheduler holds its update module, the interface masks are the registry's.
-// SpawnUnitBehavior exposes its S-207 template offer but retains this unported update and reporting.
 // An unported update does NOTHING, says so (Module::isUnported), is counted by class in ModuleFactory::unportedCreated and in
 // GameLogic::report(), and reaches every runtime report as a stop. It is never a silent default:
 //   * an unported UPDATE class is registered with the scheduler like a retail one but sleeps forever from creation (its next call
