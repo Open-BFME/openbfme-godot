@@ -28,6 +28,11 @@ namespace
 {
 typedef GiantBirdSlowDeathBehaviorModuleData Data;
 
+// stop S-5606 (the entry of #487, Gleb302596555): the fields that no code of the class reads
+const char kStop[] =
+	"[S-5606] GiantBirdSlowDeathBehavior (RW 0x86511C, 0x865009, 0x66A61A) crashes the flyer clear of CrashAvoidKindOfs; FXHitGround, OCLHitGround, "
+	"DelayFromGroundToFinalDeath, CrashAvoidStrength and NeedToMaintainFlailingHeight are parsed and read by none of the class's functions (RotWK 2.01, BFME2 1.06)";
+
 // RW 0x73A302 / 0x73A368: kept by name (nothing in the class reads them)
 void parseName(INI *ini, void *, void *store, const void *)
 {
@@ -165,6 +170,7 @@ void GiantBirdSlowDeathBehavior::beginSlowDeath(const DieModuleInterface::Event 
 	{
 		phys->flyTo(place, 0.0f, 30.0f); // RW 0x865253
 	}
+	obj->logic().noteStop(kStop);
 }
 
 // RW 0x865009

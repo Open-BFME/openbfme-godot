@@ -196,6 +196,12 @@ TEST_CASE("GiantBirdSlowDeath: a standing bird falls beside itself at 30 per fra
 	CHECK(phys->landing().y == place.y);
 	CHECK(phys->speed() == 30.0f);
 	CHECK(e.hits() == 0u);
+	bool stop = false; // S-5606: the fall notes the fields no code of the class reads
+	for (const std::string &line : e.logic->report().stops)
+	{
+		stop = stop || line.rfind("[S-5606] GiantBirdSlowDeathBehavior", 0) == 0;
+	}
+	CHECK(stop);
 	e.runUntil([&] { return e.hits() > 0u; }, 30);
 	CHECK(e.hits() == 1u);
 	CHECK(e.distance(*b->getPosition(), place.x, place.y) < 0.01f); // tolerance: the last point of the curve

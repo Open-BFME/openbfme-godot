@@ -25,6 +25,7 @@
 //   * BFME2 1.06: the same code instruction for instruction (0x86200E, 0x66B088 and the small ones); only the Object offsets (0x258 / 0x25C instead of 0x260 / 0x264) and
 //     the AI's speed (0x538 instead of 0x5FC) differ.
 //   * MOVING still stands when the die modules run: Object::onDie (RW 0x698F06) clears it after them (RW 0x69903E); RW 0x66264E (the AI marked dead) does not touch it.
+// STOP S-5606: the fields no code of the class reads are kept in the data; a fall notes the stop.
 // WHAT IS INFERENCE (OpenBFME): retail has no null test of the PhysicsBehavior, an object without one does not fall here; the snapshot is OpenBFME native (S-4190): version 2; version 1, the unported shell's block, still loads. sin and cos
 // are the deterministic ones (S-081, S-167).
 
