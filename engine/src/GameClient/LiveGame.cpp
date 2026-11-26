@@ -23,6 +23,7 @@
 #include "GameLogic/UpgradeCommands.h"
 #include "GameLogic/BeaconCommands.h"
 #include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Map/FireLogicSystem.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
@@ -462,6 +463,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 		taintRegion.hiY = maxY;
 		m_logic->taint().setExtents(taintRegion, 0.0f);
 		m_logic->taint().refreshVisitor();
+		m_logic->fireLogic().newMap(0.0f, 0.0f, maxX, maxY); // RW 0x687015
 	}
 	m_shroud->attach();
 	if (const Player *local = m_players->getLocalPlayer())

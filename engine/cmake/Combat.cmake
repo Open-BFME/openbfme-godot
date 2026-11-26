@@ -17,7 +17,8 @@ set(OPENBFME_COMBAT_SOURCES
     src/GameLogic/Module/CombatModules.cpp
     src/GameLogic/Combat/BezierSegment.cpp
     src/GameLogic/Combat/ProjectileLauncher.cpp
-    src/GameLogic/Module/ProjectileModules.cpp)
+    src/GameLogic/Module/ProjectileModules.cpp
+    src/GameLogic/Map/FireLogicSystem.cpp)
 
 set(OPENBFME_COMBAT_TESTS
     tests/test_combat_weapons.cpp
@@ -47,4 +48,5 @@ set(OPENBFME_COMBAT_TESTS
     tests/test_proj_arc.cpp
     tests/test_proj_flight.cpp
     tests/test_proj_hash.cpp
-    tests/test_hud_proj_retail.cpp)
+    tests/test_hud_proj_retail.cpp
+    tests/test_fire_logic.cpp)

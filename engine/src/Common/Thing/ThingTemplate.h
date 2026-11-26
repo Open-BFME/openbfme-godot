@@ -85,6 +85,15 @@ class WeaponTemplateSet;
 class ArmorTemplateSet;
 struct ThingCombatSets;
 
+// WB +0x314 (RW 0x73D711, BFME2 0x00285F43): cell flammability provided by a ThingTemplate
+struct FlammabilityData
+{
+	unsigned short fuel = 0;    ///< +0x314
+	int maxBurnRate = 0;        ///< +0x318 (12-bit)
+	int decay = 0;              ///< +0x31C (10-bit)
+	int resistance = 0;         ///< +0x320 (8-bit)
+};
+
 class ThingTemplate
 {
 public:
@@ -241,6 +250,8 @@ public:
 	const std::vector<ArmorTemplateSet> &armorTemplateSets() const;
 	bool armorCopiedFromDefault() const { return m_armorCopiedFromDefault; }
 	bool weaponsCopiedFromDefault() const { return m_weaponsCopiedFromDefault; }
+	const FlammabilityData &flammability() const { return m_flammability; }
+	void setFlammability(const FlammabilityData &f) { m_flammability = f; }
 	ModuleParseMode moduleParsingMode() const { return m_moduleParsingMode; }
 
 private:
@@ -279,4 +290,5 @@ private:
 	std::vector<std::pair<std::string, VoiceRowValue>> m_voiceRows; ///< AUDIO-2: row name -> both halves (see voiceRow); copied with the template
 	std::shared_ptr<ThingCombatSets> m_combatSets; ///< copy-on-write (a copy of the template shares it until a set is added)
 	ThingCombatSets &mutableCombatSets();
+	FlammabilityData m_flammability; ///< WB +0x314 (RW 0x73D711)
 };

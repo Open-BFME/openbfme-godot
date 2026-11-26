@@ -84,6 +84,8 @@ namespace ObjectGeometry
 struct Shape;
 }
 
+class FireLogicSystem;
+
 class Object : public Thing
 {
 public:
@@ -607,7 +609,8 @@ protected:
 	void reactToTransformChange(const Coord3D *oldPos, float oldAngle) override;
 
 private:
-	friend struct XpTestAccess; // lane XP-1 tests: isolated state hash mutations
+	friend struct XpTestAccess;
+	friend class FireLogicSystem; // lane XP-1 tests: isolated state hash mutations
 	void buildModules();
 	void joinTeam(Team *team);
 	// RW 0x696F0A
@@ -667,6 +670,8 @@ private:
 	bool m_effectivelyDead = false;                         ///< RW + 0x458 bit 0
 	bool m_campaignCarryover = false;                       ///< RW + 0x458 bit 4 (lane BFME2CAMP1)
 	bool m_offMap = false; ///< lane CAMPUI-1: RW + 0x458 bit 3 (OFF_MAP; in the padding before m_armorSetFlags: sizeof(Object) unchanged)
+	int m_fireWatchCount = -1;   ///< +0x49C in RotWK decomp (RW 0x68B2A6: -1 not watching, >= 0 watching cells)
+	void *m_fireWatchList = nullptr; ///< +0x4A0 in RotWK decomp ///< lane CAMPUI-1: RW + 0x458 bit 3 (OFF_MAP; in the padding before m_armorSetFlags: sizeof(Object) unchanged)
 	ArmorSetFlags m_armorSetFlags = 0;
 	std::uint32_t m_weaponBonusMask = 0;
 	const TeamPrototype *m_originalTeamProto = nullptr; ///< lane BACKLOG4: + 0x320 (the team setTeam last recorded, RW 0x69959D: kept there as its name)

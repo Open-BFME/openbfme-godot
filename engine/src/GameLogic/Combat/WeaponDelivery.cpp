@@ -2,6 +2,7 @@
 // See GameLogic/Combat/WeaponDelivery.h for the target facts.
 
 #include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/Map/FireLogicSystem.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/SlaveWatcherBehavior.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
@@ -1455,6 +1456,47 @@ void damageContained(GameLogic &logic, const DamageContainedNugget &n, ObjectID 
 }
 
 // the dispatch of fireWeaponTemplate for these kinds (see above). false: not one of them (the caller counts it)
+// RW 0x912241 (FireLogicNugget::doEffectPosition, BFME2 0x0050BE34)
+void fireLogicAt(GameLogic &logic, const FireLogicNugget &n, ObjectID sourceId, const Coord3D &pos)
+{
+	Object *source = sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr;
+	switch (n.m_logicType)
+	{
+	case 0: // INCREASE_BURN_RATE
+		if (n.m_damageArc >= 0.0f && n.m_damageArc < 3.1415927f)
+		{
+			Coord3D dir{ 1.0f, 0.0f, 0.0f };
+			float cosArc = 1.0f;
+			if (source)
+			{
+				const float angle = source->getOrientation();
+				dir.x = SimMath::fstpDword(SimMath::cosd(angle));
+				dir.y = SimMath::fstpDword(SimMath::sind(angle));
+				dir.z = 0.0f;
+				cosArc = SimMath::fstpDword(SimMath::cosd(n.m_damageArc));
+			}
+			logic.fireLogic().changeBurnRateInArea(pos, n.m_radius, dir, cosArc, (int)n.m_damage, false);
+		}
+		else
+		{
+			logic.fireLogic().changeBurnRateInArea(pos, n.m_radius, (int)n.m_damage, false);
+		}
+		break;
+	case 1: // DECREASE_BURN_RATE
+		logic.fireLogic().changeBurnRateInArea(pos, n.m_radius, -(int)n.m_damage, false);
+		break;
+	case 2: // CHANGE_FUEL
+		logic.fireLogic().changeFuelInArea(pos, n.m_radius, (int)n.m_damage, n.m_minMaxBurnRate, n.m_minDecay, n.m_maxResistance, false);
+		break;
+	case 3: // SET_BURN_RATE
+		logic.fireLogic().changeBurnRateInArea(pos, n.m_radius, (int)n.m_damage, true);
+		break;
+	case 4: // SET_FUEL
+		logic.fireLogic().changeFuelInArea(pos, n.m_radius, (int)n.m_damage, n.m_minMaxBurnRate, n.m_minDecay, n.m_maxResistance, true);
+		break;
+	}
+}
+
 bool deliver(GameLogic &logic, const WeaponNugget &n, const WeaponTemplate &w, ObjectID sourceId, Object *victim, const Coord3D &pos)
 {
 	Object *source = sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr;
@@ -1553,6 +1595,22 @@ bool deliver(GameLogic &logic, const WeaponNugget &n, const WeaponTemplate &w, O
 			damageContained(logic, static_cast<const DamageContainedNugget &>(n), sourceId, *victim);
 		}
 		return true;
+	case NUGGET_FIRE_LOGIC:
+	{
+		const FireLogicNugget &fn = static_cast<const FireLogicNugget &>(n);
+		if (victim)
+		{
+			if (shouldDeliver(n, w, source, *victim, logic))
+			{
+				fireLogicAt(logic, fn, sourceId, *victim->getPosition());
+			}
+		}
+		else if (upgradeTest(n, source))
+		{
+			fireLogicAt(logic, fn, sourceId, pos);
+		}
+		return true;
+	}
 	default:
 		return false;
 	}

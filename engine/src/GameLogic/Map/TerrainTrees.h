@@ -120,6 +120,7 @@ public:
 	void toppleTree(Record &tree, const Coord3D &from, const Object *source);
 	// RW 0x67D6E1: the supply boxes taken
 	int harvestTree(Record &tree, int amount);
+	void burnTreeLumber(std::uint32_t treeId, int amount); ///< RW 0x67F4C2 -> 0x67D6E1: fire consumes tree lumber
 	// lane TREES1: RW 0x6858BE, an object entered a new cell (Object's RW 0x69264D gate): a crusher topples the trees under it; the number toppled
 	int unitMoved(const Object &obj);
 	// lane TREES1: RW 0x6854FD: the trees whose cylinder (20 high, radius 7) the geometry (its bounding circle `circle`) at `position` / `angle` touches are

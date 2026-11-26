@@ -2,12 +2,14 @@
 // ThingFactory and the object field adapters. See ThingFactory.h for the RotWK addresses.
 
 #include "Common/Thing/ThingFactory.h"
+#include "Common/AsciiString.h"
 
 #include "GameLogic/ThingCombatSets.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <set>
 #include <stdexcept>
 
@@ -703,6 +705,37 @@ void ThingFactory::parseField(INI *ini, void *instance, void *, const void *user
 		l.sourceLine = ini->sourceLineAt(i);
 		l.text = ini->lineTextAt(i);
 		block.lines.push_back(std::move(l));
+	}
+	if (AsciiStringUtil::compareNoCase(b->name, "Flammability") == 0)
+	{
+		FlammabilityData fl;
+		for (const RawLine &l : block.lines)
+		{
+			size_t eq = l.text.find('=');
+			if (eq != std::string::npos)
+			{
+				std::string key = l.text.substr(0, eq);
+				std::string valStr = l.text.substr(eq + 1);
+				auto trim = [](std::string &s) {
+					size_t sc = s.find(';');
+					if (sc != std::string::npos) s.erase(sc);
+					while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) s.pop_back();
+					size_t start = 0;
+					while (start < s.size() && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r' || s[start] == '\n')) ++start;
+					if (start > 0) s.erase(0, start);
+				};
+				trim(key);
+				trim(valStr);
+				const char *exp = ini ? ini->preprocessMacro(valStr.c_str()) : nullptr;
+				if (exp && *exp) valStr = exp;
+				int val = std::atoi(valStr.c_str());
+				if (AsciiStringUtil::compareNoCase(key, "Fuel") == 0) fl.fuel = (unsigned short)val;
+				else if (AsciiStringUtil::compareNoCase(key, "MaxBurnRate") == 0) fl.maxBurnRate = val;
+				else if (AsciiStringUtil::compareNoCase(key, "Decay") == 0) fl.decay = val;
+				else if (AsciiStringUtil::compareNoCase(key, "Resistance") == 0) fl.resistance = val;
+			}
+		}
+		tt->setFlammability(fl);
 	}
 	tt->m_rawBlocks.push_back(std::move(block));
 	tt->m_threatCategory = ThingTemplate::RawBlockAnswer();
