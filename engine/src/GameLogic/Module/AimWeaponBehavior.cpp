@@ -20,6 +20,7 @@
 #include "GameLogic/WeaponState.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -170,10 +171,19 @@ void AimWeaponBehavior::crc(StateHasher &h) const
 	}
 }
 
-// RW 0x85E1C7's field (OpenBFME native snapshot, S-4190)
+// RW 0x85E1C7's field (OpenBFME native snapshot, S-4190). Version 2 is the port's block. Version 1 is the block an OpenBFME build wrote while the class was an unported shell (UnportedUpdateModule::xfer: the UpdateModule block, asleep for good, and the shell's call count, a report counter that is dropped): such a module never
+// aimed, so it loads with the flag clear and keeps the shell's sleep (the save's scheduler block holds it in the sleeping vector)
 void AimWeaponBehavior::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x); // RW 0x850C60
+	if (v.current < 2)
+	{
+		std::uint32_t shellCalls = 0;
+		x.xferUnsignedInt(&shellCalls);
+		m_aiming = false;
+		return;
+	}
 	x.xferBool(&m_aiming);
 }

@@ -14,6 +14,7 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/AimWeaponBehavior.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
 
 #include <cstdint>
@@ -293,4 +294,35 @@ TEST_CASE("AimWeaponBehavior: the snapshot keeps the aim flag (RW 0x85E1C7), the
 	truncated.pop_back();
 	XferLoad shortLoad(truncated);
 	CHECK_THROWS_AS(m->xfer(shortLoad), XferException);
+}
+
+TEST_CASE("AimWeaponBehavior: a save from before the port (the unported shell's version 1 block) still loads, not aiming and asleep; a version 3 is refused")
+{
+	AimWorld a;
+	Object *o = a.unit("Aimer", 'A', 400.0f, 400.0f);
+	a.frames(2);
+	AimWeaponBehavior *m = a.aimOf(o);
+	a.aimAt(o, 30.0f, 0.0f, 0.0f);
+	m->update();
+	REQUIRE(m->isAiming());
+	// the block UnportedUpdateModule::xfer wrote for this module: version 1, the UpdateModule block (asleep for good), the call count
+	UnportedUpdateModule shell(o, m->getModuleData(), MODULEINTERFACE_UPDATE);
+	shell.update();
+	shell.update();
+	REQUIRE(shell.calls() == 2u);
+	XferSave old;
+	shell.xfer(old);
+	REQUIRE(old.data().front() == 1);
+	XferLoad load(old.data());
+	m->xfer(load);
+	CHECK(load.atEnd()); // the call count is read, nothing is left over
+	CHECK_FALSE(m->isAiming());
+	CHECK(m->friend_getNextCallFrame() == (UnsignedInt)UPDATE_SLEEP_FOREVER);
+	XferSave now;
+	m->xfer(now);
+	CHECK(now.data().front() == 2);
+	std::vector<std::uint8_t> future = now.data();
+	future.front() = 3;
+	XferLoad bad(future);
+	CHECK_THROWS_AS(m->xfer(bad), XferException);
 }

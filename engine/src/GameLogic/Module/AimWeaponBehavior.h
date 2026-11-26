@@ -21,7 +21,7 @@
 //   * xfer RW 0x85E1C7: version 1, UpdateModule (RW 0x850C60), then (Xfer slot 0x10 false) the aim flag.
 //   * BFME2 1.06: the same update, instruction for instruction (0x85B297; only the Object offsets differ: the AI + 0x258, the recorded target + 0x38C).
 // WHAT IS INFERENCE (OpenBFME): the drawable exists for every object (RW 0x628882 makes one for each), so the "no drawable" exit never applies; the snapshot
-// is OpenBFME native (S-4190): RW's field in RW's order; the state hash also takes the recorded target, which no other logic reads.
+// is OpenBFME native (S-4190): RW's field in RW's order (version 2; version 1, the unported shell's block, still loads); the state hash also takes the recorded target, which no other logic reads.
 
 #pragma once
 
