@@ -189,6 +189,10 @@ public:
 	// RW 0x710A41: ThingTemplate + 0x64C (SelectionPriority, row RW 0xDA49D8, INI::parseInt RW 0x42EC5E, initialized to 0x7fffffff at
 	// RW 0x740069..0x740074, copied by ThingTemplate::copyFrom RW 0x6D271E); only reader is addDrawableToList RW 0x7108F2
 	int selectionPriority() const;
+	// Both editions: RW 0x740246 / RW 0x740264..0x740275 (ThingTemplate + 0x518, MaxDistanceForEngaged, default GlobalData +0xC38 or 50.0f at RW 0xBD88C4)
+	float maxDistanceForEngaged(float defaultValue = 50.0f) const;
+	// Both editions: RW 0x740257 / RW 0x74027D..0x740287 (ThingTemplate + 0x56C, EngagedStateTimeout in logic frames, default GlobalData +0xC3C or 2 * LOGICFRAMES_PER_SECOND = 10)
+	unsigned engagedStateTimeoutFrames(unsigned defaultValue = 10u) const;
 	const std::vector<RawBlock> &rawBlocks() const { return m_rawBlocks; }
 	// performance: an answer worked out from the raw blocks on first use (on any thread: every thread works out the same value); unset again when a block
 	// is added or removed, and in a copy

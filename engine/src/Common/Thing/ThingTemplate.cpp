@@ -2,6 +2,8 @@
 // ThingTemplate, ModuleInfo and the module-editing parsers. See ThingTemplate.h for the addresses.
 
 #include "Common/Thing/ThingTemplate.h"
+#include <cmath>
+#include <cstdlib>
 
 #include "Common/AsciiString.h"
 #include "Common/INI.h"
@@ -556,4 +558,43 @@ int ThingTemplate::selectionPriority() const
 		}
 	}
 	return INT_MAX;
+}
+
+float ThingTemplate::maxDistanceForEngaged(float defaultValue) const
+{
+	// Both editions: RW 0x740246 / RW 0x740264..0x740275 (ThingTemplate + 0x518, MaxDistanceForEngaged)
+	if (const FieldValue *v = getFinalOverride()->findField("MaxDistanceForEngaged"))
+	{
+		if (const float *f = std::get_if<float>(v))
+		{
+			return *f;
+		}
+		if (const long long *n = std::get_if<long long>(v))
+		{
+			return static_cast<float>(*n);
+		}
+	}
+	return defaultValue;
+}
+
+unsigned ThingTemplate::engagedStateTimeoutFrames(unsigned defaultValue) const
+{
+	// Both editions: RW 0x740257 / RW 0x74027D..0x740287 (ThingTemplate + 0x56C, EngagedStateTimeout in logic frames)
+	if (const FieldValue *v = getFinalOverride()->findField("EngagedStateTimeout"))
+	{
+		if (const long long *n = std::get_if<long long>(v))
+		{
+			return *n > 0 ? static_cast<unsigned>(*n) : 0u;
+		}
+		if (const std::string *s = std::get_if<std::string>(v))
+		{
+			char *end = nullptr;
+			const double ms = std::strtod(s->c_str(), &end);
+			if (end != s->c_str() && ms >= 0.0)
+			{
+				return static_cast<unsigned>(std::ceil(ms * (5.0 / 1000.0)));
+			}
+		}
+	}
+	return defaultValue;
 }

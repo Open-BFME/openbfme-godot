@@ -97,6 +97,9 @@ public:
 	// AIUpdateInterface::xfer RW 0x667416 holds the AI state here)
 	OBFME_MODULE_XFER(AIUpdateInterface)
 	UpdateSleepTime update() override;
+	// Both editions: RW 0x665921 AIUpdateInterface::handleEngagedFlag (DONOR BFME2 0x00265AF9)
+	unsigned handleEngagedFlag();
+	unsigned engagedExpireFrame() const { return m_engagedExpireFrame; } ///< RW AI + 0x234
 	// lane IDLE-1 r2: every AI update class's vslot 0x30 is RW 0x851E97 (`xor eax, eax; ret`): the scheduler files it in updates[0] (phases 3 / 4), so the
 	// AI (and the horde member update RW 0x66C748) runs before the horde contains of updates[1] (tools/rw_object_model/update_phases.py)
 	SleepyUpdatePhase getUpdatePhase() const override { return PHASE_INITIAL; }
@@ -692,6 +695,7 @@ private:
 	// lane MODULES-3
 	bool m_preventPlayerCommands = false; // RW + 0x3C5
 	bool m_victimAutoAcquired = false;    // RW + 0x3C7 (lane APPROACHGIVEUP-1)
+	unsigned m_engagedExpireFrame = 0; // RW AI + 0x234 (RW 0x665921 handleEngagedFlag)
 	bool m_fastCower = false;             // RW + 0x3C4
 	unsigned m_minCowerTime = 0, m_maxCowerTime = 0;
 	bool m_animalInterface = false, m_animalAfraidOfCastles = true; ///< lane CASTLEAREA-1 (see hasAnimalInterface)
