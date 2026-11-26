@@ -67,6 +67,7 @@
 #include "GameClient/InGameHelpBox.h"
 
 #include "GameClient/GUI/AptScreen.h"
+#include "GameClient/GUI/AptScreens/AptWidescreen.h"
 #include "Libraries/Source/Apt/AptValue.h"
 
 #include <map>
@@ -416,6 +417,7 @@ private:
 
 	ShellEnvironment &m_env;
 	std::map<std::string, std::string> m_parts;
+	std::map<std::string, AptWidescreen::SqueezeCache> m_partSqueeze; // per part: its movie authored for 16:9 by a mod (AptWidescreen.h)
 	std::map<std::string, std::vector<std::string>> m_partCommands;
 	std::vector<std::string> m_log;
 	std::vector<std::string> m_requests;

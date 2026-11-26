@@ -28,6 +28,38 @@ its existing mapping.
 This is a widescreen presentation correction, not a newly verified retail
 transform rule. S-130's target-code uncertainty remains open.
 
+## Movies a mod authored for 16:9
+
+Edain 4.8.5.4 (`___edain_apt_widescreen.big`: Palantir, StrategicPalantir,
+SpellStore) and Patch 2.02 9.8.6 (`__patch202.big`: Palantir, SpellStore)
+squeeze their HUD clips to 3/4 of their width, so that retail's stretched
+stage shows them in proportion on 16:9 (0.75 x 4/3 = 1). The construction
+bar, for example, is placed at `a` 0.75 with `tx` 256, its right edge on the
+stage's. The correction above came on top of that: 0.5625 of the width on
+16:9, a squashed construction bar, Palantir and Powers tree.
+
+`AptWidescreen::authoredSqueeze` (GameClient/GUI/AptScreens/AptWidescreen.h)
+reads such a movie from its placements: a clip of the root timeline whose
+`a / d` is 0.75 (rotation-free), or ten such placements anywhere (2.02's
+SpellStore squeezes inside its tree). The correction is then
+`min(1, (scaleY / scaleX) / 0.75)`: on 16:9 the movie looks as it does in
+retail with the mod, wider windows stay proportional, 4:3 and narrower are
+retail's. The Palantir, the Powers screen and each loaded part of the War of
+the Ring HUD are read on their own; the anchors stay as above. No movie of
+BFME2 1.06 or RotWK 2.01 meets the rule (every `.apt` of both installs: at
+most two such placements, nested, in StrategicDetailsTray), so retail data
+keeps the correction unchanged. This too is an OpenBFME inference about mod
+data, not a retail rule.
+
+- `mod widescreen: ...` (test_hud_mod_widescreen.cpp): the rule, the
+  correction at 4:3 .. 32:9 and the per-movie cache, without data.
+- `mod widescreen retail: ...`: every movie of both retail installs reads
+  as authored for 4:3.
+- `mod widescreen data: ...`: with `OPENBFME_WIDESCREEN_MOD_ARCHIVES` set to
+  the mods' archives (`;`-separated), their Palantir, SpellStore and
+  StrategicPalantir read as authored for 16:9, and the construction bar ends
+  at the height-derived scale on its right edge at 16:9, 21:9 and 32:9.
+
 `AptCharacterInst::viewportTransform` is separate from the authored and
 script-controlled `matrix`, so it neither accumulates across resizes nor
 overrides timeline animation. Render-list generation and global transforms
