@@ -413,8 +413,9 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				// to the goal is 0 (RW 0x664127), so Drogoth, on his own, strikes the horde once (825 health, 11 of 20 killed); the fell beasts stay passive
 				CHECK(own.shots == (drogoth ? 1u : 0u));
 				// pin: merge queue q64 (measured once on the merged tree and at each merge point: #334's builders turn to face the site before they build or repair, RW 0x88DD3E / 0x88DA7A, so every AI build starts a few frames later and the AI game moves; #341 keeps it, FIRINGTRACKER-1 alone keeps its own lane values): Drogoth on his own takes 975 health, 13 of 20 killed (825, 11)
-				CHECK(own.lost == (drogoth ? 975.0f : 0.0f));
-				CHECK(own.membersKilled == (drogoth ? 13u : 0u));
+				// pin: lane SPAWNUNIT-1 (measured on the lane's tree: SpawnUnitBehavior's update is ported and wakes every 5 frames as retail's does (RW 0x8BC9B0; the unported shell slept forever), so every citadel with the module moves the update order and the 4-AI play): Drogoth on his own takes 825 health, 11 of 20 killed (975, 13)
+				CHECK(own.lost == (drogoth ? 825.0f : 0.0f));
+				CHECK(own.membersKilled == (drogoth ? 11u : 0u));
 				// lane BACKLOG4: 3 strikes (4 before): the hero's creation uses the teleport form (RW 0x7814CF: RW 0x696E63(pos, 0)), which idles the new
 				// hero's AI and wakes it; the fight's damage and kills are unchanged (measured with and without that call)
 				// lane STEALTHFLY1: 2 strikes (3 before): recruited from the fortress, Drogoth leaves along its production exit path in the bird's own follow

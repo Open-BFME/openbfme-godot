@@ -476,15 +476,28 @@ TEST_CASE("save4c retail T5: each block's version window (RW 0xA1F5B9's two mess
 	REQUIRE(lateAIs != earlyAIs);
 	CHECK(loadError(early.logic(), { "obfme:AIWorld" }, ai) ==
 		"block 'obfme:AIWorld': ai world: the snapshot holds " + std::to_string(lateAIs) + " AI modules, the loaded game " + std::to_string(earlyAIs));
-	// a partition entry whose object the loaded game lacks (the newest entry of frame 600, after the frame-50 game's last object): named by the post-process
+	// a partition entry whose object the loaded game lacks: the first such entry of frame 600's list (newest first, after the frame-50 game's last object),
+	// named by the post-process. pin: lane SPAWNUNIT-1 (SpawnUnitBehavior's update wakes every 5 frames, RW 0x8BC9B0, and moves the 4-AI play; measured on
+	// the lane's tree): the list's head is an older object linked again (a MordorPorter of frame 50), so the entry is looked for in the list's order
 	std::vector<std::uint8_t> part;
 	late.logic().gameState().saveBlocks({ "obfme:Partition" }, part);
 	const size_t first = payloadOffset("obfme:Partition") + 1 + 5 * 4 + 1 + 4; // version, the region and scale, the region flag, the entry count
-	REQUIRE(part.size() >= first + 4); // tolerance: an index precondition (the first entry id must exist before it is read)
-	ObjectID newest = 0;
-	std::memcpy(&newest, &part[first], 4);
-	REQUIRE(early.logic().findObjectByID(newest) == nullptr);
-	CHECK(loadError(early.logic(), { "obfme:Partition" }, part) == "partition: the entry of object " + std::to_string(newest) + " has no object in the loaded game");
+	REQUIRE(part.size() >= first); // tolerance: an index precondition (the entry count must exist before it is read)
+	std::uint32_t entries = 0;
+	std::memcpy(&entries, &part[first - 4], 4);
+	REQUIRE(part.size() >= first + 20 * (size_t)entries); // tolerance: an index precondition (each entry: id, layer, x, y, mask)
+	ObjectID lacking = 0;
+	for (std::uint32_t i = 0; i < entries && lacking == 0; ++i)
+	{
+		ObjectID id = 0;
+		std::memcpy(&id, &part[first + 20 * (size_t)i], 4);
+		if (!early.logic().findObjectByID(id))
+		{
+			lacking = id;
+		}
+	}
+	REQUIRE(lacking == 449); // pin (SPAWNUNIT-1, as above): the head 294 is in the frame-50 game, the next entry 449 is not
+	CHECK(loadError(early.logic(), { "obfme:Partition" }, part) == "partition: the entry of object " + std::to_string(lacking) + " has no object in the loaded game");
 	// a synthetic game (no map: no AI world, no shroud manager) saves the two blocks with their subsystem absent; a real game refuses them
 	logictest::LogicWorld w;
 	std::vector<std::uint8_t> noWorld, noShroud;

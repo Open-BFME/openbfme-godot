@@ -606,6 +606,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: merge queue q65 (APPROACHGIVEUP-1, the attack approach's give-up, RW 0x749D46, S-7162: the approach state hashes the owner's position at
 // its start, RW state + 0x58, and the AIs' units give up fleeing or unreachable victims): the big battle and the skirmish move. Measured once on the merged
 // tree with OPENBFME_PERF1_REGEN=1 and at APPROACHGIVEUP-1's merge point (equal); POSTERNPLOT-1 keeps them.
+// pin: lane SPAWNUNIT-1 (SpawnUnitBehavior's update is ported and wakes every 5 frames as retail's does, RW 0x8BC9B0; the unported shell slept forever):
+// every citadel with the module moves the update order, so the skirmish moves from frame 0; the big battle does not. Re-measured on the lane's tree with
+// OPENBFME_PERF1_REGEN=1.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

@@ -392,22 +392,23 @@ TEST_CASE("save4b retail T4: a real 4-player skirmish's snapshot is written (SAV
 	// pin: merge queue q64 (measured once on the merged tree and at each merge point: #334's builders turn to face the site before they build or repair, RW 0x88DD3E / 0x88DA7A, so every AI build starts a few frames later and the AI game moves; #341 keeps it, FIRINGTRACKER-1 alone keeps its own lane values): an AutoHealBehavior, DeletionUpdate, HordeDispatchSpecialPower, RepairSpecialPower and SalvageCrateCollide object again (116)
 	// pin: merge queue q65 (measured once on the merged tree; APPROACHGIVEUP-1, the attack approach giving up a fleeing or unreachable victim, RW 0x749D46, moves the 4-AI play, POSTERNPLOT-1 keeps it): an AutoHealBehavior object again; no RebuildHoleBehavior object (115)
 	// pin: merge queue q66 (measured once on the merged tree and at each merge point; #338's idle stance countdown, RW 0x7553AB / 0x743864: a Battle / HoldGround / Porcupine unit idle after a fight or a move guards where it stands again, moves the AI game, #363 keeps it): a RebuildHoleBehavior object again (116)
+	// pin: lane SPAWNUNIT-1 (measured on the lane's tree: SpawnUnitBehavior's update is ported and wakes every 5 frames as retail's does (RW 0x8BC9B0; the unported shell slept forever), so every citadel with the module moves the update order and the 4-AI play): no salvage crate stands at frame 3000 (no DeletionUpdate, SalvageCrateCollide); no AutoHealBehavior, CommandButtonHuntUpdate, HordeNotifyTargetsOfImminentProbableCrushingUpdate, HorseHordeContain or RebuildHoleBehavior object (109)
 	CHECK(classes == std::set<std::string>{
 		"AISpecialPowerUpdate", "ActiveBody", "ArmorUpgrade", "ArrowStormUpdate", "AttributeModifierAuraUpdate", "AttributeModifierPoolUpdate",
-		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoHealBehavior", "AutoPickUpUpdate",
+		"AttributeModifierUpgrade", "AudioLoopUpgrade", "AutoAbilityBehavior", "AutoDepositUpdate", "AutoPickUpUpdate",
 		"BannerCarrierUpdate", "BezierProjectileBehavior", "BloodthirstyUpdate", "BoredUpdate", "BuildableHeroListUpgrade", "BuildingBehavior",
 		"CastleBehavior", "CastleMemberBehavior", "CastleUpgrade", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "CloudBreakSpecialPower",
-		"CommandButtonHuntUpdate", "CommandPointsUpgrade", "CommandSetUpgrade", "CostModifierUpgrade", "CreateObjectDie", "CritterEmitterUpdate",
-		"DamageFilteredCreateObjectDie", "DarknessSpecialPower", "DefectionHelper", "DelayedDeathBody", "DeletionUpdate", "DestroyDie",
+		"CommandPointsUpgrade", "CommandSetUpgrade", "CostModifierUpgrade", "CreateObjectDie", "CritterEmitterUpdate",
+		"DamageFilteredCreateObjectDie", "DarknessSpecialPower", "DefectionHelper", "DelayedDeathBody", "DestroyDie",
 		"DevastateSpecialPower", "DoCommandUpgrade", "DualWeaponBehavior", "ElvenWoodSpecialPower", "EmotionTrackerUpdate", "FXListDie",
 		"FiringTrackerHelper", "FoundationAIUpdate", "FreezingRainSpecialPower", "GeometryUpgrade", "GettingBuiltBehavior", "GiveUpgradeUpdate",
 		"GrabPassengerSpecialPower", "GrantUpgradeCreate", "GuardingHelper", "HighlanderBody", "HitReactionBehavior", "HordeContain",
-		"HordeDispatchSpecialPower", "HordeMemberCollide", "HordeNotifyTargetsOfImminentProbableCrushingUpdate", "HorseHordeContain", "ImmortalBody",
+		"HordeDispatchSpecialPower", "HordeMemberCollide", "ImmortalBody",
 		"InactiveBody", "InvisibilityUpdate", "KeepObjectDie", "LargeGroupAudioUpdate", "LargeGroupBonusUpdate", "LevelUpUpgrade", "LifetimeUpdate",
 		"ModelConditionUpgrade", "MonitorConditionUpdate", "OCLSpecialPower", "ObjectCreationUpgrade", "PassiveAreaEffectBehavior", "PhysicsBehavior",
 		"PickupStuffUpdate", "PlayerHealSpecialPower", "PlayerUpgradeSpecialPower", "PorcupineFormationBodyModule", "ProductionSpeedBonus",
-		"ProductionUpdate", "QueueProductionExitUpdate", "RebuildHoleBehavior", "RebuildHoleExposeDie", "RecoveryHelper", "RefundDie", "RepairSpecialPower", "SMCHelper",
-		"SalvageCrateCollide", "ScavengerSpecialPower", "ShareExperienceBehavior", "SiegeDeployHordeSpecialPower", "SlaughterHordeContain",
+		"ProductionUpdate", "QueueProductionExitUpdate", "RebuildHoleExposeDie", "RecoveryHelper", "RefundDie", "RepairSpecialPower", "SMCHelper",
+		"ScavengerSpecialPower", "ShareExperienceBehavior", "SiegeDeployHordeSpecialPower", "SlaughterHordeContain",
 		"SlaveWatcherBehavior", "SlavedUpdate", "SlowDeathBehavior", "SpawnBehavior", "SpawnPointProductionExitUpdate", "SpawnUnitBehavior",
 		"SpecialAbilityUpdate", "SpecialPowerModule", "SpellRechargeModifierUpgrade", "SquishCollide", "StancesBehavior", "StatusBitsUpgrade",
 		"StealthDetectorUpdate", "StructureBody", "StructureCollapseUpdate", "SubObjectsUpgrade", "TaintSpecialPower", "TemporarilyDefectUpdate",
