@@ -335,3 +335,14 @@ void RadiusCursor::update(const Coord3D &position, unsigned clientFrame, bool dr
 		m_decal.angle = (float)clientFrame * ((1.0f / 30.0f) * 0.0174532924f * m_template->rotationsPerMinute * 60.0f);
 	}
 }
+
+const FieldParse *radiusDecalFieldParse()
+{
+	return kRadiusDecalFieldParse;
+}
+
+// RW 0x7327BC / BFME2 0x330E5D: the 13-row decal table RW 0xC24278 into a RadiusDecalTemplate (W3DTornadoDraw's DecalTemplate field)
+void parseRadiusDecalTemplate(INI *ini, void *, void *store, const void *)
+{
+	ini->initFromINI(store, kRadiusDecalFieldParse);
+}

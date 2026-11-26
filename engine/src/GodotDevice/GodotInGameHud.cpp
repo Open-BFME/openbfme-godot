@@ -38,6 +38,7 @@
 #include "GameClient/LiveGame.h"
 #include "GameClient/Drawable.h"
 #include "GameClient/DrawableManager.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTornadoDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "GameClient/MessageStream/MetaEvent.h"
@@ -1506,6 +1507,31 @@ void HudDevice::drawSelectionDecals()
 	if (ghost && world && world->hud_game())
 	{
 		ghost->appendShadowDecals(selExtras);
+	}
+	if (world && world->hud_game())
+	{
+		// W3DTornadoDraw's spiral ground decals (RW 0x4D0FCB -> RadiusDecal::update RW 0x732828 / 0x732926; created for the owning player only, RW 0x732E2D)
+		const DrawableManager &dm = world->hud_game()->drawables();
+		const unsigned clientFrame = hud->input().ui().clientFrame();
+		for (size_t id = 1; id < dm.slotCount(); ++id)
+		{
+			const Drawable *d = dm.find((DrawableID)id);
+			if (!d || d->clientHidden() || d->shroudLook().hidden || d->stealthHidden())
+			{
+				continue;
+			}
+			const ::Object *logicObject = world->hud_game()->logic().findObjectByID((::ObjectID)d->getObjectID());
+			const bool playerIsLocal = (localPlayerIndex < 0 || !logicObject || !logicObject->getControllingPlayer() ||
+				logicObject->getControllingPlayer()->getPlayerIndex() == localPlayerIndex);
+			const std::uint32_t ownerColor = d->getHouseColor();
+			for (const DrawEntry &e : d->entries())
+			{
+				if (e.tornadoDraw && !e.moduleHidden && !e.conditionHidden)
+				{
+					e.tornadoDraw->appendSelectionDecals(d->getObjectID(), (unsigned)d->getID(), playerIsLocal, ownerColor, clientFrame, true, selExtras);
+				}
+			}
+		}
 	}
 	const size_t shadows = selExtras.size();
 	const TerrainResourceDecalCounts appended = resources.appendDecals(resourceUi.claimDecal, resourceUi.placeDecal, selExtras);
