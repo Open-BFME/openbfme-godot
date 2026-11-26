@@ -33,6 +33,7 @@
 #include "Common/INIDataTypes.h"
 #include "GameClient/CameraSettings.h"
 #include "GameClient/CameraShaker.h"
+#include "GameClient/ScriptCameraDirector.h" // lane PORT-439: the ParabolicEase of the focal-length ramp (RW 0x70FCC0 / 0x70FD72)
 #include "GameClient/TacticalView.h"
 #include "GameLogic/ObjectTypes.h"
 
@@ -212,6 +213,22 @@ public:
 	float fogShift() const;
 	// the horizontal field of view of the 3D camera (radians; View + 0x6C, RW 0xBDD410 = 50 degrees)
 	float horizontalFov() const { return m_fov; }
+	// ---- lane PORT-439: FOCAL_LENGTH_CAMERA (script action 389) ----
+	// RW 0x7CAFA5 case 0x185 (RW 0x7CB6FB) reads the four reals (focal mm, seconds, ease-in s, ease-out s) and calls RW 0x7BB627, which multiplies
+	// seconds and both eases by 1000.0f (RW 0xBD4388) and calls TheTacticalView's vslot 0xF0 = View::setFocalLength (RW 0x48885E) with
+	// (float focal, int msec, float easeInMs, float easeOutMs). The view stores: + 0x254 = 1 (animating), + 0x22C = frames = max(1, max(1, msec) / 33)
+	// (TheW3DFrameLengthInMsec RW 0xDC7A8C, idiv), + 0x230 = 0, + 0x23C = the current View + 0x6C in DEGREES (* 57.295776, RW 0xBD18FC),
+	// + 0x240 = focalLengthToFovDegrees(focal) = RW 0x8DAF6C = RW 0x8DAF22 * 57.295776, + 0x234 = fovToFocalLength(View + 0x6C) = RW 0x8DAEEE,
+	// + 0x238 = focal, and the ease at + 0x24C = RW 0x70FCC0(easeInMs, easeOutMs, (float)msec) — the ZH ParabolicEase fractions over the
+	// milliseconds, not over the frames (that constructor's last argument is the divisor of both fractions). One frame's duration
+	// (frames == 1) runs the step at once (RW 0x488911). The step itself is RW 0x4866A7, reached from the view's per-frame update RW 0x48A953's
+	// + 0x254 branch (called by the display at RW 0x44B8D3 and RW 0x48C09A): see updateFocalLength. The camera's zoom / height is NOT touched.
+	void setFocalLength(float focalLengthMm, int milliseconds, float easeInMs, float easeOutMs);
+	bool focalLengthAnimating() const { return m_focalActive; }
+	// RW 0x8DAEEE: 12 / tan(radians / 2) — the tangent of 0 gives the pooled 1e10 (RW 0xBF7328); the tan is the double-precision tan of the x87 form
+	static float fovToFocalLength(float radians);
+	// RW 0x8DAF22: 2 * atan(12 / mm); a value <= 0 gives the pooled pi / 2 (RW 0xBD89D0)
+	static float focalLengthToFov(float mm);
 	// the vertical field of view for the current viewport (the W3D view plane: height = width / aspect)
 	float verticalFov() const;
 	// Lane UI-6 (FB-0021, the owner's decision 2026-10-11: "we need to support widescreen for people, but we need backwards compatibility also"): the
@@ -250,6 +267,7 @@ private:
 	float sampleTerrainHeight(float x, float y) const;
 	void rebuildPinhole();
 	void zoomFromHeightField();
+	void updateFocalLength(); // RW 0x4866A7 (the + 0x254 branch of RW 0x48A953), one client frame
 
 	CameraSettings m_gd;
 	MapCameraValues m_map;
@@ -264,6 +282,16 @@ private:
 	float m_clipDepthMultiplier = 1.0f; // GlobalData + 0x950 (lane MODCOMPAT-AI)
 	float m_defaultAngle = 0.0f, m_defaultPitch = 0.0f;
 	float m_fov = 0.8726646f; // RW 0xBDD410: 50 degrees
+	// lane PORT-439: the view's focal-length animation (RW 0x48885E's stores): + 0x254 the flag, + 0x22C the frame count, + 0x230 the current
+	// frame, + 0x234 / + 0x238 the focal before / after, + 0x23C / + 0x240 the field of view before / after in DEGREES, + 0x24C the ease
+	bool m_focalActive = false;
+	int m_focalFrames = 0, m_focalFrame = 0;
+	float m_focalFrom = 0.0f, m_focalTo = 0.0f;
+	float m_fovFromDegrees = 0.0f, m_fovToDegrees = 0.0f;
+	ParabolicEase m_focalEase;
+	// GlobalData + 0x9A4 (DisableCameraMovements, the row RW 0xC000C0, parseBool RW 0x42E558; the constructor RW 0x642DA6 stores 0): a script
+	// camera animation does not advance while it is set (RW 0x4866B4). CameraSettings reads it (lane PORT-439).
+	bool m_disableCameraMovements = false;
 	bool m_widescreenWider = false; // lane UI-6: the Widescreen view option (Wider = Hor+; false = retail)
 	float m_terrainHeight = 0.0f, m_currentHeightAboveGround = 0.0f;
 	float m_groundLevel = 0.0f;

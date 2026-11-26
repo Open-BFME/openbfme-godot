@@ -1250,6 +1250,7 @@ public:
 				m_sub->setGoalObject(target->getID());
 				m_sub->setState(10);
 				ai.setCommandSource(CMD_FROM_AI);
+				ai.setVictimAutoAcquired(); // lane APPROACHGIVEUP-1: RW 0x76B428, AI + 0x3C7 = 1
 				return STATE_CONTINUE;
 			}
 		}

@@ -55,7 +55,8 @@
 // without an AI or inside a move-away search (RW 0x68230B, AIPathfindPortals.cpp).
 // INFERENCE / NOT PORTED (stops S-4853 .. S-4855, docs/STOPS.md): the order of the map placement broadcast (RW 0x62DCE4 sorts the objects: the creation order
 // here); saves (loadPostProcess, TheGameLogic + 0x6E); the drawable's WallBoundsMesh change (no retail DynamicPortalBehaviour sets WallBoundsMesh: reported);
-// the FoundationAIUpdate slot 2 call (RW 0x8582DE's statuses and drawable calls are not ported: reported); a WayPoint index without its bone (retail reads an
+// the FoundationAIUpdate slot 2 call runs (lane POSTERNPLOT-1, Construction::setFoundationOccupant) but an object without a CastleMemberBehavior, or a
+// castle, keeps no occupant (S-952's home of it; no retail object: reported); a WayPoint index without its bone (retail reads an
 // uninitialised slot: reported, nothing is made); more than six WayPoint entries (retail writes past its six slots: reported, nothing is made).
 
 #pragma once

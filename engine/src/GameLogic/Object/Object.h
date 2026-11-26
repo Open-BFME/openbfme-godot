@@ -282,7 +282,7 @@ public:
 	// the template's KindOf by the binary's own name table (-1 when the name is not in it); for callers that do not hold a bit number
 	bool isKindOfName(const char *name) const;
 	DisabledMaskType getDisabledMask() const { return m_disabled; }
-	// RW 0x6907F1 setDisabledUntil (lane DECOMP-1; BFME2 decomp attempt 0x00290114.cpp, tier B edited, read in RotWK): nothing when untilFrame <= now; a new
+	// RW 0x6907F1 setDisabledUntil (lane DECOMP-1; BFME2 decomp ObjectScriptStatus.cpp, tier B edited, read in RotWK): nothing when untilFrame <= now; a new
 	// expiry: a type other than HELD that was not set pauses every special power countdown (RW 0x68B961(1): module slot 0x20 -> slot 0x24), the expiry and the bit
 	// are stored, USER_PARALYZED / USER_FROZEN set model condition PARALYZED (529, + 0x14C bit 17) when clear (and notify, RW 0x68B53C); the contain's rider
 	// (slot 0x120) gets the same. The audio of EMP / UNMANNED / UNDERPOWERED and the drawable's tint are the client's; the radar / energy edge RW 0x68BF75 has no
@@ -461,6 +461,8 @@ public:
 	// RW 0x68C327: the ProductionUpdate's queue interface, or null
 	ProductionUpdateInterface *getProductionUpdate() const;
 	BehaviorModule *findModuleByTag(NameKeyType tagKey) const;
+	// RW 0x691526: the first special power module interface whose template matches powerType (or null)
+	const class SpecialPowerModuleInterface *findSpecialPowerModuleInterface(int powerType) const;
 	// lane HORDE-2 (RW 0x68C0C5, the formation swap): `replacement` takes the place of `old` in the module list and becomes the cached contain when it is one; the old module
 	// is returned (the caller destroys it after the scheduler let go of it)
 	std::unique_ptr<BehaviorModule> friend_replaceModule(BehaviorModule *old, std::unique_ptr<BehaviorModule> replacement);
