@@ -207,6 +207,7 @@ include(cmake/Port9.cmake) # PORT-9: OpenContain/onCollide + tryToEvacuate, the 
 include(cmake/Port7.cmake) # PORT-7: AnimalAIUpdate's enemy scan (OPENBFME_PORT7_TESTS)
 include(cmake/Port58.cmake) # PORT-58: SpecialAbilityUpdate/ApproachUntilMembersInRange (OPENBFME_PORT58_TESTS)
 include(cmake/Port217.cmake) # PORT-217: a builder turns to face the structure it builds or repairs (OPENBFME_PORT217_TESTS)
+include(cmake/Port101.cmake) # PORT-101: Object/SelectionPriority in box selection (OPENBFME_PORT101_TESTS)
 include(cmake/Port10.cmake) # PORT-10: FlammableUpdate/RunToWater (issue #65; OPENBFME_PORT10_TESTS)
 include(cmake/Port307.cmake) # PORT-307: the gates' and the wall hubs' own functions (OPENBFME_PORT307_TESTS)
 include(cmake/Port17.cmake) # PORT-17: ThreatFinderUpdate + the threat-finder script action (issue #73; appends to OPENBFME_SIM_SOURCES; OPENBFME_PORT17_TESTS)
@@ -526,6 +527,8 @@ target_sources(openbfme_core PRIVATE
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.cpp # lane LOCAL-28 (object lights, both editions)
     src/GameClient/DrawableLight.cpp # lane LOCAL-28: the drawable's light step and bone position (client only, excluded from the sim audit)
+    src/Libraries/WWVegas/WWMath/matrix3d.cpp # lane LOCAL-25 (#430): Matrix3D::Rotate_X / _Y / _Z (client only)
+    src/GameClient/DrawablePhysics.cpp # lane LOCAL-25 (#430): the drawable's presentation physics, pitch / roll / suspension (client only, excluded from the sim audit)
     src/GameClient/MapObjectDrawables.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.cpp)
 # ---- LUA-1 sources (Lua scripting: XML reader, event registry, engine, bindings) ----
@@ -680,6 +683,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotInGameHud.cpp
     src/GodotDevice/GodotPlacementGhost.cpp # BUILD-5
     src/GodotDevice/GodotPathfindView.cpp
+    src/GodotDevice/GodotGameWorldPrewarm.cpp # PERF-4: client model prewarm, excluded from the sim audit
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
     src/GodotDevice/GodotShaderBudget.cpp # SHADER-BUDGET-1
@@ -795,6 +799,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT7_TESTS}
     ${OPENBFME_PORT58_TESTS}
     ${OPENBFME_PORT217_TESTS}
+    ${OPENBFME_PORT101_TESTS}
     ${OPENBFME_PORT10_TESTS}
     ${OPENBFME_PORT17_TESTS}
     ${OPENBFME_PORT307_TESTS}
@@ -1063,6 +1068,10 @@ add_executable(openbfme_tests
     # lane LOCAL-62 (capturing a production building cancels and releases its queue, RW 0x69974D -> RW 0x8A1666)
     tests/test_local_62.cpp
     tests/test_local_91.cpp
+    # lane LOCAL-17 (tree and shrub textures: W3DTreeDraw/TextureName)
+    tests/test_local_17.cpp
+    # lane LOCAL-25 (locomotor ground motion presentation: calcPitchRoll / calcPhysicsXform, RW 0x670570 / 0x67BDC0)
+    tests/test_local_25.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy
@@ -1074,7 +1083,9 @@ add_executable(openbfme_tests
     tests/test_capcrash1.cpp
     # lane VISIONDEF-1: the vision height bonus's ground reference (Object + 0x1C4)
     tests/test_visiondef1_retail.cpp
-    tests/test_local_81.cpp)
+    tests/test_local_81.cpp
+    # lane PERF-4: the prewarm wave cap's environment contract
+    tests/test_prewarm_policy.cpp)
 target_sources(openbfme_tests PRIVATE
     tests/test_coverage_online_shell.cpp
     tests/test_coverage_simple_screens.cpp
