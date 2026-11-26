@@ -50,7 +50,8 @@ TEST_CASE("shader text: the world-space normal varying includes the instance rot
 TEST_CASE("shader text: the camera-normal mapper's world path reads the same world-space normal")
 {
 	const std::string code = Generate_W3D_Shader_Code(envKey(true, W3D_TEXGEN_CAMERA_NORMAL));
-	CHECK(has(code, "vec4(vec3(v_wnrm.x, -v_wnrm.z, v_wnrm.y), 1.0)"));
+	// Local 38 packs the normal into v_wnrm4 (w carries the per-vertex light term): the mapper reads its xyz
+	CHECK(has(code, "vec4(vec3(v_wnrm4.x, -v_wnrm4.z, v_wnrm4.y), 1.0)"));
 	CHECK(has(code, "v_wnrm = normalize(MODEL_NORMAL_MATRIX * NORMAL);"));
 }
 
@@ -229,7 +230,8 @@ std::vector<std::string> varyingNames(const ShaderVaryings::Result &result)
 
 std::vector<std::string> expectedW3DVaryings(bool fx, bool shadow)
 {
-	std::vector<std::string> names = { "v_instance", "v_pack_pos", "v_uv", "v_vnrm", "v_wnrm", "v_wview" };
+	// Local 38: the three normal varyings are vec4s (w: normalmapped.fxo's per-vertex light term), declared as v_vnrm4 / v_wnrm4 / v_wview4
+	std::vector<std::string> names = { "v_instance", "v_pack_pos", "v_uv", "v_vnrm4", "v_wnrm4", "v_wview4" };
 	if (fx)
 	{
 		names.push_back("v_light0");
