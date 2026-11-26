@@ -565,6 +565,14 @@
    "reason": "AUDIO-4, the footsteps (AnimationSoundClientBehavior and TheAnimationSoundModuleManager): a ClientBehavior module of the drawables; reads the drawables' animation frames and the listener, plays on the audio manager; never read by the logic"
   },
   {
+   "glob": "src/GameClient/DrawableAudioLoop.cpp",
+   "reason": "MODGAP-2, the drawable's list of model condition sound loops (RW 0x67449C) and the flush's call into it (RW 0x8D04CA): reads the drawable's model condition flags, plays on the audio manager through the module; never read by the logic"
+  },
+  {
+   "glob": "src/GameClient/ModelConditionAudioLoopClientBehavior.cpp",
+   "reason": "MODGAP-2, the model condition sound loops (ModelConditionAudioLoopClientBehavior): a ClientBehavior module of the drawables; reads the drawable's model condition flags, plays on the audio manager; never read by the logic"
+  },
+  {
    "glob": "src/GameClient/EvaDamage.cpp",
    "reason": "EVADAMAGE-1, the client half of the drawable damage notice's Eva part (RW 0x67B4B7): picks the Eva event from the drawable's template and the attacker drawable's shroud look, keeps the drawable's far frame and reports to the Eva; applies recorded client events, never read by the logic"
   },

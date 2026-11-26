@@ -8,6 +8,7 @@
 #include "GameClient/AnimationSoundClientBehavior.h"
 #include "GameClient/BeaconClientUpdate.h"
 #include "GameClient/ClientBehaviorModules.h"
+#include "GameClient/ModelConditionAudioLoopClientBehavior.h"
 #include "GameClient/SoundSelectorClientBehavior.h"
 
 #include "Common/AsciiString.h"
@@ -586,6 +587,14 @@ void AnimationSoundModuleManager::update()
 	{
 		return; // RW calls TheAudio unconditionally; without an audio manager there is no microphone and nothing plays
 	}
+	if (a != m_audioLoopsAudio) // stop S-6024
+	{
+		m_audioLoopsAudio = a;
+		for (ModelConditionAudioLoopClientBehavior *m : m_audioLoops)
+		{
+			m->audioAttached();
+		}
+	}
 	++m_stats.updates;
 	const Coord3D mic = a->getListenerPosition(); // TheAudio vslot 0x120
 	// RW 0x83F345 .. 0x83F382: squared distance from the stored position against MinMicrophoneDistanceToDirty squared (strictly farther)
@@ -618,6 +627,29 @@ void AnimationSoundModuleManager::update()
 		++m_stats.moduleUpdates;
 		m->update(*this, a, mic);
 		m = next;
+	}
+}
+
+void AnimationSoundModuleManager::addAudioLoop(ModelConditionAudioLoopClientBehavior *m)
+{
+	m->setManagerSlot(m_audioLoops.size());
+	m_audioLoops.push_back(m);
+}
+
+void AnimationSoundModuleManager::removeAudioLoop(ModelConditionAudioLoopClientBehavior *m)
+{
+	const size_t slot = m->managerSlot();
+	m_audioLoops[slot] = m_audioLoops.back();
+	m_audioLoops[slot]->setManagerSlot(slot);
+	m_audioLoops.pop_back();
+}
+
+void AnimationSoundModuleManager::audioLoopsDetached()
+{
+	m_audioLoopsAudio = nullptr;
+	for (ModelConditionAudioLoopClientBehavior *m : m_audioLoops)
+	{
+		m->audioGone();
 	}
 }
 
@@ -656,6 +688,7 @@ bool AnimationSoundModuleManager::isDirty(const AnimationSoundClientBehavior *m)
 void ClientBehaviorModules::registerAll(ModuleFactory &modules)
 {
 	AnimationSoundClientBehavior::registerClass(modules);
+	ModelConditionAudioLoopClientBehavior::registerClass(modules); // MODGAP-2: the taunts, cheers and collapse sounds (S-6024)
 	SoundSelectorClientBehavior::registerClasses(modules); // lane DECOMP-2: the three sound selectors (S-701)
 	BeaconClientUpdate::registerClass(modules);            // lane CHAT-1: the multiplayer beacon's minimap pulse
 }

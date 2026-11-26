@@ -203,7 +203,7 @@ public:
 	// AUDIO-2 (review r2 fix 1): the track (or the Multisound's chosen track) plays ONCE: no backend loop, no LOOP playlist chain; the caller (the music
 	// scripts' finite actions) counts the completions and repeats
 	AudioHandle playMusicOnce(const std::string &eventName);
-	void stopMusic(bool fade);                                ///< AHSV_StopTheMusic / AHSV_StopTheMusicFade
+	void stopMusic(bool fade);
 	bool isMusicPlaying() const;
 	std::string getMusicTrackName() const;
 	int musicTrackCompletions(const std::string &trackName) const;

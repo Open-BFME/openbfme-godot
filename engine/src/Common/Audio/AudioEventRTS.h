@@ -48,8 +48,7 @@ enum AudioHandleSpecialValues : AudioHandle
 	AHSV_Muted,
 	AHSV_NotForLocal,
 	AHSV_StopTheMusic,
-	AHSV_StopTheMusicFade,
-	AHSV_FirstHandle = 5 // INFERENCE: ZH has 6; RW's counter starts at 5 so one of the special values is gone (stop S-240)
+	AHSV_FirstHandle = 5 // RW 0x45C754: the counter starts at 5; RW 0x456F4D: removeAudioEvent ignores a lower handle. ZH's AHSV_StopTheMusicFade (5) is gone: it would be the first sound's handle
 };
 
 // RW AudioEventRTS +0x38 (0x6DAD89 / 0x6DB46A / 0x6DAE8B switch on it).

@@ -51,6 +51,7 @@ typedef std::uint32_t DrawableID;
 class ModuleFactory;
 class AnimationSoundModuleManager;
 class LightPulsePool;
+class ModelConditionAudioLoopClientBehavior;
 
 // lane FX-2: the client effect player the draw modules call (GameClient/LiveFX). Read at call time, so drawables made before the player was installed use it too.
 class DrawableFXHost
@@ -204,6 +205,9 @@ public:
 	// request waits until all exist
 	void scriptModuleVisible(const std::string &name, bool visible);
 	void showSubObject(const std::string &name, bool visible, bool permanent);
+	// ModelConditionAudioLoopClientBehavior (DrawableAudioLoop.cpp, client only): keep the module in the list the flush tells, and tell the list the new flags
+	void trackAudioLoop(DrawableModule *module);
+	void notifyAudioLoops(const ModelConditionFlags &flags);
  void upgradeTexture(const TextureSwap &swap, bool enabled);
 	// lane LOCAL-28: the world position of the bone `boneName` of the first model entry that has it (RW 0x672B5B Drawable::getBonePosition: the pose of the
 	// current animation state, scaled by the instance scale and rotated by the drawable's orientation); false when no model entry has the bone
@@ -340,6 +344,7 @@ private:
 	float m_geometryHeight = -1.0f;          ///< RENDER-2: RW 0xAD1920 of the template's shapes (computed on first use)
 	std::vector<DrawEntry> m_entries;
 	std::vector<std::unique_ptr<DrawableModule>> m_clientModules;
+	std::vector<ModelConditionAudioLoopClientBehavior *> m_audioLoops; ///< those of m_clientModules the flush tells (RW 0x67449C)
 	bool m_clientHidden = false; ///< lane CHAT-1
 	bool m_shadowsEnabled = true; ///< RW Drawable +0x114 bit 2 (TOP20 #24)
 	bool m_phantomLook = false;  ///< lane FBSIM-1: drawn as a dozer's phantom structure (0.4 opacity)
