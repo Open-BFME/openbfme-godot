@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0. See AudioEntryPoints.h.
 
 #include "Common/Audio/AudioEntryPoints.h"
+#include "Common/INIDataTypes.h"
 
 #include "GameClient/Eva.h"
 
@@ -417,7 +418,7 @@ void uninstallUnitVoiceHandler(const void *owner)
 	// once this returns no thread can reach the removed handler: the worker only queues (under the lock) and the queue is discarded by generation
 }
 
-void postUnitVoice(int voiceEvent, std::uint32_t objectId, std::uint32_t producerId)
+static void dispatchUnitVoice(const UnitVoiceParams &params)
 {
 	UnitVoiceHandler handler;
 	{
@@ -432,22 +433,48 @@ void postUnitVoice(int voiceEvent, std::uint32_t objectId, std::uint32_t produce
 			// S-814: the HUD's voice picker runs on the render side at the next idle point
 			if (AudioLog::enabled())
 			{
-				g_deferred.push_back({ Binding::Voice, g_voiceGeneration, [origin = AudioLog::origin(), voiceEvent, objectId, producerId]() {
+				g_deferred.push_back({ Binding::Voice, g_voiceGeneration, [origin = AudioLog::origin(), params]() {
 										  AudioLog::Scope scope(origin);
-										  postUnitVoice(voiceEvent, objectId, producerId);
+										  dispatchUnitVoice(params);
 									  } });
 			}
 			else
 			{
-				g_deferred.push_back({ Binding::Voice, g_voiceGeneration, [voiceEvent, objectId, producerId]() { postUnitVoice(voiceEvent, objectId, producerId); } });
+				g_deferred.push_back({ Binding::Voice, g_voiceGeneration, [params]() { dispatchUnitVoice(params); } });
 			}
 			++g_deferredCalls;
 			return;
 		}
 		handler = g_voice; // the owner thread: run a copy outside the lock (the picker can re-enter these entry points)
 	}
-	AudioLog::Scope scope([&] { return "logic voice message " + std::to_string(voiceEvent); });
-	handler(voiceEvent, objectId, producerId);
+	AudioLog::Scope scope([&] { return "logic voice message " + std::to_string(params.voiceEvent); });
+	handler(params);
+}
+
+void postUnitVoice(int voiceEvent, std::uint32_t objectId, std::uint32_t producerId)
+{
+	UnitVoiceParams p;
+	p.voiceEvent = voiceEvent;
+	p.objectId = objectId;
+	p.producerId = producerId;
+	dispatchUnitVoice(p);
+}
+
+void postUnitVoice(int voiceEvent, std::uint32_t objectId, const SpecialPowerTemplate *powerTemplate, std::uint32_t targetId, const Coord3D *pos)
+{
+	UnitVoiceParams p;
+	p.voiceEvent = voiceEvent;
+	p.objectId = objectId;
+	p.powerTemplate = powerTemplate;
+	p.targetId = targetId;
+	if (pos)
+	{
+		p.hasPosition = true;
+		p.posX = pos->x;
+		p.posY = pos->y;
+		p.posZ = pos->z;
+	}
+	dispatchUnitVoice(p);
 }
 
 std::uint64_t unitVoicesWithoutHandler()
