@@ -6,12 +6,14 @@
 #include "Common/AsciiString.h"
 #include "Common/Audio/AudioEntryPoints.h"
 #include "Common/Player.h"
+#include "Common/SpecialPower.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/ActionManager.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/BloodthirstyUpdate.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/UnitSpecificSound.h"
@@ -240,6 +242,7 @@ int UnitVoiceResponse::voiceTargetArgument(int msgType)
 		case MSG_DO_GUARD_OBJECT:        // GUICommandTranslator: (target, mode)
 		case MSG_DOCK:                   // CommandXlat: (dock)
 			return 0;
+		case MSG_DO_SPECIAL_POWER_AT_OBJECT: // OrdersIntoFog / CommandXlat: (power id, target, ...)
 		case MSG_DO_WEAPON_AT_OBJECT:    // GUICommandTranslator: (weapon slot, target, max shots)
 		case MSG_ENTER:                  // CommandXlat: (entering object, container); the logic case RW 0x77AC26 reads argument 1
 			return 1;
@@ -266,6 +269,10 @@ bool UnitVoiceResponse::handles(int msgType)
 		case MSG_SELECT_TEAM0: case MSG_SELECT_TEAM1: case MSG_SELECT_TEAM2: case MSG_SELECT_TEAM3: case MSG_SELECT_TEAM4:
 		case MSG_SELECT_TEAM5: case MSG_SELECT_TEAM6: case MSG_SELECT_TEAM7: case MSG_SELECT_TEAM8: case MSG_SELECT_TEAM9:
 		case MSG_CREATE_SELECT_ALL_GROUP:
+		case MSG_DO_SPECIAL_POWER:
+		case MSG_DO_SPECIAL_POWER_AT_LOCATION:
+		case MSG_DO_SPECIAL_POWER_AT_OBJECT:
+		case MSG_DO_SPELLBOOK_SPECIAL_POWER:
 		case MSG_DO_WEAPON_AT_LOCATION:
 		case MSG_DO_WEAPON_AT_OBJECT:
 		case MSG_DO_ATTACK_OBJECT:
@@ -301,6 +308,7 @@ bool UnitVoiceResponse::handles(int msgType)
 		case VOICE_EVENT_ENTER_STATE_MOVE:
 		case VOICE_EVENT_ENTER_STATE_ATTACKMOVE:
 		case VOICE_EVENT_BLOODTHIRSTY:
+		case VOICE_EVENT_ENTER_STATE_SPECIAL_POWER:
 			return true;
 		default:
 			return false;
@@ -1044,6 +1052,48 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 			case VOICE_EVENT_ALERT:
 				fillRow(c, obj, VOICE_ALERT);
 				break;
+			case MSG_DO_SPECIAL_POWER:
+			case MSG_DO_SPECIAL_POWER_AT_LOCATION:
+			case MSG_DO_SPECIAL_POWER_AT_OBJECT:
+			case MSG_DO_SPELLBOOK_SPECIAL_POWER:
+			{
+				// RW 0x8DF7FE .. 0x8DF887: special power initiate voice
+				const SpecialPowerTemplate *spt = info ? info->powerTemplate : nullptr;
+				if (spt)
+				{
+					// RW 0x8DF819: find special power module interface of this type on the unit (RW 0x691526)
+					const SpecialPowerModuleInterface *spm = obj.findSpecialPowerModuleInterface(spt->getSpecialPowerType());
+					if (spm)
+					{
+						// RW 0x8DF846: vslot 0x40 returns copy of module data + 0x10 (InitiateSound, RW 0x8969AC)
+						const std::string &initiateSound = spm->getInitiateSound();
+						if (!initiateSound.empty())
+						{
+							// RW 0x8DDA33: fill candidate voice slot if empty (crowd slot arg at RW 0x8DF849 is empty voice from RW 0x8C72DF)
+							if (!c.voice.any())
+							{
+								c.voice.sound = initiateSound;
+							}
+						}
+					}
+					// RW 0x8DD876 -> 0x8DF890: if slot remains empty, fallback to UnitSpecificSoundToUseAsInitiateIntendToDoVoice
+					if (!done(c))
+					{
+						fillName(c, obj, spt->getUnitSpecificSoundToUseAsInitiateIntendToDoVoice());
+					}
+				}
+				break;
+			}
+			case VOICE_EVENT_ENTER_STATE_SPECIAL_POWER:
+			{
+				// RW 0x8DFCE1: enter-state special power voice (SpecialPowerTemplate + 0x40)
+				const SpecialPowerTemplate *spt = info ? info->powerTemplate : nullptr;
+				if (spt)
+				{
+					fillName(c, obj, spt->getUnitSpecificSoundToUseAsEnterStateInitiateIntendToDoVoice());
+				}
+				break;
+			}
 			default:
 				break;
 		}
@@ -1191,8 +1241,8 @@ std::vector<std::string> UnitVoiceResponse::acceptanceStops()
 		"rerolls per logic frame (retail: per client frame); the move and ambient sounds of the logic and the audio side do not ask the selectors (S-712)",
 		"[S-702] unit voice: the enemy-near query of the battle voices (RW 0x701443 -> 0x7006D7 with filter 0x6E and the object's vision range RW 0x68E43B, which "
 		"scales obj + 0x1B0 by a module bonus) is approximated by `a living object of an ENEMIES relationship within the template's VisionRange (2D)`",
-		"[S-703] unit voice: message types of RW 0x8DEDBB not answered here: special powers (0x410 .. 0x412, 0x456), combine hordes (0x423), weapon modes (0x43A), "
-		"the planned action queue (0x46A), VoiceDesperateAttack / RapidFire / CaptureBuildingComplete / StartCharging / NoBuild (0x7DB .. 0x7DD, 0x7EA .. 0x7EC), "
+		"[S-703] unit voice: message types of RW 0x8DEDBB not answered here: combine hordes (0x423), weapon modes (0x43A), "
+		"the planned action queue (0x46A), VoiceDesperateAttack / RapidFire / CaptureBuildingComplete / StartCharging / NoBuild (0x7DB .. 0x7DD, 0x7EA .. 0x7EB), "
 		"the Ring voices (0x7E3 .. 0x7E5, 0x7E9)",
 		"[S-704] unit voice: rules of the move / attack / enter helpers not ported: the planning order mode (player + 0x770 == 2 -> MiscAudio PlanningModeOrderGiven), "
 		"VoiceCrush (GameData + 0x8B9, crushable target), the busy gate (GameData + 0x8B0), the castle and camp rules (RW 0x8DDBC4, campness RW 0x8DD6F3 with "
@@ -1241,6 +1291,14 @@ void PlayUnitVoiceForMessage(UnitVoiceResponse &voice, const std::vector<ObjectI
 		{
 			info.hasPosition = true;
 			info.position = a->location;
+		}
+	}
+	if (type == MSG_DO_SPECIAL_POWER || type == MSG_DO_SPECIAL_POWER_AT_LOCATION ||
+	    type == MSG_DO_SPECIAL_POWER_AT_OBJECT || type == MSG_DO_SPELLBOOK_SPECIAL_POWER)
+	{
+		if (msg.getArgumentCount() > 0 && msg.getArgument(0)->type == ARGUMENTDATATYPE_INTEGER && TheSpecialPowerStore)
+		{
+			info.powerTemplate = TheSpecialPowerStore->findSpecialPowerTemplateByID((unsigned)msg.getArgument(0)->integer);
 		}
 	}
 	voice.pickAndPlay(selection, type, &info);

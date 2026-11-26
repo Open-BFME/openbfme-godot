@@ -6,6 +6,8 @@
 
 #include <cmath>
 
+#include "GameClient/TacticalCamera.h"
+
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 namespace
@@ -262,6 +264,17 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 		}
 		return;
 	}
+	if (a == "FOCAL_LENGTH_CAMERA")
+	{
+		// lane PORT-439: RW 0x7CAFA5 case 0x185 -> RW 0x7CB6FB(param 0 real, 1, 2, 3 as reals) -> RW 0x7BB627(focal, seconds * 1000 (RW 0xBD4388),
+		// easeIn * 1000, easeOut * 1000) -> TheTacticalView vslot 0xF0 = View::setFocalLength RW 0x48885E (one camera, so the client list has it
+		// once; the game's HUD camera takes it at once, see the request's focal_mm in scripts/campaign_cine.gd). The director keeps the same animation
+		// for the viewers, whose camera it drives itself and which have no TacticalCamera: the angle the focal length means
+		// (RW 0x8DAF6C: focalLengthToFov * 57.295776 degrees) from the one it is at now, over the action's seconds and eases
+		m_focal.start(m_focal.value, realParam(r, 1), realParam(r, 2), realParam(r, 3), r.focalMm);
+		m_focalStarted = true;
+		return;
+	}
 	if (a == "SET_CAMERA_CLIP_DEPTH_MULTIPLIER")
 	{
 		return; // lane MODCOMPAT-AI: the HUD camera's far plane (scripts/campaign_cine.gd -> InGameHud camera_set_clip_depth_multiplier)
@@ -281,6 +294,14 @@ void ScriptCameraDirector::Scalar::start(float target, float seconds, float ease
 	{
 		update(0.0);
 	}
+}
+
+// lane PORT-439: FOCAL_LENGTH_CAMERA: an angle in degrees that the focal length `focalMm` means (RW 0x8DAF6C: focalLengthToFov(mm) * 57.295776,
+// the view's + 0x240), from `fromValue` over the action's seconds with its eases (RW 0x48885E's + 0x24C ease on the milliseconds)
+void ScriptCameraDirector::Scalar::start(float fromValue, float seconds, float easeIn, float easeOut, float focalMm)
+{
+	value = fromValue;
+	start(TacticalCamera::focalLengthToFov(focalMm) * 57.2957763671875f, seconds, easeIn, easeOut);
 }
 
 void ScriptCameraDirector::Scalar::update(double dt)
@@ -364,6 +385,7 @@ void ScriptCameraDirector::update(double ms, std::uint32_t presentedFrame, doubl
 	}
 	m_zoom.update(ms);
 	m_pitch.update(ms);
+	m_focal.update(ms); // lane PORT-439: the viewers' focal-length angle (the game's camera steps its own in TacticalCamera::update)
 	if (m_notificationMs > 0.0)
 	{
 		m_notificationMs -= ms;

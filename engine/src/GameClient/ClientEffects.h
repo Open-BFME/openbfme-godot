@@ -13,7 +13,7 @@
 //     value (SCORCH_MARKS_IN_TEXTURE 9, SCORCH_PER_ROW 3) and the vertex colour terrain ambient + 0.5 * diffuse * the terrain light
 //     scale (TARGET RW 0x4670E1, TerrainLightScale.h; the donor body is BaseHeightMapRenderObjClass_updateScorches.cpp).
 //   * DynamicDecal -> TARGET RW 0x5E05AB / 0x5DFBEC (DynamicDecalFXNugget::doFXPos) -> TheProjectedShadowManager::addDecal,
-//     DONOR BFME2 0x1E0E43 (DynamicDecalFXNuggetDoFXPos.cpp): a projected decal with the opacity envelope of the donor's 0x330A37
+//     DONOR BFME2 0x1E0E43 (EvaEventFXNugget.cpp DynamicDecalFXNugget::doFXPos): a projected decal with the opacity envelope of the donor's 0x330A37
 //     and the per-frame update 0x10C785 (delay, fade one, peak hold, fade two, lifetime), the colour RGBColor::getAsInt and the
 //     texture as written.
 //   * LightPulse -> TARGET RW 0x5DFAA3 / 0x5DFAE4 (LightPulseFXNugget) -> TheDisplay vslot 0xBC (createLightPulse),
@@ -89,6 +89,7 @@ struct LightPulseFx
 	float targetEnd = 0.0f;
 	RGBColor targetColor{ 0.0f, 0.0f, 0.0f };
 	bool enabled = false;
+	bool isPersistent = false; ///< true for persistent dynamic lights (W3DLightDraw) so transient FX pulses never alias the slot
 	// DONOR BFME2 0x6DE3D On_Frame_Update: one client frame; returns false when the light expired on this frame
 	bool step();
 	// the scale On_Frame_Update last wrote (0 .. 1)
@@ -106,8 +107,16 @@ public:
 	static constexpr size_t kMaxLights = 64; // the pool grows in retail; 64 active pulses is already far past any retail FXList
 	// DONOR BFME2 0x4423C: a range below 21 makes no light; the new light takes a disabled pool slot (the retail pool reuses disabled lights)
 	bool add(const Coord3D &pos, const RGBColor &color, float radius, std::uint32_t increaseFrames, std::uint32_t decreaseFrames);
+
+	// Persistent dynamic light (W3DLightDraw, RW 0x004CE750 / DONOR BFME2 0x004CEF80).
+	// Returns a pool slot index (>= 0), or -1 if full. Does not apply the 21.0f range floor of transient pulses.
+	int addPersistent(const Coord3D &pos, const RGBColor &color, float radius);
+	void updatePersistent(int handle, const Coord3D &pos, const RGBColor &color, float radius, bool enabled);
+	void removePersistent(int handle);
+
 	void step();
 	const std::vector<LightPulseFx> &lights() const { return m_lights; }
+	std::vector<LightPulseFx> &lightsMutable() { return m_lights; }
 	unsigned long long additions() const { return m_additions; }
 	unsigned long long refusedRange() const { return m_refusedRange; }
 	unsigned long long overflow() const { return m_overflow; }

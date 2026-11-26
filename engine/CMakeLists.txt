@@ -185,6 +185,7 @@ include(cmake/Port4.cmake) # OPENBFME_PORT4_TESTS
 include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Port166.cmake) # PORT-166: the ordered slot lock survives the shot that starts the reload (fork issue 395; OPENBFME_PORT166_TESTS)
 include(cmake/Port302.cmake) # retail 2.01 InactiveBody armor flags and damage
+include(cmake/Port226.cmake) # OPENBFME_PORT226_TESTS: the idle state's stance countdown
 include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
@@ -271,6 +272,7 @@ include(cmake/Flank1.cmake)     # FLANK-1: flank at fire time, crush contact, pr
 include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (appends to OPENBFME_SIM_SOURCES; OPENBFME_HUD4_TESTS)
 include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
+include(cmake/Local107.cmake)
 include(cmake/Autocast1.cmake)  # AUTOCAST-1: the ability autocast toggle and glow (OPENBFME_AUTOCAST1_TESTS)
 include(cmake/CampUi1Stance.cmake) # CAMPUI-1: the stance toggle's radial (OPENBFME_CAMPUI1_STANCE_SOURCES / _TESTS)
 include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
@@ -344,6 +346,7 @@ include(cmake/Decompfix1109.cmake) # DECOMPFIX-1109: FLEECHASE-1, ENTERADJUST-1,
 include(cmake/Port5.cmake)      # PORT-5: the bird's deferred ability target (OPENBFME_PORT5_TESTS)
 include(cmake/Port256.cmake)   # PORT-256: the weapon-switching powers (OPENBFME_PORT256_TESTS)
 include(cmake/Port426.cmake) # PORT-426: Shift on a production button queues five units (fork issue 426; OPENBFME_PORT426_TESTS)
+include(cmake/Port439.cmake)    # PORT-439: the script action FOCAL_LENGTH_CAMERA (the view's focal length; OPENBFME_PORT439_TESTS)
 include(cmake/Taintarea1.cmake) # TAINTAREA-1: TheTaintManager, the taint / elven wood grid (appends to OPENBFME_SIM_SOURCES; OPENBFME_TAINTAREA1_TESTS)
 include(cmake/Threatlevel1.cmake) # THREATLEVEL-1: the map scripts' threat conditions and counters (appends to OPENBFME_SIM_SOURCES; OPENBFME_THREATLEVEL1_TESTS)
 include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-objects test RW 0x796D37 (OPENBFME_BUILDCLEAR1_TESTS)
@@ -521,6 +524,10 @@ target_sources(openbfme_core PRIVATE
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.cpp
+    src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.cpp # lane LOCAL-28 (object lights, both editions)
+    src/GameClient/DrawableLight.cpp # lane LOCAL-28: the drawable's light step and bone position (client only, excluded from the sim audit)
+    src/Libraries/WWVegas/WWMath/matrix3d.cpp # lane LOCAL-25 (#430): Matrix3D::Rotate_X / _Y / _Z (client only)
+    src/GameClient/DrawablePhysics.cpp # lane LOCAL-25 (#430): the drawable's presentation physics, pitch / roll / suspension (client only, excluded from the sim audit)
     src/GameClient/MapObjectDrawables.cpp
     src/GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.cpp)
 # ---- LUA-1 sources (Lua scripting: XML reader, event registry, engine, bindings) ----
@@ -675,6 +682,7 @@ add_library(openbfme SHARED
     src/GodotDevice/GodotInGameHud.cpp
     src/GodotDevice/GodotPlacementGhost.cpp # BUILD-5
     src/GodotDevice/GodotPathfindView.cpp
+    src/GodotDevice/GodotGameWorldPrewarm.cpp # PERF-4: client model prewarm, excluded from the sim audit
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
     src/GodotDevice/GodotShaderBudget.cpp # SHADER-BUDGET-1
@@ -762,8 +770,10 @@ add_executable(openbfme_tests
     ${OPENBFME_PATH2_TESTS}
     ${OPENBFME_XP_TESTS}
     ${OPENBFME_FACTB_TESTS}
+    ${OPENBFME_PORT439_TESTS}
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_PORT166_TESTS}
+    ${OPENBFME_PORT226_TESTS}
     ${OPENBFME_PORT54_TESTS}
     ${OPENBFME_PORT4_TESTS}
     ${OPENBFME_PORT8_TESTS}
@@ -880,6 +890,7 @@ add_executable(openbfme_tests
     ${OPENBFME_DECOMP1_TESTS}
     ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
+    ${OPENBFME_LOCAL107_TESTS}
     ${OPENBFME_AUTOCAST1_TESTS}
     ${OPENBFME_CAMPUI1_STANCE_TESTS}
     ${OPENBFME_HUD6_TESTS}
@@ -1010,6 +1021,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail.cpp
     tests/test_w3d_draw_runtime.cpp
     tests/test_w3d_draw_retail_units.cpp
+    # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
+    tests/test_local_28.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp
@@ -1040,6 +1053,7 @@ add_executable(openbfme_tests
     # lane LOGIC-1
     tests/test_logic_scheduler.cpp
     tests/test_logic_objects.cpp
+    tests/test_lifetime_xfer.cpp
     tests/test_logic_players.cpp
     tests/test_logic_modules.cpp
     tests/test_logic_hash.cpp
@@ -1052,6 +1066,10 @@ add_executable(openbfme_tests
     # lane LOCAL-62 (capturing a production building cancels and releases its queue, RW 0x69974D -> RW 0x8A1666)
     tests/test_local_62.cpp
     tests/test_local_91.cpp
+    # lane LOCAL-17 (tree and shrub textures: W3DTreeDraw/TextureName)
+    tests/test_local_17.cpp
+    # lane LOCAL-25 (locomotor ground motion presentation: calcPitchRoll / calcPhysicsXform, RW 0x670570 / 0x67BDC0)
+    tests/test_local_25.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy
@@ -1063,7 +1081,9 @@ add_executable(openbfme_tests
     tests/test_capcrash1.cpp
     # lane VISIONDEF-1: the vision height bonus's ground reference (Object + 0x1C4)
     tests/test_visiondef1_retail.cpp
-    tests/test_local_81.cpp)
+    tests/test_local_81.cpp
+    # lane PERF-4: the prewarm wave cap's environment contract
+    tests/test_prewarm_policy.cpp)
 target_sources(openbfme_tests PRIVATE
     tests/test_coverage_online_shell.cpp
     tests/test_coverage_simple_screens.cpp

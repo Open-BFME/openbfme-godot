@@ -128,6 +128,11 @@ public:
 	virtual void doSpecialPowerAtObject(Object *target, unsigned options) = 0;          // slot 0x2C
 	virtual void doSpecialPowerAtLocation(const Coord3D &loc, unsigned options) = 0;    // slot 0x30
 	virtual void pauseCountdown(bool pause) = 0;                                        // slot 0x24 (lane HERO-2: in the interface, RW 0x8B9676 calls it so)
+	virtual const std::string &getInitiateSound() const                                 // slot 0x40 (RW 0x8969AC)
+	{
+		static const std::string empty;
+		return empty;
+	}
 };
 
 // SpecialPowerModule (RW module vtable 0xC65058, interface 0xC64FF0; constructor RW 0x8973EE). Module fields: + 0x14 the recharge length,
@@ -156,6 +161,11 @@ public:
 	void doSpecialPower(unsigned options) override;
 	void doSpecialPowerAtObject(Object *target, unsigned options) override;
 	void doSpecialPowerAtLocation(const Coord3D &loc, unsigned options) override;
+	const std::string &getInitiateSound() const override // slot 0x40 (RW 0x8969AC)
+	{
+		static const std::string empty;
+		return m_spData ? m_spData->m_initiateSound : empty;
+	}
 
 	// lane HERO-1: the module's vslot 0x38 (RW 0x897D25 -> 0x897987(null)): the trigger a SpecialAbilityUpdate runs when its preparation starts (the
 	// recharge, the light points and the trigger effects at the object; the subclass effect is not part of it)
