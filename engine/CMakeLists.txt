@@ -1018,6 +1018,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail_units.cpp
     # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
     tests/test_local_28.cpp
+    # ScoredKillEvaAnnouncer (RW 0x8256E4 / 0x825995 / 0x961353)
+    tests/test_scored_kill_eva_announcer.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp

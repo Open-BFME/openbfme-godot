@@ -12,6 +12,7 @@ set(OPENBFME_AUDIO_SOURCES
     src/Common/Audio/MiscAudio.cpp
     src/Common/Audio/AudioIni.cpp
     src/Common/Audio/EvaEvents.cpp
+    src/Common/Audio/ScoredKillEvaAnnouncer.cpp
     src/Common/Audio/LargeGroupAudio.cpp
     # the manager core: event instances, the asset cache, the simulated device
     src/Common/Audio/AudioEventRTS.cpp
