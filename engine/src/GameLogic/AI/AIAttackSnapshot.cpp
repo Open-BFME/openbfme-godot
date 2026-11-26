@@ -8,6 +8,7 @@
 // AIStateMachine::xfer (its states' ids must agree).
 
 #include "GameLogic/AI/AIAttack.h"
+#include "GameLogic/AI/AIAttackHordePosition.h"
 
 #include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIXfer.h"
@@ -57,8 +58,11 @@ void AIAttackState::xfer(Xfer &x)
 			throw XferException("ai attack: a horde attack machine saved for an AI that makes none");
 		}
 		break;
+	case MADE_HORDE_POSITION:
+		loaded = makeHordePositionAttackMachine(ai(), *this);
+		break;
 	default:
-		throw XferException("ai attack: an attack machine of kind " + std::to_string(made) + " (0 .. 4)");
+		throw XferException("ai attack: an attack machine of kind " + std::to_string(made) + " (0 .. 5)");
 	}
 	if (loaded)
 	{
