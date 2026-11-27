@@ -6,6 +6,7 @@
 
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GameClient/FXLightCull.h"
 #include "GameClient/ParticleTexture.h"
 #include "Libraries/WWVegas/WW3D2/fxshadergen.h"
 
@@ -200,6 +201,9 @@ Dictionary FXPlayer::setup(const Ref<RetailFileSystem> &fs)
 		m_hadDecals = false;
 	}
 	m_playback = std::make_unique<FXPlayback>(*fs->archive(), RandomAlgorithm::RotWK_GameDat_LCG);
+	// PORT-330 (S-190): the `Sound` / `EvaEvent*` names of a retail FXList block are checked against TheAudio's and TheEva's tables while the block
+	// parses (RW 0x73B217 -> 0x73AA94, RW 0x5DE588 -> 0x5DE0D8); the game's object world owns both, and its load precedes this one
+	m_playback->setParseServices(m_fxParseServices);
 	for (const std::string &e : m_playback->loadRetailData())
 	{
 		errors.push_back(toGodot(e));
@@ -595,26 +599,96 @@ void FXPlayer::updateLightPulseUniforms()
 	// the shader's lights are view-space (the object shaders light in view space); the camera is the one the next frame draws
 	Transform3D view;
 	bool haveView = false;
+	Vector3 cameraWorldPos;
 	if (Viewport *vp = get_viewport())
 	{
 		if (Camera3D *c = vp->get_camera_3d())
 		{
 			view = c->get_global_transform().affine_inverse();
+			cameraWorldPos = c->get_global_position();
 			haveView = true;
 		}
 	}
-	size_t used = 0;
+	std::vector<FXCullPlane> planes;
+	for (const Plane &pl : cullPlanes())
+	{
+		planes.push_back({ (float)pl.normal.x, (float)pl.normal.y, (float)pl.normal.z, (float)pl.d });
+	}
+
+	struct CandidateLight
+	{
+		const LightPulseFx *light = nullptr;
+		Vector3 viewPos;
+		float contribution = 0.0f; // RW 0x005403ED (Diffuse.Length2)
+	};
+	std::vector<CandidateLight> candidates;
 	for (const LightPulseFx &l : m_playback->lightPulses().lights())
 	{
-		if (!l.enabled || used >= 4)
+		if (!l.enabled)
+		{
+			continue;
+		}
+		const RGBColor c = l.colorNow();
+		// RW 0x00540261 (LightEnvironmentClass::Add_Light): black light cull (< 0.05f on all RGB channels, 0x00BDD760)
+		if (c.red < 0.05f && c.green < 0.05f && c.blue < 0.05f)
+		{
+			continue;
+		}
+		const float range = l.range();
+		if (range <= 0.0001f)
 		{
 			continue;
 		}
 		const Vector3 world = toGodotSpace(l.position);
+
+		// RW 0x0046FCF9 (RTS3DScene::renderOneObject): cull against view frustum (Spheres_Intersect); Godot's frustum normals point out (fxSphereVisible)
+		if (!fxSphereVisible(planes, (float)world.x, (float)world.y, (float)world.z, range))
+		{
+			continue;
+		}
+
+		// RW 0x0053F640: linear attenuation over range: clamp(1.0 - (dist - attenStart)/(attenEnd - attenStart))
+		// RW 0x005403ED: Contribution = effectiveDiffuse.Length2()
+		// INFERENCE (S-687): retail ranks per render object at the object's centre; the Godot uniforms are viewport-global, so the
+		// distance here is measured from the camera
+		float contribution = 0.0f;
+		if (haveView)
+		{
+			const float dist = (world - cameraWorldPos).length();
+			const float atten = std::clamp(1.0f - (dist - l.farAttenStart) / std::max(0.001f, range - l.farAttenStart), 0.0f, 1.0f);
+			const float effR = c.red * atten;
+			const float effG = c.green * atten;
+			const float effB = c.blue * atten;
+			contribution = effR * effR + effG * effG + effB * effB;
+		}
+		else
+		{
+			contribution = c.red * c.red + c.green * c.green + c.blue * c.blue;
+		}
+
 		const Vector3 pos = haveView ? view.xform(world) : world;
+		candidates.push_back({ &l, pos, contribution });
+	}
+
+	// RW 0x0054044B: sorted by Contribution descending, top 4 chosen (MAX_LIGHTS = 4)
+	if (candidates.size() > 4)
+	{
+		std::stable_sort(candidates.begin(), candidates.end(), [](const CandidateLight &a, const CandidateLight &b) {
+			return a.contribution > b.contribution;
+		});
+	}
+
+	size_t used = 0;
+	for (const CandidateLight &cand : candidates)
+	{
+		if (used >= 4)
+		{
+			break;
+		}
+		const LightPulseFx &l = *cand.light;
 		const RGBColor c = l.colorNow();
 		const String base = String("w3d_pulse") + String::num_int64((int64_t)used);
-		rs->global_shader_parameter_set(StringName(base), Vector4(pos.x, pos.y, pos.z, l.range()));
+		rs->global_shader_parameter_set(StringName(base), Vector4(cand.viewPos.x, cand.viewPos.y, cand.viewPos.z, l.range()));
 		rs->global_shader_parameter_set(StringName(base + String("_col")), Vector4(c.red, c.green, c.blue, 0.0f));
 		++used;
 	}

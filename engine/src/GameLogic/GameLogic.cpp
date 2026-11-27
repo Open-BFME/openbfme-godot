@@ -1356,6 +1356,12 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		{
 			x.addI32(m_rankLevelLimit);
 		}
+		// PORT-301: GameLogic + 0x9F (m_heroExperienceSharing) when toggled off by SET_HERO_EXPERIENCE_SHARING (RW 0x7BD3D1);
+		// games where it stays at its retail default (true, RW 0x62D299) keep their existing hashes.
+		if (!m_heroExperienceSharing)
+		{
+			x.addBool(false);
+		}
 		x.addU32(m_nextObjectID);
 		if (ModEngineFeatures::has(ModEngineFeature::EdainUnchainedUniqueProductionId))
 		{

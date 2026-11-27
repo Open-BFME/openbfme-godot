@@ -275,7 +275,7 @@ bool parseBridgeField(const std::string &key, const std::string &val, RoadType &
 	}
 	if (key == "damagedtosound" || key == "repairedtosound")
 	{
-		// RW 0x73B217 -> 0x73AA94: "NoSound" (any case) clears; any other name must be a known audio event (not checked here: S-7221)
+		// RW 0x73B217 -> 0x73AA94: "NoSound" (any case) clears; any other name must be a known audio event (not checked here: S-7223)
 		const std::string name = firstToken(val);
 		(key == "damagedtosound" ? r.damageToSound : r.repairedToSound)[1] = equalsNoCase(name, "NoSound") ? std::string() : name;
 		return true;

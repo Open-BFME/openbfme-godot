@@ -19,6 +19,7 @@
  ],
  "excluded": [
   {"glob": "src/GameClient/CreateAHeroStats.cpp", "reason": "Create-a-Hero client profile statistics file IO; never simulation state"},
+  {"glob": "src/GameClient/FXListParseServices.cpp", "reason": "PORT-330 (S-190): read-only parse-time lookup adapter validating FXList Sound / EvaEvent names against loaded audio/Eva tables; never writes simulation state"},
   {"glob": "src/GameClient/TutorialSettings.cpp", "reason": "lane BFME2CAMP1: GameData's Basic / Advanced tutorial records the main menu's OnTutorial reads (the map to start, its load screen and music); no logic state, the logic gets only the map name and the tutorial game mode"},
   {
    "glob": "src/Common/System/FloatFromChars.cpp",
@@ -621,6 +622,10 @@
    "reason": "the control bar view model (button states, queue display, money): client user interface reading the logic; the messages a press builds are in ControlBarCommandProcessing.cpp (manifested)"
   },
   {
+   "glob": "src/GameClient/ControlBarScheme.cpp",
+   "reason": "control bar scheme INI loader (button border colours per side): client UI presentation only"
+  },
+  {
    "glob": "src/GameClient/Radar.cpp",
    "reason": "the radar picture: client user interface reading the logic"
   },
@@ -639,6 +644,14 @@
   {
    "glob": "src/GameClient/MessageStream/LookAtXlat.cpp",
    "reason": "the LookAt translator: raw input to camera movement, client state; it emits no GameMessage (CAM-1)"
+  },
+  {
+   "glob": "src/GameClient/DrawableLight.cpp",
+   "reason": "lane LOCAL-28 (#331): W3DLightDraw's drawable side (the flicker / pulse step by render time, RW 0x4CE930; the bone position an AttachToBoneInAnotherModule light follows, RW 0x672B5B): reads the draw frames and the drawable's transform, writes only the client light pool, never simulation state"
+  },
+  {
+   "glob": "src/GameClient/DrawablePhysics.cpp",
+   "reason": "lane LOCAL-25 (#430): the drawable's presentation physics (calcPitchRoll RW 0x670570, calcPhysicsXform RW 0x67BDC0: wheels, treads, four legs, ships, giant birds): reads the object snapshot, the locomotor template and the client terrain sampler, steps on the client frame, writes only the drawable's presentation pose, never simulation state"
   },
   {
    "glob": "src/GameClient/DrawableFade.cpp",
@@ -899,6 +912,10 @@
   {
    "glob": "src/GodotDevice/GodotGameWorldSave.cpp",
    "reason": "lane SAVE-2: GameWorld's saves (writes the running recording's log to a file, lists the Save folder, starts a loaded save's catch-up and hands the game over with a continuing recording; the catch-up's audio is silenced, its queued effects dropped): client side, never part of the logic state"
+  },
+  {
+   "glob": "src/GodotDevice/GodotGameWorldPrewarm.cpp",
+   "reason": "lane PERF-4: GameWorld's load-time model prewarm and spare-time waves (W3D model, texture and material builds kept in the draw cache) and the two-second pivot-fade warm-up: client rendering, reads the logic's templates and objects, never writes simulation state; its wall-clock timings are load-report and wave-pacing data only"
   },
   {
    "glob": "src/GameNetwork/OrdersIntoFog.cpp",
