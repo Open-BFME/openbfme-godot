@@ -7,7 +7,7 @@
 //   * the hover (AptPlayer::HandleOverButtons RW 0x624C68, BFME2 decomp AptPlayer.cpp, tier A): the hovered button's target path below its
 //     level ("SoloPlayNav/Skirmish/bttn"; an unnamed button gives an empty last name, so the path ends with '/') goes first to the level's over-button
 //     handlers, then "<movie without its extension>/<path>" to the global ones (the hero bar, the spell book: InGameHud); a name that does not end with '/'
-//     goes to the tooltip function (RW 0x6235E2, decomp attempt 0x002238e6.cpp): the name is replaced by its ButtonMap entry when it has one (the map at
+//     goes to the tooltip function (RW 0x6235E2, decomp AptPlayer.cpp rva002238E6): the name is replaced by its ButtonMap entry when it has one (the map at
 //     + 0xC, filled from data\ini\AptButtonTooltipMap.ini's "ButtonMap = <path> <name>" rows), the text "TOOLTIP:" + name is fetched, and ONLY when the
 //     string file has it Mouse::setCursorTooltip(text, -1, null, 1.0) runs (RW 0x5EE1A6, BFME2 decomp MouseRva001EEA6D.cpp, tier A: the request text,
 //     the delay override -1, the default colour);

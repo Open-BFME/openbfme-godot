@@ -76,6 +76,7 @@ InGameHud::InGameHud(Config config)
 	m_environment.gameText = m_config.gameText;
 	m_input = std::make_unique<HudInput>(m_config.game.logic(), &m_config.game.ai(), m_config.view, m_config.game.commands(), m_config.mouse, m_config.metaMap);
 	m_input->context().commands = &m_config.world.commands();
+	m_input->context().schemes = &m_config.world.schemes();
 	m_input->context().formations = &m_config.world.formations();
 	// lane SPELLRC-1: a right click (not a drag) ends the spell book power waiting for its target, in the GUI command translator as RotWK's does (RW 0x83D7AD);
 	// the right press itself is the world's (the camera's RMB scroll, RW 0x83DB83 is reached only by the click)
@@ -154,14 +155,18 @@ InGameHud::InGameHud(Config config)
 		PlayUnitVoiceForMessage(*m_voice, m_input->ui().selected(), msg);
 	});
 	// the logic's voice events (ProductionUpdate's VoiceCreated RW 0x8A2A48, ...): the made object alone is the "selection" (RW passes its drawable list)
-	AudioApi::installUnitVoiceHandler([this](int voiceEvent, std::uint32_t objectId, std::uint32_t producerId) {
+	AudioApi::installUnitVoiceHandler([this](const AudioApi::UnitVoiceParams &p) {
 		if (const Player *local = m_input->context().localPlayer())
 		{
 			m_voice->setLocalPlayerIndex(local->getPlayerIndex());
 		}
 		UnitVoiceResponse::Info info;
-		info.producer = (ObjectID)producerId;
-		m_voice->pickAndPlay({ (ObjectID)objectId }, voiceEvent, &info);
+		info.producer = (ObjectID)p.producerId;
+		info.powerTemplate = p.powerTemplate;
+		info.target = (ObjectID)p.targetId;
+		info.hasPosition = p.hasPosition;
+		info.position = Coord3D{ p.posX, p.posY, p.posZ };
+		m_voice->pickAndPlay({ (ObjectID)p.objectId }, p.voiceEvent, &info);
 	}, this);
 }
 
@@ -191,6 +196,7 @@ InGameHud::~InGameHud()
 	}
 	m_config.game.drawables().setHeroAttackedHandler(nullptr);
 	m_config.game.drawables().setHeroFlashHandler(nullptr);
+	m_config.game.drawables().setDeselectLocalHandler(nullptr);
 	m_heroSelect.reset();
 	// the screen before the window manager it registered on
 	m_ownedPalantir.reset();
@@ -311,6 +317,17 @@ bool InGameHud::boot(std::string *error)
 	m_heroSelect = std::make_unique<InGameHeroSelect>(m_input->context(), builderCycleTimeoutMs);
 	m_config.game.drawables().setHeroAttackedHandler([this](ObjectID id) { m_heroSelect->onHeroAttacked(id); });
 	m_config.game.drawables().setHeroFlashHandler([this](const std::string &name, int frames) { m_heroSelect->flashHeroButton(name, frames); });
+	// lane POSTERNPLOT-1, RW 0x85834C .. 0x858389: the local player's object leaves the selection (the message, then TheInGameUI's deselectDrawable)
+	m_config.game.drawables().setDeselectLocalHandler([this](ObjectID id, int ownerIndex) {
+		HudContext &ctx = m_input->context();
+		const Player *local = ctx.localPlayer();
+		if (!local || ownerIndex < 0 || local->getPlayerIndex() != ownerIndex)
+		{
+			return;
+		}
+		ctx.stream.append(MSG_REMOVE_FROM_SELECTED_GROUP).appendObjectID(id);
+		ctx.ui.deselectObject(id);
+	});
 	m_palantirRef->setHeroSelectHandler([this](const std::string &clipPath, bool loaded) {
 		if (!loaded)
 		{

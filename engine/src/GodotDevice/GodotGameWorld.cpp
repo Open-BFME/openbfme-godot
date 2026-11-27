@@ -678,6 +678,12 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 	m_treeTopple.reset(); // lane SPELL-3
 		reset_streaks(); // the streak texture factory references the previous archive file system
 		m_fs = fs;
+		if (m_fxPlayer)
+		{
+			// PORT-330 port fix: the FX player (kept across setups) holds the old world's FXList parse services; they go with that world, so
+			// the player and its playback must not keep the pointer when this setup fails before the FX block hands them the new world's
+			m_fxPlayer->setParseServices(nullptr);
+		}
 		m_world.reset(new RetailObjectWorld(*fs->archive_fs()));
 		m_options.reset(new MapObjectOptions());
 		std::string error;
@@ -739,6 +745,9 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 				m_fxPlayer->set_name("LiveFX");
 				add_child(m_fxPlayer);
 			}
+			// PORT-330 (S-190): the FXList blocks the FX player parses are checked against the same TheAudio / TheEva tables the world loaded.
+			// Port fix: a world the map cache or the settings dropped above leaves none (the services went with it), never a dangling pointer
+			m_fxPlayer->setParseServices(m_world ? m_world->fxListParseServices() : nullptr);
 			const Dictionary fx = m_fxPlayer->setup(fs);
 			m_fxSetupErrors = fx.get("errors", Array());
 			for (int64_t i = 0; i < m_fxSetupErrors.size(); ++i)
@@ -906,6 +915,11 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		else if (p.kind == W3D_DRAWKIND_FLOOR && p.module < d.draws.size())
 		{
 			swaps = floorWeatherSwaps(d.draws[p.module].data, m_streakWeather); // a map-placed building's floor (bib) on a snowy map
+		}
+		else if (p.kind == W3D_DRAWKIND_TREE && !p.textureName.empty())
+		{
+			// RW 0x4E8C1B / RW 0x4EC9B5: W3DShrubBuffer / W3DTreeBuffer keys tree types by (ModelName, TextureName) and applies TextureName
+			swaps.emplace_back("*", p.textureName);
 		}
 		const std::string key = AsciiStringUtil::lowered(p.modelName) + W3DInstancer::Texture_Swap_Suffix(swaps);
 		auto it = m_staticModels.find(key);
@@ -1825,8 +1839,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 		remove_view((uint32_t)id);
 		return;
 	}
-	const Coord3D shownAt = *d->getPosition();
-	const Transform3D xf = toTransform(d->getBasis(), shownAt, d->getInstanceScale());
+	float presentationBasis[9];
+	Coord3D shownAt;
+	d->getPresentationPose(presentationBasis, shownAt);
+	const Transform3D xf = toTransform(presentationBasis, shownAt, d->getInstanceScale());
 	const bool xfChanged = !v.haveXf || !(xf == v.lastXf);
 	// VIS-1 / STEALTH-1 / GARRISON-1 / lane VISUAL-2: what the presented snapshot leaves undrawn and the fogged ghost's light (Drawable::presentedLook,
 	// shared with the attached particle systems, the buffs and the streaks)

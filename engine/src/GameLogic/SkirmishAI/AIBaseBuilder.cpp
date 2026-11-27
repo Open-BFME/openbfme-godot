@@ -807,7 +807,7 @@ int heroIndexFor(GameLogic &logic, AISkirmishPlayer &ai, const Player &player)
 	return u.heroIndex;
 }
 
-// RW 0x9A0993 (createBestHeroToBuild; BFME2 decomp attempt 0x0059858c.cpp, tier B edited: RotWK drops BFME2's queued-quantity term): the hero of
+// RW 0x9A0993 (createBestHeroToBuild; BFME2 decomp AIUnitBuilderRva00598D7A.cpp, tier B edited: RotWK drops BFME2's queued-quantity term): the hero of
 // heroIndexFor, its factory (RW 0x9A0705, busy ones too); when it is neither owned nor requested and has a factory: its cost (+ 0x48, RW 0x73C25F with the
 // factory) and, when the player's money (the player info record's RW 0x99E766: money + its reserve, lane AI5) reaches it and its
 // CommandPoints are below the remaining command points (limit - used, RW 0x6A7F6A; signed), a unit request with priority -1.0 (RW 0xBD19DC), + 0x21 set,
@@ -1803,7 +1803,7 @@ void processRequests(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 
 } // namespace
 
-// RW 0x8F0D54 (AIBuilder::checkForNewUpgrades in the BFME2 decomp's attempt 0x004eca01.cpp, tier B same-shape; lane DECOMP-3): when the player's Upgrade_RingHero
+// RW 0x8F0D54 (AIBuilder::checkForNewUpgrades in the BFME2 decomp's AIBuilder.cpp, tier B same-shape; lane DECOMP-3): when the player's Upgrade_RingHero
 // state (the literal RW 0xC795B0, TheUpgradeCenter RW 0x66F5E5, Player RW 0x6AC2AF) differs from + 0x154, + 0x154 takes it and every DOZER_FACTORY (template
 // + 0x120 bit 2) of the player info record's structure list (+ 8 -> + 4, in order) that resolves, is not DESTROYED (+ 0x94 bit 0) and not effectively dead
 // (+ 0x458 bit 0) is collected, then each goes through the manager's removal RW 0x6A99CB and add RW 0x6A9D9C (the AI's factory events, and the record moves it

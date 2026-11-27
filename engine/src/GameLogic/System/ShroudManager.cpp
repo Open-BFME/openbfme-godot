@@ -552,7 +552,7 @@ void ShroudManager::shape(int cx, int cy, const Radii &r, float facing, std::uin
 }
 
 // RW 0xB4DBE0 (look) / 0xB4DD90 (unlook): ceil(radius * inverse), floor((p - lo) * inverse), then the circle shape RW 0xB50C90 (BFME2 donor
-// Rva00739BE0.cpp, 0x739A30 / 0x739BE0, the same shape)
+// PartitionManager.cpp, 0x739A30 / 0x739BE0, the same shape)
 void ShroudManager::revealCircle(float x, float y, float radius, std::uint32_t mask, bool add)
 {
 	int cx, cy;
@@ -564,7 +564,7 @@ void ShroudManager::revealCircle(float x, float y, float radius, std::uint32_t m
 void ShroudManager::revealTrigger(const TriggerArea &area, std::uint32_t mask, bool add)
 {
 	// RW 0xB4DCA0 (look) / 0xB4DE50 (unlook): the trigger's bounds (RW 0x70CE4A) to cells, floor((p - lo) * inverse), then every row of that
-	// rectangle (RW 0xB50510) with a per-cell test (BFME2 donor ScriptEngineNamedMapReveal.cpp, Rva00739AF0Siblings.cpp).
+	// rectangle (RW 0xB50510) with a per-cell test (BFME2 donor ScriptEngineNamedMapReveal.cpp, PartitionManager.cpp rva00739AF0).
 	// INFERENCE (S-6102): the test is taken as pointInTrigger; the polygon object at trigger + 0x38 that retail asks was not read.
 	if (area.points.empty()) return;
 	float minX = area.points[0].x, maxX = minX, minY = area.points[0].y, maxY = minY;
