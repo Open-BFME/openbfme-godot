@@ -265,6 +265,9 @@ const FieldParse kGameDataFields[] = {
 	// row RW 0xC004E0, parseReal): the structure collapse (StructureCollapseUpdate) and the rubble state of a structure body read them
 	{ "Gravity", parseNoting<INI::parseAccelerationReal>, SEEN_DATA(SEEN_GRAVITY), (int)offsetof(BlockState, values.gravity) },
 	{ "DefaultStructureRubbleHeight", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_RUBBLE), (int)offsetof(BlockState, values.defaultStructureRubbleHeight) },
+	// Both editions: DefaultMaxDistanceForEngaged (row RW 0xC00890, +0xC38, parseReal RW 0x42ED00) and DefaultEngagedStateTimeout (row RW 0xC008A0, +0xC3C, parseDurationUnsignedInt RW 0x73A429)
+	{ "DefaultMaxDistanceForEngaged", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.defaultMaxDistanceForEngaged) },
+	{ "DefaultEngagedStateTimeout", parseNoting<INI::parseDurationUnsignedInt>, 0, (int)offsetof(BlockState, values.defaultEngagedStateTimeout) },
 	// lane COMBAT-2: the victory rules' filters (RW rows 0xC00C50 / 0xC00C60, offsets 0xEBC / 0xEC0, parser RW 0x76392F) and the seconds before the base check starts (row 0xC00EF0, + 0x110C)
 	{ "VictoryConditionStructureObjectFilter", parseNoting<parseFilterPtr>, SEEN_DATA(SEEN_VSTRUCT), (int)offsetof(BlockState, values.victoryStructureFilter) },
 	{ "VictoryConditionUnitObjectFilter", parseNoting<parseFilterPtr>, SEEN_DATA(SEEN_VUNIT), (int)offsetof(BlockState, values.victoryUnitFilter) },
@@ -813,6 +816,14 @@ void GameLogicSettings::crc(StateHasher &h) const
 	if (clampedLOSHeightForCastleStructures != 40.0f)
 	{
 		h.addFloat(clampedLOSHeightForCastleStructures); // lane LOS-1: only data that sets another value (the hash of every retail game is unchanged)
+	}
+	if (defaultMaxDistanceForEngaged != 30.0f)
+	{
+		h.addFloat(defaultMaxDistanceForEngaged); // RW GlobalData + 0xC38
+	}
+	if (defaultEngagedStateTimeout != 10u)
+	{
+		h.addU32(defaultEngagedStateTimeout); // RW GlobalData + 0xC3C
 	}
 	h.addFloat(garrisonedRangeMultiplier); // lane GARRISON-1
 	h.addU32(maxNumMembersToForceToImmediatelyEnter);

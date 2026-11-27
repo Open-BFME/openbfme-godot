@@ -15,6 +15,7 @@ endif()
 project(OpenBFME LANGUAGES C CXX)
 
 include(cmake/Sanitizers.cmake)
+include(cmake/Local187.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -761,6 +762,7 @@ endif()
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
+    ${OPENBFME_LOCAL187_TESTS}
     ${OPENBFME_PORT426_TESTS}
     tests/test_local_98.cpp
     ${OPENBFME_WIN1_TESTS}
