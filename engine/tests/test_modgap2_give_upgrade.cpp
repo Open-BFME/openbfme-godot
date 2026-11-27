@@ -4,7 +4,10 @@
 #include "CombatTestUtil.h"
 #include "Common/SpecialPower.h"
 #include "Common/Upgrade.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Module/GiveUpgradeUpdate.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -153,4 +156,58 @@ TEST_CASE("modgap2 give upgrade: a horde receives the upgrade and passes it to e
         CHECK(horde->hasUpgrade(upgrade));
         CHECK(member->hasUpgrade(upgrade));
     }
+}
+
+TEST_CASE("modgap2 give upgrade xfer: v2 round-trip, v1 UnportedUpdateModule compatibility, and v3 rejection")
+{
+    GiveWorld w;
+    Object *carrier = w.unit("TestUpgradeCarrier", 'A', 300, 300);
+    Object *recipient = w.unit("TestUpgradeRecipient", 'A', 305, 300);
+    REQUIRE(carrier);
+    REQUIRE(recipient);
+    const UpgradeTemplate *upgrade = TheUpgradeCenter->findUpgrade("Upgrade_Barracks2");
+    REQUIRE(upgrade);
+    carrier->giveUpgrade(upgrade);
+    auto *give = dynamic_cast<GiveUpgradeUpdate *>(carrier->findModule("GiveUpgradeUpdate"));
+    REQUIRE(give);
+    give->initiateIntentToDoSpecialPower(give->abilityData()->m_specialPowerTemplate, recipient, nullptr, 0, 0);
+    w.frames(1);
+    REQUIRE(give->isActive());
+
+    // v2 round-trip and version 3 rejection
+    XferSave v2Save;
+    give->xfer(v2Save);
+    REQUIRE(!v2Save.data().empty());
+    CHECK(v2Save.data().front() == 2);
+    {
+        XferLoad v2Load(v2Save.data());
+        give->xfer(v2Load);
+        CHECK(v2Load.atEnd());
+        CHECK(give->isActive());
+    }
+    {
+        std::vector<std::uint8_t> badVer = v2Save.data();
+        badVer.front() = 3;
+        XferLoad badLoad(badVer);
+        CHECK_THROWS_AS(give->xfer(badLoad), XferException);
+    }
+
+    // Real v1 legacy payload produced by UnportedUpdateModule (version 1 + UpdateModule + m_calls)
+    UnportedUpdateModule legacy(carrier, nullptr, 1);
+    legacy.update();
+    XferSave v1Save;
+    legacy.xfer(v1Save);
+    REQUIRE(!v1Save.data().empty());
+    CHECK(v1Save.data().front() == 1);
+
+    XferLoad v1Load(v1Save.data());
+    give->xfer(v1Load);
+    CHECK(v1Load.atEnd());
+    CHECK_FALSE(give->isActive());
+    CHECK(give->packingState() == 0);
+    CHECK(give->triggerCount() == 0);
+    CHECK(give->abilitiesTriggered() == 0u);
+    CHECK_FALSE(give->isFading());
+    CHECK_FALSE(give->isSearching());
+    CHECK(give->opacity() == 1.0f);
 }

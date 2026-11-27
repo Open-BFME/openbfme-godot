@@ -349,8 +349,52 @@ void GiveUpgradeUpdate::finishAbility(bool ownerDying, bool aborted)
 }
 
 void GiveUpgradeUpdate::crc(StateHasher &h) const { SpecialAbilityUpdate::crc(h); h.addBool(m_fading); h.addFloat(m_opacity); h.addBool(m_searching); }
-// RW 0x0089FB9F: base SpecialAbilityUpdate::xfer (0x852782), isLightCRC early-out, v1, m_fading (+0x88), m_opacity (+0x8C), m_searching (+0x89)
-void GiveUpgradeUpdate::xfer(Xfer &x) { SpecialAbilityUpdate::xfer(x); SnapshotXfer::version(x, 1, 1); x.xferBool(&m_fading); x.xferReal(&m_opacity); x.xferBool(&m_searching); }
+// RW 0x0089FB9F: version 2 is the native layout (SpecialAbilityUpdate::xfer, m_fading, m_opacity, m_searching).
+// Version 1 is the pre-port UnportedUpdateModule shell (UpdateModule + m_calls), which resets base and own fields to defaults.
+void GiveUpgradeUpdate::xfer(Xfer &x)
+{
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
+	if (v.current < 2)
+	{
+		xferUpdateModule(x);
+		std::uint32_t legacyCalls = 0; // UnportedUpdateModule::m_calls
+		x.xferUnsignedInt(&legacyCalls);
+		m_triggerCount = 0;
+		m_packFramesLeft = 0;
+		m_effectExpiry = 0;
+		m_packingState = 0;
+		m_prepFrames = 0;
+		m_targetID = INVALID_ID;
+		m_targetPos = Coord3D{};
+		m_lastTargetPos = Coord3D{};
+		m_extra = 0;
+		m_persistentLeft = 0;
+		m_options = 0;
+		m_captureAccumulator = 0.0f;
+		m_active = false;
+		m_approachCounter = 0;
+		m_keepActive = false;
+		m_noTarget = false;
+		m_facingIssued = false;
+		m_facingDone = false;
+		m_withinRange = false;
+		m_chargeSpeed = false;
+		m_chargeMove = false;
+		m_customAnimFrame = 0;
+		m_abilitiesTriggered = 0;
+		m_captures = 0;
+		m_unported = 0;
+		m_fading = false;
+		m_opacity = 1.0f;
+		m_searching = false;
+		return;
+	}
+	SpecialAbilityUpdate::xfer(x);
+	x.xferBool(&m_fading);
+	x.xferReal(&m_opacity);
+	x.xferBool(&m_searching);
+}
 // RW 0x0089FB79 (getModuleName), RW 0x0089FBF4 (getModuleNameKey), RW 0x0089FC39 / RW 0x0089FB7F (dtor)
 void GiveUpgradeUpdate::registerClass(ModuleFactory &factory)
 {

@@ -35,6 +35,9 @@ public:
 	UpdateSleepTime update() override;                        // RW 0x8A00C2
 	void finishAbility(bool ownerDying, bool aborted) override; // RW 0x89FD5C (vtable slot 0x34)
 	void crc(StateHasher &h) const override;
+	bool isFading() const { return m_fading; }
+	bool isSearching() const { return m_searching; }
+	float opacity() const { return m_opacity; }
 	static void registerClass(ModuleFactory &factory);
 	static const char *stopLine();
 protected:
