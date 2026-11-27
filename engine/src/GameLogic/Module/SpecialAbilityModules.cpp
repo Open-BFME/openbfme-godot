@@ -3041,11 +3041,23 @@ void WeaponFireSpecialAbilityUpdate::xfer(Xfer &x)
 	x.xferUnsignedInt(&m_shots);
 }
 
+// RW 0x008B1054 (slot 3): version window (1, 2), delegates to SpecialAbilityUpdate::xfer (RW 0x00852782), then
+// when version >= 2 transfers m_replaceAfterPacking (+0x8C, RW 0x008B107A .. 0x008B108B).
+// Also cited here: getModuleName RW 0x008B104E ("ToggleMountedSpecialAbilityUpdate"), getModuleNameKey RW 0x008B1097,
+// deleting dtor RW 0x008B1126 -> ~ToggleMountedSpecialAbilityUpdate RW 0x008B1024 -> ~SpecialAbilityUpdate RW 0x00854D9A.
 void ToggleMountedSpecialAbilityUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	SpecialAbilityUpdate::xfer(x);
-	x.xferBool(&m_replaceAfterPacking);
+	if (v.current >= 2)
+	{
+		x.xferBool(&m_replaceAfterPacking);
+	}
+	else if (x.isLoading())
+	{
+		m_replaceAfterPacking = false;
+	}
 	x.xferUnsignedInt(&m_toggles);
 	x.xferObjectID(&m_replacement);
 }

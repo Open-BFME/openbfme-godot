@@ -2,6 +2,9 @@
 // the RotWK binary (each check names the address). GPL-3.0.
 
 #include "doctest.h"
+#include "Common/StateHash.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include <fstream>
 #include <sstream>
 #include "CombatTestUtil.h"
@@ -880,4 +883,47 @@ TEST_CASE("hero2: ShareExperienceBehavior shares a gain with allied heroes in ra
 	CHECK(xp(enemy) == e0);
 	CHECK(xp(giver) == g0); // not itself (RW 0xC1D660)
 	CHECK(s->shares() == 2);
+}
+
+// RW 0x008B1054: ToggleMountedSpecialAbilityUpdate::xfer writes version 2 (window 1..2), delegates to
+// SpecialAbilityUpdate::xfer (RW 0x00852782), and only transfers m_replaceAfterPacking (+0x8C) when version >= 2.
+TEST_CASE("hero2: ToggleMountedSpecialAbilityUpdate::xfer uses version window (1, 2) and gates m_replaceAfterPacking (RW 0x008B1054)")
+{
+	PowerWorld f(kLanding);
+	Object *hero = f.unit("FlyingHero", 'A', 300, 300);
+	REQUIRE(hero != nullptr);
+	auto *tm = dynamic_cast<ToggleMountedSpecialAbilityUpdate *>(abilityOf(*hero, "SpecialAbilityTestLand"));
+	REQUIRE(tm != nullptr);
+
+	// 1. Save writes version 2 (RW 0x008B106B: mov byte ptr [ebp-3], 2)
+	XferSave savedV2;
+	tm->xfer(savedV2);
+	const std::vector<std::uint8_t> &bytesV2 = savedV2.data();
+	REQUIRE_FALSE(bytesV2.empty());
+	CHECK(bytesV2[0] == 2);
+
+	// 2. Round-trip v2 preserves state
+	StateHasher hBefore;
+	tm->crc(hBefore);
+	XferLoad loadV2(bytesV2);
+	tm->xfer(loadV2);
+	CHECK(loadV2.atEnd());
+	StateHasher hAfterV2;
+	tm->crc(hAfterV2);
+	CHECK(hAfterV2.value() == hBefore.value());
+
+	// 3. Version 1 stream (RW 0x008B107A: cmp ver, 2; jb skip +0x8C) loads cleanly without the bool byte
+	XferSave baseOnly;
+	tm->SpecialAbilityUpdate::xfer(baseOnly);
+	std::vector<std::uint8_t> bytesV1;
+	bytesV1.push_back(1);
+	bytesV1.insert(bytesV1.end(), baseOnly.data().begin(), baseOnly.data().end());
+	for (int i = 0; i < 8; ++i)
+	{
+		bytesV1.push_back(0);
+	}
+	XferLoad loadV1(bytesV1);
+	tm->xfer(loadV1);
+	CHECK(loadV1.atEnd());
+	CHECK(bytesV2.size() == bytesV1.size() + 1);
 }
