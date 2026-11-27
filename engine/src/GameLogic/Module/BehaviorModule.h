@@ -14,6 +14,7 @@
 #pragma once
 
 #include "Common/Module.h"
+#include "GameLogic/Module/EnvironmentActor.h"
 #include "GameLogic/ObjectTypes.h"
 
 #include <cstdint>
@@ -259,6 +260,8 @@ public:
 	// broadcasts it after the map objects are placed (RW 0x62F36B / 0x62F8EA) and after FoundationAIUpdate places a structure (RW 0x858A94). Default nothing
 	// (DynamicPortalBehaviour's RW 0x864341 generates its portals there)
 	virtual void onMapPlacement(const Dict *properties) { (void)properties; }
+	virtual EnvironmentActor *slot31() { return nullptr; }
+	EnvironmentActor *getEnvironmentActor() { return slot31(); }
 
 protected:
 	// lane SAVE-4b: BehaviorModule::xfer, version (1, 1) (RW 0x8CD4AA, the base xfer every UpdateModule / UpgradeModule xfer calls; inference: it is
