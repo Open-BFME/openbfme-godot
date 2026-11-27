@@ -25,6 +25,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/ProjectileModules.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ObjectSounds.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
 #include "Libraries/WWVegas/WWMath/quat.h"
@@ -778,8 +779,8 @@ float ObjectKnockback::shockwaveResistance(const Object &obj)
 //   * RW 0x6968D7 / 0x696E39: the drawable's projectile type (+ 0x360) is cleared, then set to D+0x2C at the end (client);
 //   * nothing unless D+0x40 (amount) > 0 and D+0x44 (radius) > 0 (comiss); cyclonic = D+0x68 != 0; nothing without a PhysicsBehavior (+ 0x264) or when it is
 //     stunned (+ 0x5C) and the hit is not cyclonic;
-//   * RW 0x696947 .. 0x696A0E (drawable present and not stunned): an audio event of the template's (RW 0x68FFBD / 0x68FFD6) through TheAudio (RW 0xDE42FC slot 0x64):
-//     client, not ported;
+//   * RW 0x696947 .. 0x696A0E (drawable present and not stunned): the template's SoundImpact (row 53, RW 0x68FFBD), a cyclonic hit's SoundImpactCyclonic (row 54,
+//     RW 0x68FFD6), through TheAudio (RW 0xDE42FC slot 0x64), before the resistance tests (lane OBJSOUND-2, ObjectSounds.h);
 //   * RW 0x68E16A(cyclonic): the template's ShockwaveResistance (+ 0x620) >= 100 (RW 0xBD88D8) and not (cyclonic and KindOf SHIP, template + 0x11F bit 7): the
 //     object stands up (RW 0x792AFF) and nothing more;
 //   * RESIST_KNOCKBACK (attribute modifier 10, RW 0x804F39 through the pool RW 0x68C4A6) at least 1.0: nothing;
@@ -810,6 +811,10 @@ bool ObjectKnockback::shockWave(Object &obj, const DamageInfo &info)
 	if (!phys || (phys->isStunned() && !cyclonic))
 	{
 		return true;
+	}
+	if (!phys->isStunned()) // RW 0x69694F
+	{
+		ObjectSounds::playRow(obj, cyclonic ? "SoundImpactCyclonic" : "SoundImpact");
 	}
 	GameLogic &logic = obj.logic();
 	CombatState::Counters &counters = logic.combat().counters();

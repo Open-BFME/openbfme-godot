@@ -25,6 +25,7 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/ObjectGeometry.h"
+#include "GameLogic/ObjectSounds.h"
 #include "GameLogic/Object/Contain/HordeFlank.h"
 #include "GameLogic/SimMath.h"
 #include "Common/INI/HostRealText.h"
@@ -45,7 +46,7 @@ const char *const kStop =
 	"[S-580] crush: SquishCollide (RW 0x8BFBAE), the crush levels with CRUSHABLE_LEVEL / CRUSHER_LEVEL (RW 0x68D4D0 / 0x695070), canCrush (RW 0x68D524), onCrush (RW 0x69320D: the "
 	"CrushKnockback fling through Object::doKnockback RW 0x692223, the deceleration with CRUSH_DECELERATE / CRUSHED_DECELERATE / MINIMUM_CRUSH_VELOCITY) and the bump (RW 0x696800: "
 	"the speed hold) and RamPower's shockwave hit (lane COMBAT-4) are ported; NOT ported: the bump's contact attack (S-1600), RotWK's AI-goal exemption (AI vslot 0x188) and ZH's hijacker / TNT "
-	"exemptions, SoundCrushing (client); INFERENCE: the contact pairs are MOVE-1's overlap pass of the AI units in id order (S-220, not RW's partition contacts), the shape test is "
+	"exemptions; INFERENCE: the contact pairs are MOVE-1's overlap pass of the AI units in id order (S-220, not RW's partition contacts), the shape test is "
 	"planar (circles and oriented rectangles; RW 0xAD2CE0's height test is not read), the crush / revenge weapons fire through the object's ObjectWeapons";
 
 const char *const kCombat3Stop =
@@ -315,7 +316,9 @@ void ObjectCrush::onCrush(Object &crusherIn, Object &victim)
 	{
 		return;
 	}
-	// RW 0x693231 .. 0x69329C: the crusher's SoundCrushing (TheAudio, client)
+	// lane OBJSOUND-2 (S-707), RW 0x693231 .. 0x69329C: the crusher's SoundCrushing (row 55, RW 0x68FFEF) at the crusher, before the horde test: a member's own
+	// row, then its horde's in the call below
+	ObjectSounds::playRow(crusherIn, "SoundCrushing");
 	if (crusherIn.getContainedBy() && isHorde(*crusherIn.getContainedBy()))
 	{
 		onCrush(*crusherIn.getContainedBy(), victim); // a member's crush is its horde's
