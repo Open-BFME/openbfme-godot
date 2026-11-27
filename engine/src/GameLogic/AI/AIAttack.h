@@ -122,7 +122,8 @@ public:
 		MADE_GENERIC = 1,
 		MADE_MELEE = 2,
 		MADE_HORDE_MELEE = 3,
-		MADE_HORDE_RANGED = 4
+		MADE_HORDE_RANGED = 4,
+		MADE_HORDE_POSITION = 5 // RW kind 7, AIAttackHordePosition.h
 	};
 
 private:
