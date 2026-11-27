@@ -1510,6 +1510,23 @@ void SpecialPowerModule::xfer(Xfer &x)
 	SnapshotXfer::u64(x, m_viewObjects);
 }
 
+void SpecialPowerModule::resetSpecialPowerModule()
+{
+	m_rechargeLength = 0;
+	m_readyFrame = 0;
+	m_pauseCount = 0;
+	m_pauseFrame = 0;
+	m_pausedPercent = 0.0f;
+	m_updateDisabled = false;
+	m_triggers = 0;
+	m_applied = 0;
+	m_unported = 0;
+	m_victims = 0;
+	m_initiates = 0;
+	m_clientNotices = 0;
+	m_viewObjects = 0;
+}
+
 void PlayerHealSpecialPower::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);

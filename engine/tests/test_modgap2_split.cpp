@@ -5,7 +5,11 @@
 #include "CombatTestUtil.h"
 #include "Common/SpecialPower.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/Module/SplitHordeSpecialPower.h"
+#include "GameLogic/Module/UnportedModule.h"
 
 namespace {
 const char kSplitObjects[] =
@@ -94,4 +98,52 @@ TEST_CASE("modgap2 split: a mixed horde transfers its existing members into matc
         CHECK(sword->getContainedBy()->getContain()->getContainCount() == 1);
         CHECK(archer->getContainedBy()->getContain()->getContainCount() == 1);
     }
+}
+
+TEST_CASE("modgap2 split xfer: v2 round-trip, v1 UnportedBehaviorModule compatibility, and v3 rejection")
+{
+    SplitWorld w;
+    Object *mixed = w.unit("TestMixedHorde", 'A', 300, 300);
+    REQUIRE(mixed);
+    w.frames(2);
+    auto *power = dynamic_cast<SplitHordeSpecialPower *>(mixed->findModule("SplitHordeSpecialPower"));
+    REQUIRE(power);
+    power->setReadyFrame(456u);
+    power->pauseCountdown(true);
+    const unsigned readyBefore = power->getReadyFrame();
+    REQUIRE(power->pauseCount() == 1);
+
+    // v2 round-trip and version 3 rejection
+    XferSave v2Save;
+    power->xfer(v2Save);
+    REQUIRE(!v2Save.data().empty());
+    CHECK(v2Save.data().front() == 2);
+    {
+        XferLoad v2Load(v2Save.data());
+        power->xfer(v2Load);
+        CHECK(v2Load.atEnd());
+        CHECK(power->getReadyFrame() == readyBefore);
+        CHECK(power->pauseCount() == 1);
+    }
+    {
+        std::vector<std::uint8_t> badVer = v2Save.data();
+        badVer.front() = 3;
+        XferLoad badLoad(badVer);
+        CHECK_THROWS_AS(power->xfer(badLoad), XferException);
+    }
+
+    // Real v1 legacy payload produced by UnportedBehaviorModule (version 1 + BehaviorModule only)
+    UnportedBehaviorModule legacy(mixed, nullptr, 256);
+    XferSave v1Save;
+    legacy.xfer(v1Save);
+    REQUIRE(!v1Save.data().empty());
+    CHECK(v1Save.data().front() == 1);
+
+    XferLoad v1Load(v1Save.data());
+    power->xfer(v1Load);
+    CHECK(v1Load.atEnd());
+    CHECK(power->getReadyFrame() == 0u);
+    CHECK(power->pauseCount() == 0);
+    CHECK(power->rechargeLength() == 0u);
+    CHECK(power->triggers() == 0u);
 }

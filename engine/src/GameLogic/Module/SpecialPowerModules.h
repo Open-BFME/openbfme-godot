@@ -203,6 +203,7 @@ protected:
 	void createViewObject(const Coord3D *loc); // RW 0x896FD9
 	// lane HERO-1: RW 0x8980A3's gate and the initiate RW 0x897E87; true when the do* goes on to the trigger (no UpdateModuleStartsAttack)
 	bool initiate(Object *target, const Coord3D *loc, unsigned options);
+	void resetSpecialPowerModule();
 
 private:
 	unsigned now() const;

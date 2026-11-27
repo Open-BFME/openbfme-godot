@@ -28,9 +28,19 @@ void SplitHordeSpecialPower::doSpecialPower(unsigned)
 	}
 }
 
+// Version 2 is the native layout (SpecialPowerModule::xfer).
+// Version 1 is the pre-port UnportedBehaviorModule shell (BehaviorModule::xfer only, no UpdateModule / m_calls),
+// which resets SpecialPowerModule fields to defaults.
 void SplitHordeSpecialPower::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
+	if (v.current < 2)
+	{
+		xferBehaviorModule(x);
+		resetSpecialPowerModule();
+		return;
+	}
 	SpecialPowerModule::xfer(x);
 }
 
