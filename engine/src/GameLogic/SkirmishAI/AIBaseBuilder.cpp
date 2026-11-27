@@ -1999,6 +1999,69 @@ void AIBaseBuilder::onObjectEntered(GameLogic &logic, AISkirmishPlayer &ai, Obje
 	}
 }
 
+// RW 0x8EE8CD (DONOR BFME2 0x4EA1A5 AIEconomyBuilder.cpp; both editions):
+// AIInfoReceiver::onUnRegister for AIEconomyBuilder (LISTEN_ECONOMY). When a completed or
+// under-construction economy structure that is not LINKED_TO_FLAG leaves the player's
+// AIStatCollector, decrement the built-farm counter (when completed) and release its farm site.
+void AIBaseBuilder::onEconomyObjectUnRegistered(GameLogic & /*logic*/, AISkirmishPlayer &ai, const Object &obj, unsigned lists)
+{
+	if ((lists & AIStatCollector::LISTEN_ECONOMY) == 0)
+	{
+		return;
+	}
+	const bool finished = 0.0f > obj.getConstructionPercent(); // RW 0x8EE8D7: comiss xmm0, [ebx+0x288]; ja
+	const bool underConstruction = obj.testStatus(kStatusUnderConstruction); // RW 0x8EE8E3: Object::testStatus(2)
+	if (!finished && !underConstruction)
+	{
+		return;
+	}
+	static const int linkedToFlag = kindIndex("LINKED_TO_FLAG"); // RW 0x8EE8F4: template + 0x10E bit 2 (bit 50)
+	if (isKind(obj, linkedToFlag))
+	{
+		return;
+	}
+	AIEconomyState &e = ai.build.economy;
+	if (finished && e.built > 0) // RW 0x8EE904 .. 0x8EE918
+	{
+		e.built -= 1;
+	}
+	if (!ai.farmSites)
+	{
+		return;
+	}
+	for (auto &site : *ai.farmSites) // RW 0x8EE91B .. 0x8EE94D
+	{
+		if (site->inUse && site->owner == ai.playerIndex && site->built == obj.getID())
+		{
+			if (!site->finished()) // RW 0x8EE951: call 0x8EDA5E
+			{
+				auto it = std::find(e.requests.begin(), e.requests.end(), site);
+				if (it != e.requests.end())
+				{
+					e.requests.erase(it);
+					if (e.inFlight > 0)
+					{
+						e.inFlight -= 1;
+					}
+				}
+				// RW 0x8EE97C: site->unRegisterWithBuilder (RW 0x9618E3)
+				auto eraseReq = [&](std::vector<std::shared_ptr<AIBuildRequest>> &v) {
+					auto vit = std::find(v.begin(), v.end(), site);
+					if (vit != v.end())
+					{
+						v.erase(vit);
+					}
+				};
+				eraseReq(ai.build.pending);
+				eraseReq(ai.build.inProgress);
+			}
+			site->failures += 1; // RW 0x8EE986: inc dword ptr [esi+0x6C]
+			site->inUse = false; // RW 0x8EE989: mov byte ptr [esi+0x64], 0
+			break;
+		}
+	}
+}
+
 void AIBaseBuilder::onObjectLeft(GameLogic &logic, AISkirmishPlayer &ai, Object &obj)
 {
 	// RW 0x8F0C47
