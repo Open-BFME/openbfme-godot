@@ -6,6 +6,7 @@
 
 #include "Common/INI.h"
 #include "Common/INIException.h"
+#include "Common/ModEngineFeatures.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/AI/AICommands.h"
@@ -205,7 +206,11 @@ bool StancesBehavior::setStance(StanceType stance, const char *site)
 		horde = hordeOf(obj);     // RW 0x862143: the interface again
 	}
 	AIUpdateInterface *ai = obj.getAIUpdateInterface();
-	if (stance == STANCE_HOLD_GROUND && ai)
+	// lane MODS-3: patch-202.hold-ground-keeps-move (Patch 2.02 9.8.6's .stancem at 0xF34000, jumped to from RW 0x862161): the idle order only when the
+	// AI is not waiting for a path (byte AI + 0x3B1 == 0) and is idle (AI slot 0x1B8); a unit that walks keeps its move ("Hold Ground Stance no
+	// longer stops units", 2.02 Patch Notes.txt). Retail idles it always.
+	if (stance == STANCE_HOLD_GROUND && ai &&
+		(!ModEngineFeatures::has(ModEngineFeature::Patch202HoldGroundKeepsMove) || (!ai->mover().isWaitingForPath() && ai->isIdle())))
 	{
 		ai->aiIdle(CMD_FROM_PLAYER); // RW 0x86216B: AI + 0x20, RW 0x5E821A(0)
 	}

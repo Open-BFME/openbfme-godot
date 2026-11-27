@@ -543,6 +543,38 @@ TEST_CASE("MODS-2: an install-folder mod is merged into the RotWK install's load
 	CHECK(empty.getArchiveCount() == 0);
 }
 
+TEST_CASE("MODS-3: an install overlay archive the mod engine profile leaves out is not mounted: the retail one of that path stays, with a note")
+{
+	TempDir tmp;
+	writeBig(tmp.path / "rotwk" / "apt" / "Options.big", { { "Options.apt", "retail options" } });
+	writeBig(tmp.path / "rotwk" / "apt" / "MainMenu.big", { { "MainMenu.apt", "retail menu" } });
+	RetailMountReport retail;
+	retail.ok = true;
+	for (const std::string &p : { std::string("apt/Options.big"), std::string("apt/MainMenu.big") })
+	{
+		const fs::path disk = tmp.path / "rotwk" / fs::u8path(p);
+		retail.mounted.push_back({ "rotwk", p, disk.u8string(), (std::uint64_t)fs::file_size(disk), "md5-" + p });
+	}
+	const fs::path mod = tmp.path / "official-2" / "install";
+	writeBig(mod / "apt" / "Options.big", { { "Options.apt", "mod options" } });
+	writeBig(mod / "apt" / "MainMenu.big", { { "MainMenu.apt", "mod menu" } });
+	ModMountOptions options;
+	options.leftOut = { { "apt/options.big", "needs the binary's settings code" } };
+	Win32BIGFileSystem merged;
+	const ModMountReport r = MountInstallOverlay(merged, retail, mod.u8string(), options);
+	REQUIRE_MESSAGE(r.ok, joined(r.errors));
+	CHECK(readVirtual(merged, "Options.apt") == "retail options");
+	CHECK(readVirtual(merged, "MainMenu.apt") == "mod menu"); // only the named archive is left out
+	CHECK(r.archives.size() == 1);
+	CHECK(r.notes ==
+		std::vector<std::string>{ "install mod official-2: apt/Options.big is left out (the original game's stays): needs the binary's settings code" });
+
+	Win32BIGFileSystem plain; // without the profile's list the mod's archive replaces the retail one, as before
+	const ModMountReport all = MountInstallOverlay(plain, retail, mod.u8string(), ModMountOptions());
+	REQUIRE_MESSAGE(all.ok, joined(all.errors));
+	CHECK(readVirtual(plain, "Options.apt") == "mod options");
+}
+
 TEST_CASE("MODS-2: RotWK's startup load order (RW 0xA1766D / 0xA14419): lang\\English*.big last-wins, the folder's archives without case, apt\\ after")
 {
 	auto order = [](const std::vector<std::string> &paths, bool gameInstall) {

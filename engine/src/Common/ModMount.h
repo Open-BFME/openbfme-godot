@@ -39,6 +39,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Win32BIGFileSystem;
@@ -62,6 +63,9 @@ struct ModMountOptions
 {
 	std::string md5CachePath;      // the mount's md5 cache (Common/Md5Cache.h); "" = hash every file on every mount
 	std::string rotwkInstallRoot;  // the local file system's root (the game folder): checked for loose files that would shadow archives
+	// lane MODS-3: install overlay archives (path in the game folder, lower case, '/') not mounted, with the reason; the retail archive of that path
+	// stays. Filled from ModEngineFeatures::leftOutArchives(): a mod archive that needs code of the mod's game binary OpenBFME does not have.
+	std::vector<std::pair<std::string, std::string>> leftOut;
 };
 
 struct ModMountReport
