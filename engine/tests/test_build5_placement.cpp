@@ -1123,13 +1123,14 @@ TEST_CASE("build5 r3 alpha override: an opaque surface of a translucent drawable
 	CHECK(k0.Id().find("_ao") == std::string::npos); // every existing id stays what it was
 	// the plain opaque surface dithers its fade in the opaque pass and converts to linear once
 	CHECK(plain.find("blend_mix") == std::string::npos);
-	CHECK(plain.find("if (v_fade <= ign) { discard; }") != std::string::npos);
+	// lane FADEFLOOR-1: below a fade of 1/64 nothing is drawn (retail's blend moves no channel by 4 / 255), above it the dither
+	CHECK(plain.find("if (v_fade < 0.015625 || v_fade <= ign) { discard; }") != std::string::npos);
 	CHECK(plain.find("w3d_to_linear(clamp(cur.rgb") != std::string::npos);
 	// the translucent drawable's: SRC_ALPHA / ONE_MINUS_SRC_ALPHA with depth writes (theAlphaShader), alpha = alpha * the instance fade, no dither, gamma space
 	CHECK(ao.find("blend_mix") != std::string::npos);
 	CHECK(ao.find("depth_draw_always") != std::string::npos);
 	CHECK(ao.find("ALPHA = a * v_fade;") != std::string::npos);
-	CHECK(ao.find("if (v_fade <= ign) { discard; }") == std::string::npos);
+	CHECK(ao.find("v_fade <= ign") == std::string::npos);
 	CHECK(ao.find("ALBEDO = w3d_to_linear") == std::string::npos);
 	// an additive surface keeps its blend (its fade scales the colour, as ZH scales the diffuse)
 	W3DShaderKey add;
