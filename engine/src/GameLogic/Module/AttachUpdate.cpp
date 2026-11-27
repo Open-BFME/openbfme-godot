@@ -240,9 +240,19 @@ void AttachUpdate::tryAttach()
 		if (!attach->empty())
 		{
 			AudioApi::reportEva(*attach, parent->getPosition());
-			if (const Coord3D *p = parent->getPosition())
+		}
+	}
+	if (parentPlayer)
+	{
+		if (const Coord3D *p = parent->getPosition())
+		{
+			// Simulation-side EVA positions for ScriptEngine Condition 187 must not depend on getLocalPlayer() (MP determinism).
+			for (const std::string *ev : { &m_data->m_ownerAttachEva, &m_data->m_allyAttachEva, &m_data->m_enemyAttachEva })
 			{
-				obj->logic().scriptEngine().recordEvaEventLocation(*attach, *p);
+				if (!ev->empty())
+				{
+					logic.scriptEngine().recordEvaEventLocation(*ev, *p);
+				}
 			}
 		}
 	}
@@ -266,9 +276,16 @@ UpdateSleepTime AttachUpdate::update()
 		if (!m_diedEva.empty())
 		{
 			AudioApi::reportEva(m_diedEva, obj->getPosition());
-			if (const Coord3D *p = obj->getPosition())
+		}
+		if (const Coord3D *p = obj->getPosition())
+		{
+			// Simulation-side EVA positions for ScriptEngine Condition 187 must not depend on getLocalPlayer() / m_diedEva.
+			for (const std::string *ev : { &m_data->m_ownerDiedEva, &m_data->m_allyDiedEva, &m_data->m_enemyDiedEva })
 			{
-				obj->logic().scriptEngine().recordEvaEventLocation(m_diedEva, *p);
+				if (!ev->empty())
+				{
+					logic.scriptEngine().recordEvaEventLocation(*ev, *p);
+				}
 			}
 		}
 		obj->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL); // RW 0x895453

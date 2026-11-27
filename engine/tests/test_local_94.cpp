@@ -659,3 +659,222 @@ TEST_CASE("LOCAL-94 RESIZE_VIEW_GUARDBAND dispatches client request to ScriptCam
 	CHECK(director.guardBandBiasY() == -8.0f);
 	CHECK(director.unhandled().empty());
 }
+
+TEST_CASE("LOCAL-94 AttachUpdate: ScriptEngine::crc is identical across different localPlayer peers on attach and parent death")
+{
+	const char *kAttachIni =
+		"Object L94AttachShard\n"
+		"  KindOf = IMMOBILE\n"
+		"  Geometry = CYLINDER\n"
+		"  GeometryMajorRadius = 5.0\n"
+		"  GeometryHeight = 5.0\n"
+		"  Body = ActiveBody ModuleTag_Body\n"
+		"    MaxHealth = 50\n"
+		"  End\n"
+		"  Behavior = AttachUpdate ModuleTag_Attach\n"
+		"    ObjectFilter = ANY +INFANTRY\n"
+		"    ScanRange = 80.0\n"
+		"    ParentOwnerAttachmentEvaEvent = OwnAttachEva\n"
+		"    ParentAllyAttachmentEvaEvent = AllyAttachEva\n"
+		"    ParentEnemyAttachmentEvaEvent = EnemyAttachEva\n"
+		"    ParentOwnerDiedEvaEvent = OwnDiedEva\n"
+		"    ParentAllyDiedEvaEvent = AllyDiedEva\n"
+		"    ParentEnemyDiedEvaEvent = EnemyDiedEva\n"
+		"  End\n"
+		"  Behavior = DestroyDie ModuleTag_Die\n"
+		"  End\n"
+		"End\n";
+
+	auto runPeer = [&](int localChoice, std::uint32_t &crcAfterAttach, std::uint32_t &crcAfterDeath) {
+		Local94Fx fx;
+		fx.load(kAttachIni);
+		std::vector<ScriptEngine::SideScripts> sides(3);
+		sides[0].sideName = "";
+		sides[1].sideName = "Alice";
+		sides[2].sideName = "Bob";
+		fx.logic->scriptEngine().newGame(sides, nullptr, nullptr, false);
+
+		if (localChoice == 0)
+		{
+			fx.players.setLocalPlayer(fx.p0);
+		}
+		else if (localChoice == 1)
+		{
+			fx.players.setLocalPlayer(fx.p1);
+		}
+		else
+		{
+			fx.players.setLocalPlayer(nullptr);
+		}
+
+		Object *carrier = fx.spawn("L94Infantry", fx.p0->getDefaultTeam(), 300.0f, 300.0f);
+		Object *observer = fx.spawn("L94Infantry", fx.p0->getDefaultTeam(), 420.0f, 420.0f);
+		(void)observer;
+		fx.spawn("L94AttachShard", fx.players.getNeutralPlayer()->getDefaultTeam(), 300.0f, 300.0f);
+
+		// Step 1 frame: shard attaches to Alice's carrier at (300, 300).
+		fx.logic->runLogicFrame();
+		{
+			StateHasher h;
+			fx.logic->scriptEngine().crc(h);
+			crcAfterAttach = h.value();
+		}
+
+		auto evalNear = [&](const char *evaName, int expected) {
+			ScriptCondition c = cond("IS_NUM_OF_UNITS_BELONGING_TO_PLAYER_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION_COMPARISON_INT", {
+				sp(11, "Alice"),
+				rp(40.0f),
+				sp(76, evaName),
+				ip(6, 2),
+				ip(0, expected),
+			});
+			return ScriptConditions::evaluate(fx.logic->scriptEngine(), c);
+		};
+		CHECK(evalNear("OwnAttachEva", 1));
+		CHECK(evalNear("AllyAttachEva", 1));
+		CHECK(evalNear("EnemyAttachEva", 1));
+
+		// Move carrier to (420, 420), step so shard follows, then kill and remove carrier so died-EVA records at (420, 420).
+		const Coord3D moved{ 420.0f, 420.0f, 0.0f };
+		carrier->setPosition(&moved);
+		fx.logic->partition().update();
+		fx.logic->runLogicFrame();
+
+		carrier->kill(DAMAGE_UNRESISTABLE, DEATH_NORMAL);
+		fx.logic->destroyObject(carrier);
+		fx.logic->runLogicFrame();
+		{
+			StateHasher h;
+			fx.logic->scriptEngine().crc(h);
+			crcAfterDeath = h.value();
+		}
+		Coord3D diedPos{};
+		REQUIRE(fx.logic->scriptEngine().lastEvaEventLocation("OwnDiedEva", &diedPos));
+		CHECK(diedPos.x == 420.0f);
+		CHECK(diedPos.y == 420.0f);
+		CHECK(evalNear("OwnDiedEva", 1));
+		CHECK(evalNear("AllyDiedEva", 1));
+		CHECK(evalNear("EnemyDiedEva", 1));
+	};
+
+	std::uint32_t attach0 = 0, attach1 = 0, attachN = 0;
+	std::uint32_t death0 = 0, death1 = 0, deathN = 0;
+	runPeer(0, attach0, death0);
+	runPeer(1, attach1, death1);
+	runPeer(2, attachN, deathN);
+	CHECK(attach0 == attach1);
+	CHECK(attach0 == attachN);
+	CHECK(death0 == death1);
+	CHECK(death0 == deathN);
+	CHECK_FALSE(attach0 == death0);
+}
+
+TEST_CASE("LOCAL-94 ScriptEngine v9 xfer: pre-v9 (v5/v8) payloads load cleanly and populated v9 m_lastEvaEventPositions round-trips")
+{
+	Local94Fx fx;
+	std::vector<ScriptEngine::SideScripts> sides(3);
+	sides[0].sideName = "";
+	sides[1].sideName = "Alice";
+	sides[2].sideName = "Bob";
+	fx.logic->scriptEngine().newGame(sides, nullptr, nullptr, false);
+
+	fx.spawn("L94Infantry", fx.p0->getDefaultTeam(), 195.0f, 200.0f);
+	fx.spawn("L94Infantry", fx.p0->getDefaultTeam(), 205.0f, 200.0f);
+	fx.spawn("L94Infantry", fx.p0->getDefaultTeam(), 500.0f, 500.0f);
+
+	auto evalNear = [&](const char *evaName, int expected) {
+		ScriptCondition c = cond("IS_NUM_OF_UNITS_BELONGING_TO_PLAYER_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION_COMPARISON_INT", {
+			sp(11, "Alice"),
+			rp(50.0f),
+			sp(76, evaName),
+			ip(6, 2),
+			ip(0, expected),
+		});
+		return ScriptConditions::evaluate(fx.logic->scriptEngine(), c);
+	};
+
+	// Capture genuine pre-v9 v5 payload (all optional sections empty).
+	StateHasher hV5;
+	fx.logic->scriptEngine().crc(hV5);
+	XferSave saveV5;
+	fx.logic->scriptEngine().xfer(saveV5);
+	REQUIRE(!saveV5.data().empty());
+	CHECK(saveV5.data().front() == 5);
+
+	// Capture genuine pre-v9 v8 payload (object counts populated, m_lastEvaEventPositions empty).
+	fx.logic->scriptEngine().setObjectCount(fx.p0->getPlayerIndex(), "L94Infantry", 3);
+	StateHasher hV8;
+	fx.logic->scriptEngine().crc(hV8);
+	XferSave saveV8;
+	fx.logic->scriptEngine().xfer(saveV8);
+	REQUIRE(!saveV8.data().empty());
+	CHECK(saveV8.data().front() == 8);
+
+	// Populate v9 m_lastEvaEventPositions with two distinct EVA event locations.
+	fx.logic->scriptEngine().recordEvaEventLocation("CampDestroyed", Coord3D{ 200.0f, 200.0f, 0.0f });
+	fx.logic->scriptEngine().recordEvaEventLocation("RingDropped", Coord3D{ 500.0f, 500.0f, 0.0f });
+	CHECK(evalNear("CampDestroyed", 2));
+	CHECK(evalNear("RingDropped", 1));
+
+	StateHasher hV9;
+	fx.logic->scriptEngine().crc(hV9);
+	CHECK_FALSE(hV9.value() == hV8.value());
+
+	XferSave saveV9;
+	fx.logic->scriptEngine().xfer(saveV9);
+	REQUIRE(!saveV9.data().empty());
+	CHECK(saveV9.data().front() == 9);
+
+	// (b) Load pre-v9 v8 payload: m_lastEvaEventPositions clears while v8 object counts stay intact.
+	{
+		XferLoad loadV8(saveV8.data());
+		fx.logic->scriptEngine().xfer(loadV8);
+		CHECK(loadV8.atEnd());
+		fx.logic->scriptEngine().finishLoad();
+	}
+	{
+		StateHasher hAfterV8;
+		fx.logic->scriptEngine().crc(hAfterV8);
+		CHECK(hAfterV8.value() == hV8.value());
+	}
+	CHECK(fx.logic->scriptEngine().getObjectCount(fx.p0->getPlayerIndex(), "L94Infantry") == 3);
+	CHECK(evalNear("CampDestroyed", 0));
+	CHECK(evalNear("RingDropped", 0));
+
+	// Also load pre-v9 v5 payload: clears both object counts and EVA positions cleanly.
+	{
+		XferLoad loadV5(saveV5.data());
+		fx.logic->scriptEngine().xfer(loadV5);
+		CHECK(loadV5.atEnd());
+		fx.logic->scriptEngine().finishLoad();
+	}
+	{
+		StateHasher hAfterV5;
+		fx.logic->scriptEngine().crc(hAfterV5);
+		CHECK(hAfterV5.value() == hV5.value());
+	}
+	CHECK(fx.logic->scriptEngine().getObjectCount(fx.p0->getPlayerIndex(), "L94Infantry") == 0);
+	CHECK(evalNear("CampDestroyed", 0));
+
+	// (c) Load populated v9 payload: m_lastEvaEventPositions restores identically and CRC matches.
+	{
+		XferLoad loadV9(saveV9.data());
+		fx.logic->scriptEngine().xfer(loadV9);
+		CHECK(loadV9.atEnd());
+		fx.logic->scriptEngine().finishLoad();
+	}
+	{
+		StateHasher hAfterV9;
+		fx.logic->scriptEngine().crc(hAfterV9);
+		CHECK(hAfterV9.value() == hV9.value());
+	}
+	CHECK(fx.logic->scriptEngine().getObjectCount(fx.p0->getPlayerIndex(), "L94Infantry") == 3);
+	CHECK(evalNear("CampDestroyed", 2));
+	CHECK(evalNear("RingDropped", 1));
+
+	// Future version 10 is rejected.
+	std::vector<std::uint8_t> future = saveV9.data();
+	future.front() = 10;
+	XferLoad bad(future);
+	CHECK_THROWS_AS(fx.logic->scriptEngine().xfer(bad), XferException);
+}

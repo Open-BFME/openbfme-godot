@@ -38,6 +38,7 @@
 #include "Common/Team.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Xfer.h"
+#include "GameLogic/SnapshotXfer.h"
 #include "GameClient/MapChunks.h"
 #include "GameLogic/GameLogic.h"
 

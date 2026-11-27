@@ -251,6 +251,8 @@
  "GameLogic/ObjectFilterMatch.cpp::ObjectFilterMatch::xfer::w#1": "checked by ObjectFilterMatch::xfer in GameLogic/ObjectFilterMatch.cpp: the KindOf masks hold no bit beyond the KindOf names (checked after the words)",
  "GameLogic/ScriptEngine/ScriptEngineXfer.cpp::ScriptEngine::xfer::defaultPriority#1": "open: an attack priority set's default priority (lane BFME2CAMP1, SET_DEFAULT_ATTACK_PRIORITY: any int a script gives; compared and scored)",
  "GameLogic/ScriptEngine/ScriptEngineXfer.cpp::ScriptEngine::xfer::index#1": "open: a sequential script's action index; updateSequentialScripts ends the script outside its actions",
+ "GameLogic/ScriptEngine/ScriptEngineXfer.cpp::ScriptEngine::xfer::k#3": "open: lowercase EVA event name CRC key for m_lastEvaEventPositions (Condition 187, save side)",
+ "GameLogic/ScriptEngine/ScriptEngineXfer.cpp::ScriptEngine::xfer::k#4": "open: lowercase EVA event name CRC key for m_lastEvaEventPositions (Condition 187, load side; duplicate keys rejected)",
  "GameLogic/SkirmishAI/SkirmishAISnapshot.cpp::AIStatCollector::xfer::m_reserve#1": "open: a money quantity (the AI money reserve, lane AI5)",
  "GameLogic/SkirmishAI/SkirmishAISnapshot.cpp::AIStatCollector::xfer::m_reserveTarget#1": "open: a money quantity, not an id (the money saver target; -1 means no target, RW 0x8F0502)",
  "GameLogic/SkirmishAI/SkirmishAISnapshot.cpp::AIStatCollector::xfer::n#1": "open: a count by template name",
