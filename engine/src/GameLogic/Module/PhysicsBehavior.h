@@ -113,6 +113,8 @@ public:
 	static const char *stopLine();
 
 	UpdateSleepTime update() override; // RW 0x79350E
+	// RW 0x792C6A (vtable 0xC306B8 slot 1): DISABLED_PARALYZED (4): a paralysed object (a hero that dies in flight, RespawnUpdate RW 0x8B3744) flies on
+	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)(1u << 4); }
 	void crc(StateHasher &hasher) const override;
 
 	// RW 0x792DBD: fling the object with `velocity` (per frame); `a` / `b` are kept (+0x60 / +0x64) when not 0
@@ -141,6 +143,7 @@ public:
 	float apexHeight() const { return m_apex; }
 	int pointCount() const { return m_pointCount; }
 	bool isFlying() const { return !m_points.empty(); }
+	bool bounced() const { return m_bounced; } // + 0x5E: the last update ended in a bounce
 	// lane FLY-1: + 0x5F, the flight ends in a kill (the rest RW 0x79308D: SPLATTED and Object::kill); GiantBirdAIUpdate's toss sets it (RW 0x76CD76)
 	void setKillOnRest(bool on) { m_killOnRest = on; }
 	bool killOnRest() const { return m_killOnRest; }
