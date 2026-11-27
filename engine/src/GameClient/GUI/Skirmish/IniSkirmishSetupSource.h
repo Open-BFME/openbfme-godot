@@ -24,6 +24,7 @@ public:
 	const std::vector<MapCacheEntry> &maps() const override { return m_maps; }
 	int defaultStartingCash() const override { return m_defaultStartingCash; }
 	const std::vector<int> &startingCashChoices() const override { return m_cashChoices; }
+	bool showRandomStartPos() const override { return m_showRandomStartPos; }
 	int mapContentsMask(const MapCacheEntry &map) const override;
 	bool fileExists(const std::string &path) const override;
 	bool hasFileSystem() const override { return m_fs != nullptr; }
@@ -34,7 +35,7 @@ public:
 
 	// The scans on text (tests, mods).
 	static bool scanPlayerTemplates(const std::string &text, std::vector<SkirmishFaction> &out, std::string *error);
-	static bool scanMultiplayer(const std::string &text, std::vector<SkirmishColor> &colors, std::vector<int> &cashChoices, std::string *error);
+	static bool scanMultiplayer(const std::string &text, std::vector<SkirmishColor> &colors, std::vector<int> &cashChoices, std::string *error, bool *showRandomStartPos = nullptr);
 	static bool scanDefaultStartingCash(const std::string &text, int &out, std::string *error);
 
 private:
@@ -44,4 +45,5 @@ private:
 	std::vector<MapCacheEntry> m_maps;
 	std::vector<int> m_cashChoices;
 	int m_defaultStartingCash = 0;
+	bool m_showRandomStartPos = true;
 };

@@ -19,6 +19,7 @@
 
 #include "GameNetwork/GameInfo.h"
 #include "GameClient/GUI/AptScreen.h"
+#include "GameClient/GUI/AptScreens/AptMapPreview.h"
 #include "GameClient/GUI/AptScreens/OpenBFMEOptionsPage.h"
 #include "GameClient/GUI/MenuNavigator.h"
 #include "GameClient/GameLODManager.h"
@@ -205,9 +206,13 @@ class AptLoadScreen : public AptScreen
 public:
 	AptLoadScreen(WindowManager &windows, Shell &shell, ShellEnvironment &environment);
 	~AptLoadScreen() override;
+	void runInit() override;
+	void runShutdown(bool *immediate) override;
 	void frameUpdate() override;
 	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
 	GameWindow *cardRange() const { return m_cardRange; }
+	GameWindow *currentMap() const { return m_mapPreview.currentMap(); }
+	const std::vector<GameWindow *> &startSpotButtons() const { return m_mapPreview.currentMapChildren(); }
 	// processProgress(slot, percent): SetBarTo(card, percent) on the movie (arguments as decimal strings); false when the movie is not loaded yet (the call is kept
 	// and made by the next update) or the call failed (reported through the window manager's notes)
 	bool setProgress(int card, int percent);
@@ -223,8 +228,13 @@ private:
 	void flush();
 	bool callBar(int card, int percent);
 	bool barsReady();
+	void attachMapPreview();
+	void detachMapPreview();
+	void updateMapPreview();
 
 	ShellEnvironment &m_env;
+	AptMapPreview m_mapPreview;
+	std::string m_mapPreviewError;
 	std::vector<std::pair<int, int>> m_calls;
 	std::vector<std::pair<int, int>> m_pending;
 	int m_cards = 0;

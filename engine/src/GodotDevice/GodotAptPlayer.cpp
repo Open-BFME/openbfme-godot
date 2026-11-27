@@ -3278,9 +3278,10 @@ Dictionary AptMenuPlayer::set_load_screen_from_game(const Dictionary &resolved)
 		return out;
 	}
 	ShellMode *sm = m->shell.get();
+	const int localSlot = (int)(int64_t)resolved.get("local_slot", (int64_t)-1);
 	LoadScreenInfo next = makeLoadScreenInfo(message.game, m->shell->setup, m->shell->text.get(),
 		[sm](const std::string &name) { return sm->skins.images.findImageByName(name) != nullptr; }, sm->profiles.get(),
-		(bool)resolved.get("online_game", false)); // lane RANKICON-1: an online game reads no local stats (makeLoadScreenInfo)
+		(bool)resolved.get("online_game", false), localSlot); // lane RANKICON-1: an online game reads no local stats (makeLoadScreenInfo)
 	if (!next.error.empty())
 	{
 		out["error"] = toGodot(next.error);

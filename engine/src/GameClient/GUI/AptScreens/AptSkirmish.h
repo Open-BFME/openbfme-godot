@@ -38,6 +38,7 @@
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
 #include "GameClient/GUI/Skirmish/LivingWorldShellInfo.h" // lane WOTR-1
 #include "GameClient/OptionPreferences.h"
+#include "GameClient/GUI/AptScreens/AptMapPreview.h"
 
 struct CreateAHeroHero;
 class AptMessageBox;
@@ -72,6 +73,7 @@ public:
 	// RW 0x927FEF (AptSkirmish's vtable slot at 0xC7E898, run when the screen goes): the lobby's game into the current profile's entries (RW 0x821EBD: the
 	// map, the game and the hero indexes), then the preferences' write. Also before a profile change (RW 0x9293F5 at 0x929440)
 	void keepGame();
+	void runInit() override;
 	void runShutdown(bool *immediate) override;
 	const std::string &lastError() const { return m_error; }
 	// How often the movie sent AptSkirmish::OnInitialized.
@@ -302,6 +304,8 @@ private:
 	void initSkirmishGadget(const std::string &name, GameWindow *window);
 	void initMpGameSetupGadget(const std::string &name, GameWindow *window);
 	void initMapPreviewGadget(const std::string &name, GameWindow *window);
+	void attachMapPreview();
+	void detachMapPreview();
 	void initChatGadget(const std::string &name, GameWindow *window);
 	void sendChat();
 	// ---- lobby ----
@@ -413,6 +417,9 @@ private:
 	GameWindow *m_mapPicture = nullptr;
 	GameWindow *m_currentMap = nullptr;
 	std::vector<GameWindow *> m_currentMapChildren;
+	WindowManager::RenderPicture m_mapPictureRender;
+	bool m_hasMapPictureRender = false;
+	bool m_mapPreviewAttached = false;
 	bool m_strategic = false; // AptMapPreview::GameMapType == "Strategic": MpGameSetup+0x7C == 1
 	const LivingWorldShellInfo *m_livingWorld = nullptr; // lane WOTR-1: the scenarios of the strategic setup
 	std::string m_scenario;                              // lane WOTR-1: the selected scenario (LivingWorldCampaign name)

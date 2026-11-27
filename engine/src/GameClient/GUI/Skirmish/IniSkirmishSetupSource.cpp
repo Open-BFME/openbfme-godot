@@ -269,10 +269,14 @@ bool IniSkirmishSetupSource::scanPlayerTemplates(const std::string &text, std::v
 	return ok;
 }
 
-bool IniSkirmishSetupSource::scanMultiplayer(const std::string &text, std::vector<SkirmishColor> &colors, std::vector<int> &cashChoices, std::string *error)
+bool IniSkirmishSetupSource::scanMultiplayer(const std::string &text, std::vector<SkirmishColor> &colors, std::vector<int> &cashChoices, std::string *error, bool *showRandomStartPos)
 {
 	colors.clear();
 	cashChoices.clear();
+	if (showRandomStartPos)
+	{
+		*showRandomStartPos = true; // RW 0x7836C0 (+0x1E = 1)
+	}
 	enum class Block
 	{
 		None,
@@ -347,6 +351,19 @@ bool IniSkirmishSetupSource::scanMultiplayer(const std::string &text, std::vecto
 				return;
 			}
 			credits.emplace_back(key, amount);
+		}
+		else if (block == Block::Settings && k == "showrandomstartpos")
+		{
+			bool parsedShow = true;
+			if (!parseYesNo(value, parsedShow))
+			{
+				fail("ShowRandomStartPos '" + value + "' is not a boolean");
+				return;
+			}
+			if (showRandomStartPos)
+			{
+				*showRandomStartPos = parsedShow;
+			}
 		}
 		else if (block == Block::Color)
 		{
@@ -429,7 +446,8 @@ bool IniSkirmishSetupSource::load(ArchiveFileSystem &fs, std::string *error)
 	{
 		return false;
 	}
-	if (!readFile(fs, "data\\ini\\multiplayer.ini", text, error) || !scanMultiplayer(text, m_colors, m_cashChoices, error))
+	m_showRandomStartPos = true;
+	if (!readFile(fs, "data\\ini\\multiplayer.ini", text, error) || !scanMultiplayer(text, m_colors, m_cashChoices, error, &m_showRandomStartPos))
 	{
 		return false;
 	}

@@ -189,6 +189,9 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 		sd["color"] = s.color;
 		sd["start_pos"] = s.startPos;
 		sd["player_template"] = s.playerTemplate;
+		sd["orig_color"] = s.origColor;
+		sd["orig_start_pos"] = s.origStartPos;
+		sd["orig_player_template"] = s.origPlayerTemplate;
 		sd["team"] = s.teamNumber;
 		sd["handicap"] = s.handicap; // lane OWNERFIX-2: GameSlot + 0x20
 		if (s.hasCreateAHero)
@@ -413,6 +416,9 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 		s.color = (int)(int64_t)sd["color"];
 		s.startPos = (int)(int64_t)sd["start_pos"];
 		s.playerTemplate = (int)(int64_t)sd["player_template"];
+		s.origColor = (int)(int64_t)sd.get("orig_color", (int64_t)-1);
+		s.origStartPos = (int)(int64_t)sd.get("orig_start_pos", (int64_t)-1);
+		s.origPlayerTemplate = (int)(int64_t)sd.get("orig_player_template", (int64_t)-1);
 		s.teamNumber = (int)(int64_t)sd["team"];
 		// lane OWNERFIX-2: the slot's handicap (absent: 0, the setups before OWNERFIX-2); a value the lobby never offers is refused
 		s.handicap = (int)(int64_t)sd.get("handicap", (int64_t)0);

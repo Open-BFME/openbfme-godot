@@ -2378,6 +2378,7 @@ func _begin_game(message: Dictionary) -> void:
 	_shell_leave_for_game()
 	var load_screen_game := resolved.duplicate()
 	load_screen_game["online_game"] = _last_game_online # lane RANKICON-1: an online game (_hub_begin above) reads no local profile stats for its rank icons
+	load_screen_game["local_slot"] = _last_local_slot # Local 56: GameSlot::getApparentStartPos (RW 0x801249 / 0x801190)
 	var cards: Dictionary = _shell.set_load_screen_from_game(load_screen_game)
 	if cards.has("error"):
 		_fail("load screen: " + cards.error)

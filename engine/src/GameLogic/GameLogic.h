@@ -391,6 +391,9 @@ struct GameLogicSettings
 	// lane CHAT-1: MultiplayerSettings MaxBeaconsPerPlayer (+ 0x18): a player's beacons at most (retail multiplayer.ini: 3). INFERENCE: the default is ZH's
 	// MultiplayerSettings constructor value (RotWK's constructor was not read). Not hashed (crc below): data every peer of a game reads alike (the profile)
 	int maxBeaconsPerPlayer = 3;
+	// Local 56: MultiplayerSettings ShowRandomStartPos (constructor RW 0x7836C0 +0x1E = 1, parse table RW 0xC2F798 -> INI::parseBool
+	// RW 0x42E558): when Yes, opponents' Random start positions remain hidden as -1 on the loading screen and diplomacy window (RW 0x801249).
+	bool showRandomStartPos = true;
 	// MultiplayerSettings colours (`MultiplayerColor <Name>` blocks of data\\ini\\multiplayer.ini, lane START-1): the lobby's colour list, in file order; the index is the
 	// slot's colour. ZH MultiplayerColorDefinition: RGBColor and RGBNightColor are the day and night player colours (0xRRGGBB here; Player::setPlayerColor
 	// takes 0xFF000000 | rgb), TooltipName a game text label, AvailableInWotR whether the strategic (War of the Ring) lobby offers it.

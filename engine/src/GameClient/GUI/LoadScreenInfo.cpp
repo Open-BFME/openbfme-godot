@@ -48,7 +48,8 @@ std::string loadScreenU16ToUtf8(const std::u16string &s)
 }
 
 LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSetupSource &setup, const GameTextSource *text,
-	const std::function<bool(const std::string &)> &imageExists, const SkirmishProfileStore *profiles, bool online)
+	const std::function<bool(const std::string &)> &imageExists, const SkirmishProfileStore *profiles, bool online,
+	int localSlot)
 {
 	LoadScreenInfo info;
 	info.mapStartCount = game.mapStartCount;
@@ -67,6 +68,34 @@ LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSe
 	}
 	info.gameLoadingType = 2;
 	info.mapName = game.mapName;
+	// Local 56: RW 0x7052BE(onLoadScreen=true) -> RW 0x801249 getApparentStartPos per game slot.
+	int effectiveLocalSlot = localSlot;
+	if (effectiveLocalSlot < 0)
+	{
+		int humanCount = 0;
+		int onlyHuman = -1;
+		for (int i = 0; i < game.mapStartCount; ++i)
+		{
+			if (game.slots[i].isHuman())
+			{
+				onlyHuman = i;
+				++humanCount;
+			}
+		}
+		if (humanCount == 1)
+		{
+			effectiveLocalSlot = onlyHuman;
+		}
+	}
+	const bool showRandomStartPos = setup.showRandomStartPos();
+	for (int i = 0; i < game.mapStartCount; ++i)
+	{
+		const SkirmishGameSlot &slot = game.slots[i];
+		if (slot.playerTemplate > PLAYERTEMPLATE_OBSERVER)
+		{
+			info.slotStartSpots[i] = game.apparentStartPos(i, effectiveLocalSlot, showRandomStartPos);
+		}
+	}
 	// lane RANKICON-1 (RW 0x81CF16 .. 0x81CFD4; BFME2 AptLoadScreenInit.cpp): SkirmishPreferences(game mode) -> the current profile (RW 0x8221F5 /
 	// 0x821A14), then StrategicStatsPreferences (RW 0x93E6F2) for a War of the Ring battle, else RealTimeStatsPreferences (RW 0x93E72F). Retail builds the
 	// object per human card; the file is the same for every card, so it is read once. Retail's preferences object reads a missing file as no keys: 0 points.
