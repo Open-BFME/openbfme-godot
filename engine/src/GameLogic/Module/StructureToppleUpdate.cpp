@@ -924,11 +924,12 @@ void ToppleUpdate::crc(StateHasher &h) const
 // OpenBFME native snapshot uses version 2 (version 1 was UnportedUpdateModule::xfer: UpdateModule + calls counter).
 void ToppleUpdate::xfer(Xfer &x)
 {
-	const XferVersion ver = SnapshotXfer::version(x, 2, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x);
-	if (ver == 1)
+	if (v.current < 2)
 	{
-		unsigned legacyCalls = 0;
+		std::uint32_t legacyCalls = 0;
 		x.xferUnsignedInt(&legacyCalls);
 		m_angularVelocity = 0.0f;
 		m_angularAcceleration = 0.0f;

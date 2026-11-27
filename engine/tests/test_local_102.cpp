@@ -17,6 +17,7 @@
 #include "GameLogic/Module/FlammableUpdate.h"
 #include "GameLogic/Module/SpellEffectModules.h"
 #include "GameLogic/Module/StructureToppleUpdate.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/PartitionManager.h"
 
 #include <cmath>
@@ -286,3 +287,50 @@ TEST_CASE("LOCAL-102 ToppleUpdate: KillWhenStartToppling, ToppleLeftOrRightOnly,
 	CHECK(lr->isEffectivelyDead());
 }
 
+
+TEST_CASE("LOCAL-102 ToppleUpdate: xfer loads legacy v1 UnportedUpdateModule payload and resets fields to defaults (RW 0x008ABDBD)")
+{
+	CombatWorld w(kToppleIni);
+	w.combat().setAutoAcquireEnabled(false);
+
+	Object *tree = w.unit("TestToppleTree", 'A', 300, 300);
+	ToppleUpdate *t = toppleOf(tree);
+	const Coord3D dir{ 1.0f, 0.0f, 0.0f };
+	tree->topple(&dir, 2.0f, TOPPLE_OPTIONS_NO_BOUNCE);
+	REQUIRE(t->state() == TOPPLE_FALLING);
+	REQUIRE(t->stumpID() != INVALID_ID);
+	REQUIRE(t->angularVelocity() == doctest::Approx(0.4f)); // tolerance: parsePercentToReal 20 * 0.01f * 2.0f rounding
+	REQUIRE(t->angularAcceleration() == 0.02f);
+
+	// Produce a real legacy v1 payload from UnportedUpdateModule::xfer (version 1 + UpdateModule + uint32_t m_calls).
+	UnportedUpdateModule legacy(tree, nullptr, MODULEINTERFACE_UPDATE);
+	legacy.update();
+	legacy.update();
+	XferSave v1Save;
+	legacy.xfer(v1Save);
+	REQUIRE(!v1Save.data().empty());
+	CHECK(v1Save.data().front() == 1);
+
+	XferLoad v1Load(v1Save.data());
+	t->xfer(v1Load);
+	CHECK(v1Load.atEnd());
+	CHECK(t->state() == TOPPLE_UPRIGHT);
+	CHECK(t->angularVelocity() == 0.0f);
+	CHECK(t->angularAcceleration() == 0.0f);
+	CHECK(t->toppleDirection().x == 0.0f);
+	CHECK(t->toppleDirection().y == 0.0f);
+	CHECK(t->toppleDirection().z == 0.0f);
+	CHECK(t->numAngleDeltaX() == 0);
+	CHECK(t->stumpID() == INVALID_ID);
+	CHECK(t->bounceVelocityDecay() == 0.0f);
+
+	// A future version 3 payload is rejected.
+	XferSave v2Save;
+	t->xfer(v2Save);
+	std::vector<std::uint8_t> future = v2Save.data();
+	REQUIRE(!future.empty());
+	CHECK(future.front() == 2);
+	future.front() = 3;
+	XferLoad bad(future);
+	CHECK_THROWS_AS(t->xfer(bad), XferException);
+}
