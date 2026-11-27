@@ -10,6 +10,7 @@
 #include "Common/BuildAssistant.h"
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameClient/GUI/Gadgets.h"
 #include "GameClient/GUI/Image.h"
 #include "GameClient/HudObjects.h"
 #include "GameLogic/GameLogic.h"
@@ -646,10 +647,155 @@ int ControlBar::productionCountOf(const CommandButton &b, const ProductionUpdate
 	return count;
 }
 
+// RW 0x71C62F
+void ControlBar::setCommandBarBorderColors(Color build, Color action, Color upgrade, Color system, Color altered)
+{
+	m_borderBuildColor = build;     // +0x220
+	m_borderActionColor = action;   // +0x224
+	m_borderUpgradeColor = upgrade; // +0x228
+	m_borderSystemColor = system;   // +0x22C
+	m_borderAlteredColor = altered; // +0x230
+}
+
+// RW 0x7206D5
+void ControlBar::setScheme(const ControlBarScheme *scheme)
+{
+	if (!scheme)
+	{
+		return;
+	}
+	m_schemeName = scheme->m_name;
+	// RW 0x720712 .. 0x720727: passes border colors to setCommandBarBorderColors (RW 0x71C62F)
+	setCommandBarBorderColors(
+		scheme->m_buttonBorderBuildColor,
+		scheme->m_buttonBorderActionColor,
+		scheme->m_buttonBorderUpgradeColor,
+		scheme->m_buttonBorderSystemColor,
+		scheme->m_buttonBorderAlteredColor
+	);
+	m_commandBarBorderColor = scheme->m_commandBarBorderColor; // RW 0x720732 (+0x234)
+}
+
+// RW 0x71D350 / 0x721613
+bool ControlBar::setSchemeByName(const std::string &name)
+{
+	const ControlBarSchemeStore *store = m_ctx.schemes ? m_ctx.schemes : TheControlBarSchemeStore;
+	if (!store)
+	{
+		return false;
+	}
+	const ControlBarScheme *scheme = store->findScheme(name);
+	if (scheme)
+	{
+		setScheme(scheme);
+		return true;
+	}
+	return false;
+}
+
+// RW 0x7216B6
+bool ControlBar::setSchemeBySide(const std::string &side)
+{
+	const ControlBarSchemeStore *store = m_ctx.schemes ? m_ctx.schemes : TheControlBarSchemeStore;
+	if (!store)
+	{
+		return false;
+	}
+	const ControlBarScheme *scheme = store->findSchemeBySide(side);
+	if (scheme)
+	{
+		setScheme(scheme);
+		return true;
+	}
+	return false;
+}
+
+// RW 0x71C4F4
+Color ControlBar::borderColorForType(int borderType, bool *draw) const
+{
+	switch (borderType)
+	{
+		case BUTTON_BORDER_BUILD:
+			if (draw) *draw = true;
+			return m_borderBuildColor;
+		case BUTTON_BORDER_UPGRADE:
+			if (draw) *draw = true;
+			return m_borderUpgradeColor;
+		case BUTTON_BORDER_ACTION:
+			if (draw) *draw = true;
+			return m_borderActionColor;
+		case BUTTON_BORDER_SYSTEM:
+			if (draw) *draw = true;
+			return m_borderSystemColor;
+		case BUTTON_BORDER_ALTERED:
+			if (draw) *draw = true;
+			return m_borderAlteredColor;
+		case BUTTON_BORDER_NONE:
+		default:
+			if (draw) *draw = false;
+			return 0x00FFFFFF; // WIN_COLOR_UNDEFINED
+	}
+}
+
+// RW 0x71C4F4
+void ControlBar::setCommandBarBorder(GameWindow *window, int borderType)
+{
+	if (!window)
+	{
+		return;
+	}
+	bool draw = false;
+	Color color = borderColorForType(borderType, &draw);
+	GadgetButtonSetBorder(window, color, draw);
+}
+
+// RW 0x71CF3E
+void ControlBar::setControlCommand(GameWindow *window, const CommandButton *button)
+{
+	if (!window)
+	{
+		return;
+	}
+	if (button)
+	{
+		setCommandBarBorder(window, button->getButtonBorderType());
+	}
+	else
+	{
+		setCommandBarBorder(window, BUTTON_BORDER_NONE);
+	}
+}
+
+// RW 0x944D54 / 0x944D9D
+void ControlBar::populateOCLTimerSellButton(GameWindow *sellWindow, bool show)
+{
+	if (!sellWindow)
+	{
+		return;
+	}
+	if (!show)
+	{
+		BitSet(sellWindow->winGetInstanceData()->m_status, WIN_STATUS_HIDDEN);
+		return;
+	}
+	BitClear(sellWindow->winGetInstanceData()->m_status, WIN_STATUS_HIDDEN);
+	const CommandStore *store = m_ctx.commands ? m_ctx.commands : TheCommandStore;
+	const CommandButton *sell = store ? store->findCommandButton("Command_Sell") : nullptr;
+	setControlCommand(sellWindow, sell);
+}
+
 void ControlBar::update()
 {
 	(void)kPaletteSize;
 	Player *local = m_ctx.localPlayer();
+	if (local)
+	{
+		const std::string &side = local->getSide();
+		if (!side.empty())
+		{
+			setSchemeBySide(side);
+		}
+	}
 	m_money = local && local->getMoney() ? local->getMoney()->countMoney() : 0;
 	m_cpUsed = local ? local->commandPoints().getUsage() : 0;
 	m_cpLimit = local ? m_cpUsed + local->commandPointsAvailable() : 0;
@@ -765,6 +911,10 @@ void ControlBar::update()
 						continue;
 					}
 					foreignDisable(cb);
+					cb.borderType = b->getButtonBorderType();
+					bool draw = false;
+					cb.borderColor = borderColorForType(cb.borderType, &draw);
+					cb.drawBorder = (!b->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 					cb.inPalantir = b->m_inPalantir;
 					cb.textLabel = b->m_textLabel.empty() ? std::string() : b->m_textLabel.front();
 					cb.descriptLabel = b->m_descriptLabel.empty() ? std::string() : b->m_descriptLabel.front();
@@ -860,6 +1010,10 @@ void ControlBar::update()
 					cb.autoAbility = aa->isAutoButton(*b);
 				}
 				cb.productionCount = productionCountOf(*b, pu);
+				cb.borderType = b->getButtonBorderType();
+				bool draw = false;
+				cb.borderColor = borderColorForType(cb.borderType, &draw);
+				cb.drawBorder = (!b->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 				foreignDisable(cb);
 				place(cb, start);
 			}
@@ -1072,6 +1226,10 @@ bool ControlBar::structureInventory(Object &obj, Player *local)
 		cb.image = !containerImage.empty() ? containerImage : (exitButton->m_buttonImageName.empty() ? std::string() : exitButton->m_buttonImageName.front());
 		cb.textLabel = exitButton->m_textLabel.empty() ? std::string() : exitButton->m_textLabel.front();
 		cb.descriptLabel = exitButton->m_descriptLabel.empty() ? std::string() : exitButton->m_descriptLabel.front();
+		cb.borderType = exitButton->getButtonBorderType();
+		bool draw = false;
+		cb.borderColor = borderColorForType(cb.borderType, &draw);
+		cb.drawBorder = (!exitButton->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 		buttons.push_back(cb);
 	}
 	int index = 0;
@@ -1096,6 +1254,10 @@ bool ControlBar::structureInventory(Object &obj, Player *local)
 		cb.image = evacuate->m_buttonImageName.empty() ? std::string() : evacuate->m_buttonImageName.front();
 		cb.textLabel = evacuate->m_textLabel.empty() ? std::string() : evacuate->m_textLabel.front();
 		cb.descriptLabel = evacuate->m_descriptLabel.empty() ? std::string() : evacuate->m_descriptLabel.front();
+		cb.borderType = evacuate->getButtonBorderType();
+		bool draw = false;
+		cb.borderColor = borderColorForType(cb.borderType, &draw);
+		cb.drawBorder = (!evacuate->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 		buttons.push_back(cb);
 	}
 	else if (max > 11 && contain->getContainCount() != 0)
@@ -1166,6 +1328,10 @@ void ControlBar::populateUnderConstruction(Object &obj, bool mine)
 	cb.textLabel = b->m_textLabel.empty() ? std::string() : b->m_textLabel.front();
 	cb.descriptLabel = b->m_descriptLabel.empty() ? std::string() : b->m_descriptLabel.front();
 	cb.hotkey = hotkeyOf(cb.textLabel);
+	cb.borderType = b->getButtonBorderType();
+	bool draw = false;
+	cb.borderColor = borderColorForType(cb.borderType, &draw);
+	cb.drawBorder = (!b->m_radial) && draw && (cb.borderColor != 0x00FFFFFFu);
 	place(cb, 0); // command window 0
 }
 

@@ -168,6 +168,7 @@ include(cmake/Structure.cmake)  # OPENBFME_STRUCTURE_SOURCES / OPENBFME_STRUCTUR
 include(cmake/Spell.cmake)      # OPENBFME_SPELL_SOURCES / OPENBFME_SPELL_TESTS (lane SPELL-1)
 include(cmake/Port43.cmake)     # PORT-43: GameData/PowerLimit -> GameLogic + 0x118 (issue #128; OPENBFME_PORT43_TESTS)
 include(cmake/Local80.cmake)    # script rank actions and PLAYER_COMPARE_RANK (fork issue 704; OPENBFME_LOCAL80_TESTS)
+include(cmake/Port330.cmake)    # PORT-330: FXList Sound / EvaEvent parse-time name checks (fork issue 847; OPENBFME_PORT330_TESTS)
 include(cmake/Render.cmake)     # OPENBFME_RENDER_SOURCES / OPENBFME_RENDER_TESTS (lane RENDER-1, client / draw only)
 include(cmake/SkirmishAI.cmake) # OPENBFME_SKIRMISH_AI_SOURCES / OPENBFME_SKIRMISH_AI_TESTS (lane AI-1)
 include(cmake/Vis.cmake)        # OPENBFME_VIS_SOURCES / OPENBFME_VIS_TESTS (lane VIS-1)
@@ -762,6 +763,7 @@ if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
     ${OPENBFME_PORT426_TESTS}
+    ${OPENBFME_PORT330_TESTS}
     tests/test_local_98.cpp
     ${OPENBFME_WIN1_TESTS}
     ${OPENBFME_DEP2_TESTS}
@@ -1063,6 +1065,8 @@ add_executable(openbfme_tests
     tests/test_logic_hash.cpp
     tests/test_logic_settings.cpp
     tests/test_logic_retail.cpp
+    # lane LOCAL-27 (the roads.ini Bridge block: field table RW 0xC19DC0, newBridge RW 0x6DC794)
+    tests/test_local_27.cpp
     # lane LOCAL-8 (RespawnUpdate ButtonImage, AutoRespawnAtObjectFilter, DeathAnimationTime)
     tests/test_local_8.cpp
     # upgrade completion name in the interface and its feedback (RW 0x8A2080 .. 0x8A223B)
@@ -1076,6 +1080,8 @@ add_executable(openbfme_tests
     tests/test_local_25.cpp
     # lane LOCAL-59 (WeaponFireSpecialAbilityUpdate makes and loads weapon in ctor, fork issue 418)
     tests/test_local_59.cpp
+    # lane LOCAL-12 (command button border, ControlBarScheme)
+    tests/test_local_12.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy
