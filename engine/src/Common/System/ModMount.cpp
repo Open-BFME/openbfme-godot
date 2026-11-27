@@ -753,6 +753,14 @@ ModMountReport MountInstallOverlay(Win32BIGFileSystem &out, const RetailMountRep
 				continue;
 			}
 			const std::string key = AsciiStringUtil::lowered(rel);
+			// lane MODS-3: an archive that needs code of the mod's game binary OpenBFME does not have: not mounted, the retail one of that path stays
+			const auto left = std::find_if(options.leftOut.begin(), options.leftOut.end(),
+				[&key](const std::pair<std::string, std::string> &l) { return AsciiStringUtil::lowered(l.first) == key; });
+			if (left != options.leftOut.end())
+			{
+				notes.push_back("install mod " + name + ": " + rel + " is left out (the original game's stays): " + left->second);
+				continue;
+			}
 			auto taken = owner.find(key);
 			if (taken != owner.end())
 			{

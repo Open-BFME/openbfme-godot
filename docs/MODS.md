@@ -121,7 +121,8 @@ rebuilt in OpenBFME as a named feature, off unless that mod is loaded (`Common/M
 | program (MD5) | what OpenBFME does |
 |---|---|
 | Edain Unchained 4.4.3 `game.dat` (5c31f503...) | the `edain-unchained.*` features below |
-| Patch 2.02 / 2.02 Delayfix `lotrbfme2ep1.exe` | nothing to do: install checks and EA's frame pacing, no game rule |
+| Patch 2.02 / 2.02 Delayfix `lotrbfme2ep1.exe` before 9.8.5 | nothing to do: install checks and EA's frame pacing, no game rule |
+| Patch 2.02 9.8.6 `lotrbfme2ep1.exe` (fc32e4c4...) | `edain-unchained.commandset-limit` and `edain-unchained.observer-command-range` (the same patches as Edain's); the rest is not rebuilt yet, see below |
 | Edain Völker 1.7 `game.dat` | nothing to do for the game rules: frame pacing and desync reporting |
 | RJ-RotWK launcher and its `file.dat` | nothing: a launcher, not the game |
 
@@ -139,6 +140,19 @@ keeps its plot), `multi-execute-gate`, `description-timers` (cooldown / build / 
 Not rebuilt, because no Edain data or map uses them yet: the PRODUCTION_MONEY / _UNIT / _UPGRADE / _CONSTRUCTION modifiers and desert
 weather (SAND, DESERT). The hero bar's 32 slots are inert (Edain keeps the retail 16-slot movie). Its render and crash-dump fixes are
 Windows/DirectX fixes the port does not need.
+
+Patch 2.02 9.8.6 starts with its two features on. The game names what is still missing (stop S-5304); it plays differently from the
+original 2.02 there:
+
+- Game rules: Hold Ground no longer stops units, the building limit is checked when placing a building, units leave a container
+  together on *Evacuate*, and up to 5120 upgrades (OpenBFME holds 2048).
+- Interface and replays: selecting every building of a kind, chat and muting in replays, replay pause, the map search, hotkeys and
+  text shortcuts, the camera zoom reset, and the new settings (resolutions, 30 / 60 FPS, the Delay Fix switch).
+- War of the Ring with 8 players, online, and without a host for land transfer.
+
+Its reworked settings menu (`apt/Options.big`) needs the game program's own settings code, so OpenBFME leaves that one archive of the mod
+out and keeps the original game's; the mount notes it. Without that, OpenBFME's settings menu drew broken and could not be left from the
+main menu.
 
 The active features are part of the game's identity: two players with different engine features do not join each other, and a replay
 names them.
