@@ -46,12 +46,12 @@ void Eva::setEnabled(bool enabled)
 	m_enabled = enabled;
 }
 
-bool Eva::reportEventByName(const std::string &name, const Coord3D *position, double nowMs)
+bool Eva::reportEventByName(const std::string &name, const Coord3D *position, double nowMs, const Coord3D *jumpPosition)
 {
-	return reportEvent(m_ini.eva.findIndex(name, false), position, nowMs);
+	return reportEvent(m_ini.eva.findIndex(name, false), position, nowMs, jumpPosition);
 }
 
-bool Eva::reportEvent(int index, const Coord3D *position, double nowMs)
+bool Eva::reportEvent(int index, const Coord3D *position, double nowMs, const Coord3D *jumpPosition)
 {
 	const EvaEventRecord *r = m_ini.eva.record(index, false);
 	if (!r || !m_enabled)
@@ -91,16 +91,17 @@ bool Eva::reportEvent(int index, const Coord3D *position, double nowMs)
 	p.hasPosition = position != nullptr;
 	p.position = position ? *position : Coord3D();
 	m_pending.push_back(p);
-	if (r->countAsJumpToLocation && position)
+	const Coord3D *jumpLoc = jumpPosition ? jumpPosition : position;
+	if (r->countAsJumpToLocation && jumpLoc)
 	{
 		const MiscEvaData &misc = m_ini.eva.miscEvaData();
 		bool merged = false;
 		for (JumpTo &j : m_jumpTo)
 		{
-			const float dx = j.position.x - position->x, dy = j.position.y - position->y;
+			const float dx = j.position.x - jumpLoc->x, dy = j.position.y - jumpLoc->y;
 			if (std::sqrt(dx * dx + dy * dy) < misc.minDistanceBetweenJumpToEvents)
 			{
-				j.position = *position;
+				j.position = *jumpLoc;
 				j.atMs = nowMs;
 				merged = true;
 				break;
@@ -108,7 +109,7 @@ bool Eva::reportEvent(int index, const Coord3D *position, double nowMs)
 		}
 		if (!merged)
 		{
-			m_jumpTo.push_back({ *position, nowMs });
+			m_jumpTo.push_back({ *jumpLoc, nowMs });
 		}
 	}
 	return true;

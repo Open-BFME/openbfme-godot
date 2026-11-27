@@ -128,6 +128,8 @@ public:
 	virtual void observerEvent(Object &, ObserverEvent::Kind, const Coord3D * = nullptr, const std::string & = {}, float = 0.0f) {}
 	// RW 0x628882: make the Drawable of a new object and bind it (Object::friend_bindToClient)
 	virtual void objectCreated(Object &obj) = 0;
+	// RW 0x68D27A: notify the drawable create interfaces after the object modules.
+	virtual void objectBuildComplete(Object &obj) { (void)obj; }
 	// the object is being deleted (processDestroyList): drop its drawable
 	virtual void objectDestroyed(Object &obj) = 0;
 	// a model condition bit of the object changed (ZH Object::setModelConditionFlags -> Drawable::setModelConditionFlags)

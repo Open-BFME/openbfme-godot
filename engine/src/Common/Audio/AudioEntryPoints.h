@@ -47,7 +47,8 @@ void stopSound(AudioHandle handle);
 // event is unknown, Eva is disabled or the report was dropped on the spot. No Eva installed: false, counted in callsWithoutEva().
 void installEva(Eva *eva); // nullptr uninstalls
 Eva *currentEva();
-bool reportEva(const std::string &eventName, const Coord3D *position);
+bool reportEva(const std::string &eventName, const Coord3D *position, const Coord3D *position2);
+bool reportEva(int eventIndex, const Coord3D *position, const Coord3D *position2);
 std::uint64_t callsWithoutEva();
 // lane EVADAMAGE-1 (RW 0x67B644 .. 0x67B6A4, the end of the drawable's damage notice): `second` (when not "") instead of `event` when `farFrameDue` (the
 // drawable's far frame, RW + 0x388, is not ahead of the logic frame) and TheEva calls `event` blocked by its timeout (RW 0x5DCC88) or about to play
