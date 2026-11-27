@@ -25,10 +25,12 @@
 #include <string>
 #include <vector>
 
-// The state of one member as the maps read it during a call (the member interface RW 0xC6B3D0): slot 0 the position the module stored at its last
-// notification (module + 0x28 / + 0x2C), slot 1 the object's position (+ 0x38 / + 0x3C), slot 2 / 3 the stored / current model condition flags
-// (module + 0x30 / object + 0x10C), slot 4 / 5 the stored / current status bits (module + 0x7C / object + 0x94), slot 6 UnitWeight, slot 7 the keys,
-// slot 8 / 9 stealthed now (RW 0x694C0D with no viewer) / stored (module + 0x8C), slot 10 the stored frame (module + 0x90).
+// The state of one member as the maps read it during a call (the member interface RW 0xC6B3D0): slot 0 (RW 0x008AF17C) the position the module stored
+// at its last notification (module + 0x28 / + 0x2C), slot 1 (RW 0x008AF18E) the object's position (+ 0x38 / + 0x3C), slot 2 (RW 0x009D39B1) / slot 3
+// (RW 0x008AF1A5) the stored / current model condition flags (module + 0x30 / object + 0x10C), slot 4 (RW 0x008F1161) / slot 5 (RW 0x008AF1AE) the
+// stored / current status bits (module + 0x7C / object + 0x94), slot 6 (RW 0x008AF1B7) UnitWeight, slot 7 (RW 0x008AF1BF) the keys, slot 8
+// (RW 0x008AF1C6: RW 0x694C0D with no viewer) / slot 9 (RW 0x008A4A91) stealthed now / stored (module + 0x8C), slot 10 (RW 0x006DA64A) the stored
+// frame (module + 0x90), slot 11 (RW 0x008AEF8A) the deleting dtor thunk.
 class StateHasher;
 
 struct LargeGroupAudioEvent
