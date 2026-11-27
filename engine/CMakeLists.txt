@@ -760,6 +760,7 @@ endif()
 # ---- unit tests --------------------------------------------------------------------------
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
+include(cmake/Local192.cmake)
 add_executable(openbfme_tests
     ${OPENBFME_PORT426_TESTS}
     tests/test_local_98.cpp
@@ -953,6 +954,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT302_TESTS}
     ${OPENBFME_PORT294_TESTS}
     ${OPENBFME_PORT198_TESTS}
+    ${OPENBFME_LOCAL192_TESTS}
     ${OPENBFME_PORT301_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp

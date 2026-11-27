@@ -1063,7 +1063,7 @@ std::vector<std::string> LiveGameAudio::acceptanceStops()
 		"[S-706] object ambient sounds: the rules are ZH's Drawable::startAmbientSound (damage-state sound with the pristine fallback, MaxRange gate for non global "
 		"non critical sounds) read as donor; RotWK's own drawable ambient code was not read: SoundAmbientBattle, the per-object custom ambient info "
 		"(ZH m_customSoundAmbientInfo), the time of day and the script enable flags are not ported, and an out-of-range ambient is retried every frame",
-		"[S-707] object sounds not ported: SoundCreated, SoundOnDamaged / ReallyDamaged, SoundEnter / Exit, SoundPromoted*, SoundStealthOn / Off, SoundImpact, "
+		"[S-707] object sounds not ported: SoundCreated, SoundOnDamaged / ReallyDamaged, SoundPromoted*, SoundImpact, "
 		"SoundCrushing, SoundFallingFromPlane, SoundAmbientBattle (the death, impact and FireFX sounds are FX list nuggets: FX-2's lane). Done in AUDIO-2 "
 		"part 2: the weapon FireSound (RW 0x8E3411), SoundMoveStart / Loop (S-712), VoiceFullyCreated at construction completion (RW 0x857D6C .. 0x857DBA: "
 		"GettingBuiltBehavior::checkCompletion posts it right before m_completedOnce = true, guarded by !m_completedOnce && frame >= 5; retail's +0x33 is "

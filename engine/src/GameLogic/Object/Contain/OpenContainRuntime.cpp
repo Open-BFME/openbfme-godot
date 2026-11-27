@@ -9,6 +9,9 @@
 
 #include "Common/NumericState.h"
 #include "Common/Player.h"
+#include "Common/Audio/AudioEntryPoints.h"
+#include "Common/Audio/AudioLog.h"
+#include "GameLogic/UnitSpecificSound.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -350,15 +353,38 @@ void OpenContain::objectOnRemovedFrom(Object *rider)
 	rider->friend_setContainedFrame(0);
 }
 
+namespace
+{
+void playContainObjectSound(const Object *obj, const char *row)
+{
+	const ThingTemplate *tt = obj ? obj->getTemplate() : nullptr;
+	if (!tt)
+	{
+		return;
+	}
+	const std::string sound = UnitSpecificSound::templateSound(*tt->getFinalOverride(), row);
+	if (!sound.empty())
+	{
+		AudioLog::Scope scope(row);
+		AudioApi::playSoundForObject(sound, obj->getID());
+	}
+}
+} // namespace
+
+// RW 0x00865F9A (DONOR BFME2 0x00463097 OpenContain_onContaining.cpp): plays container's SoundEnter (RW 0x00865FD0 -> RW 0x00865C98, key 0x2F)
+// for the container's ObjectID (RW 0x00865FFD -> 0x006DA6A7 -> TheAudio vslot 0x64). INFERENCE: drawable assumed present, template row only (S-701).
 void OpenContain::onContaining(Object *obj, bool wasSelected)
 {
 	(void)obj;
-	(void)wasSelected; // RW 0x865F9A: the EnterSound (client side)
+	(void)wasSelected;
+	playContainObjectSound(getObject(), "SoundEnter");
 }
 
+// RW 0x008680F4 (DONOR BFME2 OpenContainOnRemoving.cpp): plays container's SoundExit (RW 0x00868123 -> RW 0x00865CB1, key 0x30) for the container's
+// ObjectID (RW 0x00868150 -> 0x006DA6A7 -> TheAudio vslot 0x64); rider's bone records leave (RW 0x867663 / 0x866E08); ModifierToGiveOnExit (S-1100).
 void OpenContain::onRemoving(Object *obj)
 {
-	// RW 0x8680F4: the ExitSound (client side), the rider's bone records leave (RW 0x867663 / 0x866E08), ModifierToGiveOnExit (S-1100)
+	playContainObjectSound(getObject(), "SoundExit");
 	m_riderBoneIndex.erase(obj->getID());
 	m_riderBoneName.erase(obj->getID());
 }
