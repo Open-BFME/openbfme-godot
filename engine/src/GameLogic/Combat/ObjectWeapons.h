@@ -174,6 +174,7 @@ public:
 	Weapon *crushRevengeWeapon() const { return m_crushRevengeWeapon.get(); }
 	// RW 0x6CF328 Weapon::fireWeapon(source, victim): privateFireWeapon at an object, no lock, no tracker
 	void fireExtraWeapon(Weapon &w, Object &victim);
+	void forceFireExtraWeapon(Weapon &w, Object &victim); // RW 0x006CF407
 	// lane SPELL-2 / HERO-1: RW 0x6CF3D2 Weapon::forceFireWeapon(source, pos): privateFireWeapon at a position (ZH: no victim, ranges ignored), no lock, no tracker
 	void fireExtraWeaponAt(Weapon &w, const Coord3D &pos);
 	// lane HERO-1: a weapon of its own (WeaponFireSpecialAbilityUpdate RW 0x895E1A: RW 0x68B150(template, slot 0), owner 0, RW 0x6CEE0F loadAmmoNow)

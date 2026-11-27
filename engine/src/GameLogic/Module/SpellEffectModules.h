@@ -91,7 +91,7 @@ public:
 	const Weapon *singleWeapon() const { return m_weapon.get(); }
 	void crc(StateHasher &hasher) const override;
 
-private:
+protected:
 	struct Record
 	{
 		std::unique_ptr<Weapon> weapon;

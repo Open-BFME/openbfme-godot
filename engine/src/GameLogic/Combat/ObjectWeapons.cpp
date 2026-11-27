@@ -418,6 +418,21 @@ void ObjectWeapons::makeCrushWeapons()
 }
 
 // RW 0x6CF328 -> privateFireWeapon RW 0x6CEF6D with the victim as the target
+void ObjectWeapons::forceFireExtraWeapon(Weapon &w, Object &victim)
+{
+	if (!w.getTemplate())
+	{
+		return;
+	}
+	Weapon::FireArgs args;
+	args.target.hasVictim = true;
+	args.target.victimID = victim.getID();
+	args.target.victimPosition = *victim.getPosition();
+	args.ignoreRanges = true; // RW 0x006CF413: push 1
+	ObjectWeaponDelivery delivery(*m_owner, *this, *w.getTemplate(), w);
+	w.privateFireWeapon(host(), delivery, args);
+}
+
 void ObjectWeapons::fireExtraWeapon(Weapon &w, Object &victim)
 {
 	if (!w.getTemplate())
