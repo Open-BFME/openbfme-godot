@@ -175,11 +175,22 @@ void OCLUpdate::registerClass(ModuleFactory &modules)
 	});
 }
 
-// RW 0x0089EBE8 (version block RW 0x89EC00 is (1, 2)): UpdateModule, the two frames, from version 2 the count. OpenBFME native layout (S-4190): one version with all three
+// RW 0x0089EBE8 (version block RW 0x89EC00 is (1, 2)): version 2 is the native layout (UpdateModule + m_nextFrame, m_scheduledAt, m_created).
+// Version 1 is the pre-port UnportedUpdateModule shell (UpdateModule + m_calls), which resets scheduling fields to defaults.
 void OCLUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x);
+	if (v.current < 2)
+	{
+		std::uint32_t legacyCalls = 0; // UnportedUpdateModule::m_calls
+		x.xferUnsignedInt(&legacyCalls);
+		m_nextFrame = 0;
+		m_scheduledAt = 0;
+		m_created = 0;
+		return;
+	}
 	x.xferUnsignedInt(&m_nextFrame);
 	x.xferUnsignedInt(&m_scheduledAt);
 	x.xferInt(&m_created);

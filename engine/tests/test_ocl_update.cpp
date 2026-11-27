@@ -6,6 +6,7 @@
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/Module/OCLUpdate.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectCreationList.h"
 
@@ -91,4 +92,60 @@ TEST_CASE("modgap1 OCLUpdate: schedules on first update, fires OCL on delay, and
 
 		TheObjectCreationListStore = prev;
 	}
+}
+
+TEST_CASE("modgap1 OCLUpdate xfer: v2 round-trip, v1 UnportedUpdateModule compatibility, and v3 rejection")
+{
+	combattest::CombatWorld w;
+	ObjectCreationListStore ocls(w.w.keys);
+	ObjectCreationListStore *prev = TheObjectCreationListStore;
+	TheObjectCreationListStore = &ocls;
+	w.w.fx.env.blocks.registerBlock("ObjectCreationList", [](INI *ini) { ObjectCreationListStore::parseObjectCreationListDefinitionGlobal(ini); });
+	const std::string err = w.w.load(kOclUpdateIni);
+	REQUIRE_MESSAGE(err.empty(), err);
+
+	Object *emitter = w.unit("TestOclEmitter", 'A', 200.0f, 200.0f);
+	REQUIRE(emitter != nullptr);
+	auto *mod = dynamic_cast<OCLUpdate *>(emitter->findModule("OCLUpdate"));
+	REQUIRE(mod != nullptr);
+
+	w.frames(1);
+	REQUIRE(mod->nextFrame() == 3u);
+	REQUIRE(mod->scheduledAt() == 1u);
+
+	// v2 round-trip and version 3 rejection
+	XferSave v2Save;
+	mod->xfer(v2Save);
+	REQUIRE(!v2Save.data().empty());
+	CHECK(v2Save.data().front() == 2);
+	{
+		XferLoad v2Load(v2Save.data());
+		mod->xfer(v2Load);
+		CHECK(v2Load.atEnd());
+		CHECK(mod->nextFrame() == 3u);
+		CHECK(mod->scheduledAt() == 1u);
+	}
+	{
+		std::vector<std::uint8_t> badVer = v2Save.data();
+		badVer.front() = 3;
+		XferLoad badLoad(badVer);
+		CHECK_THROWS_AS(mod->xfer(badLoad), XferException);
+	}
+
+	// Real v1 legacy payload produced by UnportedUpdateModule (version 1 + UpdateModule + m_calls)
+	UnportedUpdateModule legacy(emitter, nullptr, 1);
+	legacy.update();
+	XferSave v1Save;
+	legacy.xfer(v1Save);
+	REQUIRE(!v1Save.data().empty());
+	CHECK(v1Save.data().front() == 1);
+
+	XferLoad v1Load(v1Save.data());
+	mod->xfer(v1Load);
+	CHECK(v1Load.atEnd());
+	CHECK(mod->nextFrame() == 0u);
+	CHECK(mod->scheduledAt() == 0u);
+	CHECK(mod->created() == 0);
+
+	TheObjectCreationListStore = prev;
 }
