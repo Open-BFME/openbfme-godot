@@ -957,6 +957,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT198_TESTS}
     ${OPENBFME_PORT301_TESTS}
     tests/test_main.cpp
+    tests/test_local_136.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
     tests/test_archive_order.cpp
