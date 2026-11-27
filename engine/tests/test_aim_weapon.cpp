@@ -311,11 +311,15 @@ TEST_CASE("AimWeaponBehavior: a save from before the port (the unported shell's 
 	shell.update();
 	REQUIRE(shell.calls() == 2u);
 	XferSave old;
+	old.beginBlock(); // inside a module block, as Object::xfer saves each module (RW 0x697F28)
 	shell.xfer(old);
-	REQUIRE(old.data().front() == 1);
+	old.endBlock();
+	REQUIRE(old.data()[8] == 1); // after "BLOK" and the block's end offset: the shell's version
 	XferLoad load(old.data());
+	load.beginBlock();
 	m->xfer(load);
-	CHECK(load.atEnd()); // the call count is read, nothing is left over
+	load.endBlock(); // the block's end: the call count is read, nothing is left over (endBlock refuses any other position)
+	CHECK(load.atEnd());
 	CHECK_FALSE(m->isAiming());
 	CHECK(m->friend_getNextCallFrame() == (UnsignedInt)UPDATE_SLEEP_FOREVER);
 	XferSave now;

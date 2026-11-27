@@ -472,6 +472,13 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		logic.setShowBehindBuildingMarkers(param(a, 0).intValue != 0);
 		return;
 	}
+	if (name == "SET_HERO_EXPERIENCE_SHARING")
+	{
+		// PORT-301: case 538 (RW 0x7CDF99): TheGameLogic + 0x9F = (param 0's int (+ 8) != 0) through RW 0x7BD3D1; ShareExperienceBehavior::share reads it
+		// (RW 0x883428) and skips a HERO candidate while it is clear
+		logic.setHeroExperienceSharing(param(a, 0).intValue != 0);
+		return;
+	}
 	if (name == "RADAR_CREATE_EVENT" || name == "OBJECT_CREATE_RADAR_EVENT" || name == "TEAM_CREATE_RADAR_EVENT")
 	{
 		radarEventAction(engine, a, name);

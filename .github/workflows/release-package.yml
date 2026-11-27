@@ -94,8 +94,14 @@ jobs:
           if [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" ]; then
             [ "$GITHUB_REF" = refs/heads/main ] || { echo "the release workflow runs on $GITHUB_REF, not main"; exit 1; }
           else
-            [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION" ] \
-              || { echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1; }
+            # macos-15-arm64 image 20261123 names the workflow ref "@<sha>" on a staging dispatch (nightly 2026-11-26 07:00Z): that form is
+            # accepted for this commit only, with GITHUB_REF still the staging branch
+            [ "$GITHUB_REF" = "refs/heads/staging/$IN_VERSION" ] || { echo "dispatched on $GITHUB_REF, not on staging/$IN_VERSION"; exit 1; }
+            case "$GITHUB_WORKFLOW_REF" in
+              "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION") ;;
+              "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@$IN_COMMIT") ;;
+              *) echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1 ;;
+            esac
             [ "$GITHUB_SHA" = "$IN_COMMIT" ] || { echo "the dispatched ref is at $GITHUB_SHA, not $IN_COMMIT"; exit 1; }
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -184,8 +190,14 @@ jobs:
           if [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" ]; then
             [ "$GITHUB_REF" = refs/heads/main ] || { echo "the release workflow runs on $GITHUB_REF, not main"; exit 1; }
           else
-            [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION" ] \
-              || { echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1; }
+            # macos-15-arm64 image 20261123 names the workflow ref "@<sha>" on a staging dispatch (nightly 2026-11-26 07:00Z): that form is
+            # accepted for this commit only, with GITHUB_REF still the staging branch
+            [ "$GITHUB_REF" = "refs/heads/staging/$IN_VERSION" ] || { echo "dispatched on $GITHUB_REF, not on staging/$IN_VERSION"; exit 1; }
+            case "$GITHUB_WORKFLOW_REF" in
+              "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION") ;;
+              "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@$IN_COMMIT") ;;
+              *) echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1 ;;
+            esac
             [ "$GITHUB_SHA" = "$IN_COMMIT" ] || { echo "the dispatched ref is at $GITHUB_SHA, not $IN_COMMIT"; exit 1; }
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -246,8 +258,14 @@ jobs:
           if [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main" ]; then
             [ "$GITHUB_REF" = refs/heads/main ] || { echo "the release workflow runs on $GITHUB_REF, not main"; exit 1; }
           else
-            [ "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION" ] \
-              || { echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1; }
+            # macos-15-arm64 image 20261123 names the workflow ref "@<sha>" on a staging dispatch (nightly 2026-11-26 07:00Z): that form is
+            # accepted for this commit only, with GITHUB_REF still the staging branch
+            [ "$GITHUB_REF" = "refs/heads/staging/$IN_VERSION" ] || { echo "dispatched on $GITHUB_REF, not on staging/$IN_VERSION"; exit 1; }
+            case "$GITHUB_WORKFLOW_REF" in
+              "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION") ;;
+              "$GITHUB_REPOSITORY/.github/workflows/release-package.yml@$IN_COMMIT") ;;
+              *) echo "dispatched as $GITHUB_WORKFLOW_REF, not on staging/$IN_VERSION"; exit 1 ;;
+            esac
             [ "$GITHUB_SHA" = "$IN_COMMIT" ] || { echo "the dispatched ref is at $GITHUB_SHA, not $IN_COMMIT"; exit 1; }
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

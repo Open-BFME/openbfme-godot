@@ -102,7 +102,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	m_things->registerBlocks(m_env.blocks);
 	m_playerTemplates->registerBlock(m_env.blocks);
 	// every other block: recording stubs (their parsers belong to other port steps; the Locomotor store is the one other real parser)
-	std::vector<std::string> skip = { "LoadSubsystem", "Object", "ObjectReskin", "ChildObject", "PlayerTemplate", "CommandButton", "CommandSet", "Upgrade",
+	std::vector<std::string> skip = { "LoadSubsystem", "Object", "ObjectReskin", "ChildObject", "PlayerTemplate", "CommandButton", "CommandSet", "ControlBarScheme", "Upgrade",
 		"ExperienceLevel", "ExperienceScalarTable", "ModifierList", // XP-1: these three are parsed for real
 		"StanceTemplate", // INTEG-1: TheStanceTemplateStore (RW 0x835967)
 		"EmotionNugget", // MODULES-2: TheEmotionSystem (RW 0x8E0D59)
@@ -128,6 +128,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	// PROD-1: the control bar's two block parsers (RW 0x5DA711 / 0x7205B9) replace their recording stubs
 	m_env.blocks.registerBlock("CommandButton", [](INI *ini) { CommandStore::parseCommandButtonDefinitionGlobal(ini); });
 	m_env.blocks.registerBlock("CommandSet", [](INI *ini) { CommandStore::parseCommandSetDefinitionGlobal(ini); });
+	m_env.blocks.registerBlock("ControlBarScheme", [](INI *ini) { ControlBarSchemeStore::parseSchemeDefinitionGlobal(ini); });
 	// UPGRADE-1: TheUpgradeCenter (RW 0xDE45A0): the veterancy upgrades exist before any INI (RW 0x66FDD3), the Upgrade block is RW 0x66FCDA. Its sound and Eva
 	// fields are validated against this world's audio / Eva tables, which the legend loads first (TheAudio, TheEva precede TheUpgradeCenter)
 	m_upgrades.init();
@@ -173,6 +174,11 @@ GlobalOwnerChain<LocomotorStore *> &locomotorChain()
 GlobalOwnerChain<CommandStore *> &commandChain()
 {
 	static thread_local ThreadOwnerChain<CommandStore *> chain(TheCommandStore);
+	return chain.get();
+}
+GlobalOwnerChain<ControlBarSchemeStore *> &schemeChain()
+{
+	static thread_local ThreadOwnerChain<ControlBarSchemeStore *> chain(TheControlBarSchemeStore);
 	return chain.get();
 }
 GlobalOwnerChain<UpgradeCenter *> &upgradeChain()
@@ -231,6 +237,7 @@ void RetailObjectWorld::registerContext()
 {
 	locomotorChain().install(this, &m_s->m_locomotors); // the Locomotor block has a real parser (HORDE-1) that needs the store
 	commandChain().install(this, &m_s->m_commands);     // PROD-1: CommandButton / CommandSet
+	schemeChain().install(this, &m_s->m_schemes);       // LOCAL-12: ControlBarScheme
 	upgradeChain().install(this, &m_s->m_upgrades);     // UPGRADE-1: the Upgrade block and every upgrade mask field of the object modules
 	experienceChain().install(this, &m_s->m_experienceLevels);      // XP-1
 	attributeModifierChain().install(this, &m_s->m_attributeModifiers); // XP-1
@@ -253,6 +260,7 @@ void RetailObjectWorld::unregisterContext()
 {
 	locomotorChain().remove(this);
 	commandChain().remove(this);
+	schemeChain().remove(this);
 	upgradeChain().remove(this);
 	experienceChain().remove(this);
 	attributeModifierChain().remove(this);
@@ -269,7 +277,7 @@ void RetailObjectWorld::unregisterContext()
 
 bool RetailObjectWorld::isCurrentContext() const
 {
-	return audioChain().current() == this && commandChain().current() == this && upgradeChain().current() == this && locomotorChain().current() == this && WeaponStores::currentOwner() == &m_s->m_weaponStores
+	return audioChain().current() == this && commandChain().current() == this && schemeChain().current() == this && upgradeChain().current() == this && locomotorChain().current() == this && WeaponStores::currentOwner() == &m_s->m_weaponStores
 		&& SpellStores::currentOwner() == m_s->m_spellStores.get();
 }
 
@@ -299,6 +307,20 @@ RetailObjectWorld::ContextScope::~ContextScope()
 RetailObjectWorld::RetailObjectWorld(ArchiveFileSystem &fs)
 	: m_fs(fs), m_s(std::make_unique<State>(fs))
 {
+	installFxParseServices();
+}
+
+// PORT-330 (S-190): the world's FXList blocks (and the client's FX player, which parses the FX files again) check a `Sound` nugget's name against
+// TheAudio (RW 0x73B217 -> RW 0x73AA94) and an `EvaEvent*` name against TheEva (RW 0x5DE588 -> RW 0x5DE0D8) while the block parses. Both tables are
+// this world's (m_s->m_audio), and their subsystem inits (RW 0x4538DA, RW 0x5DE837) precede TheFXListStore's own (RW 0x63AF2D onward).
+void RetailObjectWorld::installFxParseServices()
+{
+	// built once and kept across reloads: the FX player holds the pointer, the state it answers from is swapped under it
+	if (!m_fxParseServices)
+	{
+		m_fxParseServices = MakeWorldFXListParseServices(*this);
+	}
+	m_s->m_recorder.fxLists->setParseServices(m_fxParseServices.get());
 }
 
 RetailObjectWorld::State::~State() = default;
@@ -351,6 +373,7 @@ void RetailObjectWorld::reloadState()
 	unregisterContext();
 	m_s.reset(); // every store the INI load made goes (the old one first: no two states in memory)
 	m_s = std::make_unique<State>(m_fs);
+	installFxParseServices(); // PORT-330: the new state's FXList store, and the answers from its TheAudio / TheEva tables
 	std::string error;
 	if (!loadState(&error)) // selects this world's context, as load() does
 	{
@@ -480,6 +503,17 @@ bool RetailObjectWorld::loadState(std::string *error)
 	{
 		SubsystemLoadReport::FileError fe;
 		fe.file = "ControlBar";
+		fe.code = 0;
+		fe.message = e;
+		m_s->m_report.errors.push_back(fe);
+	}
+	// LOCAL-12: the ControlBar loads its schemes (RW 0x721BA1)
+	std::vector<std::string> schemeErrors;
+	m_s->m_schemes.loadFromFiles(m_s->m_env, &schemeErrors);
+	for (const std::string &e : schemeErrors)
+	{
+		SubsystemLoadReport::FileError fe;
+		fe.file = "ControlBarScheme";
 		fe.code = 0;
 		fe.message = e;
 		m_s->m_report.errors.push_back(fe);
