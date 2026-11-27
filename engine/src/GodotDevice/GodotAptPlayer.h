@@ -48,6 +48,7 @@ class AptGodotHost;
 class AptTextureStore;
 class GameTextTable;
 class FontSubstitution;
+class GlobalLanguage;
 struct AptCanvasList;
 class GadgetDrawList;
 struct AptCanvasOp;
@@ -454,6 +455,8 @@ public:
 	void set_native_hook(AptNativeHook *hook);
 	// lane HUD-6: the font the movie's texts draw with for (name, point size): fontsubstitution.ini, the corpus fonts (C++ only; the HUD's help box)
 	Ref<Font> font_for(const std::string &name, float size, float *drawSize, bool bold = false);
+	// language.ini's Language block (the fonts the engine's own texts read, DrawableCaptionFont among them); null without shell mode
+	const GlobalLanguage *language() const;
 	// lane UI-6: `font` (from font_for) at `px` pixels with RotWK's GDI text cell (ascent = the cell's baseline, height = the char height)
 	Ref<Font> font_cell(const Ref<Font> &font, int px);
 	// the shell mode's window manager and shell (null in the other modes) and a switch that hands the mouse and keys to the HUD node instead of this player (C++ only)

@@ -149,6 +149,48 @@ void InGameUI::setInputEnabled(bool on)
 	noteStep("MSG_CHANGE_ORDERMODE");
 }
 
+// lane HOVER-1: RW 0x69BB14 (InGameUI.h)
+bool InGameUI::areTooltipsDisabled() const
+{
+	if (!m_tooltipsEnabled)
+	{
+		return true; // RW 0x69BB19: GlobalData +0xDD0 == 0
+	}
+	if (m_livingWorldTooltipQuery && m_livingWorldTooltipQuery())
+	{
+		return false; // RW 0x69BB33 / 0x69BB3A: the Living World query wants them
+	}
+	return m_logic && m_logic->getFrame() < m_tooltipDisableUntil; // RW 0x69BB44: frame < +0x7EC
+}
+
+// lane HOVER-1: RW 0x69B6A8 (InGameUI.h)
+void InGameUI::setModeGate810(bool on)
+{
+	const bool was = m_modeGate810;
+	m_modeGate810 = on;
+	if (was || !on)
+	{
+		return;
+	}
+	// RW 0x69B6C4: TheMouse (0xDE8CBC) + 0x83BC38 clears its bytes +4/+5/+6; not mapped (S-2703)
+	setSelecting(false); // RW 0x69B6D8: vslot 0xAC
+	noteStep("setSelecting");
+	// RW 0x69B6E3: vslot 0x6C clears the byte at +0x28; the field is not mapped in the port (S-2703)
+	noteStep("slot6C");
+	if (m_radiusCursorNone)
+	{
+		m_radiusCursorNone(); // RW 0x69B6EA: vslot 0x144
+	}
+	noteStep("setRadiusCursorNone");
+	// RW 0x69B6F0: +0x8B8 .. +0x8C2 = 0 (eleven flags). The port maps force attack, force move and prefer selection; the
+	// other eight are not mapped (S-2703). +0x8B0 (waypoint) is NOT in this range: retail's setter leaves it (the input-disable
+	// edge clears it). No MSG_CHANGE_ORDERMODE: retail's setter appends no stream message.
+	m_forceAttack = false;
+	m_forceMove = false;
+	m_preferSelection = false;
+	noteStep("modeFlags");
+}
+
 // lane OWNERFIX-1: RW 0x7BC586 / RW 0x7BC5E9 (InGameUI.h)
 void InGameUI::applyScriptInput(bool enable)
 {

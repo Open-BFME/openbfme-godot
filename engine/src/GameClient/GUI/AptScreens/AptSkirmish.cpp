@@ -213,6 +213,10 @@ AptSkirmish::~AptSkirmish()
 AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment &environment, const char *filename, const char *codePrefix, bool lan)
 	: AptScreen(windows, shell, filename, codePrefix), m_env(environment), m_lan(lan)
 {
+	// RW 0x928324 .. 0x928326: RotWK's opener shows the front-end background. The main-menu opener also sets it after its push, but the score
+	// screen's Continue re-pushes the saved shell stack directly (S-1771), and AptMainMenu::runInit has just hidden the background root; without this
+	// the shell's main-menu backdrop showed through the Skirmish screen.
+	windows.setBackground(1);
 	// RW 0x845AE2 queries the setup owner: a network browser is not a host (LAN owner RW 0x846D9A).
 	setHostModeText(lan ? "0" : "1");
 	m_profiles = environment.profiles;

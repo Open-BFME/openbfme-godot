@@ -236,6 +236,7 @@
  "GameLogic/Object/ExperienceTracker.cpp::ExperienceTracker::xfer::m_baseRank#1": "open: the base rank (factorFor subtracts and clamps)",
  "GameLogic/Object/ExperienceTracker.cpp::ExperienceTracker::xfer::m_levelCap#1": "open: a level cap (0 none; compared)",
  "GameLogic/Object/ExperienceTracker.cpp::ExperienceTracker::xfer::m_rank#1": "open: a rank (the data's ExperienceLevel rank, any int; factorFor clamps its use)",
+ "GameLogic/Object/Object.cpp::Object::xfer::m_battlesFought#1": "open: the campaign statistics battles count (Object +0x488; help only, any int, CampaignCarryover::State::parse bounds its record to 0 .. 0x7fffffff)",
  "GameLogic/Object/Object.cpp::Object::xfer::m_disabledExpire#1": "open: a frame per disabled type (when each disable ends)",
  "GameLogic/Object/Object.cpp::Object::xfer::m_geometryVersion#1": "open: a change counter of the object's geometry",
  "GameLogic/Object/Object.cpp::Object::xfer::m_triggerCellX#1": "open: the trigger-area cell the object stood in last (any cell, also off the map)",

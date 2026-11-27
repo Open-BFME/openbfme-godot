@@ -27,16 +27,19 @@
 //   * the look (W3DGadgetPushButtonImageDrawOne RW 0x4A5112, byte-matched in the decomp, W3DPushButton.cpp): the button image clipped to the ellipse of the
 //     window (the display's ellipse stencil, the decomp's rva000A47DE), grey (the radial grayscale mode) when the window is disabled and not "not ready"; then over it, by state: RadialPush when the
 //     enabled window is hilited and selected (pressed), RadialOver when it is hilited, else RadialBorder (white, or (144, 144, 144) with the grey-overlay status);
-//     an overlay is centred on the button and scaled by its image size / 48 (drawRadialOverlay); a recharge or build clock draws RadialClockOverlay1 /
-//     RadialClockOverlay2 wiped by the percent, 46/48 of the button (RADIAL_CLOCK_SCALE); no cameo flash and no border colour for a radial button;
+//     an overlay is centred on the button and scaled by its image size / 48 (drawRadialOverlay); a recharge or build clock draws both RadialClockOverlay1
+//     (fill) and Overlay2 (rim) wiped by the same percent, 46/48 of the button (RADIAL_CLOCK_SCALE), inside the RadialBorder (the blue/red clock frame
+//     disappears with the clock, the gold rim stays; the soft circles are deliberately uneven/off-centre); the count is drawn after the clock and before
+//     the radial overlays, inside the gold;
 //   * lane OWNERFIX-3, the count (Rva000A52AEDrawNumber RW 0x4A4CD3, called by RW 0x4A5112 when the button data's + 0x28 is 1, before the radial overlays;
 //     BFME2 decomp W3DPushButton.cpp, tier A): a count of 1 or more (+ 0x2C, set each update by RW 0x729D9A: ControlBar::productionCountOf) as L"%d" in the
 //     window's font, the colours of getButtonTextColors (disabled window: DISABLED / DISABLEDBORDER, else hilited: HILITE / HILITEBORDER, else ENABLED /
-//     ENABLEDBORDER), at x = (int)(w * 0.5f - textWidth * 0.5f + left), y = top + h - textHeight (bottom centre), drawn with a (1, 1) drop;
+//     ENABLEDBORDER), with the exact WND formula x = (int)(size.x * 0.5 - textWidth * 0.5 + origin.x), y = origin.y + size.y - textHeight (no nudge);
 //   * the input: the command windows are ON_MOUSE_DOWN push buttons (ControlBar.wnd ButtonCommand): the left press is the button's command
 //     (ControlBar::processCommandUI).
-// INFERENCE (stop S-2701, InGameHud reports it): the clock's colours (GlobalData + 0x1160 / + 0x1164 and the control bar's clock colour) are not identified (a
-// translucent black wipe here); the button flash animations of the ring (RW 0x9D5BDC / 0x9D6250 for windows whose CommandButton + 0xF8 > 0) are not drawn;
+// CLOCK COLOURS (S-2701, read): the timer's colour, 0x80FFFFFF (RW 0x72A247 pushes it, RW 0x729F0C stores it at the timer data's +8, RW 0x4A56D3
+// reads it; not ControlBarScheme's BuildUpClockColor and not per side), for RadialClockOverlay1, and TheGlobalData +0x1160 (good) / +0x1164 (evil) for RadialClockOverlay2, whose constructor
+// stores at RW 0x64392E / 0x64393C are 0xFF0B5EF2 / 0xFFD92102. The button flash animations of the ring (RW 0x9D5BDC / 0x9D6250 for windows whose CommandButton + 0xF8 > 0) are not drawn;
 // the right press cancels only a CANCELABLE button's queue (RW 0x940C70); the hit area is inclusive (RW 0x715A84); the 0x808080 multiplier condition
 // (RW 0x327E0E's flag) is not set; the ring is drawn under the Palantir movie. Lane HUD-7: the grey-overlay (0x80000000) and always-colour (0x01000000) statuses
 // follow the availability (see buildOps).
@@ -139,6 +142,14 @@ public:
 	// lane OWNERFIX-3: the count's font and colours and the text measure (the device's fonts); without either a count to draw is an error (errors())
 	void setCountLook(const CommandWindowLook &look) { m_countLook = look; }
 	void setFontMetrics(FontMetricsSource *metrics) { m_metrics = metrics; }
+	// RW 0x4A5112: the clock's fill is always 0x80FFFFFF (RW 0x72A247 pushes it, RW 0x729F0C stores it at the timer
+	// data's +8; 50 % white, the retail bubble's grey/white translucent fill); its rim is TheGlobalData +0x1160 (good,
+	// 0xFF0B5EF2) or +0x1164 (evil, 0xFFD92102; the constructor's stores, RW 0x64392E / 0x64393C).
+	void setClockColors(std::uint32_t fill, std::uint32_t rim)
+	{
+		m_clockColor = fill;
+		m_clockRimColor = rim;
+	}
 
 	// ---- input (window pixels) ----
 	// the slot of the button under the pixel (the button's ellipse: retail's window rectangle is the hit area of a push button; INFERENCE: the rectangle),
@@ -179,6 +190,8 @@ private:
 	void *m_imageCtx = nullptr;
 	CommandWindowLook m_countLook;
 	FontMetricsSource *m_metrics = nullptr;
+	std::uint32_t m_clockColor = 0x80FFFFFFu;  ///< RW 0x72A247 / 0x729F0C: the timer's colour, 50 % white
+	std::uint32_t m_clockRimColor = 0xFF0B5EF2u; ///< TheGlobalData +0x1160 (good); +0x1164 evil is 0xFFD92102
 	int m_mouseX = -10000, m_mouseY = -10000;
 	int m_hilite = -1;
 	int m_pushed = -1; ///< WIN_STATE_SELECTED: the button the left press went down on, while it is held

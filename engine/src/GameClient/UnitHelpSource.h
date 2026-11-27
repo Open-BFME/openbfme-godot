@@ -9,10 +9,11 @@
 //     "NonCommand_SelectNearestBuilder" (RW 0x71D6EA findCommandButton, RW 0x807A00), a hero slot a UnitHelpSource of the hero (vtable RW 0xC130E8) through the
 //     control bar's provider (RW 0x807848); the select-all button (RW 0x92C265) the help of "NonCommand_SelectAllHeroes";
 //   * the builder (vslot 3, RW 0x8EBC61): the object (GameLogic::findObjectByID) or no help; the template, the title and the lines:
-//       - the title: a drawable's script caption (Drawable + 0x348) fetched, else the object's name (Object::getDisplayName RW 0x68FA0F for a CREATE_A_HERO
-//         template, KindOf + 0x11F bit 0x40, else Object + 0x494), else the template's DisplayName text (+ 0x30); a member of a HORDE container
-//         (Object + 0x27C, KindOf + 0x115 bit 0x20) whose own name is set: "TOOLTIP:VerteranHordeMemberName" (name, horde's name); the template's
-//         DisplayNameInvisibleForEnemy label (+ 0x5C) for a disguised object the local player is not allied with (RW 0x691B15);
+//       - the title: a TooltipUpgrade's DisplayName label (retail Drawable + 0x348; the port keeps it on Object), else the object's name
+//         (Object::getDisplayName RW 0x68FA0F for a CREATE_A_HERO template, KindOf + 0x11F bit 0x40, else Object + 0x494), else the template's
+//         DisplayName text (+ 0x30); a member of a HORDE container (Object + 0x27C, KindOf + 0x115 bit 0x20) whose own name is set:
+//         "TOOLTIP:VerteranHordeMemberName" (name, horde's name), still unported; the template's DisplayNameInvisibleForEnemy label (+ 0x5C)
+//         for a disguised object the local player is not allied with (RW 0x691B15);
 //       - "TOOLTIP:Rank" (rank, maximum rank) when the maximum rank (RW 0x8EBB14) is above 1, the rank being the current ExperienceLevel's Rank
 //         (RW 0x9D25B7, 0 without a level); a Create-a-Hero counts rank 1;
 //       - unless the template is HORDE, a DEFENSIVE_WALL without HAS_HEALTH_BAR, UNATTACKABLE, ROCK_VENDOR or BASE_FOUNDATION, or a Create-a-Hero:
@@ -21,11 +22,13 @@
 //         object's type 2 attribute modifiers + 0.5) and, when above 0, multiplied by the product of its type 3 modifiers as floor(damage * product + 0.5)
 //         (RW 0x8EBA26);
 //       - the Tooltip text of every upgrade of the object's mask (Object + 0x28C, bits 0 .. 0x47F, UpgradeTemplate + 0x2C) that has one;
-//       - "TOOLTIP:BattlesFought" with Object + 0x488 when above 0;
-//       - the description: the drawable's script description (+ 0x34C) fetched, else the template's Description text (+ 0x38), when not empty;
+//       - "TOOLTIP:BattlesFought" with Object + 0x488 when above 0 (the campaign carry-over statistics block's first int);
+//       - the description: a TooltipUpgrade's Description label (+ 0x34C) fetched, else the template's Description text (+ 0x38), when not empty;
 //     each line joins the text after a "\n" (RW 0x8EBC3B).
-// Not ported (S-4612): the drawable script captions, Object + 0x494 / the disguise label / the Create-a-Hero name and template (RW 0x69194E), the battles
-// fought count (Object + 0x488, S-852); each is named in `unported` when it could matter for the object.
+// Ported (S-4612): the TooltipUpgrade display name / description (retail Drawable +0x348 / +0x34C; the port keeps them on Object), the
+// Create-a-Hero title (Object::getDisplayName RW 0x68FA0F), Object +0x494 (the campaign statistics block's own name), the disguise label
+// (RW 0x691B15) and TOOLTIP:BattlesFought. Not ported: the horde veteran-member name (Object +0x494 is the object's own name, not a
+// container's) and the statistics block's kills / second string / byte (S-852 / S-4903).
 
 #pragma once
 

@@ -271,6 +271,61 @@ void AptPalantir::setBfme1(bool value)
 	m_bfme1 = value;
 }
 
+// BFME2 0x812845 (FindRenderImage's path helper): `_level<digits><separator>` is removed, where the separator is `/` or `.`.
+std::string AptPalantir::stripLevelPrefix(const std::string &path)
+{
+	if (path.compare(0, 6, "_level") != 0)
+	{
+		return path;
+	}
+	size_t i = 6;
+	while (i < path.size() && path[i] != '/' && path[i] != '.')
+	{
+		++i;
+	}
+	if (i < path.size())
+	{
+		++i;
+	}
+	return path.substr(i);
+}
+
+// BFME2 0x623B96 .. 0x623BCF: the part before the first `~`. Retail drops one `/` before the `~`; the port's clip paths are dot-separated, so a `.` is
+// dropped too (inference: the separator belongs to the path, not the image name).
+std::string AptPalantir::tildeBase(const std::string &path)
+{
+	const size_t tilde = path.find('~');
+	if (tilde == std::string::npos)
+	{
+		return path;
+	}
+	size_t end = tilde;
+	if (end > 0 && (path[end - 1] == '/' || path[end - 1] == '.'))
+	{
+		--end;
+	}
+	return path.substr(0, end);
+}
+
+const AptPalantir::NativeImage *AptPalantir::imageForPath(const std::string &clipPath) const
+{
+	const std::string path = stripLevelPrefix(clipPath);
+	if (path.empty())
+	{
+		return nullptr;
+	}
+	if (const NativeImage *img = imageFor(path))
+	{
+		return img;
+	}
+	if (path.find('~') == std::string::npos)
+	{
+		return nullptr;
+	}
+	const std::string base = tildeBase(path);
+	return base.empty() || base == path ? nullptr : imageFor(base);
+}
+
 const AptPalantir::NativeImage *AptPalantir::imageForClip(const std::string &clipPath, const std::string &imageMapVar) const
 {
 	if (m_bfme1)
@@ -300,6 +355,7 @@ float AptPalantir::timerFor(const std::string &key) const
 // The populate enables the window for an available (1) and an active (2) button alike (jump table RW 0x943D47 -> RW 0x943C7C), so an active button (the
 // gate's TOGGLE_GATE) is _up, not _visuallyEnabled, whose clip takes no press. Restricted (0) -> winEnable(FALSE) (RW 0x943C1F); can't afford / not ready set
 // 0x1000000 / 0x400000 on a disabled window (RW 0x943C51 / 0x943C4D)
+
 const char *AptPalantir::commandStateName(ButtonState s, std::uint32_t options)
 {
 	switch (s)
@@ -307,6 +363,7 @@ const char *AptPalantir::commandStateName(ButtonState s, std::uint32_t options)
 		case ButtonState::Enabled:
 		case ButtonState::Active: return (options & COMMAND_OPTION_NONPRESSABLE) ? "_static" : "_up";
 		case ButtonState::Restricted: return "_disabled";
+		case ButtonState::ExtraDisabled: return "_extraDisabled";
 		case ButtonState::CantAfford:
 		case ButtonState::Purchased: return "_cantAfford"; // lane HUD-7: availability 8's window status 0x01000000 (RW 0x9D2C31)
 		case ButtonState::NotReady: return "_notReady";
@@ -388,7 +445,8 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 			m_arcFramePath[i] = frame;
 			m_arc[i].created = true;
 			m_arc[i].slot = button ? button->slot : -1;
-			m_images[levelPrefix() + frame] = NativeImage{ button ? button->image : std::string(), button && button->state == ButtonState::Restricted };
+			const std::uint32_t tint = button && button->state == ButtonState::Restricted ? 0xFF909090u : 0xFFFFFFFFu;
+			m_images[levelPrefix() + frame] = NativeImage{ button ? button->image : std::string(), button && (button->state == ButtonState::Restricted || button->state == ButtonState::ExtraDisabled), tint };
 			windows().setAptText("APT:PalantirCommand" + number + "ProductionCount", button && button->queued > 0 ? "x" + std::to_string(button->queued) : " ");
 			m_timers["PalantirCommand" + number + "Timer"] = button ? button->timer : -1.0f;
 		}
@@ -479,7 +537,7 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 					{
 						// RW 0x9D285E (BFME2 Rva005C3427::Run, tier A): states 1/3/5 reject the press with the disabled cue.
 						// Enabled clicks are sounded by the movie, not by this callback.
-						if (shown.state == ButtonState::Restricted || shown.state == ButtonState::CantAfford ||
+						if (shown.state == ButtonState::Restricted || shown.state == ButtonState::ExtraDisabled || shown.state == ButtonState::CantAfford ||
 							shown.state == ButtonState::Purchased || shown.state == ButtonState::NotReady)
 						{
 							windows().invokeCallback("PlaySound", "Gui_PalantirCommandButtonDisabledClick");
@@ -491,7 +549,7 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 					{
 						// RW 0x9D28D4 (BFME2 Rva005C33DDWindowNotification, tier B): disabled and cant-afford right presses only
 						// cancel when the command is cancelable; the notification supplies the native cue for that path.
-						const bool disabled = shown.state == ButtonState::Restricted || shown.state == ButtonState::CantAfford ||
+						const bool disabled = shown.state == ButtonState::Restricted || shown.state == ButtonState::ExtraDisabled || shown.state == ButtonState::CantAfford ||
 							shown.state == ButtonState::Purchased;
 						if (disabled && (!shown.button || !shown.button->hasOption(COMMAND_OPTION_CANCELABLE)))
 						{
@@ -535,7 +593,10 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 		s.sig = sig;
 		NativeImage &img = m_images[key + "_Image"];
 		img.image = b.image;
-		img.grayscale = b.state == ButtonState::Restricted;
+		img.grayscale = b.state == ButtonState::Restricted || b.state == ButtonState::ExtraDisabled;
+		// Availability 0's window status is GRAY_OVERLAY (0x80000000, RW 0x943C0E / 0x943C15); the movie's _disabled frame itself is
+		// plain grayscale. Use the radial path's grey 0x909090 as the port's overlay until the window-status draw is ported.
+		img.tint = b.state == ButtonState::Restricted ? 0xFF909090u : 0xFFFFFFFFu;
 		if (b.timer >= 0.0f)
 		{
 			m_timers[key + "_Timer"] = b.timer;
@@ -605,6 +666,56 @@ const std::string *AptPalantir::productionCountText(int slot, bool arc)
 	return nullptr;
 }
 
+
+void AptPalantir::syncGlass(const std::vector<ControlBarButton> &buttons)
+{
+	// Palantir.apt places six ButtonGlass sprites after the command buttons. The movie's `_active` is the initial frame
+	// (the normal glass); `_passive` is the yellow passive-ability glass (libInGameUI: abilitiesPassiveHightlight).
+	// Only a NONPRESSABLE command (the passive leadership/pillage-family buttons, e.g. Lurtz's Leadership/Pillage) uses it;
+	// every other slot must go back to `_active`, or a passive glass stays lit when the slot changes command.
+	AptSpriteInst *root = windows().apt().level(level());
+	if (!root)
+	{
+		return;
+	}
+	bool passive[kArcPositions] = {};
+	for (const ControlBarButton &b : buttons)
+	{
+		if (b.button && b.position >= 0 && b.position < kArcPositions && b.button->hasOption(COMMAND_OPTION_NONPRESSABLE))
+		{
+			passive[b.position] = true;
+		}
+	}
+	for (int i = 0; i < kArcPositions; ++i)
+	{
+		AptCharacterInst *clip = windows().apt().resolvePath(root, "CommandButtons.glass" + std::to_string(i));
+		AptSpriteInst *glass = clip ? clip->asSprite() : nullptr;
+		if (!glass)
+		{
+			continue;
+		}
+		const int passiveStart = glass->labelFrame("_passive");
+		if (passive[i])
+		{
+			// the movie's show/selection animation resets the glasses to `_active`; keep a passive slot in the `_passive`
+			// segment (its frame 10 is the yellow ability glass) whenever it drifts back
+			if (passiveStart >= 0 && glass->frame < passiveStart)
+			{
+				glass->gotoFrame(passiveStart);
+			}
+		}
+		else if (m_glassPassive[i])
+		{
+			const int activeStart = glass->labelFrame("_active");
+			if (activeStart >= 0)
+			{
+				glass->gotoFrame(activeStart);
+			}
+		}
+		m_glassPassive[i] = passive[i];
+	}
+}
+
 void AptPalantir::syncLocal()
 {
 	// TARGET FACTS (RotWK game.dat, caveat S-001), the engine's Palantir update:
@@ -647,6 +758,21 @@ void AptPalantir::syncLocal()
 	{
 		call("", "SetPlayerFaction", { m_local.faction });
 		m_factionSent = m_local.faction;
+		// RW 0x6D577C -> 0x800336: the resource bar's icon is `_hide` for no playable side and `_show` for one; the movie starts it on `_hide`.
+		if (!call("", "SetResourceIconState", { m_local.faction.empty() ? "_hide" : "_show" }))
+		{
+			windows().note("palantir-resource-icon", "SetResourceIconState could not be called");
+		}
+		// FindRenderImage 0x623AC4 looks a clip without `_imageMap` up by its `_levelN`-stripped path (0x812845), then by the base before
+		// `~...`; `ResourceBar.ResourceIcon.~Enabled` therefore resolves the barrel through `ResourceBar.ResourceIcon`.
+		if (m_local.faction.empty())
+		{
+			m_images.erase("ResourceBar.ResourceIcon");
+		}
+		else
+		{
+			m_images["ResourceBar.ResourceIcon"] = NativeImage{ "Resource_Icon", false };
+		}
 	}
 	// PalantirCommandUI (PalantirCommandUI.h): a context switch to another drawable or CommandSet resets the interface, the next update shows it and its portrait
 	if (m_local.context && (!m_commandContext || m_local.contextObject != m_contextObject || m_local.commandSet != m_contextSet))
@@ -686,10 +812,13 @@ void AptPalantir::syncLocal()
 		if (m_local.portrait.empty())
 		{
 			m_images.erase(portraitKey());
+			m_images.erase("CommandUI.Portrait"); // the 0x812845 path key of the same clip
 		}
 		else
 		{
-			m_images[portraitKey()] = NativeImage{ m_local.portrait, false };
+			const NativeImage portrait{ m_local.portrait, false };
+			m_images[portraitKey()] = portrait;
+			m_images["CommandUI.Portrait"] = portrait;
 		}
 		m_portraitShown = m_local.portrait;
 	}
@@ -917,42 +1046,23 @@ void AptPalantir::syncPlayerStats()
 	}
 }
 
-void AptPalantir::setViewportSize(int width, int height)
+void AptPalantir::setViewportSize(int /*width*/, int /*height*/)
 {
 	if (m_bfme1)
 	{
 		return;
 	}
 	AptSpriteInst *root = windows().apt().level(level());
-	if (!root || !root->timelineFile || width < 1 || height < 1)
+	if (!root)
 	{
 		return;
 	}
-	const float stageWidth = (float)root->timelineFile->width;
-	const float stageHeight = (float)root->timelineFile->height;
-	if (stageWidth <= 0.0f || stageHeight <= 0.0f)
-	{
-		return;
-	}
-	const float scale = std::min(1.0f, ((float)height / stageHeight) / ((float)width / stageWidth));
+	// RotWK's Palantir uses the stage mapping's independent X/Y scale (the retail captures widen the panel on 16:9); the
+	// earlier presentation-only horizontal correction made the empty globe narrower and shifted its centre. Keep the
+	// authored matrices and let AptStageMapping map the 1024x768 stage.
 	for (AptCharacterInst *child : root->children())
 	{
-		const std::string &name = child->instName();
-		if (name == "helpBox" || name == "ButtonFlashStage")
-		{
-			continue;
-		}
-		float anchor = 0.0f;
-		if (name == "SideCommandBar")
-		{
-			anchor = stageWidth;
-		}
-		else if (name == "planningModeUI")
-		{
-			anchor = stageWidth * 0.5f;
-		}
-		child->viewportTransform.a = scale;
-		child->viewportTransform.tx = anchor * (1.0f - scale);
+		child->viewportTransform = AptMatrix();
 	}
 }
 
@@ -980,7 +1090,11 @@ void AptPalantir::sync(const ControlBar &bar)
 		m_lastTexts = texts;
 		windows().setAptText("APT:PalantirResources", std::to_string(bar.money()));
 		windows().setAptText("APT:PalantirCommandPoints", std::to_string(bar.commandPointsUsed()) + "/" + std::to_string(bar.commandPointsLimit()));
-		windows().setAptText("APT:PalantirResourceMultiplier", "x1"); // the territory multiplier is the economy's (stop S-290)
+		// RW 0x800844 formats the player's resource multiplier as x%g. It is visible in Living World / War of the Ring when
+		// territory/bonus modifiers make it other than 1.0; in skirmish and LAN it is 1.0, so the record stays empty (retail
+		// captures show no multiplier beside the money). The port does not drive the Living World value yet (S-290); do not
+		// show x1 as a fallback.
+		windows().setAptText("APT:PalantirResourceMultiplier", "");
 	}
 	// OpenBFME: the six-slot frame stays visible even when no commands are assigned.
 	const bool wantArc = true;
@@ -993,10 +1107,12 @@ void AptPalantir::sync(const ControlBar &bar)
 	if (wantArc)
 	{
 		syncFrames(bar.palantirButtons(), true);
+		syncGlass(bar.palantirButtons());
 	}
 	else
 	{
 		syncFrames({}, true);
+		syncGlass({}); // no command set: clear a passive glass left by the previous selection
 	}
 	syncSubMenus(); // lane CAMPUI-1
 	syncSideBar(bar);
@@ -1129,7 +1245,7 @@ void AptPalantir::pressToggleStance(int position)
 	{
 		return;
 	}
-	if (s.state == ButtonState::Restricted || s.state == ButtonState::NotReady)
+	if (s.state == ButtonState::Restricted || s.state == ButtonState::ExtraDisabled || s.state == ButtonState::NotReady)
 	{
 		return;
 	}
@@ -1327,7 +1443,7 @@ std::vector<std::string> AptPalantir::acceptanceStops()
 		"was not read, so the order of the calls within a frame may differ",
 		"[S-294] Palantir features not driven: the rank interface of CommandUI (the portrait: S-760), hero select, help box (the power points badge, its progress and highlight: lane HUD-5), planning mode, observer buttons, the movie and messenger "
 		"buttons, objectives / options buttons (their commands are registered and logged), radar pings, button flash / auto-ability overlays, tooltips and hotkeys of the buttons, the territory resource "
-		"multiplier (shown as x1); the movie / faction icon render components are not drawn (the globe: S-762)",
+		"multiplier beyond the skirmish value (the record is empty there, as the retail capture shows; RW 0x800844's x%g formatter is read); the movie / faction icon render components are not drawn (the globe: S-762)",
 		"[S-763] Apt text layout and the PlayerMagic switch (HUD-3): a single-line edit text is placed as RotWK's display string draw does (RW 0x4A8F95: aligned, centred "
 		"vertically, squeezed when wider than its box, whole pixels, unrotated); INFERENCE: the box and the string are both measured in window pixels and the string height is the "
 		"Godot font's line height (GDI tmHeight in retail); EnablePlayerMagicButton follows the player-magic switch at RW 0xDE8ADC, always on here (its setter RW 0x822D75 "

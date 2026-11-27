@@ -7,6 +7,7 @@
 #include "GameClient/AptCanvas.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/InGameHud.h"
+#include "Libraries/Source/Apt/AptActionDecoder.h"
 #include "Libraries/Source/Apt/AptFile.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
 
@@ -345,4 +346,100 @@ TEST_CASE("hud3 apt canvas: a bitmap fill's texture coordinates are the fill mat
 		CHECK(op.uvs[v * 2] == doctest::Approx((lx + 487.0f) / 1024.0f).epsilon(1e-5));
 		CHECK(op.uvs[v * 2 + 1] == doctest::Approx((ly + 188.0f) / 512.0f).epsilon(1e-5));
 	}
+}
+
+TEST_CASE("hud3 retail: libInGameUI CommandButton's disabled frames carry the retail tints")
+{
+	if (!haveWorld("hud3 command button frame colours"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	AptConstFile cf;
+	std::string err;
+	REQUIRE_MESSAGE(AptConstFile::parse(readRetail(s, "libInGameUI.const"), cf, &err), err);
+	AptFile f;
+	REQUIRE_MESSAGE(AptFile::parse("libInGameUI", std::make_shared<std::vector<std::uint8_t>>(readRetail(s, "libInGameUI.apt")), cf, f, &err), err);
+	const AptCharacter *c = character(f, 49);
+	REQUIRE(c != nullptr);
+	const int disabled = labelFrame(c->frames, "_disabled");
+	const int extra = labelFrame(c->frames, "_extraDisabled");
+	const int cant = labelFrame(c->frames, "_cantAfford");
+	REQUIRE(disabled >= 0); // tolerance: a frame-label index in the retail movie, not a value: any found label proves the state exists
+	REQUIRE(extra >= 0); // tolerance: a frame-label index in the retail movie, not a value: any found label proves the state exists
+	REQUIRE(cant >= 0); // tolerance: a frame-label index in the retail movie, not a value: any found label proves the state exists
+	const AptPlaceObject *disabledCameo = placement(f, c->frames, "", 4, disabled);
+	const AptPlaceObject *extraTint = placement(f, c->frames, "", 4, extra);
+	const AptPlaceObject *cantCameo = placement(f, c->frames, "", 4, cant);
+	REQUIRE(disabledCameo != nullptr);
+	REQUIRE(extraTint != nullptr);
+	REQUIRE(cantCameo != nullptr);
+	// the movie data: _disabled is the plain grayscale cameo; _extraDisabled is a 50 % alpha transform on the existing
+	// cameo; _cantAfford is the same cameo with the dark grey 142 tint. The states are exclusive, not stacked.
+	CHECK(disabledCameo->tint[0] == 255);
+	CHECK(disabledCameo->tint[1] == 255);
+	CHECK(disabledCameo->tint[2] == 255);
+	CHECK(disabledCameo->tint[3] == 255);
+	CHECK(extraTint->tint[0] == 255);
+	CHECK(extraTint->tint[1] == 255);
+	CHECK(extraTint->tint[2] == 255);
+	CHECK(extraTint->tint[3] == 127);
+	CHECK(cantCameo->tint[0] == 142);
+	CHECK(cantCameo->tint[1] == 142);
+	CHECK(cantCameo->tint[2] == 142);
+	CHECK(cantCameo->tint[3] == 255);
+}
+
+TEST_CASE("hud3 retail: ButtonGlass has `_active` at 0 and `_passive` at 10, each a stopped segment")
+{
+	if (!haveWorld("hud3 button glass"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	AptConstFile cf;
+	std::string err;
+	REQUIRE_MESSAGE(AptConstFile::parse(readRetail(s, "libInGameUI.const"), cf, &err), err);
+	AptFile f;
+	REQUIRE_MESSAGE(AptFile::parse("libInGameUI", std::make_shared<std::vector<std::uint8_t>>(readRetail(s, "libInGameUI.apt")), cf, f, &err), err);
+	const AptCharacter *c = character(f, 33);
+	REQUIRE(c != nullptr);
+	CHECK(c->type == APT_CHAR_SPRITE);
+	REQUIRE(c->frames.size() == 20);
+	int active = -1, passive = -1;
+	bool stop9 = false, stop19 = false;
+	for (int frame = 0; frame < (int)c->frames.size(); ++frame)
+	{
+		for (const AptFrameItem &it : c->frames[(size_t)frame].items)
+		{
+			if (it.type == APT_ITEM_FRAMELABEL)
+			{
+				if (it.label == "_active")
+				{
+					active = frame;
+				}
+				if (it.label == "_passive")
+				{
+					passive = frame;
+				}
+			}
+			if (it.type != APT_ITEM_ACTION)
+			{
+				continue;
+			}
+			std::shared_ptr<const AptCodeBlock> block;
+			REQUIRE_MESSAGE(AptActionDecoder::decodeProgram(f, it.codeOffset, block, &err), err);
+			REQUIRE(block != nullptr);
+			if (block->instructions.empty() || block->instructions.front().opcode != APT_OP_STOP)
+			{
+				continue;
+			}
+			stop9 = stop9 || frame == 9;
+			stop19 = stop19 || frame == 19;
+		}
+	}
+	CHECK(active == 0);
+	CHECK(passive == 10);
+	CHECK(stop9);  // `_active` is frames 0..9
+	CHECK(stop19); // `_passive` is frames 10..19
 }

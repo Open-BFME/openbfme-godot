@@ -109,6 +109,36 @@ public:
 	bool isInPreferSelectionMode() const { return m_preferSelection; }
 	void setPreferSelectionMode(bool on) { m_preferSelection = on; }
 	bool getInputEnabled() const { return m_inputEnabled; }
+
+	// ---- lane HOVER-1: the help box's tooltip policy and late UI mode gate ----
+	// RW 0x69BB14 (vslot +0x1BC), BFME2 donor InGameUI_Rva0029B04D.cpp: true when the global tooltip setting is off
+	// (GlobalData +0xDD0), the Living World query is false, and the logic frame is below +0x7EC. The port has no GlobalData
+	// record nor the RotWK Living World query: m_tooltipsEnabled defaults to true and the query is a hook (INFERENCE, S-2703).
+	bool areTooltipsDisabled() const;
+	bool tooltipsEnabled() const { return m_tooltipsEnabled; }
+	void setTooltipsEnabled(bool on) { m_tooltipsEnabled = on; } ///< GlobalData +0xDD0 (the setting's owner is not ported)
+	// RW 0x69BAF9: raise the deadline to the argument (the setter never lowers it); RW 0x69BB0C: clear it
+	void disableTooltipsUntilFrame(unsigned frame)
+	{
+		if (frame > m_tooltipDisableUntil)
+		{
+			m_tooltipDisableUntil = frame;
+		}
+	}
+	void clearTooltipDisable() { m_tooltipDisableUntil = 0; }
+	unsigned tooltipDisableUntilFrame() const { return m_tooltipDisableUntil; }
+	// RotWK only: TheLivingWorldLogic->query441E4A() (RW 0x69BB33); the port's Living World has no such query yet. A true
+	// hook means the Living World wants its tooltips even though the setting is off (the retail early-out).
+	void setLivingWorldTooltipQuery(std::function<bool()> query) { m_livingWorldTooltipQuery = std::move(query); }
+
+	// RW 0x48E916 (vslot +0x17C): the late UI mode gate at InGameUI +0x810. It is NOT the engine/script input flag
+	// (+0x15 / +0x16, slot 82): showHelp reads it after it marks the hover consumed. RW 0x69B6A8 (slot 94) stores it and,
+	// on a false-to-true edge, runs the late-mode clear: TheMouse's bytes +4/+5/+6 (RW 0x83BC38),
+	// setSelecting(false) (vslot 0xAC), slot 0x6C's byte +0x28 = 0, setRadiusCursorNone (vslot 0x144) and the eleven mode
+	// flags +0x8B8 .. +0x8C2 = 0 (not +0x8B0, the waypoint flag). The port maps force attack, force move and prefer selection;
+	// the rest, slot 0x6C and the owner/callers of the gate are not read (S-2703). No trigger is invented.
+	bool modeGate810() const { return m_modeGate810; }
+	void setModeGate810(bool on);
 	// lane OWNERFIX-1: InGameUI::setInputEnabled(bool, bool *gate) (RW 0x69B5ED, BFME2 decomp InGameUIInputModes.cpp slot 82, tier A): on an enabled-to-disabled
 	// edge: setSelecting(false), setRadiusCursorNone (the HUD draws no radius cursor while the input is off: InGameHud::updateRadiusCursor), the mode flags
 	// +0x8B0 / +0x8B8 .. +0x8C2 off (the port has the force-attack, force-move and waypoint ones, and +0x8BA, the prefer-selection mode; the other eight are not mapped, S-4964; a pending GUI command stays) and MSG_CHANGE_ORDERMODE
@@ -346,6 +376,10 @@ private:
 	}
 	bool m_scriptMouseHidden = false; ///< lane OWNERFIX-1: Mouse::setVisibility(false) of DISABLE_INPUT
 	bool m_inputEnabled = true, m_scrolling = false, m_selecting = false, m_quitMenuVisible = false;
+	bool m_tooltipsEnabled = true;          ///< GlobalData +0xDD0 (RW 0x69BB19)
+	unsigned m_tooltipDisableUntil = 0;     ///< +0x7EC (RW 0x69BB44 / 0x69BAF9)
+	bool m_modeGate810 = false;             ///< +0x810 (RW 0x48E916 / 0x69B6A8)
+	std::function<bool()> m_livingWorldTooltipQuery;
 	IRegion2D m_areaHint{};
 	bool m_hasAreaHint = false;
 	std::string m_cursor = MouseCursorName::Arrow;

@@ -31,7 +31,10 @@
 #include "GameClient/InGameHeroSelect.h"
 #include "GameClient/InGameHud.h"
 #include "GameClient/UnitHelpSource.h"
+#include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/ExperienceLevels.h"
+#include "GameLogic/Module/UpgradeModuleClasses.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Module/CastleModules.h"
@@ -866,6 +869,140 @@ TEST_CASE("hover1 retail: every spell book power of every faction shows its stri
 	CHECK(total == 84);
 }
 
+TEST_CASE("hover1 unit help: a TooltipUpgrade's DisplayName / Description label the help (RW 0x8BBBCC)")
+{
+	if (!haveWorld("hover1 tooltip upgrade"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	HoverRig h(s, "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const ThingTemplate *candidate = nullptr;
+	const TooltipUpgradeModuleData *tip = nullptr;
+	for (const ThingTemplate *tt : s.world->things().templates())
+	{
+		for (const ThingTemplate::Nugget &n : tt->getFinalOverride()->behaviorModules().nuggets())
+		{
+			if (n.name != "TooltipUpgrade")
+			{
+				continue;
+			}
+			const auto *d = dynamic_cast<const TooltipUpgradeModuleData *>(n.data.get());
+			if (d && !d->m_displayName.empty() && !d->m_triggeredBy.empty())
+			{
+				candidate = tt;
+				tip = d;
+				break;
+			}
+		}
+		if (candidate)
+		{
+			break;
+		}
+	}
+	REQUIRE(candidate);
+	const Coord3D spot = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *obj = h.rig.make(candidate->getName(), spot.x, spot.y);
+	REQUIRE(obj);
+	obj->giveUpgrade(tip->m_triggeredBy.front());
+	CHECK(obj->tooltipDisplayName() == tip->m_displayName);
+	CHECK(obj->tooltipDescription() == tip->m_description);
+	const UnitHelpSource::Text t = UnitHelpSource::compose(*obj, &h.text, h.rig.logic(), h.rig.local);
+	CHECK(t.title == h.label(tip->m_displayName));
+	if (!tip->m_description.empty())
+	{
+		CHECK(t.text.find(h.label(tip->m_description)) != std::u16string::npos);
+	}
+	// RW 0x8BBC0A: removing the upgrade clears the two labels
+	const UpgradeTemplate *upgrade = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(tip->m_triggeredBy.front()) : nullptr;
+	REQUIRE(upgrade);
+	obj->removeUpgrade(upgrade);
+	CHECK(obj->tooltipDisplayName().empty());
+	CHECK(obj->tooltipDescription().empty());
+}
+
+TEST_CASE("hover1 unit help: an invisible enemy shows DisplayNameInvisibleForEnemy (RW 0x691B15)")
+{
+	if (!haveWorld("hover1 invisible enemy"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	HoverRig h(s, "FactionMen");
+	auto ctx = h.hud->enterContext();
+	Player *enemy = h.rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy);
+	const Coord3D spot = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *gate = h.rig.make("MenWallPosternGateSmall", spot.x, spot.y, enemy);
+	REQUIRE(gate);
+	const ThingTemplate *tt = gate->getTemplate()->getFinalOverride();
+	const std::string label = CommandButtonHelp::templateLabel(*tt, "DisplayNameInvisibleForEnemy");
+	REQUIRE_FALSE(label.empty());
+	const int invisible = CombatNames::modelCondition("INVISIBLE_STEALTH");
+	const int camouflage = CombatNames::modelCondition("INVISIBLE_CAMOUFLAGE");
+	REQUIRE(invisible >= 0); // tolerance: a model-condition table index, not a value: any registered index proves the retail name exists
+	REQUIRE(camouflage >= 0); // tolerance: a model-condition table index, not a value: any registered index proves the retail name exists
+	gate->setModelConditionState(invisible, true);
+	gate->setModelConditionState(camouflage, true);
+	const UnitHelpSource::Text hidden = UnitHelpSource::compose(*gate, &h.text, h.rig.logic(), h.rig.local);
+	CHECK(hidden.title == h.label(label));
+	gate->setModelConditionState(invisible, false);
+	gate->setModelConditionState(camouflage, false);
+	const UnitHelpSource::Text shown = UnitHelpSource::compose(*gate, &h.text, h.rig.logic(), h.rig.local);
+	CHECK(shown.title == CommandButtonHelp::templateText(*tt, "DisplayName", &h.text));
+	CHECK(shown.title != h.label(label));
+}
+
+TEST_CASE("hover1 unit help: the campaign statistics own name / battles line (Object +0x494 / +0x488)")
+{
+	if (!haveWorld("hover1 statistics help"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	HoverRig h(s, "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const Templates &t = templates(s);
+	REQUIRE_FALSE(t.infantry.empty());
+	const Coord3D spot = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *obj = h.rig.make(t.infantry.front(), spot.x, spot.y);
+	REQUIRE(obj);
+	obj->setOwnName("Glorfindel");
+	obj->setBattlesFought(3);
+	const UnitHelpSource::Text with = UnitHelpSource::compose(*obj, &h.text, h.rig.logic(), h.rig.local);
+	CHECK(with.title == u"Glorfindel"); // Object +0x494, before the template's DisplayName
+	const UnicodeString battles = UnitHelpSource::format(h.label("TOOLTIP:BattlesFought"), { u"3" });
+	CHECK(with.text.find(battles) != std::u16string::npos);
+	obj->setOwnName({});
+	obj->setBattlesFought(0);
+	const UnitHelpSource::Text without = UnitHelpSource::compose(*obj, &h.text, h.rig.logic(), h.rig.local);
+	CHECK(without.title == CommandButtonHelp::templateText(*obj->getTemplate()->getFinalOverride(), "DisplayName", &h.text));
+	CHECK(without.text.find(battles) == std::u16string::npos);
+}
+
+TEST_CASE("hover1 unit help: a Create-a-Hero's title is its record name (RW 0x68FA0F / 0x619562)")
+{
+	if (!haveWorld("hover1 create-a-hero title"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	HoverRig h(s, "FactionMen");
+	auto ctx = h.hud->enterContext();
+	const Coord3D spot = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *hero = h.rig.make("CreateAHero", spot.x, spot.y);
+	REQUIRE(hero);
+	REQUIRE(hero->isKindOfName("CREATE_A_HERO"));
+	CreateAHeroHero record;
+	record.name = u"Fhaleen";
+	record.objectID = hero->getID();
+	h.rig.logic().createAHeroes().assign(*h.rig.local, record);
+	const UnitHelpSource::Text t = UnitHelpSource::compose(*hero, &h.text, h.rig.logic(), h.rig.local);
+	CHECK(t.title == u"Fhaleen");
+	CHECK(t.unported.end() == std::find_if(t.unported.begin(), t.unported.end(), [](const std::string &u) { return u.find("Create-a-Hero") != std::string::npos; }));
+}
+
 TEST_CASE("hover1 retail: the hero bar's portraits show the unit help (RW 0x8EBC61), its builder and select-all buttons their NonCommand help (RW 0x92BF34 / 0x92C265)")
 {
 	if (!haveWorld("hover1 hero bar"))
@@ -1221,8 +1358,11 @@ TEST_CASE("hover1 retail: controlled help states: recruit / revive, castle unpac
 			"help, a hero its UnitHelpSource RW 0x8EBC61 as an InGameSimpleHelp RW 0x9402E7: name, level, maximum health, damages with the modifiers, upgrades, "
 			"description), the Palantir portrait's (RW 0x93099D: an own or allied object's unit help), the spell book's (RW 0x930DC4: the slot's command button), "
 			"RW 0x807A81's revive / castle unpack / unit cost / science-disabled / multi-science / upgrade conflict and prerequisite branches (the repair costs "
-			"and the revive Create-a-Hero name: lane ROTWK-C); not ported: the drawable's script captions, Object + 0x494 names (the veteran horde member name), the disguise "
-			"label, the Create-a-Hero names and template, the battles fought (Object + 0x488, S-852); also not ported, named by the inventory of every tool tip "
+			"and the revive Create-a-Hero name: lane ROTWK-C); the Create-a-Hero title (Object::getDisplayName RW 0x68FA0F -> the record name RW 0x619562); the "
+			"TooltipUpgrade display name / description (RW 0x8BBBCC / 0x8BBC0A; the port keeps the labels on Object), the disguise label "
+			"(RW 0x691B15) and the campaign statistics block's two help fields: Object +0x494 own name and Object +0x488 TOOLTIP:BattlesFought (the "
+			"carry-over record +0xA4 subset; S-852 / S-4903); not ported: the veteran horde member name (Object +0x494 is the object's own name, not a "
+			"container's) and the statistics block's kills / second string / byte; also not ported, named by the inventory of every tool tip "
 			"source (tools/hover/hover_inventory.py, sources.csv): the in-game unit tips (TOOLTIP:AddSpecialAbilityNoPower, ClickToRenameThisUnit, DisbandUnit, "
 			"DisbandUnitDisabled, DisbandUnitDisabledHero, DisbandUnitDisabledLeader, SupplyWarehouse, YouMayNotRenameAHero) and the War of the Ring HUD's 23 "
 			"labels (STRATEGICHUD:*Tooltip, APT:StrategicBattlePromptSwapButton1Tooltip / 2Tooltip, BackButtonTooltip), "

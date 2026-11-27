@@ -297,6 +297,31 @@ private:
 	unsigned m_appliedFrame = 0; ///< the logic frame + 1 of the last implementation; 0: never applied
 };
 
+// lane HOVER-1: TooltipUpgrade (create RW 0x65A7F3, vtable 0xC6F868; BFME2 donor UpgradeModuleClasses): the upgrade module that
+// replaces the object's help display name / description while its TriggeredBy upgrade is active. RW 0x8BBBCC sets Drawable +0x348 /
+// +0x34C from the module data's DisplayName (+0x138) / Description (+0x13C); 0x8BBC0A clears them on removal. The port keeps the two
+// labels on Object (S-810: no Drawable in the logic) and UnitHelpSource fetches them.
+class TooltipUpgradeModuleData : public UpgradeModuleData
+{
+public:
+	std::string m_displayName, m_description; ///< labels (OBJECT:*), +0x138 / +0x13C
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+class TooltipUpgrade : public UpgradeModule
+{
+public:
+	OBFME_MODULE_XFER(TooltipUpgrade) // UpgradeModule's
+	TooltipUpgrade(Thing *thing, const TooltipUpgradeModuleData *data) : UpgradeModule(thing, data), m_data(data) {}
+
+protected:
+	void upgradeImplementation() override;
+	void processUpgradeRemoval() override;
+
+private:
+	const TooltipUpgradeModuleData *m_data;
+};
+
 // GrantUpgradeCreate (create RW 0x6508A3, table RW 0xC70158): UpgradeToGrant (+8, a name looked up when it is granted: RW 0x66F5E5, an unknown name grants
 // nothing), ExemptStatus (+0xC, RW 0x7B1E5C, empty by default), GiveOnBuildComplete (+0x1C). onCreate RW 0x8BD15E: without GiveOnBuildComplete, when
 // ExemptStatus holds UNDER_CONSTRUCTION and the object is not under construction, the upgrade is granted; onBuildComplete RW 0x8BD1D4: once (the create

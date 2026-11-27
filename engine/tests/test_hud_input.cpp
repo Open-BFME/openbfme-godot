@@ -956,21 +956,22 @@ TEST_CASE("synthetic HUD: the waiting attack move shows its CursorName (createCo
 	// over an own unit: the mode's cursor (createMouseoverHint), never Select, and the command hint keeps the AttackMove
 	r.move(100, 100);
 	CHECK(r.input->ui().cursor() == "AttackMove");
-	SUBCASE("the order ends the mode and the cursor is the Arrow again")
+	SUBCASE("the order ends the mode and the cursor is the Move hint again")
 	{
 		r.click(300, 300, HudInput::Button::Right);
 		r.locationCommand(MSG_DO_ATTACKMOVETO, 300, 300);
 		CHECK(r.input->ui().mouseMode() == 0);
-		CHECK(r.input->ui().cursor() == "Arrow");
+		// the pointer is still over open ground with the battalion selected: the command hint's Move, not the base Arrow (HOVER-1)
+		CHECK(r.input->ui().cursor() == "Move");
 		r.move(320, 300);
 		CHECK(r.input->ui().cursor() == "Move");
 	}
-	SUBCASE("the cancel ends the mode and the cursor is the Arrow again")
+	SUBCASE("the cancel ends the mode and the cursor is the Move hint again")
 	{
 		r.click(300, 300);
 		CHECK(r.commands.messages().size() == 0u);
 		CHECK(r.input->ui().mouseMode() == 0);
-		CHECK(r.input->ui().cursor() == "Arrow");
+		CHECK(r.input->ui().cursor() == "Move");
 	}
 	SUBCASE("a button without a CursorName shows the Target (cursor 4)")
 	{
