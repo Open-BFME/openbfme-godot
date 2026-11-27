@@ -17,7 +17,8 @@
 
 enum class ModEngineFeature
 {
-	// Edain Unchained 4.4.3 (its game.dat: install/ENGINEPATCHES_README.md names the patches)
+	// Edain Unchained 4.4.3 (its game.dat: install/ENGINEPATCHES_README.md names the patches). Patch 2.02 9.8.6's lotrbfme2ep1.exe carries two
+	// of them as the same code: commandset-limit (.cmdext) and observer-command-range (.obscmd)
 	EdainUnchainedHerobarKindOf,       // KindOf HEROBAR (bit 222) / HEROBAR_GROUP (bit 223) in the name table (.hbar)
 	EdainUnchainedQueueIgnoreCP,       // CommandButton QueueIgnoreCP (.qcp)
 	EdainUnchainedCommandSetLimit,     // CommandSet slots 1..64 (.cmdext)
@@ -40,6 +41,9 @@ enum class ModEngineFeature
 	EdainUnchainedUpgradeDescription,  // an owned upgrade's help keeps its description, the purchased text below it (.upgdsc)
 	EdainUnchainedObserverCommandRange, // an observer may page the command ranges (PUSH / POP_VISIBLE_COMMAND_RANGE) (.obscmd)
 	EdainUnchainedProductionSplit,     // the PRODUCTION_MONEY / _UNIT / _UPGRADE / _CONSTRUCTION attribute modifiers (.prodsp)
+	// Patch 2.02 9.8.6 (its lotrbfme2ep1.exe: the Ennorath team's sections; 2.02 Patch Notes.txt names the changes)
+	Patch202HoldGroundKeepsMove,       // setStance(HoldGround) idles the AI only when it is idle and not waiting for a path (.stancem)
+	Patch202BuildingLimitCountsPhantoms, // MaxSimultaneousOfType also counts a dozer's phantom structure that is not placed yet (.bldcap)
 	Count
 };
 
@@ -49,6 +53,13 @@ public:
 	// the feature's stable name (identity text, reports): "edain-unchained.herobar-kindof"
 	static const char *name(ModEngineFeature f);
 
+	// an archive the mod ships for the binary's own code that OpenBFME does not have: the install mount leaves the mod's archive of this path out, so
+	// the original game's stays (Common/ModMount.h ModMountOptions::leftOut). Not a silent fallback: the mount notes it with the reason.
+	struct LeftOutArchive
+	{
+		const char *path; // the archive's path in the game folder, lower case, '/' separators ("apt/options.big")
+		const char *why;  // the reason the note gives
+	};
 	// a known modified binary: its MD5 (lower-case hex), what it is, and the features that stand in for it (possibly none: e.g. a launcher, or
 	// only install / copy-protection checks a port does not have)
 	struct Profile
@@ -57,6 +68,7 @@ public:
 		const char *what;
 		std::vector<ModEngineFeature> features;
 		const char *notes; // what of the binary is NOT re-implemented ("" when nothing)
+		std::vector<LeftOutArchive> leftOut{}; // the mod's archives that need what is not re-implemented (none for most)
 	};
 	static const std::vector<Profile> &knownBinaries();
 
@@ -69,4 +81,6 @@ public:
 	static std::vector<std::string> activeProfiles();
 	// docs/STOPS.md S-5304: what the active profiles leave out or do differently, one line per active profile with notes ("" for none)
 	static std::vector<std::string> stopLines();
+	// the active profiles' left-out archives (Profile::leftOut), in profile order; empty with no mod
+	static std::vector<LeftOutArchive> leftOutArchives();
 };

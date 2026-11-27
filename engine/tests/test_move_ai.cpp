@@ -3,8 +3,11 @@
 // path facts by hand.
 
 #include "doctest.h"
+#include "IniTestUtil.h"
 #include "MoveTestUtil.h"
+#include "Common/ModEngineFeatures.h"
 #include "GameLogic/Module/AmbientAIUpdate.h"
+#include "GameLogic/Module/StancesBehavior.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -209,6 +212,62 @@ TEST_CASE("move: an idle order stops a walking unit within a frame (ZH AIIdleSta
 	CHECK(u->getPosition()->x == x1);
 	CHECK_FALSE(ai->isMoving());
 	CHECK(x1 < 505.0f);
+}
+
+TEST_CASE("MODS-3: patch-202.hold-ground-keeps-move: Hold Ground keeps a walking unit's move (Patch 2.02 9.8.6); retail idles it (RW 0x86216B)")
+{
+	struct Restore
+	{
+		StanceTemplateStore *saved = TheStanceTemplateStore;
+		~Restore()
+		{
+			TheStanceTemplateStore = saved;
+			ModEngineFeatures::reset();
+		}
+	};
+	for (const bool patch202 : { false, true })
+	{
+		CAPTURE(patch202);
+		Restore restore;
+		initest::Fixture ini;
+		StanceTemplateStore store;
+		store.registerBlock(ini.env.blocks);
+		TheStanceTemplateStore = &store; // the block's parser fills TheStanceTemplateStore (as test_integ1_stances.cpp's StanceFixture)
+		const std::string loadError = initest::loadError(ini.env, "stances.ini", "StanceTemplate SyntheticStances\nEnd\n");
+		REQUIRE_MESSAGE(loadError.empty(), loadError);
+		std::string error;
+		if (patch202)
+		{
+			REQUIRE_MESSAGE(ModEngineFeatures::activate({ "fc32e4c4142b5c607b90972eaf448400" }, &error), error);
+		}
+		CHECK(ModEngineFeatures::has(ModEngineFeature::Patch202HoldGroundKeepsMove) == patch202);
+
+		MoveWorld mw;
+		mw.buildMap();
+		Object *u = mw.spawn("Walker", 105.0f, 105.0f);
+		AIUpdateInterface *ai = mw.aiOf(u);
+		REQUIRE(ai != nullptr);
+		StancesBehaviorModuleData data;
+		data.m_stanceTemplate = "SyntheticStances";
+		StancesBehavior stance(u, &data);
+		mw.frames(2);
+		ai->aiMoveToPosition(Coord3D{ 505.0f, 105.0f, 0.0f }, CMD_FROM_PLAYER);
+		mw.frames(8);
+		REQUIRE(ai->isMoving());
+		REQUIRE_FALSE(ai->mover().isWaitingForPath());
+		CHECK(stance.setStance(STANCE_HOLD_GROUND, "test:walking"));
+		CHECK(ai->isIdle() == !patch202); // retail: the idle order (RW 0x86216B); 2.02: the AI is not idle, so .stancem skips it
+		mw.frames(5);
+		CHECK(ai->isMoving() == patch202);
+
+		// an idle unit: both idle it (2.02's test passes: idle and not waiting for a path)
+		ai->aiIdle(CMD_FROM_PLAYER);
+		mw.frames(2);
+		CHECK(stance.setStance(STANCE_BATTLE, "test:idle"));
+		CHECK(stance.setStance(STANCE_HOLD_GROUND, "test:idle"));
+		CHECK(ai->isIdle());
+		CHECK_FALSE(ai->isMoving());
+	}
 }
 
 TEST_CASE("move: a new move order replaces the running one")

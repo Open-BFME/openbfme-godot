@@ -46,6 +46,8 @@ const char *ModEngineFeatures::name(ModEngineFeature f)
 	case F::EdainUnchainedUpgradeDescription: return "edain-unchained.upgrade-description";
 	case F::EdainUnchainedObserverCommandRange: return "edain-unchained.observer-command-range";
 	case F::EdainUnchainedProductionSplit: return "edain-unchained.production-split";
+	case F::Patch202HoldGroundKeepsMove: return "patch-202.hold-ground-keeps-move";
+	case F::Patch202BuildingLimitCountsPhantoms: return "patch-202.building-limit-counts-phantoms";
 	case F::Count: break;
 	}
 	return "?";
@@ -72,6 +74,26 @@ const std::vector<ModEngineFeatures::Profile> &ModEngineFeatures::knownBinaries(
 			"LAN game info (OpenBFME's lobby already carries them)" },
 		{ "7a4068f87ea5c3b98e03ae4e83e2b806", "Patch 2.02 lotrbfme2ep1.exe (a whole game binary)", {},
 			"install / copy-protection checks (none in OpenBFME); EA's frame pacing restored (presentation timing, not lockstep state)" },
+		// Patch 2.02 9.8.5 / 9.8.6 (2026-11-21): the first 2.02 binary with engine patches (the Ennorath team's, in named sections like Edain's).
+		// Its .cmdext is Edain Unchained's commandset-limit (the same populate hook at +0x47D after RW 0x71CF0A, CommandSet 0xA0 -> 0x11C, the
+		// bound 0x21 -> 0x40 at RW 0x7950E2 / 0x80C8E3 / 0x80C8FC / 0x80C91D) and its .obscmd is Edain's observer-command-range (RW 0x941BD2:
+		// commands 0x37 / 0x38, PUSH / POP_VISIBLE_COMMAND_RANGE, pass for an inactive local player). Its .stancem (0xF34000, jumped to from RW
+		// 0x862161 in setStance) is patch-202.hold-ground-keeps-move (GameLogic/Module/StancesBehavior.cpp); its .bldcap (0xF21000, the callback
+		// canMakeUnit pushes at RW 0x79406F) is patch-202.building-limit-counts-phantoms (Common/BuildAssistant.cpp). Its .bldlvl and .bldext wrap
+		// the control bar's availability and press (RW 0x942733, 0x940435) for a selection of several buildings: they belong to .bldgrp. The rest is
+		// listed in the notes; the sections' purpose comes from the decoded hooks and, where marked, from the patch's own notes (2.02 Patch Notes.txt).
+		{ "fc32e4c4142b5c607b90972eaf448400", "Patch 2.02 9.8.6 lotrbfme2ep1.exe (a whole game binary)",
+			{ F::EdainUnchainedCommandSetLimit, F::EdainUnchainedObserverCommandRange, F::Patch202HoldGroundKeepsMove, F::Patch202BuildingLimitCountsPhantoms },
+			"not yet re-implemented, game rules: units leaving a container together on Evacuate (.padsel: by the patch "
+			"notes), the upgrade limit 5120 (.upg5k: OpenBFME holds 2048 upgrades, S-5303); interface and replays: select every building of a "
+			"kind and give orders to all of them (.bldgrp, .bldlvl, .bldext), chat in replays and muting a player (.rpchat, .chatmut), replay pause (.rppause), the map search (.mapfind), hotkeys "
+			"and text shortcuts (.hotkeys, .keydef, .keycmd, .txtclip), the camera zoom reset (.camfix), the settings menu's resolutions, 30 / 60 "
+			"FPS and Delay Fix switch (.optui, .optfix, .ressort, .fpsvar, .fpsdraw, .fxrate, .dlyfix), War of the Ring with 8 players, online "
+			"and without a host for land transfer (.wotrui, .wotrobs, .wtrview, .wtrdisp, .lobfac), a 500 ms throttle (.spstore); the mod's "
+			"settings menu (apt/Options.big) is left out for the original game's",
+			// its reworked Options.apt drives the new settings through .optui / .optfix: OpenBFME's Options screen (AptOptionsScreen) cannot find
+			// retail's frames and bottom bar in it, so the menu draws broken and, from the main menu, cannot be left
+			{ { "apt/options.big", "its settings menu needs the game program's own settings code (.optui), which OpenBFME does not have" } } },
 		{ "a6ce9397ee16376e7c84a72218ffe03a", "2.02 Delayfix Addon lotrbfme2ep1.exe", {},
 			"install checks (none in OpenBFME); the 2.01 frame pacing (OpenBFME's)" },
 		{ "f7ce90438eb50da4ce63804ba2688b6b", "RJ-RotWK launcher (a Qt program that starts the game, not a game binary)", {}, "" },
@@ -167,4 +189,17 @@ std::vector<std::string> ModEngineFeatures::stopLines()
 std::vector<std::string> ModEngineFeatures::activeProfiles()
 {
 	return g_profiles;
+}
+
+std::vector<ModEngineFeatures::LeftOutArchive> ModEngineFeatures::leftOutArchives()
+{
+	std::vector<LeftOutArchive> out;
+	for (const Profile &p : knownBinaries())
+	{
+		if (std::find(g_profiles.begin(), g_profiles.end(), std::string(p.what)) != g_profiles.end())
+		{
+			out.insert(out.end(), p.leftOut.begin(), p.leftOut.end());
+		}
+	}
+	return out;
 }
