@@ -77,12 +77,14 @@ enum DistanceCalculationType
 	FROM_GEOMETRY_OVERLAP = 4
 };
 
-// RW 0xA3A750 (ZH IterOrderType)
+// RW 0xA3A750 / RW 0x952EE1 (ZH IterOrderType)
 enum IterOrderType
 {
 	ITER_FASTEST = 0,
 	ITER_SORTED_NEAR_TO_FAR = 1,
-	ITER_SORTED_FAR_TO_NEAR = 2
+	ITER_SORTED_FAR_TO_NEAR = 2,
+	ITER_SORTED_CHEAP_TO_EXPENSIVE = 3, // RW 0x952EE1 case 3 -> RW 0x950624 (unsigned short ThingTemplate + 0x5EA BuildCost)
+	ITER_SORTED_EXPENSIVE_TO_CHEAP = 4  // RW 0x952EE1 case 4 -> RW 0x95064B (unsigned short ThingTemplate + 0x5EA BuildCost)
 };
 
 // A partition filter (RW vtable: slot 1 allow(object), slot 2 the mask of the player layers it can accept). Filters are asked in chain order; the first that
