@@ -277,6 +277,9 @@ public:
 	void attemptDamage(DamageInfo &info) override;
 	void attemptHealing(DamageInfo &info) override; // RW 0x008C4F62
 	float estimateDamage(const DamageInfoInput &input) const override; // RW 0x008C51BC
+	bool lastDamageRecordType(int &type) const override;
+	bool lastDamageRecordNoEffect(bool &noEffect) const override;
+	UnsignedInt lastDamageFrame() const override;
 	void setIndestructible(bool) override {}        // RW 0x009F3A3C (vtable 0xC72200 +0x88: no-op)
 	bool isIndestructible() const override;         // RW 0x008C52DB
 	float getDodgePercent() const override;         // RW 0x008C5250

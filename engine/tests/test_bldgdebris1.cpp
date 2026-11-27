@@ -341,7 +341,7 @@ TEST_CASE("BLDGDEBRIS-1 save: ActiveBody xfer version 3 keeps the side stage, va
 	XferSave saved;
 	ba->xfer(saved);
 	REQUIRE_FALSE(saved.data().empty());
-	CHECK(saved.data()[0] == 3);
+	CHECK(saved.data()[0] == 4);
 	ActiveBody *bb = bodyOf(bObj);
 	XferLoad load(saved.data());
 	bb->xfer(load);
@@ -352,10 +352,10 @@ TEST_CASE("BLDGDEBRIS-1 save: ActiveBody xfer version 3 keeps the side stage, va
 	XferSave again;
 	bb->xfer(again);
 	CHECK(again.data() == saved.data());
-	// version 2: the same without the trailing stage (4) and the four value / flag pairs (4 x 5)
+	// version 2: the same without the trailing v3 stage (4) + four value / flag pairs (4 x 5) and v4 no-effect flag (1)
 	std::vector<std::uint8_t> v2 = saved.data();
 	v2[0] = 2;
-	v2.resize(v2.size() - 24);
+	v2.resize(v2.size() - 25);
 	ActiveBody *bc = bodyOf(cObj);
 	XferLoad old(v2);
 	bc->xfer(old);
