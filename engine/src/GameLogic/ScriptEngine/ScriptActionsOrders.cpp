@@ -545,6 +545,77 @@ bool ScriptActions::executeOrderAction(ScriptEngine &engine, const ScriptActionR
 		}
 		return true;
 	}
+	if (name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF" || name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF_OWNED_BY_PLAYER")
+	{
+		// RW 0x7CAFA5 case 391 -> RW 0x7C2CF5 (all players, mask 0xFFFFF) / case 392 -> RW 0x7C2E34 (player mask p2):
+		// teamCentreAllMembers (RW 0x7A0ECD), per player findClosestToPosByKindOf(c, kindOf, NONE) (RW 0x6ABC10 -> RW 0x6AADB6),
+		// best by Coord3D::length (RW 0x403111), then AIGroup::groupMoveToPosition(*best->getPosition(), false, CMD_FROM_SCRIPT) (RW 0x774897).
+		const bool byPlayer = (name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF_OWNED_BY_PLAYER");
+		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
+		Coord3D c;
+		const std::int32_t kindOf = param(a, 1).intValue;
+		if (!t || kindOf < 0 || !ScriptConditions::teamCentreAllMembers(*t, c))
+		{
+			return true;
+		}
+		std::vector<Player *> playerList;
+		if (byPlayer)
+		{
+			playerList = ScriptConditions::players(engine, param(a, 2).stringValue);
+		}
+		else
+		{
+			for (int i = 0; i < logic.players().getPlayerCount(); ++i)
+			{
+				if (Player *p = logic.players().getNthPlayer(i))
+				{
+					playerList.push_back(p);
+				}
+			}
+		}
+		Object *best = nullptr;
+		float bestDist = 99999.0f; // RW 0xBDF350 (first hit always wins because best == nullptr)
+		for (Player *p : playerList)
+		{
+			Object *pBest = nullptr;
+			float pBestDist = 0.0f;
+			for (const auto &proto : logic.players().teams().prototypes())
+			{
+				if (proto->getControllingPlayer() != p)
+				{
+					continue;
+				}
+				for (Team *tm : proto->teams())
+				{
+					for (Object *o = tm->getFirstMember(); o; o = o->friend_teamNext())
+					{
+						if (!o->getTemplate() || !o->getPosition() || !MaskTest(logic.templateInfo(o->getTemplate()).kindOf, (unsigned)kindOf))
+						{
+							continue;
+						}
+						const float d = SimMath::fstpDword(SimMath::length3d(SimMath::sseSub(o->getPosition()->x, c.x),
+							SimMath::sseSub(o->getPosition()->y, c.y), SimMath::sseSub(o->getPosition()->z, c.z)));
+						if (!pBest || d < pBestDist)
+						{
+							pBest = o;
+							pBestDist = d;
+						}
+					}
+				}
+			}
+			if (pBest && (!best || pBestDist < bestDist))
+			{
+				best = pBest;
+				bestDist = pBestDist;
+			}
+		}
+		if (best)
+		{
+			AIGroup group(logic, idsOf(teamAIGroup(*t)));
+			group.groupMoveToPosition(*best->getPosition(), false, CMD_FROM_SCRIPT); // RW 0x774897
+		}
+		return true;
+	}
 	if (name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE" || name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER")
 	{
 		const bool byPlayer = name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER"; // RW 0x7C31FF; else RW 0x7C30F7
@@ -1317,6 +1388,66 @@ bool ScriptActions::executeOrderAction(ScriptEngine &engine, const ScriptActionR
 			{
 				engine.note("Error - Team hunt with command button - unit type '" + o->getTemplate()->getName() +
 					"' requires CommandButtonHuntUpdate in .ini definition to hunt with " + ability);
+			}
+		}
+		return true;
+	}
+	if (name == "FIRE_SPECIAL_POWER_ON_TEAM")
+	{
+		// RW 0x7CAFA5 case 447 -> RW 0x7C4BDB (both editions; BFME2 rva003C4145): getTeamNamed(p2, false) (RW 0x759FDA),
+		// hasAnyObjects(false) (RW 0x7A0956), teamCentreAllMembers (RW 0x7A0ECD), findSpecialPowerTemplate(p1) (RW 0x69C146),
+		// fireSpecialPowerAtPosition(p0, sp, pos) (RW 0x7C112E).
+		Team *t = ScriptConditions::team(engine, param(a, 2).stringValue);
+		Coord3D pos;
+		if (t && ScriptConditions::teamCentreAllMembers(*t, pos))
+		{
+			if (const SpecialPowerTemplate *sp = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(param(a, 1).stringValue) : nullptr)
+			{
+				fireSpecialPowerAtPosition(engine, param(a, 0).stringValue, *sp, pos);
+			}
+		}
+		return true;
+	}
+	if (name == "FIRE_SPECIAL_POWER_ON_NEAREST_OBJECTTYPE" || name == "FIRE_SPECIAL_POWER_ON_NEAREST_OBJECTTYPE_BY_PLAYER")
+	{
+		// RW 0x7CAFA5 case 445 -> RW 0x7C6170 (all players) / case 446 -> RW 0x7C6040 (by player mask p4; first player with a hit wins),
+		// both calling RW 0x7C4CA0 (findSpecialPowerTemplate(p1) -> fireSpecialPowerAtPosition(p0, sp, target->pos), RW 0x7C112E).
+		const bool byPlayer = (name == "FIRE_SPECIAL_POWER_ON_NEAREST_OBJECTTYPE_BY_PLAYER");
+		Team *t = ScriptConditions::team(engine, param(a, 3).stringValue);
+		Coord3D c;
+		if (!t || !ScriptConditions::teamCentreAllMembers(*t, c))
+		{
+			return true;
+		}
+		const std::vector<std::string> *list = engine.findObjectList(param(a, 2).stringValue);
+		const ThingTemplate *tt = list ? nullptr : logic.things().findTemplate(param(a, 2).stringValue);
+		if (!list && !tt)
+		{
+			return true;
+		}
+		auto closestFor = [&](const Player *p) { return list ? closestOfList(logic, c, *list, p) : closestOfTemplate(logic, c, tt, p); };
+		Object *target = nullptr;
+		if (!byPlayer)
+		{
+			target = closestFor(nullptr);
+		}
+		else
+		{
+			for (Player *p : ScriptConditions::players(engine, param(a, 4).stringValue))
+			{
+				if (Object *o = closestFor(p))
+				{
+					target = o;
+					break; // RW 0x7C6143: first player in mask order with a match fires immediately
+				}
+			}
+		}
+		if (target && target->getPosition())
+		{
+			// RW 0x7C4CA0 (fireSpecialPowerAtObject): findSpecialPowerTemplate(p1) -> RW 0x7C112E(p0, sp, target->pos)
+			if (const SpecialPowerTemplate *sp = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(param(a, 1).stringValue) : nullptr)
+			{
+				fireSpecialPowerAtPosition(engine, param(a, 0).stringValue, *sp, *target->getPosition());
 			}
 		}
 		return true;

@@ -570,6 +570,81 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
+	if (name == "TEAM_TOGGLE_CLOSE_RANGE_WEAPON")
+	{
+		// RW 0x7CAFA5 case 469 -> RW 0x7C3B6E (both editions; BFME2 Rva003C30D9Do): getTeamNamed(p0, false) (RW 0x759FDA);
+		// for each member findModule("DualWeaponBehavior") (RW 0x68BDA5, string RW 0xC0BD84) -> module + 0x20 (m_closeRequest) = (p1 != 0).
+		if (Team *t = ScriptConditions::team(engine, param(a, 0).stringValue))
+		{
+			const bool close = param(a, 1).intValue != 0;
+			for (Object *o : ScriptConditions::members(*t))
+			{
+				if (DualWeaponBehavior *dw = DualWeaponBehavior::first(*o))
+				{
+					dw->setCloseRequest(close);
+				}
+			}
+		}
+		return true;
+	}
+	if (name == "NAMED_TOGGLE_CLOSE_RANGE_WEAPON")
+	{
+		// RW 0x7CAFA5 case 470 -> RW 0x7C3C0A (both editions; BFME2 Rva003C3175Do): getUnitNamed(p0) (RW 0x75A243);
+		// findModule("DualWeaponBehavior") (RW 0x68BDA5, string RW 0xC0BD84) -> module + 0x20 (m_closeRequest) = (p1 != 0).
+		if (Object *o = engine.getUnitNamed(param(a, 0).stringValue))
+		{
+			if (DualWeaponBehavior *dw = DualWeaponBehavior::first(*o))
+			{
+				dw->setCloseRequest(param(a, 1).intValue != 0);
+			}
+		}
+		return true;
+	}
+	if (name == "SET_STOPPING_DISTANCE")
+	{
+		// RW 0x7CAFA5 case 144 -> RW 0x7C10C0 (both editions; BFME2 doSetStoppingDistance): getTeamNamed(p0, false) (RW 0x759FDA);
+		// for each member: if (!ai || !ai->curLocomotor()) return immediately; if (dist >= 0.5f) (RW 0xBD869C) loco->m_closeEnoughDist (+0x3C) = dist.
+		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
+		if (t)
+		{
+			const float dist = param(a, 1).realValue;
+			for (Object *o : ScriptConditions::members(*t))
+			{
+				AIUpdateInterface *ai = o->getAIUpdateInterface();
+				Locomotor *loco = ai ? ai->curLocomotor() : nullptr;
+				if (!loco)
+				{
+					return true; // RW 0x7C10FD / 0x7C1107: early return on first member without AI or locomotor
+				}
+				if (dist >= 0.5f)
+				{
+					loco->setCloseEnoughDist(dist);
+				}
+			}
+		}
+		return true;
+	}
+	if (name == "TEAM_TELEPORT_TO_WAYPOINT")
+	{
+		// RW 0x7CAFA5 case 503 -> RW 0x7C3FD1 (both editions; BFME2 Rva003C353BDo): getTeamNamed(p0, false) (RW 0x759FDA),
+		// TheTerrainLogic->getWaypointByName(p1) (vslot 0x88), for each member teleportTo(&wp->location, false) (RW 0x696E63).
+		Team *t = ScriptConditions::team(engine, param(a, 0).stringValue);
+		const Waypoint *w = t && terrain ? terrain->findWaypointByName(param(a, 1).stringValue) : nullptr;
+		if (t && w)
+		{
+			for (Object *o : ScriptConditions::members(*t))
+			{
+				o->teleportTo(&w->location, false); // RW 0x7C4026 -> RW 0x696E63(pos, 0)
+			}
+		}
+		return true;
+	}
+	if (name == "PLAYER_CREATE_TEAM_FROM_CAPTURED_UNITS")
+	{
+		// RW 0x7CAFA5 case 275 -> RW 0x7C28FC (both editions; BFME2 rva003C1E69): calls getTeamNamed(p1, false) and discards result (no-op in RotWK).
+		(void)ScriptConditions::team(engine, param(a, 1).stringValue);
+		return true;
+	}
 	if (name == "IDLE_ALL_UNITS")
 	{
 		std::vector<Player *> ps;

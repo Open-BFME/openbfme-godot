@@ -274,6 +274,7 @@ include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (
 include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
 include(cmake/Local107.cmake)
+include(cmake/Local189.cmake)   # LOCAL-189: script engine binary-map ports (fork issue 982; OPENBFME_LOCAL189_TESTS)
 include(cmake/Autocast1.cmake)  # AUTOCAST-1: the ability autocast toggle and glow (OPENBFME_AUTOCAST1_TESTS)
 include(cmake/CampUi1Stance.cmake) # CAMPUI-1: the stance toggle's radial (OPENBFME_CAMPUI1_STANCE_SOURCES / _TESTS)
 include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
@@ -894,6 +895,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
     ${OPENBFME_LOCAL107_TESTS}
+    ${OPENBFME_LOCAL189_TESTS}
     ${OPENBFME_AUTOCAST1_TESTS}
     ${OPENBFME_CAMPUI1_STANCE_TESTS}
     ${OPENBFME_HUD6_TESTS}

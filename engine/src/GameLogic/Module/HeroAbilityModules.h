@@ -427,6 +427,9 @@ public:
 	UpdateSleepTime update() override;                                         // RW 0x85DF88
 	void crc(StateHasher &h) const override;
 	unsigned switches() const { return m_switches; }
+	bool closeRequest() const { return m_closeRequest; }
+	void setCloseRequest(bool close) { m_closeRequest = close; } // RW 0x7C3B6E / RW 0x7C3C0A (+0x20)
+	static DualWeaponBehavior *first(Object &obj);
 
 private:
 	UpdateSleepTime setClose(bool close);
