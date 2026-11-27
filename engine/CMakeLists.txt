@@ -626,6 +626,7 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/AI/AIMove.cpp
     src/GameLogic/Map/TerrainPathfindSource.cpp
     src/GameClient/MapPathfindObjects.cpp)
+include(cmake/LaserDraw.cmake) # LaserDraw
 # ---- register the manifest once (after every lane's block above) and write it for the audit ----
 list(REMOVE_DUPLICATES OPENBFME_SIM_SOURCES)
 target_sources(openbfme_core PRIVATE ${OPENBFME_SIM_SOURCES})
@@ -762,6 +763,7 @@ endif()
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
+    ${OPENBFME_LASERDRAW_TESTS}
     ${OPENBFME_PORT426_TESTS}
     ${OPENBFME_PORT330_TESTS}
     tests/test_local_98.cpp

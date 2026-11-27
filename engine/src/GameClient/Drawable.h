@@ -54,6 +54,7 @@ typedef std::uint32_t DrawableID;
 class ModuleFactory;
 class AnimationSoundModuleManager;
 class LightPulsePool;
+class LaserUpdate;
 
 // lane FX-2: the client effect player the draw modules call (GameClient/LiveFX). Read at call time, so drawables made before the player was installed use it too.
 class DrawableFXHost
@@ -256,6 +257,10 @@ public:
 	// lane LOCAL-28: the world position of the bone `boneName` of the first model entry that has it (RW 0x672B5B Drawable::getBonePosition: the pose of the
 	// current animation state, scaled by the instance scale and rotated by the drawable's orientation); false when no model entry has the bone
 	bool boneWorldPosition(const std::string &boneName, Coord3D &outPos) const;
+	// RW 0x6747C2 / BFME2 0x27449C: the LaserUpdate client update module of this drawable, or null
+	LaserUpdate *findLaserUpdate() const;
+	// RW 0xAD1920: the maximum geometry height above the position over the template's shapes (computed on first use)
+	float geometryHeight() const;
 
 	// The render transform from the object's record in a completed logic frame's snapshot (SMOOTH-1: RenderInterpolation::retailPose, RW 0x6765B9;
 	// `interpolate` false: the record's current transform, the stepped look). Then the construction look (updateConstruction).
@@ -395,7 +400,7 @@ private:
 	unsigned m_changeCount = 0;
 	bool m_drawsInMirror = false;
 	unsigned m_constructionLogicFrame = ~0u; ///< RENDER-2: the logic frame the cached construction percents were refreshed in
-	float m_geometryHeight = -1.0f;          ///< RENDER-2: RW 0xAD1920 of the template's shapes (computed on first use)
+	mutable float m_geometryHeight = -1.0f;          ///< RENDER-2: RW 0xAD1920 of the template's shapes (computed on first use)
 	std::vector<DrawEntry> m_entries;
 	std::vector<std::unique_ptr<DrawableModule>> m_clientModules;
 	bool m_clientHidden = false; ///< lane CHAT-1
