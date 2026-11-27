@@ -2,6 +2,7 @@
 // See Common/ScoreKeeper.h for the target facts, the donor and what is inference (lane END-1).
 
 #include "Common/ScoreKeeper.h"
+#include "Common/Audio/ScoredKillEvaAnnouncer.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -209,6 +210,10 @@ void ScoreKeeper::addObjectDestroyed(GameLogic &logic, const Object &victim)
 		++m_unitsDestroyed2[idx]; // + 0x170
 	}
 	addToMap(m_destroyedByTemplate[idx], templateKey(victim), 1, false); // RW 0x79F3BD .. : + 0x1FC [idx]
+	if (TheScoredKillEvaAnnouncerController) // RW 0x79F303 -> ScoredKillTracker::friend_addTrackedKill
+	{
+		TheScoredKillEvaAnnouncerController->onObjectKilled(logic, m_playerIndex, victim);
+	}
 }
 
 // PORT-55. RW 0x79F619..0x79F67A: no enabled/counting gate, and no
