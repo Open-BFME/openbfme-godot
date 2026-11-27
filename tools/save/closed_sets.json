@@ -168,6 +168,7 @@
  "GameLogic/Module/InvisibilityModules.cpp::StealthDetectorUpdate::xfer::m_marks#1": "open: a statistic counter",
  "GameLogic/Module/InvisibilityModules.cpp::StealthUpdate::xfer::m_forbiddenOverride#1": "open: -1 (none) or a script's forbidden conditions word (any bits a script sets; tested only)",
  "GameLogic/Module/NotifyCrushModules.cpp::NotifyCrushUpdate::xfer::m_warned#1": "open: a statistic counter",
+ "GameLogic/Module/OCLUpdate.cpp::OCLUpdate::xfer::m_scheduledAt#1": "open: the logic frame the next creation was scheduled at",
  "GameLogic/Module/PhysicsBehavior.cpp::PhysicsBehavior::xfer::m_extraA#1": "open: retail's + 0x60 word of a launch (a caller's argument, carried; compared with 0)",
  "GameLogic/Module/PhysicsBehavior.cpp::PhysicsBehavior::xfer::m_extraB#1": "open: retail's + 0x64 word of a launch (compared with 0)",
  "GameLogic/Module/PickupStuffUpdate.cpp::PickupStuffUpdate::xfer::m_pickups#1": "open: a statistic counter (lane MODCOMPAT-MOD1)",
