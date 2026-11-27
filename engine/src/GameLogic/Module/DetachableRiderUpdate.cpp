@@ -317,11 +317,21 @@ void DetachableRiderUpdate::crc(StateHasher &hasher) const
 	hasher.addBool(m_whichDeathEntry);
 }
 
-// RW 0x8B285F / DONOR BFME2 0x4AE7A2 (DetachableRiderUpdateSnapshots.cpp), version (1, 1)
+// RW 0x8B285F / DONOR BFME2 0x4AE7A2. Version 2 is the native layout (UpdateModule + m_isRiderDead, m_whichDeathEntry).
+// Version 1 is the pre-port UnportedUpdateModule shell (UpdateModule + m_calls), which resets rider flags to defaults.
 void DetachableRiderUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x);
+	if (v.current < 2)
+	{
+		std::uint32_t legacyCalls = 0; // UnportedUpdateModule::m_calls
+		x.xferUnsignedInt(&legacyCalls);
+		m_isRiderDead = false;
+		m_whichDeathEntry = false;
+		return;
+	}
 	x.xferBool(&m_isRiderDead);
 	x.xferBool(&m_whichDeathEntry);
 }
@@ -394,10 +404,19 @@ void DetachableRiderBody::crc(StateHasher &hasher) const
 	crcMux(hasher);
 }
 
-// RW 0x8C5EB5 / DONOR BFME2 0x4C1D0B (DetachableRiderBodyXfer.cpp), version (1, 2)
+// RW 0x8C5EB5 / DONOR BFME2 0x4C1D0B. Version 2 is the native layout (ActiveBody::xfer + UpgradeMux::xferMux).
+// Version 1 is the pre-port UnportedBehaviorModule shell (BehaviorModule::xfer only), which resets body and mux to defaults.
 void DetachableRiderBody::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 2);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
+	if (v.current < 2)
+	{
+		xferBehaviorModule(x);
+		resetActiveBody();
+		setUpgradeExecuted(false);
+		return;
+	}
 	ActiveBody::xfer(x);
 	xferMux(x);
 }

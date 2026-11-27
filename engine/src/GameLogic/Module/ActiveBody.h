@@ -166,6 +166,9 @@ protected:
 	float m_previousHealth = 0.0f; // the previous health of internalChangeHealth (damage accounting)
 	float m_reviveReference = 0.0f; // lane HERO-1: RW module + 0x2C (see getReviveReference)
 
+protected:
+	void resetActiveBody();
+
 private:
 	class DamageHost;
 	BodyDamageType calcDamageState() const;

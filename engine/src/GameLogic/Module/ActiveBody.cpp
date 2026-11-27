@@ -998,6 +998,46 @@ void ActiveBody::xfer(Xfer &x)
 	}
 }
 
+void ActiveBody::resetActiveBody()
+{
+	m_initialHealth = m_data->m_initialHealth;
+	m_maxHealth = m_data->m_maxHealth;
+	const float inverse = SimMath::divf32(1.0f, m_maxHealth);
+	m_damagedFraction = SimMath::mulf32(m_data->m_maxHealthDamaged, inverse);
+	m_reallyDamagedFraction = SimMath::mulf32(m_data->m_maxHealthReallyDamaged, inverse);
+	m_currentHealth = m_data->m_initialHealth == -1.0f ? m_data->m_maxHealth : m_data->m_initialHealth;
+	m_previousHealth = m_currentHealth;
+	m_reviveReference = m_currentHealth;
+	m_damageScalar = 1.0f;
+	m_indestructible = false;
+	m_curDamageState = BODY_PRISTINE;
+	m_lastDamageFrame = 0xFFFFFFFFu;
+	m_lastDamager = INVALID_ID;
+	m_lastAttackerTaken = false;
+	m_lastDamagerPlayerMask = 0;
+	m_lastDamageType = DAMAGE_UNDEFINED;
+	m_lastDamageFXType = 0;
+	m_damageFXThrottleUntil = 0;
+	m_sideStage = 0;
+	for (int i = 0; i < 4; ++i)
+	{
+		m_sideDamage[i] = 0.0f;
+		m_sideDestroyed[i] = false;
+	}
+	if (m_data->m_useDefaultDamageSettings)
+	{
+		const GameLogicSettings &settings = getObject()->logic().settings();
+		if (m_damagedFraction == 0.0f && settings.bodyThresholdsLoaded)
+		{
+			m_damagedFraction = settings.unitDamagedThreshold;
+		}
+		if (m_reallyDamagedFraction == 0.0f && settings.bodyThresholdsLoaded)
+		{
+			m_reallyDamagedFraction = settings.unitReallyDamagedThreshold;
+		}
+	}
+}
+
 void ImmortalBody::xfer(Xfer &x)
 {
 	SnapshotXfer::version(x, 1, 1);

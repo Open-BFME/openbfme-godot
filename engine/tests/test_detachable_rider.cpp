@@ -7,6 +7,7 @@
 #include "Common/XferSave.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/Module/DetachableRiderUpdate.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
 
 namespace
@@ -92,5 +93,86 @@ TEST_CASE("LOCAL-24 DetachableRider: lethal hit clamps health, kills rider, ente
 		CHECK_FALSE(rider->isRiderDead());
 		CHECK_FALSE(knight->testStatus(39));
 		CHECK_FALSE(knight->testModelCondition(297));
+	}
+}
+
+TEST_CASE("LOCAL-24 DetachableRider xfer: v2 round-trip, v1 UnportedUpdateModule/UnportedBehaviorModule compatibility, and v3 rejection")
+{
+	combattest::CombatWorld w(kRiderIni);
+	Object *knight = w.unit("TestMountedKnight", 'A', 200.0f, 200.0f);
+	REQUIRE(knight != nullptr);
+	auto *body = dynamic_cast<DetachableRiderBody *>(knight->getBodyModule());
+	auto *rider = dynamic_cast<DetachableRiderUpdate *>(knight->findModule("DetachableRiderUpdate"));
+	REQUIRE(body != nullptr);
+	REQUIRE(rider != nullptr);
+
+	// Trigger lethal hit so both body and rider are non-default
+	DamageInfo dmg;
+	dmg.m_input.m_amount = 500.0f;
+	dmg.m_input.m_damageType = DAMAGE_SLASH;
+	dmg.m_input.m_deathType = DEATH_NORMAL;
+	knight->attemptDamage(dmg);
+	REQUIRE(body->getHealth() == 100.0f);
+	REQUIRE(body->isAlreadyUpgraded());
+	REQUIRE(rider->isRiderDead());
+
+	// DetachableRiderUpdate: v2 round-trip, v3 rejection, and real v1 UnportedUpdateModule load
+	{
+		XferSave v2Save;
+		rider->xfer(v2Save);
+		REQUIRE(!v2Save.data().empty());
+		CHECK(v2Save.data().front() == 2);
+		XferLoad v2Load(v2Save.data());
+		rider->xfer(v2Load);
+		CHECK(v2Load.atEnd());
+		CHECK(rider->isRiderDead());
+
+		std::vector<std::uint8_t> badVer = v2Save.data();
+		badVer.front() = 3;
+		XferLoad badLoad(badVer);
+		CHECK_THROWS_AS(rider->xfer(badLoad), XferException);
+
+		UnportedUpdateModule legacy(knight, nullptr, 1);
+		legacy.update();
+		XferSave v1Save;
+		legacy.xfer(v1Save);
+		REQUIRE(!v1Save.data().empty());
+		CHECK(v1Save.data().front() == 1);
+
+		XferLoad v1Load(v1Save.data());
+		rider->xfer(v1Load);
+		CHECK(v1Load.atEnd());
+		CHECK_FALSE(rider->isRiderDead());
+		CHECK_FALSE(rider->whichDeathEntry());
+	}
+
+	// DetachableRiderBody: v2 round-trip, v3 rejection, and real v1 UnportedBehaviorModule load
+	{
+		XferSave v2Save;
+		body->xfer(v2Save);
+		REQUIRE(!v2Save.data().empty());
+		CHECK(v2Save.data().front() == 2);
+		XferLoad v2Load(v2Save.data());
+		body->xfer(v2Load);
+		CHECK(v2Load.atEnd());
+		CHECK(body->getHealth() == 100.0f);
+		CHECK(body->isAlreadyUpgraded());
+
+		std::vector<std::uint8_t> badVer = v2Save.data();
+		badVer.front() = 3;
+		XferLoad badLoad(badVer);
+		CHECK_THROWS_AS(body->xfer(badLoad), XferException);
+
+		UnportedBehaviorModule legacy(knight, nullptr, 32);
+		XferSave v1Save;
+		legacy.xfer(v1Save);
+		REQUIRE(!v1Save.data().empty());
+		CHECK(v1Save.data().front() == 1);
+
+		XferLoad v1Load(v1Save.data());
+		body->xfer(v1Load);
+		CHECK(v1Load.atEnd());
+		CHECK(body->getHealth() == 200.0f);
+		CHECK_FALSE(body->isAlreadyUpgraded());
 	}
 }
