@@ -38,9 +38,9 @@
 #include "GameNetwork/ProfileChoice.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DStreakDraw.h"
+#include "GameEngineDevice/W3DDevice/GameClient/HouseColor.h" // lane HCKEY-1: EntryView::staticKeyPalette
 #include "GameEngineDevice/W3DDevice/GameClient/W3DVegetationSway.h"
 #include "GodotDevice/GodotW3DMaterial.h"
-#include "GameEngineDevice/W3DDevice/GameClient/HouseColor.h" // lane HCKEY-1: EntryView::staticKeyPalette
 
 #include <godot_cpp/classes/immediate_mesh.hpp>
 #include <godot_cpp/classes/mesh_instance3d.hpp>
@@ -809,9 +809,10 @@ private:
 	void build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &report, Array &errors, Array &stops);
 	// S-029 (1): no pivot-fade dither for the first two seconds of a game (GodotGameWorldPrewarm.cpp).
 	void begin_fade_warmup();
-	// Lane PERF-4 (owner report 2026-11-10): every player's units / buildings, the map's neutral objects and the placement ghost (the flag)
-	// plus GameData's move hint are built during the load, so the first one of each does not pay the W3D / texture /
-	// material cost in the middle of a game. The models stay in `m_dynamicModels` with no instance (nothing is drawn).
+	// Lane PERF-4 (owner report 2026-11-10): every player's units / buildings, their player-coloured variants and the map's neutral
+	// objects, plus GameData's move hint, are built during the load, so the first one of each does not pay the W3D / texture /
+	// material cost in the middle of a game. The models stay in `m_dynamicModels` with no instance (nothing is drawn). The placement
+	// cursor is the ghost renderer's own cache and is not built here.
 	void prewarm_match_models(W3DInstancer &dyn, Dictionary &timings);
 	// lane PERF-4: the models the load pass did not build (the other model-condition states of the present factions
 	// and the map, i.e. upgrades, rubble, damage variants) are built one per wave while the game runs. A wave never
@@ -821,6 +822,7 @@ private:
 	{
 		std::string model; // lower-cased W3D name
 		std::vector<TextureSwap> swaps; // a ModelConditionState's `Texture = A B` (empty: the plain model)
+		HouseColorParams color; // kind > 0: a player-colour variant (the live path's add_model_colored)
 	};
 	std::vector<PrewarmJob> m_prewarmQueue;
 	size_t m_prewarmCursor = 0;

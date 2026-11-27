@@ -168,6 +168,7 @@ include(cmake/Structure.cmake)  # OPENBFME_STRUCTURE_SOURCES / OPENBFME_STRUCTUR
 include(cmake/Spell.cmake)      # OPENBFME_SPELL_SOURCES / OPENBFME_SPELL_TESTS (lane SPELL-1)
 include(cmake/Port43.cmake)     # PORT-43: GameData/PowerLimit -> GameLogic + 0x118 (issue #128; OPENBFME_PORT43_TESTS)
 include(cmake/Local80.cmake)    # script rank actions and PLAYER_COMPARE_RANK (fork issue 704; OPENBFME_LOCAL80_TESTS)
+include(cmake/Port330.cmake)    # PORT-330: FXList Sound / EvaEvent parse-time name checks (fork issue 847; OPENBFME_PORT330_TESTS)
 include(cmake/Render.cmake)     # OPENBFME_RENDER_SOURCES / OPENBFME_RENDER_TESTS (lane RENDER-1, client / draw only)
 include(cmake/SkirmishAI.cmake) # OPENBFME_SKIRMISH_AI_SOURCES / OPENBFME_SKIRMISH_AI_TESTS (lane AI-1)
 include(cmake/Vis.cmake)        # OPENBFME_VIS_SOURCES / OPENBFME_VIS_TESTS (lane VIS-1)
@@ -186,6 +187,7 @@ include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Port166.cmake) # PORT-166: the ordered slot lock survives the shot that starts the reload (fork issue 395; OPENBFME_PORT166_TESTS)
 include(cmake/Port302.cmake) # retail 2.01 InactiveBody armor flags and damage
 include(cmake/Port226.cmake) # OPENBFME_PORT226_TESTS: the idle state's stance countdown
+include(cmake/Port212.cmake) # PORT-212: a plot's construction applies no MaxSimultaneousOfType (OPENBFME_PORT212_TESTS)
 include(cmake/Port54.cmake) # OPENBFME_PORT54_TESTS (lane PORT-54)
 include(cmake/Port8.cmake) # PORT-8: PhysicsBehavior/OrientToFlightPath (OPENBFME_PORT8_TESTS)
 include(cmake/Port11.cmake) # PORT-11: SlavedUpdate/StayOnSameLayerAsMaster (OPENBFME_PORT11_TESTS)
@@ -210,6 +212,7 @@ include(cmake/Port217.cmake) # PORT-217: a builder turns to face the structure i
 include(cmake/Port101.cmake) # PORT-101: Object/SelectionPriority in box selection (OPENBFME_PORT101_TESTS)
 include(cmake/Port10.cmake) # PORT-10: FlammableUpdate/RunToWater (issue #65; OPENBFME_PORT10_TESTS)
 include(cmake/Port307.cmake) # PORT-307: the gates' and the wall hubs' own functions (OPENBFME_PORT307_TESTS)
+include(cmake/AimWeapon.cmake) # AimWeaponBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_AIMWEAPON_TESTS)
 include(cmake/Port17.cmake) # PORT-17: ThreatFinderUpdate + the threat-finder script action (issue #73; appends to OPENBFME_SIM_SOURCES; OPENBFME_PORT17_TESTS)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
@@ -225,6 +228,8 @@ include(cmake/Mod2.cmake)       # MODULES-2: partition manager, emotions, area-s
 include(cmake/Mod3.cmake)       # MODULES-3: the emotion AI states, the safe path, the crush warning (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOD3_TESTS)
 include(cmake/Stealth.cmake)    # STEALTH-1: invisibility and detection (appends to OPENBFME_SIM_SOURCES; OPENBFME_STEALTH_TESTS)
 include(cmake/Garrison.cmake)   # GARRISON-1: garrisons (appends to OPENBFME_SIM_SOURCES; OPENBFME_GARRISON_TESTS)
+include(cmake/EvacuateDamage.cmake) # EvacuateDamage (appends to OPENBFME_SIM_SOURCES; OPENBFME_EVACUATEDAMAGE_TESTS)
+include(cmake/SpecialEnemySense.cmake) # SpecialEnemySenseUpdate (appends to OPENBFME_SIM_SOURCES; OPENBFME_SPECIALENEMYSENSE_TESTS)
 include(cmake/GiantBirdSlowDeath.cmake) # GiantBirdSlowDeathBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_GIANTBIRDSLOWDEATH_TESTS)
 include(cmake/Transport.cmake)  # GARRISON-2: transports, siege carriers, turrets (appends to OPENBFME_SIM_SOURCES; OPENBFME_TRANSPORT_TESTS)
 include(cmake/Hud2.cmake)       # OPENBFME_HUD2_SOURCES / OPENBFME_HUD2_TESTS (lane HUD-2: radar terrain picture, Palantir globe and power cap)
@@ -354,6 +359,7 @@ include(cmake/Buildclear1.cmake) # BUILDCLEAR-1: the placement's clear-of-object
 include(cmake/Bldgdebris1.cmake) # BLDGDEBRIS-1: the DamageCreationList debris and the siege side damage of ActiveBody (OPENBFME_BLDGDEBRIS1_TESTS)
 include(cmake/Port294.cmake)    # PORT-294: ObjectCreationUpgrade's own mux slots — wouldUpgrade, postUpgradeCheck, isPermanent (OPENBFME_PORT294_TESTS)
 include(cmake/Port198.cmake) # PORT-198: the SpawnBehavior order slots and Player::onUnitCreated (OPENBFME_PORT198_TESTS)
+include(cmake/Port301.cmake)    # PORT-301: ShareExperienceBehavior — the hero-experience-sharing switch (TheGameLogic + 0x9F) and the share counter's snapshot layout (OPENBFME_PORT301_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -761,6 +767,7 @@ if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
 add_executable(openbfme_tests
     ${OPENBFME_PORT426_TESTS}
+    ${OPENBFME_PORT330_TESTS}
     tests/test_local_98.cpp
     ${OPENBFME_WIN1_TESTS}
     ${OPENBFME_DEP2_TESTS}
@@ -775,6 +782,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_PORT166_TESTS}
     ${OPENBFME_PORT226_TESTS}
+    ${OPENBFME_PORT212_TESTS}
     ${OPENBFME_PORT54_TESTS}
     ${OPENBFME_PORT4_TESTS}
     ${OPENBFME_PORT8_TESTS}
@@ -789,6 +797,8 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT24_TESTS}
     ${OPENBFME_PORT1_TESTS}
     ${OPENBFME_PORT6_TESTS}
+    ${OPENBFME_EVACUATEDAMAGE_TESTS}
+    ${OPENBFME_SPECIALENEMYSENSE_TESTS}
     ${OPENBFME_GIANTBIRDSLOWDEATH_TESTS}
     ${OPENBFME_PORT55_TESTS}
     ${OPENBFME_PORT62_TESTS}
@@ -802,6 +812,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT101_TESTS}
     ${OPENBFME_PORT10_TESTS}
     ${OPENBFME_PORT17_TESTS}
+    ${OPENBFME_AIMWEAPON_TESTS}
     ${OPENBFME_PORT307_TESTS}
     ${OPENBFME_PLAY4_TESTS}
     ${OPENBFME_MAPRESET1_TESTS}
@@ -952,6 +963,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PORT302_TESTS}
     ${OPENBFME_PORT294_TESTS}
     ${OPENBFME_PORT198_TESTS}
+    ${OPENBFME_PORT301_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_parser_fuzz_regressions.cpp
@@ -1061,6 +1073,8 @@ add_executable(openbfme_tests
     tests/test_logic_hash.cpp
     tests/test_logic_settings.cpp
     tests/test_logic_retail.cpp
+    # lane LOCAL-27 (the roads.ini Bridge block: field table RW 0xC19DC0, newBridge RW 0x6DC794)
+    tests/test_local_27.cpp
     # lane LOCAL-8 (RespawnUpdate ButtonImage, AutoRespawnAtObjectFilter, DeathAnimationTime)
     tests/test_local_8.cpp
     # upgrade completion name in the interface and its feedback (RW 0x8A2080 .. 0x8A223B)
@@ -1072,6 +1086,10 @@ add_executable(openbfme_tests
     tests/test_local_17.cpp
     # lane LOCAL-25 (locomotor ground motion presentation: calcPitchRoll / calcPhysicsXform, RW 0x670570 / 0x67BDC0)
     tests/test_local_25.cpp
+    # lane LOCAL-59 (WeaponFireSpecialAbilityUpdate makes and loads weapon in ctor, fork issue 418)
+    tests/test_local_59.cpp
+    # lane LOCAL-12 (command button border, ControlBarScheme)
+    tests/test_local_12.cpp
     # shared numeric facade (WEAPON-1 e75dd8c, imported unchanged: wide PC24 results, SSE binary32 ops, retail integer conversions)
     tests/test_numeric_facade.cpp
     # lane ECON-1: the economy

@@ -221,11 +221,12 @@ void GameLogic::xferCore(Xfer &x)
 	// lane CHEAT-1: version 2 adds the Cheat Mode block at the end; lane BFME2CAMP1: version 3 adds the buildability overrides (GameLogic.h, RW GameLogic
 	// + 0x10) and the campaign's carry-over after it; WOTR2 milestone 7: version 4 adds the War of the Ring battle's army tags after those (it was
 	// version 3 on feature/wotr before the archive merge: never released); PORT-43: version 5 adds GameLogic + 0x118 (m_rankLevelLimit, retail
-	// GameLogic::xfer RW 0x630D6F .. 0x630D78) when PLAYER_SET_RANKLEVELLIMIT scripted it.
+	// GameLogic::xfer RW 0x630D6F .. 0x630D78) when PLAYER_SET_RANKLEVELLIMIT scripted it; PORT-301: version 6 adds GameLogic + 0x9F
+	// (m_heroExperienceSharing, RW 0x62D299 default true) when toggled off.
 	// Each version is written only when its state is there, so every other game's snapshot is byte-identical to version 1's (an older snapshot loads with
 	// none of the later state)
 	const bool campaignState = !m_buildableOverrides.empty() || m_campaignCarryover.has_value();
-	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_rankLevelLimitScripted ? 5 : m_livingWorldTags.inUse() ? 4 : campaignState ? 3 : m_cheatMode.enabled() ? 2 : 1) };
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || !m_heroExperienceSharing ? 6 : m_rankLevelLimitScripted ? 5 : m_livingWorldTags.inUse() ? 4 : campaignState ? 3 : m_cheatMode.enabled() ? 2 : 1) };
 	x.xferVersion(v);
 	x.xferUnsignedInt(&m_frame);
 	x.xferBool(&m_frameAdvance);
@@ -353,6 +354,14 @@ void GameLogic::xferCore(Xfer &x)
 	else if (x.isLoading())
 	{
 		resetRankLevelLimitFromEconomy();
+	}
+	if (v.current >= 6)
+	{
+		x.xferBool(&m_heroExperienceSharing);
+	}
+	else if (x.isLoading())
+	{
+		m_heroExperienceSharing = true; // RW 0x62D299 default for saves before v6
 	}
 }
 

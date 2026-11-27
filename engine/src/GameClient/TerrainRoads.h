@@ -33,6 +33,44 @@ struct RoadType
 	float roadWidth = 0.0f;        // RoadWidth (world units)
 	float roadWidthInTexture = 0.0f; // RoadWidthInTexture (fraction of the texture height the road covers)
 	bool isBridge = false;
+
+	// Bridge blocks: RotWK 2.01's TerrainRoadType, its Bridge field table RW 0xC19DC0 (22 rows) read by the Bridge block parse
+	// RW 0x5DA647. Defaults are the TerrainRoadType constructor's (RW 0x6DC310): names empty, BridgeScale 1.0, the rest 0. `texture`
+	// above is the table's Texture row (+0x38). Body states index PRISTINE, DAMAGED, REALLYDAMAGED, RUBBLE (RW 0xDA2038).
+	static constexpr int BODY_STATES = 4;
+	static constexpr int MAX_BRIDGE_BODY_FX = 3; // TransitionToOCL / TransitionToFX: EffectNum 1..3 (RW 0x6DC1AF)
+	float bridgeScale = 1.0f;                  // +0x1C BridgeScale (parseReal RW 0x42ED00)
+	std::string scaffoldObjectName;            // +0x20 ScaffoldObjectName (parseAsciiString RW 0x42EE5E)
+	std::string scaffoldSupportObjectName;     // +0x24 ScaffoldSupportObjectName (RW 0x42EE5E)
+	float radarColor[3] = { 0.0f, 0.0f, 0.0f }; // +0x28 RadarColor (parseRGBColor RW 0x42EF99: R: G: B: 0..255, times 1/255)
+	std::string bridgeModelName;               // +0x34 BridgeModelName (RW 0x42EE5E)
+	std::string bridgeModelNameDamaged;        // +0x3C BridgeModelNameDamaged
+	std::string textureDamaged;                // +0x40 TextureDamaged
+	std::string bridgeModelNameReallyDamaged;  // +0x44 BridgeModelNameReallyDamaged
+	std::string textureReallyDamaged;          // +0x48 TextureReallyDamaged
+	std::string bridgeModelNameBroken;         // +0x4C BridgeModelNameBroken
+	std::string textureBroken;                 // +0x50 TextureBroken
+	// +0x54 .. +0x60 TowerObjectNameFromLeft, FromRight, ToLeft, ToRight, indexed by BridgeTowerType (getTowerObjectName RW 0x6813E2)
+	std::string towerObjectName[4];
+	// Transition effects by the body state reached. DamagedToSound / RepairedToSound (parseAudioEventRTS RW 0x73B217) write the
+	// DAMAGED entry (+0x68, +0xD8); TransitionToOCL (RW 0x6DC132) and TransitionToFX (RW 0x6DC221) any state and effect.
+	std::string damageToSound[BODY_STATES];                       // +0x64
+	std::string damageToOCL[BODY_STATES][MAX_BRIDGE_BODY_FX];     // +0x74
+	std::string damageToFX[BODY_STATES][MAX_BRIDGE_BODY_FX];      // +0xA4
+	std::string repairedToSound[BODY_STATES];                     // +0xD4
+	std::string repairedToOCL[BODY_STATES][MAX_BRIDGE_BODY_FX];   // +0xE4
+	std::string repairedToFX[BODY_STATES][MAX_BRIDGE_BODY_FX];    // +0x114
+	float transitionEffectsHeight = 0.0f;      // +0x144 TransitionEffectsHeight (RW 0x42ED00)
+	int numFXPerType = 0;                      // +0x148 NumFXPerType (parseInt RW 0x42EC5E)
+};
+
+// BridgeTowerType, the index of RoadType::towerObjectName (getTowerObjectName RW 0x6813E2 reads +0x54 + 4 * type)
+enum BridgeTowerType
+{
+	BRIDGE_TOWER_FROM_LEFT = 0,
+	BRIDGE_TOWER_FROM_RIGHT = 1,
+	BRIDGE_TOWER_TO_LEFT = 2,
+	BRIDGE_TOWER_TO_RIGHT = 3,
 };
 
 struct RoadTypeIndex
@@ -71,7 +109,8 @@ struct RoadBuildReport
 
 namespace TerrainRoads
 {
-void scanText(const std::string &text, RoadTypeIndex &out);
+// false + *error on a Bridge block retail rejects (an unknown field, a bad RadarColor or transition, a road redefined as a bridge).
+bool scanText(const std::string &text, RoadTypeIndex &out, std::string *error = nullptr);
 bool load(ArchiveFileSystem &fs, RoadTypeIndex &out, std::string *error);
 
 // liftWorldUnits: presentation-only raise above the terrain (ZH uses MAP_HEIGHT_SCALE/8 = 0.005, which

@@ -224,18 +224,36 @@ TEST_CASE("#define with a lone slash in its value defines once, not twice")
 	CHECK(fx.env.macros.find("PATH2")->value == "X/Y/Z");
 }
 
-TEST_CASE("#define is a pre-pass: a macro defined at the bottom of a file is usable above it (spec 0.1 fact 2)")
+TEST_CASE("#define is a pre-pass over the file's first lines: it ends at the first line that is not a define (RW 0x42D0FE -> 0x42D341)")
 {
 	Fixture fx;
-	int value = 0;
+	std::string value;
 	fx.env.blocks.registerBlock("V", [&](INI *ini) {
 		ini->readLine();
 		ini->firstToken();
-		value = ini->scanInt(ini->getNextToken());
+		value = ini->preprocessMacro(ini->getNextToken());
 		ini->readLine(); // End
 	});
-	REQUIRE(loadError(fx.env, "t.ini", "V x\nKey LATE\nEnd\n#define LATE 99\n").empty());
-	CHECK(value == 99);
+	REQUIRE(loadError(fx.env, "t.ini", "; blank lines and comments are no lines\n\n#define FIRST 99\n\n  ; here neither\n#define SECOND FIRST\nV x\nKey SECOND\nEnd\n").empty());
+	CHECK(value == "FIRST");
+	REQUIRE(fx.env.macros.findByName("FIRST") != nullptr);
+	CHECK(fx.env.macros.findByName("FIRST")->value == "99");
+	// after the first other line a define is not read; as a block name it is unknown
+	CHECK_FALSE(loadError(fx.env, "u.ini", "V x\nKey 1\nEnd\n#define LATE 99\n").empty());
+	CHECK(fx.env.macros.findByName("LATE") == nullptr);
+}
+
+TEST_CASE("#define without anything after the name defines it as \"#define\": nextToken leaves token 0 in the value (RW 0x42D16E / 0x4366DC); Edain's SUMMONED_HERO_WEAK")
+{
+	Fixture fx;
+	REQUIRE(defineOnly(fx.env, "t.ini", "#define BEFORE 1\n#define SUMMONED_HERO_WEAK\n#define SUMMONED_HERO_STRONG\r\n#define AFTER 2\n").empty());
+	CHECK(fx.env.macros.findByName("BEFORE")->value == "1");
+	REQUIRE(fx.env.macros.findByName("SUMMONED_HERO_WEAK") != nullptr);
+	CHECK(fx.env.macros.findByName("SUMMONED_HERO_WEAK")->value == "#define");
+	REQUIRE(fx.env.macros.findByName("SUMMONED_HERO_STRONG") != nullptr);
+	CHECK(fx.env.macros.findByName("SUMMONED_HERO_STRONG")->value == "#define");
+	REQUIRE(fx.env.macros.findByName("AFTER") != nullptr);
+	CHECK(fx.env.macros.findByName("AFTER")->value == "2");
 }
 
 TEST_CASE("#define: names must be upper case, but the check is 'a' < c < 'z' exclusive (spec 2.2 item 1.4)")
@@ -255,7 +273,7 @@ TEST_CASE("#define: empty value, duplicate name and the map.ini ban (spec 2.2 it
 {
 	Fixture fx;
 	int code = 0;
-	std::string err = defineOnly(fx.env, "t.ini", "#define LONELY\n", &code);
+	std::string err = defineOnly(fx.env, "t.ini", "#define LONELY  ; spaces are left before the comment\n", &code);
 	CHECK(code == 8);
 	CHECK(err.find("t.ini:\nError parsing MACRO.\nLONELY has no value") == 0);
 

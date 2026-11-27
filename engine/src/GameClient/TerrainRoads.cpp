@@ -4,10 +4,15 @@
 
 #include "GameClient/TerrainRoads.h"
 
+#include "Common/INI/Msvcr71Real.h"
+#include "Common/NumericState.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <tuple>
 
 namespace
@@ -41,6 +46,248 @@ float dot(V2 a,V2 b) { return a.x*b.x+a.y*b.y; }
 V2 normal(V2 a) { return {-a.y,a.x}; }
 V2 normalized(V2 a) { const float n=std::hypot(a.x,a.y); return n ? a*(1.0f/n) : V2{1,0}; }
 
+bool isSubTokenSep(char c)
+{
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '=' || c == ':';
+}
+
+// The tokens of a value, split at INI's colon separators (INI m_sepsColon " \n\r\t=:", as getNextSubToken reads them).
+bool subTokens(const std::string &val, std::vector<std::string> &out, std::string &error)
+{
+	out.clear();
+	if (val.find('\0') != std::string::npos)
+	{
+		error = "unexpected NUL byte in roads.ini value";
+		return false;
+	}
+	size_t i = 0;
+	while (i < val.size())
+	{
+		while (i < val.size() && isSubTokenSep(val[i])) ++i;
+		size_t j = i;
+		while (j < val.size() && !isSubTokenSep(val[j])) ++j;
+		if (j > i) out.push_back(val.substr(i, j - i));
+		i = j;
+	}
+	return true;
+}
+
+// parseAsciiString (RW 0x42EE5E) and the audio name (RW 0x73B217) take the value's first token.
+std::string firstToken(const std::string &val)
+{
+	const size_t end = val.find_first_of(" \t");
+	return end == std::string::npos ? val : val.substr(0, end);
+}
+
+bool equalsNoCase(const std::string &a, const char *b)
+{
+	return lower(a) == lower(b);
+}
+
+// INI::scanInt / scanReal without the macro table (no retail roads.ini value is a macro or math op; one is an error here).
+bool scanInt(const std::string &t, int &v)
+{
+	return !t.empty() && t[0] != '#' && std::sscanf(t.c_str(), "%d", &v) == 1;
+}
+bool scanReal(const std::string &t, float &v)
+{
+	return !t.empty() && t[0] != '#' && Msvcr71Real::scanfFloat(t.c_str(), v);
+}
+
+// getNextSubToken(expected) (INI.cpp; RW 0x42DD73): the tag compared without case, then its value.
+bool subToken(const std::vector<std::string> &t, size_t &at, const char *expected, std::string &value, std::string &error)
+{
+	if (at + 1 >= t.size() || !equalsNoCase(t[at], expected))
+	{
+		error = std::string("expected '") + expected + "' but found '" + (at < t.size() ? t[at] : std::string()) + "'";
+		return false;
+	}
+	value = t[at + 1];
+	at += 2;
+	return true;
+}
+
+// parseRGBColor RW 0x42EF99 (INI::parseRGBColor): R: G: B:, each 0..255, scaled by 1/255.
+bool parseRadarColor(const std::string &val, float out[3], std::string &error)
+{
+	std::vector<std::string> t;
+	if (!subTokens(val, t, error))
+	{
+		return false;
+	}
+	const char *names[3] = { "R", "G", "B" };
+	size_t at = 0;
+	int c[3];
+	for (int i = 0; i < 3; ++i)
+	{
+		std::string v;
+		if (!subToken(t, at, names[i], v, error))
+		{
+			return false;
+		}
+		if (!scanInt(v, c[i]))
+		{
+			error = "expected signed integer value but found '" + v + "'";
+			return false;
+		}
+		if (c[i] < 0 || c[i] > 255)
+		{
+			error = std::string("color value ") + names[i] + "=" + std::to_string(c[i]) + " out of range (0..255)";
+			return false;
+		}
+	}
+	for (int i = 0; i < 3; ++i)
+	{
+		out[i] = NumericState::pc24Mul((float)c[i], 1.0f / 255.0f);
+	}
+	return true;
+}
+
+// TransitionToOCL RW 0x6DC132 / TransitionToFX RW 0x6DC221: Transition:Damage|Repair ToState:<body state> EffectNum:1..3 OCL:|FX:<name>
+bool parseTransition(const std::string &val, bool ocl, RoadType &r, std::string &error)
+{
+	static const char *const states[RoadType::BODY_STATES] = { "PRISTINE", "DAMAGED", "REALLYDAMAGED", "RUBBLE" }; // RW 0xDA2038
+	std::vector<std::string> t;
+	if (!subTokens(val, t, error))
+	{
+		return false;
+	}
+	size_t at = 0;
+	std::string kind, state, num, name;
+	if (!subToken(t, at, "Transition", kind, error))
+	{
+		return false;
+	}
+	const bool damage = equalsNoCase(kind, "Damage");
+	if (!damage && !equalsNoCase(kind, "Repair"))
+	{
+		error = "Transition must be Damage or Repair, found '" + kind + "'";
+		return false;
+	}
+	if (!subToken(t, at, "ToState", state, error))
+	{
+		return false;
+	}
+	int s = -1;
+	for (int i = 0; i < RoadType::BODY_STATES; ++i)
+	{
+		s = s < 0 && equalsNoCase(state, states[i]) ? i : s;
+	}
+	if (s < 0)
+	{
+		error = "Token '" + state + "' is not a valid member of the index list";
+		return false;
+	}
+	int effect = 0;
+	if (!subToken(t, at, "EffectNum", num, error))
+	{
+		return false;
+	}
+	if (!scanInt(num, effect))
+	{
+		error = "expected signed integer value but found '" + num + "'";
+		return false;
+	}
+	if (--effect < 0 || effect >= RoadType::MAX_BRIDGE_BODY_FX) // RW 0x6DC1AD js / 0x6DC1AF cmp 3
+	{
+		error = "EffectNum " + num + " out of range (1..3)";
+		return false;
+	}
+	if (!subToken(t, at, ocl ? "OCL" : "FX", name, error))
+	{
+		return false;
+	}
+	std::string &slot = ocl ? (damage ? r.damageToOCL[s][effect] : r.repairedToOCL[s][effect])
+	                        : (damage ? r.damageToFX[s][effect] : r.repairedToFX[s][effect]);
+	slot = name;
+	return true;
+}
+
+// TerrainRoadCollection::newBridge RW 0x6DC794: a new bridge takes from an earlier Bridge DefaultBridge its texture, scale, the seven
+// model / texture names, +0x144 and +0x148, both sounds per body state and, per state and effect, DefaultBridge's damage OCL into all four
+// OCL / FX slots (the copy reads every one with the damageToOCL getter RW 0x6DBE3A). The scaffold and tower names and RadarColor stay unset.
+void copyDefaultBridge(const RoadType &d, RoadType &r)
+{
+	r.texture = d.texture;
+	r.bridgeScale = d.bridgeScale;
+	r.bridgeModelName = d.bridgeModelName;
+	r.bridgeModelNameDamaged = d.bridgeModelNameDamaged;
+	r.bridgeModelNameReallyDamaged = d.bridgeModelNameReallyDamaged;
+	r.bridgeModelNameBroken = d.bridgeModelNameBroken;
+	r.textureDamaged = d.textureDamaged;
+	r.textureReallyDamaged = d.textureReallyDamaged;
+	r.textureBroken = d.textureBroken;
+	r.transitionEffectsHeight = d.transitionEffectsHeight;
+	r.numFXPerType = d.numFXPerType;
+	for (int s = 0; s < RoadType::BODY_STATES; ++s)
+	{
+		r.damageToSound[s] = d.damageToSound[s];
+		r.repairedToSound[s] = d.repairedToSound[s];
+		for (int e = 0; e < RoadType::MAX_BRIDGE_BODY_FX; ++e)
+		{
+			r.damageToOCL[s][e] = d.damageToOCL[s][e];
+			r.damageToFX[s][e] = d.damageToOCL[s][e];
+			r.repairedToOCL[s][e] = d.damageToOCL[s][e];
+			r.repairedToFX[s][e] = d.damageToOCL[s][e];
+		}
+	}
+}
+
+// One row of the Bridge field table RW 0xC19DC0; false + error on an unknown field (INI's initFromINI rejects it) or a bad value.
+bool parseBridgeField(const std::string &key, const std::string &val, RoadType &r, std::string &error)
+{
+	std::string *names[] = { &r.scaffoldObjectName, &r.scaffoldSupportObjectName, &r.bridgeModelName, &r.texture,
+		&r.bridgeModelNameDamaged, &r.textureDamaged, &r.bridgeModelNameReallyDamaged, &r.textureReallyDamaged,
+		&r.bridgeModelNameBroken, &r.textureBroken, &r.towerObjectName[0], &r.towerObjectName[1], &r.towerObjectName[2],
+		&r.towerObjectName[3] };
+	const char *nameKeys[] = { "scaffoldobjectname", "scaffoldsupportobjectname", "bridgemodelname", "texture",
+		"bridgemodelnamedamaged", "texturedamaged", "bridgemodelnamereallydamaged", "texturereallydamaged", "bridgemodelnamebroken",
+		"texturebroken", "towerobjectnamefromleft", "towerobjectnamefromright", "towerobjectnametoleft", "towerobjectnametoright" };
+	for (size_t i = 0; i < sizeof(nameKeys) / sizeof(nameKeys[0]); ++i)
+	{
+		if (key == nameKeys[i])
+		{
+			*names[i] = firstToken(val);
+			return true;
+		}
+	}
+	if (key == "bridgescale" || key == "transitioneffectsheight")
+	{
+		if (!scanReal(firstToken(val), key == "bridgescale" ? r.bridgeScale : r.transitionEffectsHeight))
+		{
+			error = "expected floating point value but found '" + val + "'";
+			return false;
+		}
+		return true;
+	}
+	if (key == "numfxpertype")
+	{
+		if (!scanInt(firstToken(val), r.numFXPerType))
+		{
+			error = "expected signed integer value but found '" + val + "'";
+			return false;
+		}
+		return true;
+	}
+	if (key == "radarcolor")
+	{
+		return parseRadarColor(val, r.radarColor, error);
+	}
+	if (key == "damagedtosound" || key == "repairedtosound")
+	{
+		// RW 0x73B217 -> 0x73AA94: "NoSound" (any case) clears; any other name must be a known audio event (not checked here: S-7223)
+		const std::string name = firstToken(val);
+		(key == "damagedtosound" ? r.damageToSound : r.repairedToSound)[1] = equalsNoCase(name, "NoSound") ? std::string() : name;
+		return true;
+	}
+	if (key == "transitiontoocl" || key == "transitiontofx")
+	{
+		return parseTransition(val, key == "transitiontoocl", r, error);
+	}
+	error = "unknown field '" + key + "'";
+	return false;
+}
+
 } // namespace
 
 const RoadType *RoadTypeIndex::find(const std::string &name) const
@@ -49,11 +296,18 @@ const RoadType *RoadTypeIndex::find(const std::string &name) const
 	return it == byName.end() ? nullptr : &it->second;
 }
 
-void TerrainRoads::scanText(const std::string &text, RoadTypeIndex &out)
+bool TerrainRoads::scanText(const std::string &text, RoadTypeIndex &out, std::string *error)
 {
 	size_t pos = 0;
 	bool inBlock = false;
 	RoadType cur;
+	auto fail = [&](const std::string &what) {
+		if (error)
+		{
+			*error = "data\\ini\\roads.ini: Bridge " + cur.name + ": " + what;
+		}
+		return false;
+	};
 	while (pos <= text.size())
 	{
 		size_t nl = text.find('\n', pos);
@@ -79,14 +333,33 @@ void TerrainRoads::scanText(const std::string &text, RoadTypeIndex &out)
 			const bool bridge = line.size() > 7 && lower(line.substr(0, 6)) == "bridge" && std::isspace((unsigned char)line[6]);
 			if (road || bridge)
 			{
-				cur = RoadType();
-				cur.isBridge = bridge;
-				cur.name = trim(line.substr(road ? 4 : 6));
-				size_t sp = cur.name.find_first_of(" \t");
+				std::string name = trim(line.substr(road ? 4 : 6));
+				size_t sp = name.find_first_of(" \t");
 				if (sp != std::string::npos)
 				{
-					cur.name.erase(sp);
+					name.erase(sp);
 				}
+				cur = RoadType();
+				const RoadType *known = out.find(name);
+				if (bridge && known && known->isBridge)
+				{
+					cur = *known; // the Bridge block parse RW 0x5DA647: a second block of a known bridge parses into it
+				}
+				else if (bridge)
+				{
+					cur.name = name;
+					if (known)
+					{
+						return fail("Redefining road '" + name + "' as a bridge!"); // RW 0x5DA6A5
+					}
+					const RoadType *def = out.find("DefaultBridge"); // newBridge RW 0x6DC794
+					if (def && def->isBridge)
+					{
+						copyDefaultBridge(*def, cur);
+					}
+				}
+				cur.isBridge = bridge;
+				cur.name = name;
 				inBlock = true;
 			}
 			continue;
@@ -100,11 +373,23 @@ void TerrainRoads::scanText(const std::string &text, RoadTypeIndex &out)
 		size_t eq = line.find('=');
 		if (eq == std::string::npos)
 		{
+			if (cur.isBridge)
+			{
+				return fail("'" + line + "' is not a field");
+			}
 			continue;
 		}
 		std::string key = lower(trim(line.substr(0, eq)));
 		std::string val = trim(line.substr(eq + 1));
-		if (key == "texture")
+		if (cur.isBridge)
+		{
+			std::string why;
+			if (!parseBridgeField(key, val, cur, why))
+			{
+				return fail(why);
+			}
+		}
+		else if (key == "texture")
 		{
 			cur.texture = val;
 		}
@@ -117,6 +402,7 @@ void TerrainRoads::scanText(const std::string &text, RoadTypeIndex &out)
 			cur.roadWidthInTexture = (float)std::atof(val.c_str());
 		}
 	}
+	return true;
 }
 
 bool TerrainRoads::load(ArchiveFileSystem &fs, RoadTypeIndex &out, std::string *error)
@@ -127,7 +413,10 @@ bool TerrainRoads::load(ArchiveFileSystem &fs, RoadTypeIndex &out, std::string *
 	{
 		return false;
 	}
-	scanText(std::string(bytes.begin(), bytes.end()), out);
+	if (!scanText(std::string(bytes.begin(), bytes.end()), out, error))
+	{
+		return false;
+	}
 	if (out.byName.empty())
 	{
 		if (error)
