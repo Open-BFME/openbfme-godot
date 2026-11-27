@@ -55,6 +55,7 @@ struct ClientEvent
 		DESTROYED,
 		MODEL_CONDITION, ///< bit, on
 		SHOW_MODULE,     ///< name (the module tag), visible, permanent
+		UPGRADE_TEXTURE, ///< upgrade texture and excluded subobjects
 		SHOW_SUB_OBJECT, ///< name, visible, permanent
 		PLACEMENT,       ///< flags (when setFlags), scale (when setScale), mirror
 		REPLACED,        ///< lane STEALTH-2 (RW 0x776F03): the drawable made again as CREATED's fields say (tmpl: the look, flags: the object's conditions)
@@ -69,6 +70,7 @@ struct ClientEvent
 		CAH_STATISTICS,   ///< hero unique id and the matching statistic names, client profile data
 		MODEL_CONDITIONS, ///< lane SAVE-4e: flags, the object's whole set stored (Drawable::replaceModelConditionFlags RW 0x679512 takes a whole set)
 		EVA_DAMAGED,      ///< lane EVADAMAGE-1 (RW 0x67B4B7's Eva half): position (the object's, + 0x38), eva (the logic's part of the choice)
+		DESELECT_LOCAL,   ///< lane POSTERNPLOT-1 (RW 0x85834C): ownerIndex = the object's controlling player at the call (-1: none)
 	};
 	std::string heroUniqueID;
 	std::vector<std::string> heroStatistics;
@@ -76,6 +78,7 @@ struct ClientEvent
 	UnsignedInt frame = 0;   ///< the logic frame that made it (0 during the load)
 	std::uint32_t seq = 0;   ///< call order over the whole game
 	ObjectID object = INVALID_ID;
+	int ownerIndex = -1;     ///< DESELECT_LOCAL: the controlling player's index when the logic made the call
 	const ThingTemplate *tmpl = nullptr;
 	ModelConditionFlags flags;
 	bool hasHouseColor = false;
@@ -96,6 +99,7 @@ struct ClientEvent
 	DrawableScriptTarget scriptTarget; ///< MODEL_FLUSH (lane FX-3 / ANIM-1): the object's target record when the flags reach the draw, for the state scripts they start
 	bool hasWeaponTiming = false;      ///< MODEL_FLUSH (lane ANIM-1): the object has a current weapon (RW 0x68B58C(0)); weaponTimingFrames is its cycle
 	int weaponTimingFrames = 0;        ///< ObjectWeapons::drawWeaponTimingFrames (RW 0x4BEE31 .. 0x4BEE91), what UseWeaponTiming animations divide by
+	TextureSwap textureSwap;
 	std::string name;
 	bool visible = false, permanent = false;
 	bool setFlags = false, setScale = false, mirror = false;
@@ -124,6 +128,7 @@ public:
 	void modelConditionChanged(Object &obj, int bit, bool on) override;
 	void flushModelConditions(Object &obj) override;
 	bool showModule(Object &obj, const std::string &tag, bool visible, bool permanent) override;
+	void upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled) override;
 	void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) override;
 	void replaceDrawable(Object &obj, const ThingTemplate *tmpl, bool hasColor, std::uint32_t color) override;
 	void fadeIn(Object &obj, UnsignedInt frames) override;
@@ -135,6 +140,7 @@ public:
 	void heroAttacked(Object &obj) override;
 	void evaDamaged(Object &obj, const EvaDamageNotice &notice) override; // lane EVADAMAGE-1
 	void flashHeroButton(const std::string &templateName, int frames) override;
+	void deselectLocal(Object &obj) override; // lane POSTERNPLOT-1 (RW 0x85834C)
 	// MapObjectLoop's afterCreate for a map object (DrawableManager::applyPlacement): the client part of the placement
 	void placement(Object &obj, const MapObjectDrawable &placement);
 	// lane SAVE-4e: a snapshot load set the object's model conditions without the hooks (Object::xfer): its whole set goes to the drawable

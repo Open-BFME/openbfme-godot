@@ -13,7 +13,8 @@
 // DONOR: ZH AIStates.cpp AIAttackState (5358-5700), AIAttackApproachTargetState (2555-2790), AIAttackAimAtTargetState (4904-5133), AIAttackFireWeaponState (5161-5330).
 //
 // WHAT IS INFERENCE / NOT PORTED (stop S-325): the Pursue state (a fleeing victim is chased by the Approach state's re-path), turrets, stealth, view blocking, garrison fire points,
-// guard / hunt / retaliation, attack area and attack squad. The attack on a position
+// guard / hunt / retaliation, attack area and attack squad. Lane APPROACHGIVEUP-1 ported the approach's give-up paths (RW 0x749D46: the chase limit of an auto-acquired
+// fleeing victim, the wait-then-fail of an unreachable one, the raised StandGround wait; S-7162). The attack on a position
 // (state 9, lane PLAY-2) is ZH's AIAttackState(follow false, object false, force false) (AIStates.cpp:710; the BFME2 constructor row is not read).
 
 #pragma once
@@ -176,6 +177,13 @@ private:
 	// an owner that cannot move waits (RW 0x74E6CE, + 0x68 / + 0x71; BFME2 decomp AIAttackApproachTargetState::onEnter retail 0x0034CD3A)
 	bool m_waiting = false;
 	unsigned m_waitFrame = 0;
+	// lane APPROACHGIVEUP-1: RW state + 0x58, the owner's position when the approach began (RW 0x74E6CE's first store; BFME2 decomp
+	// AIAttackApproachTargetState::onEnter m_ownerPosition): the give-up test after the move (RW 0x74A11F) asks whether the owner moved more than 10 since
+	Coord3D m_ownerPosition{ 0.0f, 0.0f, 0.0f };
+	// lane APPROACHGIVEUP-1: RW 0x749FB2 .. 0x74A0DF, the chase limit of an auto-acquired fleeing victim (true: the approach fails)
+	bool chaseLimitExceeded(Object &source, Object &victim);
+	// RW 0x6FB754 (Pathfinder::CanApproachToTarget) from the owner to `pos` with the current weapon, stopAtFirstMiss false (RW 0x74A1EF: its 4th argument 0)
+	bool canApproachVictim(const Coord3D &pos);
 };
 
 class AIAttackAimState : public AIState

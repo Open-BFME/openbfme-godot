@@ -15,6 +15,7 @@ set(OPENBFME_STEALTH_TESTS
     tests/test_stealthlook1.cpp
     tests/test_stealth_parse.cpp
     tests/test_stealth_retail.cpp
+    tests/test_stealth_disguise_load.cpp
     tests/test_hud_stealth_retail.cpp
     tests/test_hud_stealth_abilities_retail.cpp
 )

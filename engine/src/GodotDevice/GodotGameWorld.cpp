@@ -140,6 +140,7 @@
 #include <fstream>
 #include <chrono>
 #include <cmath>
+#include <set>
 
 // the binary's model condition names (GameLogic/BitFlags.h: not included here, its ModelConditionFlags typedef collides with Common/ModelState.h)
 extern const char *const TheModelConditionNames[];
@@ -797,6 +798,10 @@ void GameWorld::clear_scene()
 	m_views.clear();
 	m_dynamicModels.clear();
 	m_staticModels.clear();
+	m_prewarmQueue.clear();
+	m_prewarmCursor = 0;
+	m_prewarmNextMs = 0.0;
+	m_prewarmBuilt = m_prewarmFailed = 0;
 	m_buffInstances.clear(); // lane SPELL-4: the buffs' instances went with the instancer
 	m_staticId = m_dynamicId = 0;
 	m_textureClock = 0.0;
@@ -836,9 +841,9 @@ static int staticGlowOf(const ModuleData *data)
 // stops S-115 / S-5015: a W3DFloorDraw's WeatherTexture of the map's weather (the first entry, as RW 0x4CFA9A picks a streak's) replaces the floor model's
 // texture: every texture of the model ("*"; 92 of the 96 retail floor models that set one have a single texture, the other four none or one name the
 // extractor split). INFERENCE: the floor draw's own routine was not read. Empty for any other draw module or when no entry has the weather.
-static std::vector<std::pair<std::string, std::string>> floorWeatherSwaps(const ModuleData *data, int weather)
+static std::vector<TextureSwap> floorWeatherSwaps(const ModuleData *data, int weather)
 {
-	std::vector<std::pair<std::string, std::string>> swaps;
+	std::vector<TextureSwap> swaps;
 	if (const W3DFloorDrawModuleData *fd = dynamic_cast<const W3DFloorDrawModuleData *>(data))
 	{
 		for (const std::pair<int, std::string> &w : fd->m_weatherTextures)
@@ -891,7 +896,7 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		const MapObjectDrawable &d = m_game->clientOnly().drawables[p.drawable];
 		const Transform3D xf = toTransform(d.basis, d.position, d.scale);
 		// stop S-5015: a model draw's state swaps textures (a rock's or a civilian building's SNOW state on a snowy map): its own model variant
-		std::vector<std::pair<std::string, std::string>> swaps;
+		std::vector<TextureSwap> swaps;
 		if (p.draw)
 		{
 			W3DDrawPoseView view;
@@ -901,6 +906,11 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		else if (p.kind == W3D_DRAWKIND_FLOOR && p.module < d.draws.size())
 		{
 			swaps = floorWeatherSwaps(d.draws[p.module].data, m_streakWeather); // a map-placed building's floor (bib) on a snowy map
+		}
+		else if (p.kind == W3D_DRAWKIND_TREE && !p.textureName.empty())
+		{
+			// RW 0x4E8C1B / RW 0x4EC9B5: W3DShrubBuffer / W3DTreeBuffer keys tree types by (ModelName, TextureName) and applies TextureName
+			swaps.emplace_back("*", p.textureName);
 		}
 		const std::string key = AsciiStringUtil::lowered(p.modelName) + W3DInstancer::Texture_Swap_Suffix(swaps);
 		auto it = m_staticModels.find(key);
@@ -1389,10 +1399,16 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		}
 	}
 	dyn->set_house_colors_enabled(m_houseColors);
+	// S-029 (1): no pivot-fade dither for the first two seconds of a game (the black dither pixels are conspicuous on snowy maps)
+	begin_fade_warmup();
 	dyn->set_playing(false); // time only enters through set_instance_pose
 	dyn->set_pose_culling(m_perf3Client); // PiP supplies an additional frustum when a second camera sees the live objects.
 	dyn->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the same frusta decide what is drawn
 	timings["static_layer_ms"] = timing::elapsedMs(t0);
+	// lane PERF-4 (owner report 2026-11-10): build the local faction's unit / building / placement-flag / move-hint models now, while the
+	// loading screen covers the map; their meshes, textures and materials are then cached for the first spawn or first placement. Its own
+	// timing is outside static_layer_ms, so the load report's total does not count it twice.
+	prewarm_match_models(*dyn, timings);
 
 	t0 = nowMs();
 	refresh_shroud(true);
@@ -1750,7 +1766,7 @@ bool GameWorld::view_is_local(size_t id, const W3DInstancer &dyn, const LogicSna
 			e.draw->poseView(f);
 			const bool shown = f.model && !e.moduleHidden && !fogHidden;
 			const auto palette = Render_House_Color_Params(d->getHouseColor(), d->customColorKind(), d->customColors());
-			const bool keySame = ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
+			const bool keySame = !flagsChanged && ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
 				&& ev.animKeySwaps == (const void *)f.textureSwaps && ev.animKeyKind == palette.kind && ev.animKeyGlow == f.glow
 				&& ev.animKeyColors[0] == (std::uint32_t)palette.colors[0] && ev.animKeyColors[1] == (std::uint32_t)palette.colors[1]
 				&& ev.animKeyColors[2] == (std::uint32_t)palette.colors[2];
@@ -1813,8 +1829,10 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 		remove_view((uint32_t)id);
 		return;
 	}
-	const Coord3D shownAt = *d->getPosition();
-	const Transform3D xf = toTransform(d->getBasis(), shownAt, d->getInstanceScale());
+	float presentationBasis[9];
+	Coord3D shownAt;
+	d->getPresentationPose(presentationBasis, shownAt);
+	const Transform3D xf = toTransform(presentationBasis, shownAt, d->getInstanceScale());
 	const bool xfChanged = !v.haveXf || !(xf == v.lastXf);
 	// VIS-1 / STEALTH-1 / GARRISON-1 / lane VISUAL-2: what the presented snapshot leaves undrawn and the fogged ghost's light (Drawable::presentedLook,
 	// shared with the attached particle systems, the buffs and the streaks)
@@ -1970,7 +1988,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			ev.colorsRevision = d->customColorRevision();
 			// lane PERF-HD: the model key below (the lowered name, the house colour's "#..." suffix, the swap suffix) depends only on these inputs;
 			// while they hold the key is `ev.model` already, so the strings are not made and compared again (every animated troop, every frame)
-			const bool keySame = ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
+			const bool keySame = !flagsChanged && ev.animKeyValid && ev.animKeyShown == shown && ev.animKeyHouse == m_houseColors && ev.animKeyName == f.modelName
 				&& ev.animKeySwaps == (const void *)f.textureSwaps && ev.animKeyKind == palette.kind && ev.animKeyGlow == f.glow
 				&& ev.animKeyColors[0] == (std::uint32_t)palette.colors[0] && ev.animKeyColors[1] == (std::uint32_t)palette.colors[1]
 				&& ev.animKeyColors[2] == (std::uint32_t)palette.colors[2];
@@ -1993,7 +2011,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			std::string swappedModel;
 			if (shown && !f.textureSwaps->empty())
 			{
-				if (ev.swapSource != f.textureSwaps)
+				if (ev.swapSource != f.textureSwaps || flagsChanged)
 				{
 					ev.swapSource = f.textureSwaps;
 					ev.swapSuffix = W3DInstancer::Texture_Swap_Suffix(*f.textureSwaps); // once per state change (Sol review r1: not every frame)
@@ -2179,7 +2197,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			{
 				ev.staticKeyPalette = Render_House_Color_Params(owner, customKind, custom);
 				ev.staticKeyColored = m_houseColors && ev.staticKeyPalette.kind > 0;
-				ev.staticKeySwaps = e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<std::pair<std::string, std::string>>();
+				ev.staticKeySwaps = e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<TextureSwap>();
 				ev.staticKey = AsciiStringUtil::lowered(e.staticModel) + W3DInstancer::Texture_Swap_Suffix(ev.staticKeySwaps);
 				ev.staticGlow = staticGlowOf(e.data); // lane GLOW-1 (S-5231): a glowing module's model is a copy of its own, as on the animated path
 				if (ev.staticGlow != 0)
@@ -2207,7 +2225,7 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 			}
 			const HouseColorParams &palette = ev.staticKeyPalette;
 			const bool colored = ev.staticKeyColored;
-			const std::vector<std::pair<std::string, std::string>> &swaps = ev.staticKeySwaps;
+			const std::vector<TextureSwap> &swaps = ev.staticKeySwaps;
 			const std::string &model = ev.staticKey;
 			if(ev.model!=model && ev.instance>=0) {dyn->remove_instance(ev.instance);ev.instance=-1;ev.posed=false;}
 			if (!ev.posed)
@@ -2461,6 +2479,7 @@ void GameWorld::advance(double delta)
 	{
 		return;
 	}
+	prewarm_wave_tick(); // lane PERF-4: one spare-time model per wave; while paused it has no game frame to disturb
 	if (m_paused)
 	{
 		// the simulation and the animations stand still; the streak ribbons still face the camera of this frame (the camera moves while paused)

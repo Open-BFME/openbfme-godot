@@ -176,10 +176,13 @@ LiveFX::LiveFX(LiveGame &game, FXPlayback &playback) : m_game(game), m_mapWeathe
 	m_playback.setWorld(this);
 	m_game.logic().fxEvents().setSink(this);
 	m_game.drawables().setFXHost(this);
+	// lane LOCAL-28: the dynamic lights of the draw modules (W3DLightDraw) go to the same pool the FXList LightPulse sinks use (S-687)
+	m_game.drawables().services().lightPulses = &m_playback.lightPulsesMutable();
 }
 
 LiveFX::~LiveFX()
 {
+	m_game.drawables().services().lightPulses = nullptr;
 	m_game.drawables().setFXHost(nullptr);
 	if (m_game.logic().fxEvents().sink() == this)
 	{

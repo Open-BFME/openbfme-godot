@@ -18,6 +18,7 @@
 //  * mapper phase is per material, shared by every instance that uses it (WW3D keeps it per render object).
 
 #pragma once
+#include "Common/TextureSwap.h"
 
 #include "GameClient/AssetPacks.h"
 #include "GameEngineDevice/W3DDevice/GameClient/HouseColor.h"
@@ -106,7 +107,7 @@ public:
 	void Set_House_Params(const HouseColorParams &params) { HouseParams = params; }
 	// stop S-5015: the texture swaps of the model being built (W3DInstancer::Set_Build_Texture_Swaps, a ModelConditionState's `Texture = A B` pairs):
 	// a surface texture named A (any case; A = "*": every texture) is loaded as B. Empty by default.
-	void Set_Texture_Swaps(const std::vector<std::pair<std::string, std::string>> &swaps) { TextureSwaps = swaps; }
+	void Set_Texture_Swaps(const std::vector<TextureSwap> &swaps) { TextureSwaps = swaps; }
 	// lane SDK-0 (GameClient/AssetPacks.h): cosmetic asset packs in front of the texture lookup; their files decode by their own bytes (DDS, PNG,
 	// JPEG, else TGA). nullptr (the default) = retail textures only. The packs must outlive the factory.
 	void Set_Asset_Packs(const AssetPacks *packs) { Packs = packs; }
@@ -160,7 +161,7 @@ private:
 	const HouseColorTable *HouseColors = nullptr;
 	const AssetPacks *Packs = nullptr; // lane SDK-0
 	HouseColorParams HouseParams;
-	std::vector<std::pair<std::string, std::string>> TextureSwaps; // stop S-5015
+	std::vector<TextureSwap> TextureSwaps; // stop S-5015
 	bool AlphaOverride = false;
 	bool SelectionDecals = false; // lane SELWALL-1
 	// Shared entries live while a requesting factory owns them; the process lookup

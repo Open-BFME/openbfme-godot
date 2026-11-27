@@ -17,6 +17,8 @@
 #include "Common/BuildAssistant.h"
 #include "GameLogic/BuildPlacement.h"
 #include "Common/Upgrade.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/UpgradeModule.h"
 
@@ -464,6 +466,14 @@ Outcome trainOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Result
 	// it walks where a right click sends it (what cannot move: a mine)
 	if (!factb::hasKindOf(*utt, "IMMOBILE") && factb::hasKindOf(*utt, "SELECTABLE"))
 	{
+		// lane VISIONDEF-1: a queued exit (QueueProductionExitUpdate) keeps the unit at the door, idle and IS_LEAVING_FACTORY, until its turn; then its exit path
+		// replaces any order (a click before it took the Siege Works' catapult nowhere: the move check passed only while the port's old height bonus let the
+		// catapult see and chase creeps 750 - 850 away). The player's click comes once it is out
+		static const int leaving = ObjectTemplateInfoBuilder::objectStatusIndex("IS_LEAVING_FACTORY");
+		for (int k = 0; k < 120 && leaving >= 0 && unit->testStatus((unsigned)leaving); ++k)
+		{
+			g.step(5);
+		}
 		const Coord3D from0 = *unit->getPosition();
 		if (g.select(unit, true))
 		{
@@ -477,11 +487,23 @@ Outcome trainOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Result
 			// a straight walk (a slow unit's 100 in 120 frames), 200 from the structures: a click beside one picks its model, not the ground
 			const Coord3D to = g.rig.freeSpot(from.x + 300.0f, from.y - 200.0f, 200.0f, false, {}, &from);
 			g.clickAt(to); // RotWK's default mouse: a left click on the ground orders the selection there
-			g.step(120); // a catapult crawls
+			std::string trace; // lane VISIONDEF-1: the AI state, the distance walked and the victim every 10 frames, for the report
+			for (int k = 0; k < 12; ++k)
+			{
+				g.step(10); // a catapult crawls
+				AIUpdateInterface *tai = unit->getAIUpdateInterface();
+				const Object *tv = tai ? tai->currentVictim() : nullptr;
+				trace += str(" %u:%.0f", tai ? tai->currentStateId() : 0u, dist2d(*unit->getPosition(), from));
+				if (tv)
+				{
+					trace += str("(victim %s at %.0f)", tv->getTemplate()->getName().c_str(), dist2d(*tv->getPosition(), *unit->getPosition()));
+				}
+			}
 			const float moved = dist2d(*unit->getPosition(), from);
 			if (moved < 100.0f)
 			{
-				res.fail(item, str("moved only %.0f in 120 frames after a click %.0f away (sent: %s)", moved, dist2d(to, from), g.lastMessages().c_str()));
+				res.fail(item, str("moved only %.0f in 120 frames after a click %.0f away (sent: %s; AI state:distance every 10 frames:%s)", moved, dist2d(to, from),
+					g.lastMessages().c_str(), trace.c_str()));
 			}
 			measured += str(", walked %.0f", moved);
 		}
@@ -788,7 +810,20 @@ void foundEveryExpansion(const std::string &faction, Results &res)
 			const Coord3D site = siteFor(g, n++, 300.0f);
 			Object *pad = g.rig.make(e->name, site.x, site.y);
 			g.step(5);
+			// a pad is BASE_FOUNDATION: a drag box never takes it (RW 0x83C3E7..0x83C3EE, PORT-101), so g.select's drag fallback cannot. Where the
+			// rig's click misses the flat pad (the castle in front, or the pick volume), the pad is selected by a test hook (the UI mirror and the
+			// logic's group message appended to the command list, as test_ownerfix1_input): this test is about the pad's buttons (in the game a pad
+			// in view is clicked; one behind the castle is clicked after turning the camera)
 			if (!g.select(pad))
+			{
+				g.hud->input().ui().selectObject(pad->getID());
+				GameMessage group(MSG_CREATE_SELECTED_GROUP, g.rig.local->getPlayerIndex());
+				group.appendBooleanArgument(true);
+				group.appendObjectIDArgument(pad->getID());
+				g.rig.game->commands().append(group);
+				g.step(2);
+			}
+			if (!g.hud->input().ui().isSelected(pad->getID()))
 			{
 				res.fail(item, "the pad could not be selected with a click (selection " + g.selectionText() + ")");
 				g.logic().destroyObject(pad);

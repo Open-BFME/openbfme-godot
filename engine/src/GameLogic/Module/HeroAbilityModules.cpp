@@ -1242,13 +1242,21 @@ void WeaponModeSpecialPowerUpdate::initiate()
 	ObjectWeapons *weapons = obj->getWeapons();
 	if (m_data->m_lockWeaponSlot == 5)
 	{
-		if (weapons) // RW 0x68FDF7
+		// RW 0x89843E: RW 0x68FDF7 is a popcount over the data's four WeaponSetFlags words (cmp edi, 4); an empty mask skips the loop
+		bool anyFlag = false;
+		for (std::uint32_t word : m_data->m_weaponSetFlags)
+		{
+			anyFlag = anyFlag || word != 0;
+		}
+		if (anyFlag)
 		{
 			for (int bit = 0; bit < 0x68; ++bit)
 			{
 				if ((m_data->m_weaponSetFlags[(size_t)bit >> 5] >> (bit & 31)) & 1u)
 				{
-					weapons->setWeaponSetFlag(bit, true); // RW 0x691059
+					// RW 0x691059 is an OBJECT method (this + 0x38C, then the weapon set update RW 0x6C99E2 and the model condition mirror
+					// RW 0xC16958): an object without a weapon set keeps the bits in its own words and mirrors the condition just the same.
+					obj->setWeaponSetFlag(bit, true);
 				}
 			}
 		}
@@ -1273,12 +1281,12 @@ UpdateSleepTime WeaponModeSpecialPowerUpdate::update()
 	if (ObjectWeapons *weapons = obj->getWeapons())
 	{
 		weapons->releaseWeaponLock(LOCKED_PERMANENTLY); // RW 0x68DF11(2)
-		for (int bit = 0; bit < 0x68; ++bit)
+	}
+	for (int bit = 0; bit < 0x68; ++bit)
+	{
+		if ((m_data->m_weaponSetFlags[(size_t)bit >> 5] >> (bit & 31)) & 1u)
 		{
-			if ((m_data->m_weaponSetFlags[(size_t)bit >> 5] >> (bit & 31)) & 1u)
-			{
-				weapons->setWeaponSetFlag(bit, false); // RW 0x691106
-			}
+			obj->setWeaponSetFlag(bit, false); // RW 0x691106, the same OBJECT method as RW 0x691059 (Object + 0x38C), weaponless included
 		}
 	}
 	if (!m_data->m_attributeModifier.empty())

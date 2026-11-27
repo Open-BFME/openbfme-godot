@@ -260,8 +260,7 @@ private:
 };
 
 // ---- the states ----------------------------------------------------------------------------------------------------------------
-// stop S-5148: the stop line of the idle state's unported stance failure (RotWK RW 0x7553AB / 0x7537E0; AIStateMachine.cpp), noted by AIIdleState::update
-const char *idleStanceStopLine();
+// The idle state's stance countdown (RW 0x7553AB / 0x7537E0) runs in AIIdleState::update.
 
 // AIIdleState (ZH AIStates.cpp:1273-1460, B1 RW-equivalent 0x188090): stakes out the unit's cell and sleeps.
 class AIIdleState : public AIState
@@ -274,10 +273,14 @@ public:
 	void crc(class StateHasher &hasher) const override;
 	void xfer(class Xfer &x) override;
 
+	/// retail's + 0x22 (RW 0x7553AB's stance countdown); read by the tests of its rule
+	unsigned short stancesCountdown() const { return m_stancesCountdown; }
+
 private:
 	void doInitIdleState();
-	unsigned short m_initialSleepOffset = 0xFFFF;
-	bool m_inited = false;
+	unsigned short m_initialSleepOffset = 0xFFFF; // + 0x20
+	unsigned short m_stancesCountdown = 5;        // + 0x22: RW 0x7489B6 sets it to 5 at every onEnter (DONOR BFME2 0x00346FD0 AIIdleStateOnEnter.cpp)
+	bool m_inited = false;                        // + 0x25
 };
 
 // AIMoveToState (ZH AIStates.cpp:2076 and AIInternalMoveToState): a PATH-1 AIMoveToState driven as a machine state; with a goal object

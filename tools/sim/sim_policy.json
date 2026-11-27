@@ -81,6 +81,10 @@
    "reason": "lane HOVER-1: the help box's text over a hero portrait (name, level, health, damages, upgrades): user interface, reads the logic, never changes it"
   },
   {
+   "glob": "src/GameClient/MouseoverTooltip.cpp",
+   "reason": "lane HOVER-2: the mouse-over tool tip's text over an object in the world (InGameUI::createMouseoverHint): user interface, reads the logic, never changes it"
+  },
+  {
    "glob": "src/GameClient/InGameHelpBox.cpp",
    "reason": "lane HUD-6: the help box movie's state machine and the hover provider: user interface on the render clock"
   },
@@ -637,6 +641,14 @@
    "reason": "the LookAt translator: raw input to camera movement, client state; it emits no GameMessage (CAM-1)"
   },
   {
+   "glob": "src/GameClient/DrawableLight.cpp",
+   "reason": "lane LOCAL-28 (#331): W3DLightDraw's drawable side (the flicker / pulse step by render time, RW 0x4CE930; the bone position an AttachToBoneInAnotherModule light follows, RW 0x672B5B): reads the draw frames and the drawable's transform, writes only the client light pool, never simulation state"
+  },
+  {
+   "glob": "src/GameClient/DrawablePhysics.cpp",
+   "reason": "lane LOCAL-25 (#430): the drawable's presentation physics (calcPitchRoll RW 0x670570, calcPhysicsXform RW 0x67BDC0: wheels, treads, four legs, ships, giant birds): reads the object snapshot, the locomotor template and the client terrain sampler, steps on the client frame, writes only the drawable's presentation pose, never simulation state"
+  },
+  {
    "glob": "src/GameClient/DrawableFade.cpp",
    "reason": "lane PROJ-2: the drawable's fade (RW 0x85EE00 / 0x67309D / 0x675AB7: a launched projectile hidden for InvisibleFrames, then faded in; the fog fades): reads a completed frame's snapshot and template data, writes only the drawable's opacity and hidden flag, never simulation state"
   },
@@ -895,6 +907,10 @@
   {
    "glob": "src/GodotDevice/GodotGameWorldSave.cpp",
    "reason": "lane SAVE-2: GameWorld's saves (writes the running recording's log to a file, lists the Save folder, starts a loaded save's catch-up and hands the game over with a continuing recording; the catch-up's audio is silenced, its queued effects dropped): client side, never part of the logic state"
+  },
+  {
+   "glob": "src/GodotDevice/GodotGameWorldPrewarm.cpp",
+   "reason": "lane PERF-4: GameWorld's load-time model prewarm and spare-time waves (W3D model, texture and material builds kept in the draw cache) and the two-second pivot-fade warm-up: client rendering, reads the logic's templates and objects, never writes simulation state; its wall-clock timings are load-report and wave-pacing data only"
   },
   {
    "glob": "src/GameNetwork/OrdersIntoFog.cpp",
