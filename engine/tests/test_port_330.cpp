@@ -18,9 +18,12 @@
 #include "Common/BfmeGame.h"
 #include "Common/INI.h"
 #include "GameClient/FXList.h"
+#include "GameClient/FXPlayback.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -203,4 +206,30 @@ TEST_CASE("PORT-330 S-190: the answers survive a world reload, which replaces th
 	int code = 0;
 	CHECK(w.load("FXList ReloadedBad\n  Sound\n    Name = GoneWithTheOldState\n  End\nEnd\n", &code).find("Invalid Sound 'GoneWithTheOldState'") != std::string::npos);
 	CHECK(code == 3);
+}
+
+TEST_CASE("PORT-330 S-190 port fix: a playback whose world went drops the services and parses unvalidated (GodotGameWorld::setup failing again)")
+{
+	// The live game's FX player outlives its world: a second setup that replaces the world and then fails (the world load, the map cache or the
+	// settings) leaves no world. The setup clears the services on the FX player and its playback (GodotFXPlayer.h setParseServices), so the next
+	// parse uses none: unvalidated and reported (S-190), never a call into the destroyed world's tables.
+	initest::Fixture fxFiles;
+	FXPlayback playback(fxFiles.fsys, RandomAlgorithm::RotWK_GameDat_LCG);
+	{
+		auto w = std::make_unique<ParseWorld>();
+		w->addAudio(kAudioTable);
+		playback.setParseServices(w->world.fxListParseServices());
+		const std::vector<std::string> checked = playback.loadIniText("checked.ini", "FXList Checked\n  Sound\n    Name = NotKnown\n  End\nEnd\n");
+		REQUIRE(checked.size() == 1u);
+		CHECK(checked.front().find("Invalid Sound 'NotKnown'") != std::string::npos);
+		playback.setParseServices(nullptr); // what the setup does before the world goes
+	}
+	const std::vector<std::string> errors = playback.loadIniText("after.ini", "FXList AfterTheWorld\n  Sound\n    Name = NotKnown\n  End\nEnd\n");
+	CHECK(errors.empty());
+	bool reported = false;
+	for (const std::string &line : playback.unverified())
+	{
+		reported = reported || line.find("S-190") != std::string::npos;
+	}
+	CHECK(reported);
 }

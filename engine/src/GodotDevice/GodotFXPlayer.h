@@ -110,7 +110,16 @@ public:
 	// lane FX-2 (C++ only): the playback the live game's LiveFX drives; null before setup() succeeded
 	FXPlayback *playback() const { return m_playback.get(); }
 	// PORT-330 (S-190): the FXList blocks' parse-time name checks, answered from the game's object world's tables before setup()
-	void setParseServices(FXListParseServices *services) { m_fxParseServices = services; }
+	// Port fix: the playback a previous setup made parsed with the old services and keeps them on its FXList store; it takes the new ones (or
+	// null when the world that owned them went) too, so neither holds a pointer into a destroyed world
+	void setParseServices(FXListParseServices *services)
+	{
+		m_fxParseServices = services;
+		if (m_playback)
+		{
+			m_playback->setParseServices(services);
+		}
+	}
 	// lane WEATHER-1 (C++ only): a particle texture through this player's cache (the snow manager's TextureAsset::Get is the particle texture loader,
 	// BFME2 0x00132D89); a name that does not resolve is the 1x1 white and is reported in get_stats().missing_textures
 	Ref<Texture2D> particleTexture(const std::string &name) { return loadTexture(name); }

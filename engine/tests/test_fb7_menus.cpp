@@ -8,6 +8,7 @@
 #include "doctest.h"
 #include "AptRetail.h"
 
+#include "Common/AsciiString.h"
 #include "Common/Audio/AudioAssetCache.h"
 #include "Common/Audio/AudioIni.h"
 #include "Common/Audio/GameAudio.h"
@@ -3188,7 +3189,8 @@ TEST_CASE("shellfix1 options retail: the OpenBFME menu's ACCEPT goes back to the
 	REQUIRE(bfme2);
 	REQUIRE_MESSAGE(bfme2->fs, bfme2->error);
 	AptRetail bfme2Only{ *bfme2->fs };
-	REQUIRE(bfme2Only.fs.getArchiveFilenameForFile("Options.apt").find("options.big") != std::string::npos); // BFME2 1.06's own movie
+	// BFME2 1.06's own movie; the archive's name on disk is Options.big or options.big, depending on the install
+	REQUIRE(AsciiStringUtil::lowered(bfme2Only.fs.getArchiveFilenameForFile("Options.apt")).find("options.big") != std::string::npos);
 	CHECK(menuAcceptUpdates(bfme2Only, "") == 2); // an unnamed button (the player's list_buttons calls it "instance14")
 }
 

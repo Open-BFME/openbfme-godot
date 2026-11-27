@@ -26,6 +26,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Upgrade.h"
 #include "GameClient/ControlBarCommands.h"
+#include "GameClient/ControlBarScheme.h"
 #include "GameClient/LinearCampaign.h"
 #include "GameEngineDevice/W3DDevice/GameClient/GlowEffect.h"
 #include "GameLogic/AttributeModifiers.h"
@@ -151,6 +152,8 @@ public:
 	const CreateAHeroSystem &setupCreateAHeroSystem() const { return *m_setupCreateAHero; }
 	// lane MAPRESET-1 (tests): the INI environment the map.ini blocks are parsed with (applyMapIni's INI), and the FX stores the INI load filled
 	INIEnvironment &iniEnvironment() { return m_s->m_env; }
+	const ControlBarSchemeStore &schemes() const { return m_s->m_schemes; }
+	ControlBarSchemeStore &schemes() { return m_s->m_schemes; }
 	const FXListStore &fxLists() const { return *m_s->m_recorder.fxLists; }
 	// PORT-330 (S-190): the FXList block's parse-time name checks, answered from this world's TheAudio / TheEva tables (FXListParseServices.cpp). The
 	// world's own load installs them on its FXList store; the client's FX player (FXPlayback, which parses the FX files again) takes them from here,
@@ -214,6 +217,7 @@ private:
 		SubsystemLegend m_legend;
 		LocomotorStore m_locomotors;
 		CommandStore m_commands;
+		ControlBarSchemeStore m_schemes;
 		ProductionSettings m_productionSettings;
 		UpgradeTypeTable m_upgradeTypes;
 		UpgradeCenter m_upgrades; // UPGRADE-1

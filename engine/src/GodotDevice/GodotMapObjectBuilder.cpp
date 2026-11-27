@@ -373,13 +373,25 @@ Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, cons
 			frame = p.draw->frame();
 			modelName = frame.modelName;
 		}
-		const bool playerColored=houseColors && d.sideIndex>=0 && m_drawables->sides[(size_t)d.sideIndex].hasColor;
-		const std::uint32_t playerColor=playerColored ? m_drawables->sides[(size_t)d.sideIndex].colorRGB : 0;
-		const std::string key = AsciiStringUtil::lowered(modelName)+(playerColored ? "#player&"+std::to_string(playerColor) : "");
+		std::vector<TextureSwap> swaps;
+		if (p.kind == W3D_DRAWKIND_TREE && !p.textureName.empty())
+		{
+			// RW 0x4E8C1B / RW 0x4EC9B5: W3DShrubBuffer / W3DTreeBuffer keys tree types by (ModelName, TextureName) and applies TextureName
+			swaps.emplace_back("*", p.textureName);
+		}
+		const bool playerColored = houseColors && d.sideIndex >= 0 && m_drawables->sides[(size_t)d.sideIndex].hasColor;
+		const std::uint32_t playerColor = playerColored ? m_drawables->sides[(size_t)d.sideIndex].colorRGB : 0;
+		const std::string key = AsciiStringUtil::lowered(modelName)
+			+ W3DInstancer::Texture_Swap_Suffix(swaps)
+			+ (playerColored ? "#player&" + std::to_string(playerColor) : "");
 		auto it = cache.find(key);
 		int64_t model;
 		if (it == cache.end())
 		{
+			if (!swaps.empty())
+			{
+				target->Set_Build_Texture_Swaps(swaps);
+			}
 			if (playerColored) {
 			 PackedInt64Array colors;colors.push_back((int64_t)playerColor);
 			 model=target->add_model_colored(toGodot(modelName),1,colors);

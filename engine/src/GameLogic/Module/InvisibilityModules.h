@@ -220,13 +220,15 @@ public:
 	static const char *const *forbiddenConditionNames(); ///< RW 0xDA5524
 };
 
-// RW StealthUpdate (create RW 0x64E90D, constructor RW 0x776E3D, 0x16C bytes; update RW 0x7779E3 -> 0x777310)
+// RW StealthUpdate (create RW 0x64E90D, constructor RW 0x776E3D, 0x16C bytes; getModuleName RW 0x00776068,
+// getModuleNameKey RW 0x00776023, dtors RW 0x00776278 / 0x0077600A, xfer RW 0x00776C7D,
+// loadPostProcess RW 0x00776E23, onObjectCreated RW 0x0077730B -> 0x776BF8, update RW 0x7779E3 -> 0x777310)
 class StealthUpdate : public UpdateModule
 {
 public:
-	OBFME_MODULE_XFER(StealthUpdate) // lane SAVE-4b
+	OBFME_MODULE_XFER(StealthUpdate) // lane SAVE-4b, RW 0x00776C7D
 	StealthUpdate(Thing *thing, const StealthUpdateModuleData *data); ///< RW 0x776E3D
-	void onObjectCreated() override;      ///< RW 0x776BF8: the upgrade name lists become masks
+	void onObjectCreated() override;      ///< RW 0x0077730B -> RW 0x776BF8: the upgrade name lists become masks
 	UpdateSleepTime update() override;    ///< RW 0x7779E3
 	// RW 0x7767A9: frames 0 = StealthDelay (RW 0x776213); `horde`: a horde member / horde passes it to the horde's and every member's StealthUpdate
 	void markAsDetected(unsigned frames, int mode, Object *detector, bool horde);
@@ -276,6 +278,7 @@ private:
 	bool m_halfway = false;               ///< + 0x44
 	bool m_disguising = false;            ///< + 0x45
 	bool m_disguised = false;             ///< + 0x46
+	bool m_xferRestoreDisguise = false;   ///< + 0x47 (RW 0x00776E23 / 0x007779ED / 0x007772FB; not xfer'd, not in crc)
 	UpgradeMaskType m_requiredUpgrades;   ///< + 0x48
 	UpgradeMaskType m_forbiddenUpgrades;  ///< + 0xD8
 	bool m_active = false;                ///< + 0x168

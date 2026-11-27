@@ -23,6 +23,7 @@
 #pragma once
 
 #include "GameClient/ControlBarCommands.h"
+#include "GameClient/ControlBarScheme.h"
 #include "GameClient/HudContext.h"
 #include "GameLogic/ObjectTypes.h"
 
@@ -68,6 +69,9 @@ struct ControlBarButton
 	bool autoAbility = false;               ///< lane AUTOCAST-1: the glow (RW 0x9D2D0E -> SetAutoAbilityOverlayState): the source object's AutoAbilityBehavior auto casts this button
 	int productionCount = 0;                ///< lane OWNERFIX-3: the count the window shows (RW 0x729D9A; 0 none): ShowProductionCount buttons only
 	bool commandPointsShort = false;        ///< a CantAfford UNIT_BUILD / REVIVE button is RotWK's availability 7 (command points short, RW 0x942F47), not 6
+	int borderType = 0;                     ///< lane LOCAL-12 (RW 0x75CBA5): BUTTON_BORDER_* (0 NONE, 1 BUILD, 2 UPGRADE, 3 ACTION, 4 SYSTEM, 5 ALTERED)
+	bool drawBorder = false;                ///< lane LOCAL-12 (RW 0x71C4F4 / 0x4A579C): true for non-radial button with valid border color
+	Color borderColor = 0x00FFFFFF;         ///< lane LOCAL-12 (RW 0x71C62F / 0x7206D5): color from ControlBarScheme
 };
 
 struct ControlBarQueueEntry
@@ -179,6 +183,24 @@ public:
 	void tickAttackFlash();  ///< RW 0x71C81A (one client frame)
 	const AttackFlash &attackFlash() const { return m_flash; }
 
+	// ---- lane LOCAL-12: border colours and schemes (RW 0x71C62F / 0x7206D5 / 0x71C4F4) ----
+	void setCommandBarBorderColors(Color build, Color action, Color upgrade, Color system, Color altered); // RW 0x71C62F
+	void setScheme(const ControlBarScheme *scheme); // RW 0x7206D5
+	bool setSchemeByName(const std::string &name);  // RW 0x71D350
+	bool setSchemeBySide(const std::string &side);  // RW 0x7216B6
+	void setCommandBarBorder(GameWindow *window, int borderType); // RW 0x71C4F4
+	Color borderColorForType(int borderType, bool *draw = nullptr) const;
+	void populateOCLTimerSellButton(GameWindow *sellWindow, bool show); // RW 0x944D54
+	void setControlCommand(GameWindow *window, const CommandButton *button); // RW 0x71CF3E
+
+	Color borderBuildColor() const { return m_borderBuildColor; }
+	Color borderActionColor() const { return m_borderActionColor; }
+	Color borderUpgradeColor() const { return m_borderUpgradeColor; }
+	Color borderSystemColor() const { return m_borderSystemColor; }
+	Color borderAlteredColor() const { return m_borderAlteredColor; }
+	Color commandBarBorderColor() const { return m_commandBarBorderColor; }
+	const std::string &schemeName() const { return m_schemeName; }
+
 	static std::vector<std::string> acceptanceStops();
 
 private:
@@ -220,4 +242,11 @@ private:
 	bool m_underConstruction = false;
 	AttackFlash m_flash;
 	bool m_foreignView = false;
+	Color m_borderBuildColor = 0x00FFFFFF;
+	Color m_borderActionColor = 0x00FFFFFF;
+	Color m_borderUpgradeColor = 0x00FFFFFF;
+	Color m_borderSystemColor = 0x00FFFFFF;
+	Color m_borderAlteredColor = 0x00FFFFFF;
+	Color m_commandBarBorderColor = 0x00FFFFFF;
+	std::string m_schemeName;
 };

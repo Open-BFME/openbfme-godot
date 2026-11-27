@@ -316,6 +316,9 @@ def test_the_release_builds_call_the_package_workflow():
         # dispatched: on staging/<version> at the commit; called: by release.yml on main only (its plan checked tag and commit)
         assert '"$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/heads/main"' in check
         assert '"$GITHUB_REPOSITORY/.github/workflows/release-package.yml@refs/heads/staging/$IN_VERSION"' in check
+        # the macOS image 20261123 form: the commit's own file at the commit, the ref still the staging branch
+        assert '"$GITHUB_REPOSITORY/.github/workflows/release-package.yml@$IN_COMMIT") ;;' in check
+        assert '[ "$GITHUB_REF" = "refs/heads/staging/$IN_VERSION" ]' in check
         assert '[ "$GITHUB_SHA" = "$IN_COMMIT" ]' in check and "${{" not in check
 
 
