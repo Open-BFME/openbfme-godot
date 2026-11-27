@@ -44,6 +44,15 @@ public:
 		}
 	}
 
+	// this = this * Rotate_X(theta) (ZH/RotWK Matrix3D::Rotate_X, RW 0x00A3CEF0, DONOR BFME2 0x0027BB65)
+	void Rotate_X(float theta); // defined in matrix3d.cpp (client only)
+
+	// this = this * Rotate_Y(theta) (ZH/RotWK Matrix3D::Rotate_Y, RW 0x00A3CF90, DONOR BFME2 0x0027BB65)
+	void Rotate_Y(float theta); // defined in matrix3d.cpp (client only)
+
+	// this = this * Rotate_Z(theta) (ZH/RotWK Matrix3D::Rotate_Z, RW 0x00A3D030, DONOR BFME2 0x0027BB65)
+	void Rotate_Z(float theta); // defined in matrix3d.cpp (client only)
+
 	void Set_Translation(const Vector3 &t)
 	{
 		Row[0][3] = t.X;

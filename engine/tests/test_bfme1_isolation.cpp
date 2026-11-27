@@ -207,6 +207,24 @@ TEST_CASE("bfme1 isolation: a table's BFME1 rows are found in BFME1 data only; R
 	CHECK(Bfme1FieldRows(kProbeBfme1Rows) == nullptr);
 }
 
+TEST_CASE("bfme1 isolation: BFME1 data reads a #define after other lines (B1T 0x00853610); RotWK data ends the pass there (RW 0x42D0FE)")
+{
+	const std::string text = "Probe\r\n  A = LATE\r\nEnd\r\n#define LATE 7\r\n";
+	{
+		initest::Fixture bfme1(kBfme1Legend);
+		Probe p;
+		REQUIRE(loadProbe(bfme1, p, text).empty());
+		REQUIRE(bfme1.env.macros.findByName("LATE") != nullptr);
+		CHECK(bfme1.env.macros.findByName("LATE")->value == "7");
+	}
+	{
+		initest::Fixture rotwk(kRotwkLegends);
+		Probe p;
+		CHECK_FALSE(loadProbe(rotwk, p, text).empty());
+		CHECK(rotwk.env.macros.findByName("LATE") == nullptr);
+	}
+}
+
 TEST_CASE("bfme1 isolation: AudioEvent Control = RANDOM and the AudioSettings 3D buffer rows are BFME1's only")
 {
 	const std::string event = "AudioEvent DefaultSoundEffect\r\n  Volume = 100\r\nEnd\r\nAudioEvent Shout\r\n  Sounds = shout\r\n  Control = loop random\r\nEnd\r\n";

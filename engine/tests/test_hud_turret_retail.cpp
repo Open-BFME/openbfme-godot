@@ -14,6 +14,7 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/Object/Object.h"
 
 #include <cmath>
@@ -176,6 +177,12 @@ TEST_CASE("turret retail: Rohirrim in bow mode attack warg riders, then ride on:
 	const ObjectID wargsId = wargs->getID();
 	r.frame(3);
 	setBowMode(*horde);
+	// pin: merge queue q66 (#338's idle stance countdown, RW 0x7553AB / 0x743864): a Battle stance horde idle after its ride-on guards where it stands again
+	// (frame 55 of the march) before its idle mood scan picks the wargs 600 away, so its turrets keep quiet; in Aggressive stance the countdown changes
+	// nothing (RW 0x86228E guards Battle / HoldGround / Porcupine only) and the riders' turrets take their idle targets after the march as before (measured
+	// once on the merged tree: 150 shots, none while the horses moved, 0.34 rad at a shot; in Battle stance the guard's turrets fire when the wargs come near)
+	REQUIRE(StancesBehavior::of(*horde) != nullptr);
+	StancesBehavior::of(*horde)->setStance(STANCE_AGGRESSIVE, "turret retail");
 	r.frame(1);
 	const std::vector<Object *> members = membersOf(*horde);
 	std::vector<ObjectID> memberIds;
