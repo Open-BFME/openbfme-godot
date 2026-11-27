@@ -42,6 +42,7 @@ struct W3DFileContents
 	std::vector<ParticleEmitterDefClass> Emitters;
 	std::vector<ShdMeshDefClass> ShdMeshes; // structure only (see shdmesh.h)
 	std::vector<std::uint32_t> OtherChunks; // top-level chunks with no loader (none in the retail corpus); listed, not hidden
+	bool Truncated = false; // a chunk ran past the end of the file (ChunkLoadClass::Was_Truncated): loaded from what is there, as ZH does
 
 	const MeshModelClass *Find_Mesh(const std::string &name) const; // case-insensitive
 	const HLodDefClass *Find_HLod(const std::string &name) const;
@@ -105,6 +106,7 @@ struct RenderSubObject
 	const W3dBoxStruct *Box = nullptr;
 	const ParticleEmitterDefClass *Emitter = nullptr;
 	std::string Reason;     // why a sub object is unresolved (ZH skips a null render object silently; here it is reported)
+	bool AbsentFromData = false; // the name is in no loaded file: retail's HLodClass skips it (BFME2 hlod.cpp:1108 .. 1112, if (robj != NULL)); a note, not an error
 };
 
 // Create_Render_Obj's result: a bare mesh (one default pivot) or an HLOD with its hierarchy and sub objects.

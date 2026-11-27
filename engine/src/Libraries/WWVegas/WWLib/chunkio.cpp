@@ -7,8 +7,8 @@
 
 #include <cstring>
 
-ChunkLoadClass::ChunkLoadClass(const std::uint8_t *data, size_t size)
-	: Data(data), Size(size), Offset(0), StackIndex(0), Error(false)
+ChunkLoadClass::ChunkLoadClass(const std::uint8_t *data, size_t size, bool allowTruncatedEnd)
+	: Data(data), Size(size), Offset(0), StackIndex(0), Error(false), AllowTruncatedEnd(allowTruncatedEnd)
 {
 	std::memset(PositionStack, 0, sizeof(PositionStack));
 }
@@ -40,12 +40,17 @@ bool ChunkLoadClass::Open_Chunk()
 	std::memcpy(&header.ChunkType, Data + Offset, 4);
 	std::memcpy(&header.ChunkSize, Data + Offset + 4, 4);
 
-	// Bounds: the chunk must fit in its parent and in the buffer.
+	// Bounds: the chunk must fit in its parent and in the buffer; with AllowTruncatedEnd one that runs past the end of the buffer opens, as ZH's
+	// FileClass reads do (Was_Truncated)
 	std::uint64_t end = (std::uint64_t)Offset + 8 + header.Get_Size();
 	if (end > Size)
 	{
-		Error = true;
-		return false;
+		if (!AllowTruncatedEnd)
+		{
+			Error = true;
+			return false;
+		}
+		Truncated = true;
 	}
 	if (StackIndex > 0)
 	{
@@ -78,6 +83,10 @@ bool ChunkLoadClass::Close_Chunk()
 	if (pos < csize)
 	{
 		Offset += csize - pos;
+	}
+	if (Offset > Size)
+	{
+		Offset = Size; // a truncated chunk: ZH's seek past the end of the file leaves the next header read empty
 	}
 
 	StackIndex--;

@@ -130,6 +130,12 @@ bool AssetPacks::checkModels(W3DFileSource &base, std::vector<std::string> &erro
 			errors.push_back(label + " is not a W3D file the game can read: " + error);
 			continue;
 		}
+		if (replacement.Truncated)
+		{
+			// only the retail / mod mount reads a file shorter than its last chunk, as ZH does (W3DFileContents::Truncated); a pack's damaged model stays an error
+			errors.push_back(label + " is not a W3D file the game can read: a chunk runs past the end of the file");
+			continue;
+		}
 		const std::string path = W3D_Asset_Path(stemOf(e.first), base.FlatAssetLayout());
 		if (!base.Exists(path))
 		{
