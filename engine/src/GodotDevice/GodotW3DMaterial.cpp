@@ -504,7 +504,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	}
 	TextureResolution res = Resolve_Packed_W3D_Texture(name, [&](const std::string &p) { return Fs.doesFileExist(p); }, isBfme1Data(Fs)); // community PR #36: the archives' layout
 	bool isPng = false;
-	if (!res.Found && !isBfme1Data(Fs) && name.size() > 4)
+	if (!res.Found && res.Probed && !isBfme1Data(Fs) && name.size() > 4)
 	{
 		// lane WOTR-2 [inference, as the W3DModelBuilder's WOTR-1 fallback]: a few retail textures exist only as .png in the compiled folder
 		// (LivingMap's LM_MinasTirith); the compiled-only .jpg ones (LM_Smoke, EXLavaSeq) resolve through Resolve_Packed_W3D_Texture above

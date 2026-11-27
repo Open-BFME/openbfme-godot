@@ -126,10 +126,13 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 	std::vector<std::string> candidates = resolved.Tried;
 	// lane WOTR-1 [inference]: a few retail textures exist only as .png in the compiled folder (LivingMap's LM_MinasTirith; the compiled-only .jpg
 	// ones, LM_Smoke and EXLavaSeq, are Resolve_Packed_W3D_Texture's); the retail loader's order for them was not read
-	if (!flatLayout)
+	if (resolved.Probed && !flatLayout)
 	{
 		const std::string dds = W3D_Compiled_Texture_Path(name);
-		candidates.push_back(dds.substr(0, dds.size() - 4) + ".png");
+		if (dds.size() > 4)
+		{
+			candidates.push_back(dds.substr(0, dds.size() - 4) + ".png");
+		}
 	}
 	Ref<Texture2D> texture;
 	for (const std::string &path : candidates)
