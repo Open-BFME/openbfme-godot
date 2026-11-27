@@ -1063,8 +1063,10 @@ std::vector<std::string> LiveGameAudio::acceptanceStops()
 		"[S-706] object ambient sounds: the rules are ZH's Drawable::startAmbientSound (damage-state sound with the pristine fallback, MaxRange gate for non global "
 		"non critical sounds) read as donor; RotWK's own drawable ambient code was not read: SoundAmbientBattle, the per-object custom ambient info "
 		"(ZH m_customSoundAmbientInfo), the time of day and the script enable flags are not ported, and an out-of-range ambient is retried every frame",
-		"[S-707] object sounds not ported: SoundCreated, SoundOnDamaged / ReallyDamaged, SoundEnter / Exit, SoundPromoted*, SoundStealthOn / Off, SoundImpact, "
-		"SoundCrushing, SoundFallingFromPlane, SoundAmbientBattle (the death, impact and FireFX sounds are FX list nuggets: FX-2's lane). Done in AUDIO-2 "
+		"[S-707] object sounds not ported: SoundCreated, SoundEnter / Exit, SoundStealthOn / Off, SoundImpact, "
+		"SoundCrushing, SoundFallingFromPlane, SoundAmbientBattle (the death, impact and FireFX sounds are FX list nuggets: FX-2's lane). Lane OBJSOUND-1: "
+		"SoundOnDamaged / ReallyDamaged at a hit's damage state change (ActiveBody::attemptDamage RW 0x8C4422, the template row without the drawable's "
+		"selectors RW 0x676A8A); SoundPromoted* is not ported: no live caller found (RW 0x6957B9 is unreferenced) and no retail template sets it. Done in AUDIO-2 "
 		"part 2: the weapon FireSound (RW 0x8E3411), SoundMoveStart / Loop (S-712), VoiceFullyCreated at construction completion (RW 0x857D6C .. 0x857DBA: "
 		"GettingBuiltBehavior::checkCompletion posts it right before m_completedOnce = true, guarded by !m_completedOnce && frame >= 5; retail's +0x33 is "
 		"m_completedOnce), LargeGroupAudio (S-248)",
@@ -1086,6 +1088,6 @@ std::vector<std::string> LiveGameAudio::acceptanceStops()
 		"[S-1464] footsteps (lane AUDIO-4: AnimationSoundClientBehavior and TheAnimationSoundModuleManager, RW 0x8CE75B / 0x83F321): the module's slot 11 is read as "
 		"reactToTransformChange (every re-posed drawable is dirty each render frame), the manager runs once per render frame after the animations advanced "
 		"(retail: per client frame with the lazy advance RW 0x4BFAF4), animations are matched by upper-cased name (retail: name keys)",
-		"[S-1242] retail sound triggers that never fire here (lane AUDIO-3 sweep): CrushDie's TotalCrushSound / BackEndCrushSound / FrontEndCrushSound (RW 0x8895D8: the module is not ported; no retail template uses it), and the S-707 object sounds",
+		"[S-1242] retail sound triggers that never fire here (lane AUDIO-3 sweep): CrushDie's TotalCrushSound / BackEndCrushSound / FrontEndCrushSound (RW 0x8895D8: the module is not ported; no retail template uses it), and the S-707 object sounds not ported yet",
 	};
 }
