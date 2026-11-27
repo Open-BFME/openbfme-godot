@@ -6,6 +6,7 @@ set(OPENBFME_FX_SOURCES
     src/GameClient/FXParticleSystem.cpp
     src/GameClient/FXList.cpp
     src/GameClient/FXListObjectFilter.cpp
+    src/GameClient/FXListParseServices.cpp
     src/GameClient/ParticleSys.cpp
     src/GameClient/FXPlayback.cpp
     src/GameClient/ParticleDraw.cpp

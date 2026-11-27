@@ -820,10 +820,17 @@ void SymbioticStructuresBody::xfer(Xfer &x)
 	x.xferObjectID(&m_symbioteId);
 }
 
+// RW 0x007A7E88 (LifetimeUpdate::xfer): UpdateModule::xfer (RW 0x850C60), skipped on CRC (0x7A7E9C), then version (1, 2),
+// m_dieFrame (+0x20), m_startFrame (+0x24), and for version >= 2 m_waitingForWakeUp (+0x28, RW 0x7A7ECC..0x7A7EDA).
 void LifetimeUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x);
 	x.xferUnsignedInt(&m_dieFrame);
 	x.xferUnsignedInt(&m_startFrame);
+	if (v.current >= 2)
+	{
+		x.xferBool(&m_waitingForWakeUp);
+	}
 }

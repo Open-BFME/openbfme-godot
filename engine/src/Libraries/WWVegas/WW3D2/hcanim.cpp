@@ -3,7 +3,7 @@
 //
 // Port of ZH Libraries/Source/WWVegas/WW3D2/hcanim.cpp (Load_W3D, add_channel, add_bit_channel,
 // Get_Translation, Get_Orientation, Get_Visibility), BFME1 hcanim.cpp (fade slot) and BFME2
-// HCompressedAnimGetters.cpp (the second, motion channel node array).
+// hcanim.cpp HCompressedAnimClass::Has_* (the second, motion channel node array).
 
 #include "Libraries/WWVegas/WW3D2/hcanim.h"
 #include "Libraries/WWVegas/WW3D2/w3d_file.h"
@@ -359,7 +359,7 @@ float HCompressedAnimClass::Get_Fade(int pividx, float frame) const
 }
 
 // ZH Is_Node_Motion_Present checks X, Y, Z, Q and Vis; BFME2's motion form also checks the fifth slot
-// (HCompressedAnimGetters.cpp), the classic form does not.
+// (the decomp's hcanim.cpp, HCompressedAnimClass::Has_*), the classic form does not.
 bool HCompressedAnimClass::Is_Node_Motion_Present(int pividx) const
 {
 	if (MotionChannelForm)

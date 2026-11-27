@@ -159,6 +159,8 @@ void storeUberHashes(const char *name, const std::vector<std::uint32_t> &hashes)
 // once (OPENBFME_UBER1_REGEN=1, Windows MSVC) on this tree with the other open ports merged.
 // pin: merge queue q63 (#355 ForceHordesToLowLOD): the battle's horde members carry the hashed status CREATE_DRAWABLE_WITH_LOW_DETAIL (bit 55) from
 // their creation. Re-measured once on the merged tree (OPENBFME_UBER1_REGEN=1); #350 keeps it, #358's merge point equals the merged tree's.
+// pin: merge queue q65 (APPROACHGIVEUP-1, RW 0x749D46, S-7162: the approach state hashes the owner's position at its start): the battle's vector moves
+// from its first approach. Re-measured once on the merged tree (OPENBFME_UBER1_REGEN=1) and at APPROACHGIVEUP-1's merge point (equal); POSTERNPLOT-1 keeps it.
 TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1, 4 and 16 logic threads and in a repeated run; the hash's own jobs run on "
 		  "workers; Faithful hashes differently and serially")
 {
