@@ -110,6 +110,12 @@ RotWK `0x00670A50` / `0x00670AA2`'s immediate completion.
 The completed logic snapshot captures the selected parent and passenger bone,
 including members inside a horde inside a transport. After all parent drawables
 have committed their poses, the client attaches to the current animated bone.
+The bone root uses the parent's final presentation pose, including LOCAL-25's
+terrain/suspension transform. A physics-capable rider publishes its attachment
+and release blend into the final presentation cache, preserving its once-per-
+client-frame physics step. Release interpolation targets its ordinary presentation
+pose. An authored synthetic model pins the bone matrix, cached rider pose,
+same-frame repeats and release result without game files.
 Serial and parallel client schedules use the same dependency order. No live
 logic object or simulation RNG is read by the attachment pass. A missing bone
 is reported as S-5017, rather than silently counted as successful attachment.

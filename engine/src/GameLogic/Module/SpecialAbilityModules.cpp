@@ -1929,28 +1929,60 @@ void SpecialAbilityUpdate::crc(StateHasher &h) const
 // ---------------------------------------------------------------------------------------------------------------------------------
 // WeaponFireSpecialAbilityUpdate
 // ---------------------------------------------------------------------------------------------------------------------------------
+namespace
+{
+// RW 0x6CEE0F (Weapon::loadAmmoNow) takes Object *source and reads only the owner's weapon bonus condition mask (+0x39C), GameData's global
+// WeaponBonusSet ([0xDE4364]+0xAD0) and TheGameLogic->getFrame() ([0xDE412C]+0x40), without touching ObjectWeapons (Object::m_weapons is built
+// after buildModules() at Object.cpp:454). Using a lightweight WeaponHost over Object avoids constructing a premature m_ownHost (ObjectWeapons) on
+// objects that have a WeaponSet.
+class ConstructorWeaponHost final : public WeaponHost
+{
+public:
+	explicit ConstructorWeaponHost(Object &obj)
+		: m_obj(obj)
+	{
+	}
+	std::uint32_t currentFrame() override { return m_obj.logic().getFrame(); }
+	GameLogicRandom &logicRandom() override { return m_obj.logic().random(); }
+	std::uint32_t weaponBonusConditionMask() override { return m_obj.weaponBonusConditionMask(); }
+	// GameData's global WeaponBonus set is the existing S-320 gap (the normal weapon host answers null as well); the constructor's ammo load
+	// (Weapon::reloadAmmo) does not read the bonus
+	const WeaponBonusSet *globalWeaponBonusSet() override { return nullptr; }
+	float rateOfFireAttributeProduct() override { return 1.0f; }
+	bool containedAmmo(const ObjectFilter &, unsigned &count) override
+	{
+		count = 0;
+		return false;
+	}
+	bool ownerHasContainAmmo(const ObjectFilter &) override { return false; }
+	int barrelCount(int) override { return 1; }
+	int firingTrackerShotsAtTarget(bool, unsigned, const Coord3D &) override { return 0; }
+	bool ownerPositionMatchesLastShot() override { return false; }
+	void setOwnerDisabledUntil(std::uint32_t frame) override { m_obj.setDisabled(8, frame); }
+	float groundHeightAt(float x, float y) override { return m_obj.logic().getGroundHeight(x, y); }
+	Coord3D linearTargetPosition(float, float) override { return *m_obj.getPosition(); }
+
+private:
+	Object &m_obj;
+};
+} // namespace
+
+// RW 0x895D98 (DONOR BFME2 0x00492708 WeaponFireSpecialAbilityUpdateCtor.cpp): look up SpecialWeapon (moduleData + 0xD0) via TheWeaponStore
+// (RW 0x6CC5DF); a missing template leaves m_weapon (+0x88) null without an error, else allocate slot-0 weapon (RW 0x68B150), clear its owner id
+// (RW 0x895E16: weapon + 8 = 0) and load its ammo now (RW 0x6CEE0F(m_object)).
 WeaponFireSpecialAbilityUpdate::WeaponFireSpecialAbilityUpdate(Thing *thing, const WeaponFireSpecialAbilityUpdateModuleData *data)
 	: SpecialAbilityUpdate(thing, data)
 	, m_wf(data)
 {
-}
-
-// RW 0x895DF2 (the constructor): the SpecialWeapon from TheWeaponStore (RW 0x6CC5DF), made and loaded; an unknown name leaves no weapon (the trigger then fires
-// nothing). Here the object's weapon host (ObjectWeapons) exists only after the modules are built, so the weapon is made at its first use (a fresh weapon is
-// loaded either way)
-Weapon *WeaponFireSpecialAbilityUpdate::specialWeapon()
-{
-	if (!m_weaponMade)
+	const WeaponTemplate *wt = (!m_wf->m_specialWeapon.empty() && TheWeaponStore) ? TheWeaponStore->findWeaponTemplate(m_wf->m_specialWeapon) : nullptr;
+	if (wt)
 	{
-		m_weaponMade = true;
-		const WeaponTemplate *wt = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(m_wf->m_specialWeapon) : nullptr;
-		ObjectWeapons *w = wt ? weaponHost() : nullptr;
-		if (wt && w)
-		{
-			m_weapon = w->makeExtraWeapon(wt);
-		}
+		Object *obj = getObject();
+		m_weapon = std::make_unique<Weapon>(wt, PRIMARY_WEAPON, obj->logic().getFrame()); // RW 0x68B150(template, 0)
+		m_weapon->setOwnerID(0);                                                          // RW 0x895E16
+		ConstructorWeaponHost loadHost(*obj);
+		m_weapon->loadAmmoNow(loadHost); // RW 0x6CEE0F(m_object)
 	}
-	return m_weapon.get();
 }
 
 ObjectWeapons *WeaponFireSpecialAbilityUpdate::weaponHost()
@@ -2015,7 +2047,7 @@ void WeaponFireSpecialAbilityUpdate::startUnpacking()
 void WeaponFireSpecialAbilityUpdate::triggerAbilityEffect()
 {
 	Object *obj = getObject();
-	ObjectWeapons *weapons = specialWeapon() ? weaponHost() : obj->getWeapons();
+	ObjectWeapons *weapons = m_weapon ? weaponHost() : obj->getWeapons();
 	// RW 0x896210: the FiringTracker's RW 0x8E302A(1) (the object's + 0x248) is COMBAT-1's: not called here
 	if (!(isHorde(*obj) && m_data->m_suppressForHordes))
 	{
@@ -2032,7 +2064,7 @@ void WeaponFireSpecialAbilityUpdate::triggerAbilityEffect()
 				}
 			}
 		}
-		if (specialWeapon() && weapons && weapons->extraWeaponStatus(*m_weapon) == 0) // RW 0x6CDCE7 == READY_TO_FIRE
+		if (m_weapon && weapons && weapons->extraWeaponStatus(*m_weapon) == 0) // RW 0x6CDCE7 == READY_TO_FIRE
 		{
 			m_weapon->setOwnerID(obj->getID());
 			if (!victim)
@@ -2066,7 +2098,6 @@ void WeaponFireSpecialAbilityUpdate::finishAbility(bool ownerDying, bool aborted
 void WeaponFireSpecialAbilityUpdate::crc(StateHasher &h) const
 {
 	SpecialAbilityUpdate::crc(h);
-	h.addBool(m_weaponMade);
 	h.addBool(m_weapon != nullptr);
 	if (m_weapon)
 	{
@@ -2987,20 +3018,37 @@ void SpecialAbilityUpdate::xfer(Xfer &x)
 }
 
 // the special weapon is made on first use (specialWeapon): a load makes it when the snapshot's was made, then loads its state
+// RW 0x895C75 (DONOR BFME2 0x004925E5): m_weapon (+0x88) is made and loaded in the constructor, not lazily; version 2 drops the port's
+// m_weaponMade flag. RW 0x895C9F returns immediately on XferCRC after SpecialAbilityUpdate::xfer.
+// Version 1 (the port's lazy weapon: `made`, then `has`, the weapon, the shot count) still loads, so older saves keep working:
+// made && has restores the saved weapon onto the constructor's; !has keeps the weapon the constructor made (a save from before the first use, or
+// one whose template is missing: then m_weapon stays null), and the shot count is read either way so the stream stays aligned.
 void WeaponFireSpecialAbilityUpdate::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	SpecialAbilityUpdate::xfer(x);
-	bool made = !x.isLoading() && m_weaponMade;
-	x.xferBool(&made);
-	if (x.isLoading() && made != m_weaponMade)
+	if (v.current < 2)
 	{
-		m_weapon.reset();
-		m_weaponMade = false;
-		if (made)
+		bool made = false;
+		x.xferBool(&made); // version 1's lazy-weapon flag: it only told whether `has` could be true
+		bool has = false;
+		x.xferBool(&has);
+		if (has)
 		{
-			specialWeapon();
+			if (!m_weapon)
+			{
+				throw XferException("the version 1 snapshot's special ability weapon of object " + std::to_string(getObject()->getID()) +
+					" exists, this one's template has none");
+			}
+			m_weapon->xfer(x);
 		}
+		x.xferUnsignedInt(&m_shots);
+		return;
+	}
+	if (x.getXferMode() == XFER_CRC)
+	{
+		return; // RW 0x895C9F .. 0x895CA4
 	}
 	bool has = !x.isLoading() && m_weapon != nullptr;
 	x.xferBool(&has);

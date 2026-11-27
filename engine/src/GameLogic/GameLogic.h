@@ -665,6 +665,12 @@ public:
 	// and GameData UseBehindBuildingMarker are set (RW 0x47074D). Not hashed and not saved (no GameLogic xfer reads it): presentation only
 	void setShowBehindBuildingMarkers(bool on) { m_showBehindBuildingMarkers = on; }
 	bool getShowBehindBuildingMarkers() const { return m_showBehindBuildingMarkers; }
+	// PORT-301: TheGameLogic + 0x9F, the hero-experience-sharing switch: the GameLogic constructor sets it to 1 (RW 0x62D299: mov byte ptr [esi + 0x9F], 1), script
+	// action 538 SET_HERO_EXPERIENCE_SHARING writes it (RW 0x7CDF99 -> RW 0x7BD3D1: the parameter's int (+ 8) != 0), and ShareExperienceBehavior::share reads it
+	// (RW 0x883428: cmp byte ptr [eax + 0x9F], 0) to skip a HERO candidate when it is clear. Saved in obfme:GameLogic v6 (when off; older saves default true)
+	// and included in the native state hash when off (SAVES.md §6).
+	void setHeroExperienceSharing(bool on) { m_heroExperienceSharing = on; }
+	bool getHeroExperienceSharing() const { return m_heroExperienceSharing; }
 	// PORT-43: TheGameLogic + 0x118, m_rankLevelLimit: constructor RW 0x6301DD and startNewGame's init helper RW 0x62A20D (RW 0x62A11A, called at
 	// RW 0x631555; GameLogic::reset RW 0x62D232 leaves +0x118 untouched) set 1000 (0x3E8); startNewGame's tail helper RW 0x6311ED (called at RW 0x6315A7)
 	// copies GlobalData + 0xE94 (GameData PowerLimit, row RW 0xC00C00, EconomySettings::powerLimit) into +0x118 at RW 0x631420 .. 0x631436 when RW 0x625456
@@ -1178,6 +1184,7 @@ private:
 	UnsignedInt m_frame = 0;
 	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
 	bool m_showBehindBuildingMarkers = true; ///< lane OCCLUDE-1: RW GameLogic + 0x99
+	bool m_heroExperienceSharing = true; ///< PORT-301: RW GameLogic + 0x9F (the constructor sets it to 1, RW 0x62D299)
 	int m_rankLevelLimit = kDefaultRankLevelLimit; ///< PORT-43: RW GameLogic + 0x118 (m_rankLevelLimit)
 	bool m_rankLevelLimitScripted = false;         ///< PORT-43: set by PLAYER_SET_RANKLEVELLIMIT (RW 0x7BB04E)
 	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1

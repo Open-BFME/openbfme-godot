@@ -353,6 +353,14 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 		}
 		s.instanceScale = o->getInstanceScale();
 		s.moveSpeed = drawSpeedOf(*o); // lane SMOOTH-3
+		if (const AIUpdateInterface *ai = o->getAIUpdateInterface())
+		{
+			if (const Locomotor *l = ai->curLocomotor())
+			{
+				s.locomotorTemplate = &l->getTemplate();
+			}
+			s.aboveTerrain = ai->adapter().isSignificantlyAboveTerrain(); // RW 0x70C55D
+		}
 		s.scriptTarget = DrawableScriptTarget::capture(logic, *o); // lane FX-3
 		// the radar's inputs (Radar::blips: retail's live test of the same conditions)
 		if (const Player *owner = o->getControllingPlayer())

@@ -761,7 +761,8 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	// FiringTracker's horde id and loop-sound stop frame, and the FiringTrackerHelper's update schedule)
 	// pin: merge queue q64 (measured once on the merged tree and at each merge point: #334's builders turn to face the site before they build or repair, RW 0x88DD3E / 0x88DA7A, so every AI build starts a few frames later and the AI game moves; #341 keeps it, FIRINGTRACKER-1 alone keeps its own lane values); goals and positions unchanged: 0xB556326A -> 0x1F56DD09 (0xDB28DAAF -> 0xC61ADFC9 at #334's merge point)
 	// pin: merge queue q66 (measured once on the merged tree and at each merge point; #338's idle stance countdown, RW 0x7553AB / 0x743864: a Battle / HoldGround / Porcupine unit idle after a fight or a move guards where it stands again, moves the AI game, #363 keeps it): 0x1F56DD09 -> 0xAEE3B4FA
-	CHECK(a.hashes.back() == 0xAEE3B4FAU);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
+	// pin: merge queue q67 (measured once on the merged tree and at each merge point; #322's WeaponFireSpecialAbilityUpdate makes and loads its weapon in the constructor, RW 0x895D98, and hashes it from frame 0; #333 and #351 keep it): 0xAEE3B4FA -> 0x9002C0C4
+	CHECK(a.hashes.back() == 0x9002C0C4U);   // q19: BACKLOG-8 hashes the formation and march rows of AIData / GameData in GameLogicSettings::crc (unconditionally) and moves the march;
 	                                         // re-measured on the merged tree (a CI host); was 0x78A9CB12 (q18: DEVPORT-3C castle keep gate / Horde removal record, before 0x2BD4804B); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);

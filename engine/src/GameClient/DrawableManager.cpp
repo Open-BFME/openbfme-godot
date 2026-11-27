@@ -11,6 +11,7 @@
 #include "Common/Player.h"
 #include "Common/Team.h"
 #include "GameClient/MapObjectRuntime.h"
+#include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Object.h"
 
 #include <algorithm>
@@ -21,6 +22,20 @@ DrawableManager::DrawableManager(WW3DAssetManager &assets, GameLogic &logic)
 {
 	m_slots.resize(1); // slot 0 unused
 	m_services.animationSounds = &m_animationSounds; // lane AUDIO-4
+	// LOCAL-25: the presentation physics samples the logic's terrain
+	const GameLogic *logicPtr = &logic; // the drawables are made by the game that owns this logic and die with it
+	m_services.groundHeight = [logicPtr](float x, float y, Coord3D *normal) -> float {
+		if (const TerrainLogic *terrain = logicPtr->terrain())
+		{
+			return terrain->getGroundHeight(x, y, normal);
+		}
+		if (normal)
+		{
+			*normal = Coord3D{ 0.0f, 0.0f, 1.0f };
+		}
+		return 0.0f;
+	};
+	m_services.clientFrame = &m_clientFrame;              // LOCAL-25: the step's gate (RW 0x67BE04)
 }
 
 DrawableManager::~DrawableManager() = default;
@@ -455,6 +470,8 @@ void DrawableManager::advance(double elapsedMs)
 			d->updateStealthLook(d->stealthParentId() != INVALID_ID ? findByObject(d->stealthParentId()) : nullptr);
 		}
 	}
+
+	advanceClientFrame(elapsedMs); // LOCAL-25: DrawablePhysics.cpp (client only)
 }
 
 void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha, bool interpolate)
@@ -604,10 +621,12 @@ void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha
 				{
 					d->reactToTransformChange(d->getPosition(), d->getOrientation()); // the modules ignore the old transform (AnimationSoundClientBehavior)
 				}
+				d->applyPhysicsXform(*prep.rec, prep.pose); // LOCAL-25: the ordered pass (the step draws the shared client random), once per client frame
 				continue;
 			}
 			d->startProjectileFade(*prep.rec, snapshot); // lane PROJ-2: RW 0x85EE00 for a launch the drawable has not seen (DrawableFade.cpp)
 			d->commitSync(prep);
+			d->applyPhysicsXform(*prep.rec, prep.pose); // LOCAL-25
 		}
 	}
 	syncContainerBones(snapshot);
@@ -758,10 +777,12 @@ bool Drawable::currentContainerBone(const std::string &name, Matrix3D &world) co
 		HTreePose pose;
 		const auto *clip0 = static_cast<const HAnimClass *>(view.clipKey0);
 		const auto *clip1 = static_cast<const HAnimClass *>(view.clipKey1);
+		// BFME1 0x007629F0 attaches to the current client model; LOCAL-25's physics is part of that rendered root (RW 0x67BE90).
+		float basis[9]; Coord3D position; getPresentationPose(basis, position);
 		Matrix3D root;
 		for (int r = 0; r < 3; ++r)
-			for (int c = 0; c < 3; ++c) root.Row[r][c] = getBasis()[r * 3 + c] * getInstanceScale();
-		root.Set_Translation(Vector3(getPosition()->x, getPosition()->y, getPosition()->z));
+			for (int c = 0; c < 3; ++c) root.Row[r][c] = basis[r * 3 + c] * getInstanceScale();
+		root.Set_Translation(Vector3(position.x, position.y, position.z));
 		if (clip0 && clip1) tree.Blend_Pose(root, clip0, view.frame0, clip1, view.frame1, view.blendPercentage, pose);
 		else if (clip0) tree.Anim_Pose(root, clip0, view.frame0, pose);
 		else tree.Base_Pose(root, pose);
@@ -772,6 +793,8 @@ bool Drawable::currentContainerBone(const std::string &name, Matrix3D &world) co
 
 void Drawable::syncContainerBone(const Drawable *parent, const std::string &bone, const ObjectSnapshot *record)
 {
+	// applyPhysicsXform has already produced the ordinary client pose. The release blends toward that pose, including its suspension.
+	float ordinaryBasis[9]; Coord3D ordinaryPosition; getPresentationPose(ordinaryBasis, ordinaryPosition);
 	Matrix3D target;
 	if (parent && parent->currentContainerBone(bone, target))
 	{
@@ -826,10 +849,10 @@ void Drawable::syncContainerBone(const Drawable *parent, const std::string &bone
 			for (int c = 0; c < 3; ++c)
 			{
 				from[r * 3 + c] = a.Row[r][c] / divisor;
-				to[r * 3 + c] = getBasis()[r * 3 + c] / divisor;
+				to[r * 3 + c] = ordinaryBasis[r * 3 + c] / divisor;
 			}
 		RenderInterpolation::slerpBasis(from, to, m_containerRelease, blended);
-		const float position[3] = {getPosition()->x, getPosition()->y, getPosition()->z};
+		const float position[3] = {ordinaryPosition.x, ordinaryPosition.y, ordinaryPosition.z};
 		for (int r = 0; r < 3; ++r)
 		{
 			for (int c = 0; c < 3; ++c) target.Row[r][c] = blended[r * 3 + c] * divisor;
@@ -842,6 +865,12 @@ void Drawable::syncContainerBone(const Drawable *parent, const std::string &bone
 		for (int c = 0; c < 3; ++c) basis[r * 3 + c] = target.Row[r][c];
 	const Coord3D position{target.Row[0][3], target.Row[1][3], target.Row[2][3]};
 	setTransform(&position, basis);
+	if (m_hasPhysicsXform)
+	{
+		// Publish the final attachment to the renderer too. Preserve the physics step/cache: the next sync reapplies it from the fresh ordinary pose.
+		std::copy(basis, basis + 9, m_presentationBasis);
+		m_presentationPosition = position;
+	}
 }
 
 void DrawableManager::syncContainerBones(const LogicSnapshot &snapshot)

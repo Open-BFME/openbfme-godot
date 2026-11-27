@@ -63,6 +63,7 @@ std::vector<std::uint8_t> bytesOf(const ObjectSnapshot &s)
 	put(b, s.lastMovedFrame);
 	put(b, s.instanceScale);
 	put(b, s.moveSpeed);
+	put(b, s.locomotorTemplate != nullptr); // two fresh worlds own different template objects: compare whether one is set
 	put(b, s.scriptTarget.hasObject);
 	put(b, s.scriptTarget.ownPosition.x);
 	put(b, s.scriptTarget.ownPosition.y);

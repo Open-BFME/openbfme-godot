@@ -2602,3 +2602,82 @@ TEST_CASE("bfme1 ai: the shared approach chase query cannot clear a native team'
 	CHECK(approach.update() == STATE_CONTINUE);
 	CHECK(team->teamTargetId() == 0x12345678u);
 }
+
+#include "ObjectTestUtil.h"
+#include "W3dSynth.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
+TEST_CASE("bfme1 ai: client bones and released physics riders use the final presentation pose")
+{
+	objtest::World w;
+	W3DDrawModules::registerTypedDrawModuleData(w.modules);
+	REQUIRE(w.load("Object PoseCarrier\n Geometry = BOX\n GeometryMajorRadius = 20\n GeometryMinorRadius = 10\n GeometryHeight = 8\n Draw = W3DScriptedModelDraw Draw\n DefaultModelConditionState\n Model = ABSEAT_SKN\n End\n End\nEnd\nObject PoseRider\n Geometry = BOX\n GeometryMajorRadius = 20\n GeometryMinorRadius = 10\n GeometryHeight = 8\nEnd\n").empty());
+	w3dsynth::MemoryFileSource fs;
+	fs.Add("art\\w3d\\ab\\abseat_skl.w3d", w3dsynth::hierarchyChunk("ABSEAT_SKL", {
+		w3dsynth::pivot("ROOTTRANSFORM", 0xFFFFFFFFu, 0, 0, 0), w3dsynth::pivot("SEAT", 0, 0, 2, 3)}));
+	w3dsynth::SynthMesh mesh;
+	mesh.Container = "ABSEAT_SKN"; mesh.Name = "BODY";
+	mesh.Vertices = {{0,0,0},{1,0,0},{1,1,0}}; mesh.Triangles = {0,1,2};
+	auto model = w3dsynth::meshChunk(mesh);
+	w3dsynth::append(model, w3dsynth::hlodChunk("ABSEAT_SKN", "ABSEAT_SKL", {{"ABSEAT_SKN.BODY", 1}}));
+	fs.Add("art\\w3d\\ab\\abseat_skn.w3d", model);
+	WW3DAssetManager assets(fs);
+	W3DLuaDrawScriptHost::Options options;
+	DrawServices services(assets, w.modules, options);
+	unsigned clientFrame = 7; services.clientFrame = &clientFrame;
+	services.groundHeight = [](float, float y, Coord3D *normal) {
+		if (normal) *normal = Coord3D{0.0f, -0.12403473f, 0.99227786f};
+		return y * 0.125f;
+	};
+	std::vector<std::string> problems;
+	Drawable parent(services, w.get("PoseCarrier"), 1, 10, {}, problems);
+	Drawable rider(services, w.get("PoseRider"), 2, 11, {}, problems);
+	REQUIRE_MESSAGE(problems.empty(), (problems.empty() ? "" : problems.front()));
+	LocomotorTemplate loco;
+	loco.m_appearance = LOCO_LEGS_FOUR_HUGE;
+	loco.m_pitchStiffness = loco.m_rollStiffness = 0.15f;
+	loco.m_pitchDamping = loco.m_rollDamping = 0.05f;
+	loco.m_uniformAxialDamping = 0.9f; loco.m_accelerationPitchLimit = 0.3f;
+	ObjectSnapshot rec; rec.locomotorTemplate = &loco;
+	RenderInterpolation::Pose pose; pose.position = Coord3D{10.0f,20.0f,0.0f};
+	for (int i=0;i<9;++i) pose.basis[i] = i%4 == 0 ? 1.0f : 0.0f;
+	rec.position = rec.previousPos = pose.position;
+	parent.setTransform(&pose.position, pose.basis);
+	parent.applyPhysicsXform(rec, pose);
+	REQUIRE(parent.hasPhysicsXform());
+	float parentBasis[9]; Coord3D parentPosition; parent.getPresentationPose(parentBasis, parentPosition);
+	CHECK_FALSE(std::equal(parentBasis, parentBasis+9, parent.getBasis()));
+	Matrix3D renderedRoot;
+	for(int r=0;r<3;++r) for(int c=0;c<3;++c) renderedRoot.Row[r][c] = parentBasis[r*3+c];
+	renderedRoot.Set_Translation(Vector3(parentPosition.x,parentPosition.y,parentPosition.z));
+	std::string error; const HTreeClass *tree = assets.Get_HTree("ABSEAT_SKL", &error); REQUIRE_MESSAGE(tree,error);
+	HTreePose expected; tree->Base_Pose(renderedRoot, expected);
+	const int seat = tree->Get_Bone_Index("SEAT"); REQUIRE(seat == 1);
+	Matrix3D bone; REQUIRE(parent.currentContainerBone("SEAT",bone));
+	for(int r=0;r<3;++r) for(int c=0;c<4;++c) CHECK(bone.Row[r][c] == expected.Transform[seat].Row[r][c]);
+	pose.position = Coord3D{70.0f,80.0f,0.0f}; rec.position = rec.previousPos = pose.position;
+	rider.setTransform(&pose.position,pose.basis); rider.applyPhysicsXform(rec,pose);
+	REQUIRE(rider.hasPhysicsXform()); REQUIRE(rider.locoInfo());
+	const DrawableLocoInfo stepped = *rider.locoInfo();
+	for(int sync=0;sync<3;++sync)
+	{
+		rider.setTransform(&pose.position,pose.basis); rider.applyPhysicsXform(rec,pose);
+		rider.syncContainerBone(&parent,"SEAT");
+		float basis[9]; Coord3D position; rider.getPresentationPose(basis,position);
+		CHECK(position.x == bone.Row[0][3]); CHECK(position.y == bone.Row[1][3]); CHECK(position.z == bone.Row[2][3]);
+		for(int r=0;r<3;++r) for(int c=0;c<3;++c) CHECK(basis[r*3+c] == bone.Row[r][c]);
+		CHECK(std::memcmp(&stepped,rider.locoInfo(),sizeof(stepped)) == 0);
+	}
+	rider.releaseContainerBone(0.5f);
+	rider.setTransform(&pose.position,pose.basis); rider.applyPhysicsXform(rec,pose);
+	float ordinaryBasis[9]; Coord3D ordinary; rider.getPresentationPose(ordinaryBasis,ordinary);
+	rider.syncContainerBone(nullptr,"");
+	float releasedBasis[9]; Coord3D released; rider.getPresentationPose(releasedBasis,released);
+	CHECK(released.x == (ordinary.x-bone.Row[0][3])*0.5f+bone.Row[0][3]);
+	CHECK(released.y == (ordinary.y-bone.Row[1][3])*0.5f+bone.Row[1][3]);
+	CHECK(released.z == (ordinary.z-bone.Row[2][3])*0.5f+bone.Row[2][3]);
+	float boneBasis[9], blended[9];
+	for(int r=0;r<3;++r) for(int c=0;c<3;++c) boneBasis[r*3+c] = bone.Row[r][c];
+	RenderInterpolation::slerpBasis(boneBasis,ordinaryBasis,0.5f,blended);
+	for(int i=0;i<9;++i) CHECK(releasedBasis[i] == blended[i]);
+	CHECK(std::memcmp(&stepped,rider.locoInfo(),sizeof(stepped)) == 0);
+}

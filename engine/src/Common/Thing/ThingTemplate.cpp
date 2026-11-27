@@ -9,6 +9,7 @@
 #include "GameLogic/ThingCombatSets.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstddef>
 
 // ---------------------------------------------------------------------------------------------
@@ -541,4 +542,18 @@ std::vector<std::string> ThingTemplate::fieldNames() const
 		}
 	}
 	return out;
+}
+
+int ThingTemplate::selectionPriority() const
+{
+	// RW 0x710A41: mov esi, [esi + 0x64C] (table row RW 0xDA49D8, INI::parseInt RW 0x42EC5E,
+	// constructor RW 0x740069..0x740074 initializes +0x64C to 0x7fffffff, copied by ThingTemplate::copyFrom RW 0x6D271E)
+	if (const FieldValue *v = getFinalOverride()->findField("SelectionPriority"))
+	{
+		if (const long long *n = std::get_if<long long>(v))
+		{
+			return static_cast<int>(*n);
+		}
+	}
+	return INT_MAX;
 }
