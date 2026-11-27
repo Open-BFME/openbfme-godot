@@ -163,6 +163,63 @@ void Construction::onStructureCreated(Player &player, Object *builder, Object &s
 	}
 }
 
+bool Construction::setFoundationOccupant(Object &foundation, ObjectID id)
+{
+	// RW 0x8582DE (BFME2 decomp FoundationAIUpdate.cpp rva0045527A, tier A). The occupant's home is the port's (S-952): the CastleMemberBehavior's occupant
+	if (foundation.findModule("CastleBehavior"))
+	{
+		return false; // a castle's occupant is its keep (CastleBehavior::occupantOf); no retail caller hands a castle another id
+	}
+	CastleMemberBehavior *member = dynamic_cast<CastleMemberBehavior *>(foundation.findModule("CastleMemberBehavior"));
+	if (!member)
+	{
+		return false;
+	}
+	if (member->occupantId() == id)
+	{
+		return true; // RW 0x8582E5
+	}
+	member->setOccupantId(id); // RW 0x8582F5: + 0x28
+	static const int unselectable = ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
+	if (unselectable < 0)
+	{
+		throw std::logic_error("Construction::setFoundationOccupant: the object status UNSELECTABLE is not in the table");
+	}
+	// RW 0x85830B / 0x858393: template + 0x11A & 0x40 (the same bit as + 0x118 & 0x400000): KindOf WALL_UPGRADE
+	const bool wallUpgrade = foundation.isKindOfName("WALL_UPGRADE");
+	// the drawable's calls (RW 0x70E013 getDrawable; each guarded by a drawable) are the client's: the object's bound hooks stand for the drawable (S-810)
+	ObjectClientHooks *client = foundation.clientHooks();
+	if (id != INVALID_ID)
+	{
+		if (!wallUpgrade)
+		{
+			foundation.setStatus((unsigned)unselectable, true); // RW 0x858318: setStatus(3, 1)
+			if (client)
+			{
+				// RW 0x858329: Drawable::setSelectable(false) (RW 0x6719FA): the port's selection follows UNSELECTABLE (Object::isSelectable RW 0x68DE58),
+				// the drawable keeps no flag of its own; RW 0x858332: fadeOut(10)
+				client->fadeOut(foundation, 10);
+			}
+		}
+		else if (client)
+		{
+			// RW 0x85834C .. 0x858389: for the local player's object (ThePlayerList + 0x10), MSG_REMOVE_FROM_SELECTED_GROUP (0x3ED) with the object's id
+			// (+ 0x74), then TheInGameUI's deselectDrawable (vslot 0x10C): the client tests the local player (it alone knows it)
+			client->deselectLocal(foundation);
+		}
+		return true;
+	}
+	if (!wallUpgrade)
+	{
+		foundation.setStatus((unsigned)unselectable, false); // RW 0x85839F: setStatus(3, 0)
+		if (client)
+		{
+			client->fadeIn(foundation, 30); // RW 0x8583C4: setSelectable(true) (see above), RW 0x8583CD: fadeIn(30)
+		}
+	}
+	return true;
+}
+
 void Construction::onStructureConstructionComplete(Player &player, Object *builder, Object &structure, bool fromRebuild)
 {
 	// RW 0x6AA72B -> 0x6AA7A8 -> 0x68E0C2: the structure's command points join the player's pool (once: the object remembers). Lane PLAY-4: before that the

@@ -120,6 +120,7 @@ struct MapTemplateInfo
 	bool isBridge = false;
 	bool shrubbery = false, tree = false, shrub = false, optimizedProp = false, clearedByBuild = false, optimizedSound = false;
 	bool walkOnTopOfWall = false, canCastReflections = false;
+	bool grabbable = false, harvestable = false; ///< ThingTemplate +0x5FB IsGrabbable / +0x5FC IsHarvestable (RW 0x62E3F3..0x62E41D)
 	float fenceWidth = 0.0f;
 	float scale = 1.0f;                  ///< Scale, default 1.0 (RW 0x74008C)
 	float anchorX = 0.0f, anchorY = 0.0f; ///< GeometryRotationAnchorOffset
@@ -182,6 +183,13 @@ struct MapScorch
 struct MapObjectOptions
 {
 	bool useTrees = true;                       ///< the trees-off switch of the loop is off (S-114)
+	// Local 93: AIData low-LOD tree substitution (RW 0x62DCE4: +0xD8 UseLowLODTrees, +0xDC..+0xE4 LowLodTreeName*, +0xE8 LowLodTreeScale)
+	bool useLowLODTrees = false;                ///< AIData UseLowLODTrees (+0xD8, RW 0x62DD8B)
+	int staticLODLevel = 1;                     ///< GameLODManager +0x1774 (RW 0x62DD99: <= 0 activates substitution)
+	std::string lowLodTreeName;                 ///< AIData LowLodTreeName (+0xDC, RW 0x62DD05)
+	std::string lowLodTreeNameNoGrab;           ///< AIData LowLodTreeNameNoGrab (+0xE0, RW 0x62DD25)
+	std::string lowLodTreeNameNoHarvest;        ///< AIData LowLodTreeNameNoHarvest (+0xE4, RW 0x62DD4A)
+	float lowLodTreeScale = 0.55f;              ///< AIData LowLodTreeScale (+0xE8, RW 0x62E426)
 	bool forceModelsToFollowTimeOfDay = false;  ///< GameData ForceModelsToFollowTimeOfDay (RW 0xBFFAC0)
 	bool forceModelsToFollowWeather = false;    ///< GameData ForceModelsToFollowWeather (RW 0xBFFAD0)
 	// PlayerTemplate name -> PreferredColor (0xRRGGBB) of the templates that define a StartingBuilding (the real factions; Civilian, Neutral

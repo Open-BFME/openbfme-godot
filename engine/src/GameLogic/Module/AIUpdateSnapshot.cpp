@@ -74,7 +74,8 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	// version 4 (lane BFME2CAMP1, M4): the team to guard (AI + 0x68), written only by an AI that has one
 	// version 5 (lane MODCOMPAT-MOD1): the machine kept while a temporary machine runs (RW AI + 0x34, beginTemporaryStateMachine), last, written only
 	// by an AI that keeps one
-	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_temporaryKeptMachine ? 5 : (m_guardTeam != 0 ? 4 : (m_areaToGuard != -1 || m_attackInfoOverride ? 3 : 2))) };
+	// version 6 (lane APPROACHGIVEUP-1): the auto-acquired victim flag (RW AI + 0x3C7, saved by RW 0x667416), last, written only by an AI that has it set
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_victimAutoAcquired ? 6 : (m_temporaryKeptMachine ? 5 : (m_guardTeam != 0 ? 4 : (m_areaToGuard != -1 || m_attackInfoOverride ? 3 : 2)))) };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	for (std::uint32_t &w : m_luaConditionSnapshot)
@@ -328,6 +329,14 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	else if (m_temporaryKeptMachine)
 	{
 		m_temporaryKeptMachine->xfer(x);
+	}
+	if (v.current >= 6)
+	{
+		x.xferBool(&m_victimAutoAcquired);
+	}
+	else if (loading)
+	{
+		m_victimAutoAcquired = false; // a version 2 .. 5 snapshot predates the flag (or was written with it clear)
 	}
 }
 

@@ -321,6 +321,11 @@ void DeployStyleAIUpdate::dispatch(const RoutedCommand &c)
 	case 0x11:
 		aiAttackFollowWaypointPath(c.waypointId, c.maxShots, c.source, c.type == 0x11); // lane WARG-1
 		return;
+	case 0x2B:
+		// AICMD_WANDER (RW 0x7C828A -> privateWander RW 0x664852): RW 0x891F9B replays the kept command through aiDoCommand, which takes every
+		// command type, so a wander kept while the unit (un)packs runs when it is done (review of upstream PR 341: it threw here)
+		aiWander(c.waypointId, c.source);
+		return;
 	default:
 		throw std::logic_error("DeployStyleAIUpdate: a kept command of a type the port does not route");
 	}

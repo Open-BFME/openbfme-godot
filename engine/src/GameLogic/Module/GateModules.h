@@ -122,6 +122,12 @@ public:
 
 	bool isOpen() const { return m_state == OPEN; } // slot 6
 	bool isSettled() const { return m_settled; }    // slot 10
+	// RW 0x654FD1 (the update interface RW 0xC667E0 slot 1; the base class's slot 1 is RW 0x8B3313, `*out = 0`): the gate overrides the empty mask with ONE
+	// bit, bit 3 of the second byte = 0x800 = DISABLED_USER_FROZEN (11) of the name table RW 0xDAD904. A frozen gate therefore keeps running its update
+	// (an open / close under way still advances); every other disabled type skips it, exactly as the base's empty mask does. RW 0x654FD1 zeroes the 4-byte
+	// buffer (RW 0xA3CF28 = memset), ORs 8 at buffer + 1 and answers it; the logic's scheduler (RW 0x62EA46 .. 0x62EA7A) runs an update while the object's
+	// disabled mask is empty or shares a bit with this one.
+	DisabledMaskType getDisabledTypesToProcess() const override { return (DisabledMaskType)(1u << DISABLED_USER_FROZEN); }
 	void open();                                     // slot 7
 	void close();                                    // slot 8
 	void toggle();                                   // slot 9
@@ -183,6 +189,7 @@ class AIGateUpdate : public UpdateModule
 public:
 	OBFME_MODULE_XFER(AIGateUpdate) // lane SAVE-4b
 	AIGateUpdate(Thing *thing, const AIGateUpdateModuleData *data);
+	~AIGateUpdate() override;
 	UpdateSleepTime update() override;
 	void crc(StateHasher &hasher) const override;
 	// the trigger's callback (RW 0x8B4AF4)

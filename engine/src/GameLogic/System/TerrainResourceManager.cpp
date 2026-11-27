@@ -653,7 +653,7 @@ void TerrainResourceManager::crc(StateHasher &h) const
 	}
 }
 
-// lane SAVE-4d. TARGET FACTS (RW 0x75C7AE, tier B edited against BFME2's TerrainResourceManagerDoXfer.cpp; read from the RotWK disassembly): version (1, 3);
+// lane SAVE-4d. TARGET FACTS (RW 0x75C7AE, tier B edited against BFME2's TerrainResourceManager.cpp (DoXfer); read from the RotWK disassembly): version (1, 3);
 // the claimant list (+ 0x14): an int count, then per node its object id (XferObjectID, node + 8), its radius (real, + 0xC) and, from version 2, its
 // visible flag (bool, + 0x10); the region (+ 0x1C, Region3D: the low corner then the high corner, six reals); the width (+ 0x34) and height (+ 0x38)
 // ints; the cell size (+ 0x3C) and the largest radius (+ 0x18) reals; an int, width * height; then every cell (16 bytes, + 0x40): from version 3 its state

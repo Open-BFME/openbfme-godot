@@ -372,6 +372,14 @@ const FieldParse kAIDataFields[] = {
 	{ "MeleeApproachDist", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.meleeApproachDist) },
 	{ "CastleSiegeStandBackDistance", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.castleSiegeStandBackDistance) },
 	{ "HordesWaitForHordes", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.hordesWaitForHordes) },
+	// ForceHordesToLowLOD (row RW 0xC1CE70, parseBool RW 0x42E558, AIData + 0xBB) and low-LOD trees (rows RW 0xC1CF50 UseLowLODTrees + 0xD8,
+	// RW 0xC1CF70..0xC1CF90 LowLodTreeName / NoGrab / NoHarvest + 0xDC..+0xE4 parseAsciiString, RW 0xC1CFA0 LowLodTreeScale + 0xE8 parseReal)
+	{ "ForceHordesToLowLOD", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.forceHordesToLowLOD) },
+	{ "UseLowLODTrees", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.useLowLODTrees) },
+	{ "LowLodTreeName", parseNoting<INI::parseAsciiString>, 0, (int)offsetof(BlockState, values.lowLodTreeName) },
+	{ "LowLodTreeNameNoGrab", parseNoting<INI::parseAsciiString>, 0, (int)offsetof(BlockState, values.lowLodTreeNameNoGrab) },
+	{ "LowLodTreeNameNoHarvest", parseNoting<INI::parseAsciiString>, 0, (int)offsetof(BlockState, values.lowLodTreeNameNoHarvest) },
+	{ "LowLodTreeScale", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.lowLodTreeScale) },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kMultiplayerFields[] = {
@@ -746,6 +754,10 @@ void GameLogicSettings::crc(StateHasher &h) const
 	{
 		h.addFloat(maxRecruitRadius); // lane PORT-40: retail 2.01 and Ennorath set 400.0 (default\aidata.ini:32, the mod keeps it), so a game with
 		                             // that data is unchanged; a map.ini / mod AIData block with another value is hashed (as lane STEALTHFLY1 above)
+	}
+	if (!forceHordesToLowLOD)
+	{
+		h.addBool(forceHordesToLowLOD); // ctor RW 0x6FFDA5 and retail aidata.ini set true, so default games keep their settings hash
 	}
 	h.addU32((std::uint32_t)attackPriorityDefs.size());
 	for (const AttackPriorityDef &d : attackPriorityDefs)

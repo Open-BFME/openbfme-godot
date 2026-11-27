@@ -3,6 +3,7 @@
 
 #include "Common/BfmeGame.h"
 #include "GameClient/InGameHud.h"
+#include "GameClient/MouseoverTooltip.h"
 #include "GameClient/BeaconClientUpdate.h"
 #include "Common/Audio/AudioEntryPoints.h"
 #include "GameLogic/BeaconCommands.h"
@@ -153,14 +154,18 @@ InGameHud::InGameHud(Config config)
 		PlayUnitVoiceForMessage(*m_voice, m_input->ui().selected(), msg);
 	});
 	// the logic's voice events (ProductionUpdate's VoiceCreated RW 0x8A2A48, ...): the made object alone is the "selection" (RW passes its drawable list)
-	AudioApi::installUnitVoiceHandler([this](int voiceEvent, std::uint32_t objectId, std::uint32_t producerId) {
+	AudioApi::installUnitVoiceHandler([this](const AudioApi::UnitVoiceParams &p) {
 		if (const Player *local = m_input->context().localPlayer())
 		{
 			m_voice->setLocalPlayerIndex(local->getPlayerIndex());
 		}
 		UnitVoiceResponse::Info info;
-		info.producer = (ObjectID)producerId;
-		m_voice->pickAndPlay({ (ObjectID)objectId }, voiceEvent, &info);
+		info.producer = (ObjectID)p.producerId;
+		info.powerTemplate = p.powerTemplate;
+		info.target = (ObjectID)p.targetId;
+		info.hasPosition = p.hasPosition;
+		info.position = Coord3D{ p.posX, p.posY, p.posZ };
+		m_voice->pickAndPlay({ (ObjectID)p.objectId }, p.voiceEvent, &info);
 	}, this);
 }
 
@@ -177,6 +182,11 @@ InGameHud::~InGameHud()
 		m_config.game.setScriptLocalView(nullptr); // lane BFME2CAMP1
 	}
 	m_config.game.drawables().destroyClientDrawable(m_rallyPointDrawable);
+	// lane HOVER-2 (review #404): the shell's window manager outlives a shell-hosted HUD; its world tool tip must not stay over the score screen and the menus
+	if (m_wm)
+	{
+		m_wm->setWorldTooltip(std::u16string());
+	}
 	// lane SPELL-2 (review r2): an open spell store is a screen of the window manager below: it goes first, without sending its pending purchases
 	m_store.reset();
 	if (m_palantirRef)
@@ -185,6 +195,7 @@ InGameHud::~InGameHud()
 	}
 	m_config.game.drawables().setHeroAttackedHandler(nullptr);
 	m_config.game.drawables().setHeroFlashHandler(nullptr);
+	m_config.game.drawables().setDeselectLocalHandler(nullptr);
 	m_heroSelect.reset();
 	// the screen before the window manager it registered on
 	m_ownedPalantir.reset();
@@ -211,6 +222,9 @@ bool InGameHud::boot(std::string *error)
 	{
 		m_errors.push_back("rally marker: " + (settingsError.empty() ? std::string("GameData has no DownwindAngle") : settingsError));
 	}
+	// lane HOVER-2: GameData's DebugAI, which the mouse-over tool tip reads (absent: reported by the tool tip, S-7187)
+	m_debugAI = gameData.debugAI;
+	m_haveDebugAI = gameData.haveDebugAI;
 	// lane CHAT-1: the message lines' InGameUI rows (data\ini\ingameui.ini + language.ini's MessageFont)
 	{
 		InGameUIMessageSettings ms;
@@ -302,6 +316,17 @@ bool InGameHud::boot(std::string *error)
 	m_heroSelect = std::make_unique<InGameHeroSelect>(m_input->context(), builderCycleTimeoutMs);
 	m_config.game.drawables().setHeroAttackedHandler([this](ObjectID id) { m_heroSelect->onHeroAttacked(id); });
 	m_config.game.drawables().setHeroFlashHandler([this](const std::string &name, int frames) { m_heroSelect->flashHeroButton(name, frames); });
+	// lane POSTERNPLOT-1, RW 0x85834C .. 0x858389: the local player's object leaves the selection (the message, then TheInGameUI's deselectDrawable)
+	m_config.game.drawables().setDeselectLocalHandler([this](ObjectID id, int ownerIndex) {
+		HudContext &ctx = m_input->context();
+		const Player *local = ctx.localPlayer();
+		if (!local || ownerIndex < 0 || local->getPlayerIndex() != ownerIndex)
+		{
+			return;
+		}
+		ctx.stream.append(MSG_REMOVE_FROM_SELECTED_GROUP).appendObjectID(id);
+		ctx.ui.deselectObject(id);
+	});
 	m_palantirRef->setHeroSelectHandler([this](const std::string &clipPath, bool loaded) {
 		if (!loaded)
 		{
@@ -573,6 +598,7 @@ void InGameHud::update(double seconds)
 		}
 	}
 	part(m_updateParts.input);
+	updateMouseoverTooltip(); // lane HOVER-2: after the translators set this frame's mouse-over hint
 	// lane INPUT-1: the SPELL_STORE meta (the ` key): RW 0x71C6AF closes the open store, else opens it (the Palantir's powers button path)
 	while (m_spellToggleSeen < m_input->ui().spellStoreToggles())
 	{
@@ -787,6 +813,44 @@ bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
 // lane RADAR-1: the radar's events (Radar.h): the local player's attacked objects (RW 0x67B4B7), the events' end (RW 0x6D8E2B), then
 // W3DRadar::drawEvents (RW 0x44DE58) for the picture the device drew last (the events end in the radar's update, Radar::advanceClock) and the Palantir's pings; the window pixels go to the movie's stage units
 // (RW 0x6D5AD9: the Apt player's scale)
+// lane HOVER-2: RW 0x69F637's tool tip (MouseoverTooltip.h) for the object under the pointer; over the HUD, while scrolling or selecting, while a script
+// has the input off (DISABLE_INPUT: no pointer, InGameUI::applyScriptInput) and with no object the request is empty (INFERENCE S-7187: ZH's window manager
+// clears it on every mouse event before createMouseoverHint runs).
+// The object: ZH's Mouse::createStreamMessages appends MSG_RAW_MOUSE_POSITION in every client frame ("basic position messages are always created"), so
+// the selection translator's hover pick (RW 0x83CC13) follows an object that moves under a still pointer. The port posts the position only when the
+// pointer moves (S-137), so the tool tip picks again here each frame with the translator's rule (HudObjects::pickForHover; a dead object only when
+// ALWAYS_SELECTABLE)
+void InGameHud::updateMouseoverTooltip()
+{
+	InGameUI &ui = m_input->ui();
+	UnicodeString text;
+	if (m_pointerSeen && !m_modal && ui.getInputEnabled() && !ui.scriptMouseHidden() && !ui.isScrolling() && !ui.isSelecting() &&
+		!isOverGui(m_pointerX, m_pointerY))
+	{
+		GameLogic &logic = m_config.game.logic();
+		const Object *obj = HudObjects::pickForHover(m_input->context(), { m_pointerX, m_pointerY });
+		if (obj && HudObjects::isEffectivelyDead(*obj) && !obj->isKindOfName("ALWAYS_SELECTABLE"))
+		{
+			obj = nullptr;
+		}
+		if (obj)
+		{
+			MouseoverTooltip::Inputs in;
+			in.localPlayer = m_config.game.players().getLocalPlayer();
+			in.networkGame = ui.networkGame();
+			in.debugAI = m_debugAI;
+			in.haveDebugAI = m_haveDebugAI;
+			const ICoord2D pixel{ m_pointerX, m_pointerY };
+			in.groundUnderPointer = [this, &logic, pixel](Coord3D &out) { return m_config.view.screenToTerrain(pixel, logic, out); };
+			MouseoverTooltip::Result r = MouseoverTooltip::compose(*obj, logic, m_config.gameText, in);
+			text = r.text;
+			m_mouseoverUnported.insert(r.unported.begin(), r.unported.end());
+		}
+	}
+	m_mouseoverTooltip = text;
+	m_wm->setWorldTooltip(text);
+}
+
 void InGameHud::updateRadarEvents()
 {
 	// What a logic frame writes (an object's radar attack frame, the scripts' event notices) is read once per logic frame.
@@ -1551,6 +1615,14 @@ std::vector<std::string> InGameHud::stops() const
 	std::vector<std::string> out = m_input->stops();
 	out.push_back("[S-6101] player message log: BFME2 recovered six-entry message, positioning and fade routines ported; independent RotWK display-routine verification remains outstanding");
 	out.push_back(DrawablePick::stopLine()); // lane QA-1: the HUD's pick is the drawn-model ray test, not S-284's geometry volumes
+	for (const std::string &l : MouseoverTooltip::acceptanceStops()) // lane HOVER-2
+	{
+		out.push_back(l);
+	}
+	for (const std::string &u : m_mouseoverUnported)
+	{
+		out.push_back("[S-7187] met: " + u);
+	}
 	out.push_back("[S-1201] context commands (lane QA-1): a click with a builder on our rising structure is MSG_RESUME_CONSTRUCTION, on our damaged finished structure "
 				  "MSG_DO_REPAIR (CommandTranslator::evaluateContextCommand), by ZH ActionManager::canResumeConstructionOf / canRepairObject (a DOZER of the same player); "
 				  "RotWK's ActionManager checks and the order of its context checks are not read");
