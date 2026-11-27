@@ -74,7 +74,7 @@ bool pointBehind(const Object &obj, const Coord3D &p, const Coord3D &next)
 const char *AIFollowPathAsTeamState::stopLine()
 {
 	return "[S-4463] the formation march's states 54 and 61 (AIFollowPathAsTeamState, lanes BACKLOG-8 / PORT-13: commands 0x24 / 0x25, RW 0x74FD39 / 0x74FF49) "
-		   "run; NOT ported: the attack-move sub-machine's crate state 0x27 and AI + 0x3C7, AI + 0x164 (cleared before each point), the wait for the others at "
+		   "run; NOT ported: the attack-move sub-machine's crate state 0x27, AI + 0x164 (cleared before each point), the wait for the others at "
 		   "the first points (AIData WaitForOthers, No in retail), computePath's outside-the-map quick path; INFERENCE: AI + 0x44 is the desired speed, the "
 		   "internal move is the port's AIMoveToState";
 }
@@ -211,6 +211,7 @@ StateReturnType AIFollowPathAsTeamState::update()
 			m_attackMachine->setGoalObject(victim->getID());
 			m_attackMachine->setState(AI_ATTACK_OBJECT);
 			a.setLastCommandSource(CMD_FROM_AI); // RW 0x750060
+			a.setVictimAutoAcquired();           // lane APPROACHGIVEUP-1: RW 0x750067, AI + 0x3C7 = 1
 			return STATE_CONTINUE;
 		}
 	}

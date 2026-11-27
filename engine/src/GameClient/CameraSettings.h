@@ -46,6 +46,10 @@ struct CameraSettings
 	// lane PLAY-1: the in-game UI's move hint model (MoveHintName, GlobalData + 0x10, row RW 0xBFF5C0, parseAsciiString RW 0x42EE5E; retail "SCMoveHint").
 	// Optional: a GameData without it leaves it empty and the HUD reports that no hint is drawn (the constructor's value was not read)
 	std::string moveHintName;
+	// lane PORT-439: DisableCameraMovements, GlobalData + 0x9A4 (the table row RW 0xC000C0: name RW 0xC02EA0, parseBool RW 0x42E558, + 0x9A4; the
+	// constructor RW 0x642DA6 stores 0). Optional: retail's GameData does not set it, and an absent key keeps the constructor's false. The view's
+	// script camera animations do not advance while it is set (RW 0x4866B4)
+	bool disableCameraMovements = false;
 	// RW 0x71D18F reads GlobalData +0x94; DownwindAngle is parseReal, not parseAngleReal.
 	float downwindAngle = 0.0f;
 	bool haveDownwindAngle = false;
@@ -53,6 +57,10 @@ struct CameraSettings
 	// VeterancyPipDrawObjectFilter (GlobalData + 0xEB8, ParseObjectFilter RW 0x76392F, row RW 0xC00C40). Optional (not every GameData has them): absent, the
 	// health bars and the veterancy marks are off and the HUD reports it
 	bool showObjectHealth = false;
+	// lane HOVER-2: DebugAI (GlobalData + 0x9B8, parseBool RW 0x42E558, row RW 0xC000E0; BFME2 row 0xBE9080, decomp GlobalData field09B8), which the
+	// mouse-over tool tip reads (InGameUI::createMouseoverHint RW 0x69FC31, MouseoverTooltip.h). Optional: absent, the tool tip reports it
+	bool debugAI = false;
+	bool haveDebugAI = false;
 	// lane UI-4: the selection marker (GameClient/SelectionDecals.h): ShowSelectedUnitMarker, UseSimpleHordeDecals, UseSimpleMergeDecals (GlobalData + 0x9A5 ..
 	// + 0x9A7, parseBool) and OpacityOfSimpleMergeDecals (+ 0x9A8, parsePercentToReal). Optional: absent, no marker is drawn (the ctor's values were not read)
 	bool showSelectedUnitMarker = false, useSimpleHordeDecals = false, useSimpleMergeDecals = false;

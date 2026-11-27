@@ -39,7 +39,7 @@ bool ControlBar::sendChangeStance(int stance, const char *site)
 	return true;
 }
 
-bool ControlBar::pressButton(int slot, bool inPalantir)
+bool ControlBar::pressButton(int slot, bool inPalantir, bool shift)
 {
 	const ControlBarButton *cb = find(slot, inPalantir);
 	Object *obj = m_ctx.logic.findObjectByID(m_source);
@@ -105,20 +105,24 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			{
 				return false;
 			}
-			// MSG_QUEUE_UNIT_CREATE, RotWK layout (RW 0x77A764): { byte fromBuildIndex, int templateId, int value30, byte batch, byte secondary }
+			// MSG_QUEUE_UNIT_CREATE, RotWK layout (RW 0x77A764): { byte fromBuildIndex, int templateId, int value30, byte batch, byte secondary }.
+			// PORT-426: the fourth argument is processCommandUI's `multiple` (RW 0x940C3E). RW 0x940BB3 calls Keyboard::isShift (RW 0x63F122),
+			// RW 0x940BC2 excludes a REVIVE, RW 0x940BCF reads ThingTemplate + 0x5F0 (MaxSimultaneousOfType, field table offset 1520) and
+			// RW 0x940BD9 sets the flag only when all three hold. The logic's batch loop is RW 0x8A1260 (`lea eax,[eax*4+1]`: 5 or 1).
+			// REVIVE has its own case below (RW 0x940B1B) and always sends one, as RW 0x940BC2 requires.
+			const bool multiple = shift && BuildAssistant::maxSimultaneousOfType(*tt) == 0;
 			ClientMessage &m = m_ctx.stream.append(MSG_QUEUE_UNIT_CREATE);
 			m.appendBoolean(false);
 			m.appendInteger((int)tt->getTemplateID());
 			m.appendInteger(-1);
-			m.appendBoolean(false);
+			m.appendBoolean(multiple);
 			m.appendBoolean(false);
 			return true;
 		}
 		case GUI_COMMAND_DOZER_CONSTRUCT:
-		case GUI_COMMAND_FOUNDATION_CONSTRUCT:
 		{
 			// ZH processCommandUI: a build button asks the user interface for a site (placeBuildAvailable); the PlaceEventTranslator sends the construct message when the
-			// player clicks a legal one. A plot's button (FOUNDATION_CONSTRUCT) builds on the plot itself: the message goes out at once with the plot's own place
+			// player clicks a legal one
 			const ThingTemplate *tt = b.getThingTemplate();
 			const CanMakeType make = BuildAssistant::canMakeUnit(*obj, tt, -1);
 			if (make == CANMAKE_MAXED_OUT_FOR_PLAYER)
@@ -130,15 +134,25 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			{
 				return false;
 			}
-			if (b.m_command == GUI_COMMAND_FOUNDATION_CONSTRUCT)
-			{
-				ClientMessage &m = m_ctx.stream.append(MSG_FOUNDATION_CONSTRUCT);
-				m.appendInteger((int)tt->getTemplateID());
-				m.appendLocation(*obj->getPosition());
-				m.appendReal(0.0f);
-				return true;
-			}
 			m_ctx.ui.placeBuildAvailable(tt->getName(), obj->getID(), &b); // RW 0x940AA1, then the button as the GUI command (RW 0x94089B; see InGameUI.h)
+			return true;
+		}
+		case GUI_COMMAND_FOUNDATION_CONSTRUCT:
+		{
+			// PORT-212 (fork issue 502): a plot's button builds on the plot itself: the message goes out at once with the plot's own place, so
+			// no per-click canMakeUnit runs (that query belongs to the placement translator, RW 0x83E771) and the production limits the arm
+			// used to apply here (maximum / queue / command points) are not this command's in RotWK (RW 0x942733 arm 1, see ControlBar.cpp).
+			// The gates that do stand are the ones before the switch (the button's availability: Buildable, Player::canBuild RW 0x6AAA2E,
+			// the price) and the message's own case in the logic (RW 0x77A91B).
+			const ThingTemplate *tt = b.getThingTemplate();
+			if (!tt)
+			{
+				return false;
+			}
+			ClientMessage &m = m_ctx.stream.append(MSG_FOUNDATION_CONSTRUCT);
+			m.appendInteger((int)tt->getTemplateID());
+			m.appendLocation(*obj->getPosition());
+			m.appendReal(0.0f);
 			return true;
 		}
 		case GUI_COMMAND_SET_STANCE:

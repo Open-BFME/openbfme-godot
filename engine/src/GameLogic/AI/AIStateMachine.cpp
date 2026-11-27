@@ -325,6 +325,9 @@ StateReturnType AIStateMachine::internalSetState(unsigned id)
 	}
 	if (m_currentState)
 	{
+		// RW 0x751F0E keeps the state it leaves for a frame, so a state whose failure is the state it already is runs its exit and its entry again
+		// (RW 0x751F55 commits the new state past its onEnter): the idle state's countdown failure into idle 0 enters the idle state again, so its onEnter
+		// runs (RW 0x7489B6's stance countdown and sleep offset)
 		AIState *old = m_currentState;
 		old->onExit(EXIT_NORMAL);
 	}
@@ -558,6 +561,8 @@ StateReturnType AIIdleState::onEnter()
 	ai().resetNextMoodCheckTime();
 	// ZH: the idle countdown is randomised so the idle checks of many units do not spike on the same frame (S-221: the RW draw is not read)
 	m_initialSleepOffset = (unsigned short)ai().getObject()->logic().random().getValue(0, (int)kIdleCountdownDelay, "AIStates.cpp", 0x520);
+	// RW 0x7489B6: the stance countdown (+ 0x22) is 5 again on every entry (DONOR BFME2 0x00346FD0 AIIdleStateOnEnter.cpp: `m_22 = 5`)
+	m_stancesCountdown = 5;
 	return STATE_CONTINUE; // never sleep at the start: the cell check runs the first time through
 }
 
@@ -599,24 +604,26 @@ void AIIdleState::doInitIdleState()
 	a.setCurrentVictim(nullptr);
 }
 
-// stop S-5148 (review of #73): RotWK's idle update (RW 0x7553AB) fails the state every fifth update (the countdown + 0x22, 5 again at onEnter RW 0x7489B6)
-// for an owner that is not status 0x3A, has no temporary state machine (AI + 0x34) and has a StancesBehavior (RW 0x861E6E / 0x68BDA5) while its machine
-// defines state 0x4E (RW 0x8DBA9A); the idle state's failure goes to 0x4E (RW 0x7537E0 .. 0x7537EE: defineState(0, idle, 0, 0x4E)), AIGoingIdleState, whose
-// onEnter tells the StancesBehavior onMoveEnd (RW 0x743864): a stanced unit idle after an attack guards again where it stands (RW 0x662A21). The port's idle
-// state never fails and its failure goes to idle (AIUpdate.cpp), so such a unit stays idle (its plain mood scan, no guard); a FACE_OBJECT state (59) is not
-// ended by it either
-const char *idleStanceStopLine()
-{
-	return "[S-5148] idle stances: RotWK's idle state (RW 0x7553AB) fails every fifth update for a unit with a StancesBehavior and its failure goes to "
-	       "AIGoingIdleState 0x4E (RW 0x7537E0), which guards the unit again where it stands (RW 0x743864 -> 0x86228E); not ported: the unit stays idle";
-}
-
+// AIIdleState::update RW 0x7553AB: the stance countdown. Unless the owner is status 0x3A (INSIDE_GARRISON, RW 0x44DDEC) or has a temporary state machine
+// (AI + 0x34, RW 0x7553F6), the countdown (+ 0x22) drops by one; at 0 it is 5 again (RW 0x755405) and the state fails (RW 0x75541C .. 0x755426: a
+// StancesBehavior, RW 0x861E6E / 0x68BDA5, and state 0x4E, RW 0x8DBA9A) — the failure id is 0x4E (RW 0x7537E0 .. 0x7537EE), AIGoingIdleState, whose
+// onEnter tells the StancesBehavior onMoveEnd (RW 0x743864) and fails on to idle: a Battle / HoldGround / Porcupine unit idles again and guards where it
+// stands (RW 0x662A21)
 StateReturnType AIIdleState::update()
 {
 	doInitIdleState();
-	if (machine().findState(AI_GOING_IDLE) && StancesBehavior::of(*ai().getObject()))
+	static const int kStatusInsideGarrison = ObjectTemplateInfoBuilder::objectStatusIndex("INSIDE_GARRISON"); // 0x3A (RW 0x44DDEC)
+	Object *ownerObject = ai().getObject();
+	if (ownerObject && !(kStatusInsideGarrison >= 0 && ownerObject->testStatus((unsigned)kStatusInsideGarrison)))
 	{
-		ai().getObject()->logic().noteStop(idleStanceStopLine()); // S-5148
+		if (--m_stancesCountdown == 0)
+		{
+			m_stancesCountdown = 5; // RW 0x755405
+			if (machine().findState(AI_GOING_IDLE) && StancesBehavior::of(*ownerObject) != nullptr)
+			{
+				return STATE_FAILURE; // RW 0x75541C .. 0x755426
+			}
+		}
 	}
 	AIUpdateInterface &self = ai();
 	if (self.attackMoveActive())
@@ -630,7 +637,7 @@ StateReturnType AIIdleState::update()
 	// onEnter offset, which is used once; unless the object is disabled EMP / PARALYZED / TEMPORARILY_BUSY (+ 0x1C8 & 0x14 / 0x100) or the mood matrix's idle
 	// action has IgnoreAll (RW 0x664E18(0) & 0x10), the mood scan getNextMoodTarget(1, 1) (RW 0x66844A) runs; a target is attacked (RW 0x66C536, AI command
 	// source 2); none: the sleep is shortened to the next mood check (AI + 0x21C) when that comes sooner, and then the offset is kept for the next time.
-	// Not ported here: the weapon's frame-window test (RW 0x6CA2C3), the stances countdown (+ 0x22) with state 0x4E (S-5148), the hunt status 0x49, the HORDE_MEMBER
+	// Not ported here: the weapon's frame-window test (RW 0x6CA2C3), the hunt status 0x49, the HORDE_MEMBER
 	// melee wait, the repulsors (KindOf + 0x10D bit 5) and the crate (RW 0x66810B: none in RotWK) (S-326)
 	const unsigned short oldSleepOffset = m_initialSleepOffset;
 	unsigned timeToSleep = kIdleCountdownDelay + oldSleepOffset;
@@ -641,7 +648,9 @@ StateReturnType AIIdleState::update()
 	{
 		if (Object *target = self.getNextMoodTarget(true, true))
 		{
-			if (self.aiAttackObject(target, CMD_FROM_AI))
+			const bool attacked = self.aiAttackObject(target, CMD_FROM_AI);
+			self.setVictimAutoAcquired(); // lane APPROACHGIVEUP-1: RW 0x755539, after the command (which clears it) whether or not it ran
+			if (attacked)
 			{
 				return STATE_CONTINUE; // the machine changed state: the new state runs next
 			}
@@ -896,6 +905,7 @@ void AIStateMachine::crc(StateHasher &h) const
 void AIIdleState::crc(StateHasher &h) const
 {
 	h.addU32(m_initialSleepOffset);
+	h.addU32(m_stancesCountdown); // retail's + 0x22 takes part in the play (the fifth update of a stanced unit)
 	h.addBool(m_inited);
 }
 

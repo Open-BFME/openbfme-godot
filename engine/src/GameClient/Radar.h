@@ -263,7 +263,7 @@ public:
 	bool tryEvent(int type, const Coord3D &world);
 	// RW 0x6D9BF3: an UNDER_ATTACK event at the object; false when tryEvent refused it
 	bool tryUnderAttackEvent(const Coord3D &position);
-	// lane BACKLOG3: RW 0x6D9BF3 after a new event (BFME2 decomp attempt 0x002d8b9d.cpp Radar::tryUnderAttackEvent, tier A): the message by the object's KindOf
+	// lane BACKLOG3: RW 0x6D9BF3 after a new event (BFME2 decomp Radar.cpp Radar::tryUnderAttackEvent, tier A): the message by the object's KindOf
 	// bits: INFANTRY (8) or CAVALRY (9): HARVESTER (16) -> RADAR:HarvesterUnderAttack, else RADAR:UnitUnderAttack; else STRUCTURE (7) and
 	// MP_COUNT_FOR_VICTORY (37) -> RADAR:StructureUnderAttack; else RADAR:UnderAttack
 	static const char *underAttackLabel(const Object &object);

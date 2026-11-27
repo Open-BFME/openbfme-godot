@@ -207,3 +207,54 @@ TEST_CASE("stealth load: saving mid-transition does not flip m_disguised early o
 	CHECK(loaded.hash() == hashMid);
 	loaded.logic->setClientHooks(nullptr);
 }
+
+// MERGEQ-68: a completed disguise survives a whole-game snapshot round trip; the post-load drawable
+// restore (RW 0x007779ED) is presentation only, so every resumed frame hashes as the uninterrupted game.
+TEST_CASE("stealth load: a completed disguise restores its drawable once after a snapshot load and every resumed frame hashes as uninterrupted")
+{
+	combattest::CombatWorld uninterrupted;
+	REQUIRE(uninterrupted.w.load(kStealthDisguiseLoadObjects).empty());
+	Object *spyA = uninterrupted.unit("TestSpyLoad", 'A', 300, 300);
+	Object *enemyA = uninterrupted.unit("TestEnemyLoad", 'B', 500, 300);
+	REQUIRE(spyA != nullptr);
+	REQUIRE(enemyA != nullptr);
+	const ObjectID spyId = spyA->getID();
+	StealthUpdate *stA = StealthUpdate::of(*spyA);
+	REQUIRE(stA != nullptr);
+	stA->disguiseAsObject(enemyA);
+	uninterrupted.frames(20); // the 200 ms transition is over
+	REQUIRE(stA->disguiseTemplate() == enemyA->getTemplate());
+	REQUIRE(stA->disguiseShown());
+
+	std::vector<std::uint8_t> snapshot;
+	std::string error;
+	REQUIRE_MESSAGE(uninterrupted.logic->gameState().saveSnapshot(uninterrupted.logic->stateHashSectionNames(), snapshot, &error), error);
+	std::vector<std::uint32_t> hashes;
+	for (int i = 0; i < 30; ++i)
+	{
+		uninterrupted.frames(1);
+		hashes.push_back(uninterrupted.hash());
+	}
+
+	combattest::CombatWorld loaded;
+	REQUIRE(loaded.w.load(kStealthDisguiseLoadObjects).empty());
+	SpyClientHooksLoad hooks;
+	loaded.logic->setClientHooks(&hooks);
+	REQUIRE_MESSAGE(loaded.logic->gameState().loadSnapshot(loaded.logic->stateHashSectionNames(), snapshot, &error), error);
+	Object *spyB = loaded.byId(spyId);
+	REQUIRE(spyB != nullptr);
+	StealthUpdate *stB = StealthUpdate::of(*spyB);
+	REQUIRE(stB != nullptr);
+	CHECK(hooks.replaces.empty());
+	for (int i = 0; i < 30; ++i)
+	{
+		loaded.frames(1);
+		INFO("resumed frame " << i);
+		CHECK(loaded.hash() == hashes[static_cast<size_t>(i)]);
+	}
+	REQUIRE(hooks.replaces.size() == 1);
+	CHECK(hooks.replaces[0].id == spyId);
+	CHECK(hooks.replaces[0].tmpl == stB->disguiseTemplate());
+	CHECK(stB->disguiseShown());
+	loaded.logic->setClientHooks(nullptr);
+}

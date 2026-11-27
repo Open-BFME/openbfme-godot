@@ -786,39 +786,59 @@ bool WeaponIsWithinTargetPitch(const WeaponTemplate &t, bool pitchLimited, float
 // =============================================================================================================================
 // FiringTracker
 // =============================================================================================================================
-// RW 0x8E302A
+// RW 0x8E302A coolDown(forceReset) (decomp FiringTrackerXfer.cpp:511): a soft cool down of a sped-up tracker drops to CONTINUOUS_FIRE_SLOW and keeps the
+// cooldown frame; a hard one (or a tracker without MEAN / FAST) clears all three model conditions, the cooldown frame and the last shot position. Both forget
+// the count and the victim. One RW 0x68D607(clear, set) call either way
 void FiringTracker::reset(FiringTrackerHost &host, bool hard)
 {
 	const std::uint32_t bits = (1u << CONDITION_CONTINUOUS_FIRE_MEAN) | (1u << CONDITION_CONTINUOUS_FIRE_FAST);
 	const std::uint32_t mask = host.weaponBonusConditionMask();
-	if (hard || (mask & bits) == 0)
+	if (!hard && (mask & bits) != 0)
 	{
-		host.setWeaponBonusConditionMask(mask & ~bits);
-		m_coastEnd = 0;
-		m_lastOwnerPosition = Coord3D{};
+		host.setWeaponBonusConditionMask(mask & ~bits);                   // RW 0x8E307A / 0x8E3084
+		host.clearAndSetFireConditions(FiringTrackerHost::FIRE_CONDITION_MEAN | FiringTrackerHost::FIRE_CONDITION_FAST,
+			FiringTrackerHost::FIRE_CONDITION_SLOW);                       // RW 0x8E3076 / 0x8E308B
 	}
 	else
 	{
 		host.setWeaponBonusConditionMask(mask & ~bits);
+		host.clearAndSetFireConditions(FiringTrackerHost::FIRE_CONDITION_SLOW | FiringTrackerHost::FIRE_CONDITION_MEAN | FiringTrackerHost::FIRE_CONDITION_FAST,
+			0u);                                                           // RW 0x8E30A8
+		m_coastEnd = 0;                                                    // RW 0x8E30AC
+		m_lastOwnerPosition = Coord3D{};                                   // RW 0x8E30AF .. 0x8E30B9
 	}
-	m_count = 0;
-	m_victimID = 0;
+	m_count = 0;    // RW 0x8E30CE
+	m_victimID = 0; // RW 0x8E30D1
 }
 
-// RW 0x8E3174
+// RW 0x8E3174 (decomp :475): none -> MEAN (model condition MEAN on, SLOW / FAST off); MEAN -> FAST (the unit voice 0x7DC first, then FAST on, SLOW / MEAN off);
+// FAST stays (RW 0x68D607 with two empty sets)
 void FiringTracker::speedUp(FiringTrackerHost &host)
 {
 	const std::uint32_t mean = 1u << CONDITION_CONTINUOUS_FIRE_MEAN;
 	const std::uint32_t fast = 1u << CONDITION_CONTINUOUS_FIRE_FAST;
 	const std::uint32_t mask = host.weaponBonusConditionMask();
+	if (mask & fast)
+	{
+		return;
+	}
 	if (mask & mean)
 	{
-		host.setWeaponBonusConditionMask((mask & ~mean) | fast);
+		host.postSpeedUpVoice();
+		host.setWeaponBonusConditionMask((mask | fast) & ~mean);
+		host.clearAndSetFireConditions(FiringTrackerHost::FIRE_CONDITION_SLOW | FiringTrackerHost::FIRE_CONDITION_MEAN, FiringTrackerHost::FIRE_CONDITION_FAST);
 	}
-	else if (!(mask & fast))
+	else
 	{
-		host.setWeaponBonusConditionMask(mask | mean);
+		host.setWeaponBonusConditionMask((mask | mean) & ~fast);
+		host.clearAndSetFireConditions(FiringTrackerHost::FIRE_CONDITION_SLOW | FiringTrackerHost::FIRE_CONDITION_FAST, FiringTrackerHost::FIRE_CONDITION_MEAN);
 	}
+}
+
+// RW 0x8E2E52
+std::uint32_t FiringTracker::calcTimeToSleep() const
+{
+	return (m_fireSoundEnd == 0 && m_coastEnd == 0 && m_autoReloadDeadline == 0) ? 0x3FFFFFFFu : 1u;
 }
 
 // RW 0x8E2E12
@@ -831,62 +851,69 @@ int FiringTracker::getShotsAtTarget(bool hasVictim, unsigned victimID, const Coo
 	return (m_positionMode == 1 && m_victimPos.x == pos.x && m_victimPos.y == pos.y && m_victimPos.z == pos.z) ? m_count : 0;
 }
 
-// RW 0x8E326D
+// RW 0x8E326D (decomp :316)
 void FiringTracker::shotFired(FiringTrackerHost &host, const Weapon &weapon, unsigned victimID, const Coord3D &victimPos, bool hard)
 {
+	unsigned horde = 0;
+	if (host.victimHordeID(victimID, horde)) // RW 0x8E3280 .. 0x8E32C0
+	{
+		m_auxiliaryID = horde;
+	}
+	const std::uint32_t now = host.currentFrame();
+	m_lastShotFrame = now;                       // RW 0x8E32D2
+	m_lastOwnerPosition = host.ownerPosition();  // RW 0x8E32D5 .. 0x8E32E0
 	if (hard)
 	{
 		m_count = 1;
-		reset(host, true);
+		reset(host, true); // RW 0x8E32E3 .. 0x8E32F1: no wake
 		return;
 	}
-	const std::uint32_t now = host.currentFrame();
-	const bool idShot = victimID != 0;
-	if (idShot)
+	if (victimID == 0)
 	{
-		if (m_positionMode == 0 && m_victimID == victimID)
+		// RW 0x8E32FD .. 0x8E3346 (the caller passes a position for a position shot)
+		if (m_positionMode == 0)
+		{
+			m_count = 1; // a switch to position mode forgets the victim
+			m_victimID = 0;
+		}
+		else if (m_victimPos.x == victimPos.x && m_victimPos.y == victimPos.y && m_victimPos.z == victimPos.z)
 		{
 			++m_count;
 		}
-		else if (m_positionMode == 0)
-		{
-			m_count = now < m_coastEnd ? m_count + 1 : 1;
-		}
 		else
 		{
-			m_count = 1; // mode switch
-		}
-		m_victimID = victimID;
-		m_positionMode = 0;
-	}
-	else
-	{
-		const bool same = m_victimPos.x == victimPos.x && m_victimPos.y == victimPos.y && m_victimPos.z == victimPos.z;
-		if (m_positionMode == 1 && same)
-		{
-			++m_count;
-		}
-		else if (m_positionMode == 1)
-		{
 			m_count = now < m_coastEnd ? m_count + 1 : 1;
-		}
-		else
-		{
-			m_count = 1;
 		}
 		m_victimPos = victimPos;
 		m_positionMode = 1;
 	}
+	else
+	{
+		// RW 0x8E334C .. 0x8E3386
+		if (m_positionMode != 0)
+		{
+			m_count = 1; // a switch to object mode forgets the position
+			m_victimPos = Coord3D{};
+		}
+		else if (m_victimID == victimID)
+		{
+			++m_count;
+		}
+		else
+		{
+			m_count = now < m_coastEnd ? m_count + 1 : 1;
+		}
+		m_victimID = victimID;
+		m_positionMode = 0;
+	}
 	const WeaponTemplate &t = *weapon.getTemplate();
-	if (t.m_autoReloadWhenIdle > 0)
+	if (t.m_autoReloadWhenIdle > 0) // template + 0x104
 	{
 		m_autoReloadDeadline = now + t.m_autoReloadWhenIdle;
 	}
-	m_coastEnd = t.m_continuousFireCoastFrames != 0 ? weapon.whenWeCanFireAgain() + t.m_continuousFireCoastFrames : 0;
-	m_lastShotFrame = now;
-	m_lastOwnerPosition = host.ownerPosition();
-	const int one = t.m_continuousFireOneShotsNeeded;
-	const int two = t.m_continuousFireTwoShotsNeeded;
+	m_coastEnd = t.m_continuousFireCoastFrames != 0 ? weapon.whenWeCanFireAgain() + t.m_continuousFireCoastFrames : 0; // + 0x100, weapon + 0x18
+	const int one = t.m_continuousFireOneShotsNeeded; // + 0xF8
+	const int two = t.m_continuousFireTwoShotsNeeded; // + 0xFC
 	const std::uint32_t mask = host.weaponBonusConditionMask();
 	if (mask & (1u << CONDITION_CONTINUOUS_FIRE_MEAN))
 	{
@@ -894,7 +921,7 @@ void FiringTracker::shotFired(FiringTrackerHost &host, const Weapon &weapon, uns
 		{
 			reset(host, false);
 		}
-		if (m_count > two)
+		else if (m_count > two)
 		{
 			speedUp(host);
 		}
@@ -910,28 +937,37 @@ void FiringTracker::shotFired(FiringTrackerHost &host, const Weapon &weapon, uns
 	{
 		speedUp(host);
 	}
+	// RW 0x8E3411 .. 0x8E34DD: the FireSound; a looping one (FireSoundLoopTime, + 0xCC) keeps its stop frame here; the sound itself is the audio side's
+	// (ObjectWeapons posts it after this call: AudioApi::postWeaponFireSound, S-712)
+	m_fireSoundEnd = t.m_fireSoundLoopTime != 0 ? now + t.m_fireSoundLoopTime : 0u;
+	host.setWakeFrame(calcTimeToSleep()); // RW 0x8E34E2 .. 0x8E34ED
 }
 
-// RW 0x8E30DD
+// RW 0x8E30DD (inside RotWK's merged Ghidra entry RW 0x8E302A; called on the helper's update interface, module + 0x10)
 std::uint32_t FiringTracker::update(FiringTrackerHost &host)
 {
 	const std::uint32_t now = host.currentFrame();
 	const Coord3D pos = host.ownerPosition();
 	if (pos.x != m_lastOwnerPosition.x || pos.y != m_lastOwnerPosition.y || pos.z != m_lastOwnerPosition.z)
 	{
-		reset(host, true); // the owner moved
-	}
-	if (now > m_coastEnd)
-	{
-		m_coastEnd = now + COAST_POLL_FRAMES;
-		reset(host, false);
+		reset(host, true); // RW 0x8E30F3 .. 0x8E3101: the owner moved
 	}
 	if (m_autoReloadDeadline != 0 && now >= m_autoReloadDeadline)
 	{
-		host.reloadAllWeapons();
+		host.reloadAllWeapons(); // RW 0x8E310F: RW 0x68B491(0)
 		m_autoReloadDeadline = 0;
 	}
-	return m_autoReloadDeadline != 0 ? 1u : 0x3FFFFFFFu;
+	if (m_fireSoundEnd != 0 && now >= m_fireSoundEnd)
+	{
+		m_fireSoundEnd = 0; // RW 0x8E3121 .. 0x8E313E: the loop's stop (TheAudio vslot 0x6C on + 0x58) is the audio side's (AudioApi, same stop frame)
+	}
+	if (m_coastEnd != 0 && now > m_coastEnd) // RW 0x8E3146 .. 0x8E314E
+	{
+		m_coastEnd = now + COAST_POLL_FRAMES; // [RW 0xD9F608] = 5
+		reset(host, false);
+		return COAST_POLL_FRAMES;
+	}
+	return calcTimeToSleep();
 }
 
 // =============================================================================================================================
@@ -1051,6 +1087,8 @@ void FiringTracker::crc(StateHasher &h) const
 	h.addFloat(m_lastOwnerPosition.x);
 	h.addFloat(m_lastOwnerPosition.y);
 	h.addFloat(m_lastOwnerPosition.z);
+	h.addU32(m_auxiliaryID);  // lane FIRINGTRACKER-1
+	h.addU32(m_fireSoundEnd);
 }
 
 // ---- lane SAVE-4b: the snapshot (OpenBFME native, S-4190) -----------------------------------------------------------------------
@@ -1100,7 +1138,9 @@ void Weapon::xfer(Xfer &x)
 // retail FiringTracker is a helper module (FiringTrackerHelper, RW 0x8E2EB2); this one is ObjectWeapons' member: native layout, the crc's fields
 void FiringTracker::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	// version 2 (lane FIRINGTRACKER-1): + 0x38 (the auxiliary id) and + 0x54 (the loop sound's stop frame); a version 1 snapshot leaves both 0
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	x.xferInt(&m_count);
 	x.xferUnsignedInt(&m_victimID);
 	SnapshotXfer::coord3D(x, m_victimPos);
@@ -1109,4 +1149,14 @@ void FiringTracker::xfer(Xfer &x)
 	x.xferUnsignedInt(&m_autoReloadDeadline);
 	x.xferUnsignedInt(&m_lastShotFrame);
 	SnapshotXfer::coord3D(x, m_lastOwnerPosition);
+	if (v.current >= 2)
+	{
+		x.xferUnsignedInt(&m_auxiliaryID);
+		x.xferUnsignedInt(&m_fireSoundEnd);
+	}
+	else
+	{
+		m_auxiliaryID = 0;
+		m_fireSoundEnd = 0;
+	}
 }

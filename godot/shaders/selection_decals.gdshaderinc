@@ -129,7 +129,9 @@ float sel_mask_at(int header, vec2 w) {
 // each decal (review: an additive decal could leave > 1 in the premultiplied share and a later alpha decal blended over the unclamped value). Returned
 // premultiplied against `surface`: rgb the decals' share (retail space), a how much of the surface is covered, so the surface becomes
 // surface (1 - result.a) + result.rgb. The same raised and wall rules as sel_merge_at
-vec4 sel_alpha_at(vec3 w, bool wall, vec3 surface) {
+// Presentation extension: resource/placement overlays project onto opaque object tops too, even
+// when the object's surface is above the terrain-height mask. Selection rings retain SELWALL-1.
+vec4 sel_alpha_projected_at(vec3 w, bool wall, bool ground_overlays, vec3 surface) {
 	if (int(sel_grid2.w) < 4) {
 		return vec4(0.0);
 	}
@@ -148,14 +150,19 @@ vec4 sel_alpha_at(vec3 w, bool wall, vec3 surface) {
 		if (dot(d, d) > 0.5 * e.z * e.z) {
 			continue; // outside the turned square's circumcircle
 		}
-		if (!wall && e.w < 0.0) {
+		if (!wall && !ground_overlays && e.w < 0.0) {
 			continue;
 		}
 		int di = int(e.w < 0.0 ? -e.w - 1.0 : e.w) * 4;
 		vec4 rec1 = sel_texel(di + 1); // r, g, b, z
 		vec4 rec3 = sel_texel(di + 3); // the turn's cosine and sine, the y size, -1 terrain only / -2 terrain-only additive / -3 additive, wall too / the vertex mask's texel (lane PLACEDECAL-1)
 		bool additive = rec3.w == -2.0 || rec3.w == -3.0;
-		if (wall && ((rec3.w != 0.0 && rec3.w != -3.0) || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT))) {
+		bool terrain_overlay = rec3.w != 0.0 && rec3.w != -3.0;
+		if (ground_overlays && terrain_overlay) {
+			// Claimable-vertex masks are still sampled in SAGE x/y below.
+		} else if (ground_overlays && !wall) {
+			continue;
+		} else if (wall && (terrain_overlay || !(abs(w.z - rec1.w) <= SEL_MAX_HEIGHT))) {
 			continue;
 		}
 		vec4 rec0 = sel_texel(di); // x, y, size, opacity
@@ -180,6 +187,10 @@ vec4 sel_alpha_at(vec3 w, bool wall, vec3 surface) {
 		}
 	}
 	return vec4(cur - surface * keep, 1.0 - keep); // the composite surface * keep + rgb is cur (review: surface * (1 - keep) doubled an uncovered ground)
+}
+
+vec4 sel_alpha_at(vec3 w, bool wall, vec3 surface) {
+	return sel_alpha_projected_at(w, wall, false, surface);
 }
 
 // the terrain's (the SAGE point x, y)

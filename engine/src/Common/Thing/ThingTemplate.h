@@ -186,6 +186,9 @@ public:
 		return slot < m_fields.size() && !std::holds_alternative<std::monostate>(m_fields[slot]) ? &m_fields[slot] : nullptr;
 	}
 	std::vector<std::string> fieldNames() const; ///< names of the fields that were set
+	// RW 0x710A41: ThingTemplate + 0x64C (SelectionPriority, row RW 0xDA49D8, INI::parseInt RW 0x42EC5E, initialized to 0x7fffffff at
+	// RW 0x740069..0x740074, copied by ThingTemplate::copyFrom RW 0x6D271E); only reader is addDrawableToList RW 0x7108F2
+	int selectionPriority() const;
 	const std::vector<RawBlock> &rawBlocks() const { return m_rawBlocks; }
 	// performance: an answer worked out from the raw blocks on first use (on any thread: every thread works out the same value); unset again when a block
 	// is added or removed, and in a copy

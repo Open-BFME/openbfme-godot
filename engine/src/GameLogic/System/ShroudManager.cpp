@@ -53,7 +53,6 @@ int kindIndex(const char *name)
 	return CombatNames::kindOf(name);
 }
 
-float groundReference(const Object &obj, float radius, int segments);
 
 // GeometryIsSmall (the template's last row; RW geometry + 4)
 bool geometryIsSmall(const ThingTemplate &tt)
@@ -553,7 +552,7 @@ void ShroudManager::shape(int cx, int cy, const Radii &r, float facing, std::uin
 }
 
 // RW 0xB4DBE0 (look) / 0xB4DD90 (unlook): ceil(radius * inverse), floor((p - lo) * inverse), then the circle shape RW 0xB50C90 (BFME2 donor
-// Rva00739BE0.cpp, 0x739A30 / 0x739BE0, the same shape)
+// PartitionManager.cpp, 0x739A30 / 0x739BE0, the same shape)
 void ShroudManager::revealCircle(float x, float y, float radius, std::uint32_t mask, bool add)
 {
 	int cx, cy;
@@ -565,7 +564,7 @@ void ShroudManager::revealCircle(float x, float y, float radius, std::uint32_t m
 void ShroudManager::revealTrigger(const TriggerArea &area, std::uint32_t mask, bool add)
 {
 	// RW 0xB4DCA0 (look) / 0xB4DE50 (unlook): the trigger's bounds (RW 0x70CE4A) to cells, floor((p - lo) * inverse), then every row of that
-	// rectangle (RW 0xB50510) with a per-cell test (BFME2 donor ScriptEngineNamedMapReveal.cpp, Rva00739AF0Siblings.cpp).
+	// rectangle (RW 0xB50510) with a per-cell test (BFME2 donor ScriptEngineNamedMapReveal.cpp, PartitionManager.cpp rva00739AF0).
 	// INFERENCE (S-6102): the test is taken as pointInTrigger; the polygon object at trigger + 0x38 that retail asks was not read.
 	if (area.points.empty()) return;
 	float minX = area.points[0].x, maxX = minX, minY = area.points[0].y, maxY = minY;
@@ -1018,9 +1017,12 @@ ShroudManager::TemplateVision ShroudManager::templateVision(const ThingTemplate 
 	v.visionSide = real(F_SIDE, 1.0f);
 	v.visionRear = real(F_REAR, 1.0f);
 	v.bonusPerFoot = real(F_PERFOOT, 0.0f);
-	v.bonusTestRadius = real(F_RADIUS, 0.0f);
-	v.maxBonus = real(F_MAX, 0.0f);
-	v.minBonus = real(F_MIN, 0.0f);
+	// RW 0x73FB7A ThingTemplate constructor: VisionBonusTestRadius +0x4D8 = 100.0, MaxVisionBonusPercent +0x4D0 = 0.5, MinVisionBonusPercent +0x4D4 = -0.5,
+	// VisionBonusTestSegments +0x554 = 8. The INI never sets the segments; with 0 the ground reference was 0 and the height bonus became the absolute Z
+	// (the dwarven axe throwers saw four times farther: reported in play).
+	v.bonusTestRadius = real(F_RADIUS, 100.0f);
+	v.maxBonus = real(F_MAX, 0.5f);
+	v.minBonus = real(F_MIN, -0.5f);
 	if (const FieldValue *f = field(F_SEGMENTS))
 	{
 		if (const long long *i = std::get_if<long long>(f))
@@ -1029,26 +1031,6 @@ ShroudManager::TemplateVision ShroudManager::templateVision(const ThingTemplate 
 		}
 	}
 	return v;
-}
-
-float ShroudManager::groundReferenceFor(const Object &obj, const TemplateVision &tv)
-{
-	// RW 0x69264D: `(int)x`, `(int)y` of the position (cvttss2si); the circle is sampled again only when they change
-	Record *r = recordOf(obj);
-	const int ix = SimMath::cvttss2si(obj.getPosition()->x), iy = SimMath::cvttss2si(obj.getPosition()->y);
-	if (r && r->groundValid && r->groundX == ix && r->groundY == iy)
-	{
-		return r->groundRef;
-	}
-	const float ref = groundReference(obj, tv.bonusTestRadius, tv.bonusTestSegments);
-	if (r)
-	{
-		r->groundValid = true;
-		r->groundX = ix;
-		r->groundY = iy;
-		r->groundRef = ref;
-	}
-	return ref;
 }
 
 void ShroudManager::markDirty(const Object &obj, bool force)
@@ -1531,10 +1513,6 @@ void ShroudManager::hash(StateHasher &h) const
 			h.addU32(r.previous[(size_t)p]);
 			h.addU32(r.seen[(size_t)p]);
 		}
-		h.addBool(r.groundValid);
-		h.addI32(r.groundX);
-		h.addI32(r.groundY);
-		h.addFloat(r.groundRef);
 	}
 	h.addU32((std::uint32_t)m_dirty.size());
 	for (size_t i = m_dirty.size(); i-- > 0;)
@@ -1583,30 +1561,6 @@ std::vector<std::string> ShroudManager::stopLines()
 // ---- the object side (RW vtable 0xC123B0) ----------------------------------------------------------------------------------------
 namespace
 {
-// RW 0x69264D: the mean ground height of VisionBonusTestSegments points at VisionBonusTestRadius
-float groundReference(const Object &obj, float radius, int segments)
-{
-	const GameLogic &logic = obj.logic();
-	const Coord3D &pos = *obj.getPosition();
-	if (segments <= 0)
-	{
-		return 0.0f;
-	}
-	const float step = SimMath::pc24Div(6.2831855f, (float)segments); // RW DAT_00C12150 / n
-	float angle = 0.0f;
-	float sum = 0.0f;
-	for (int i = 0; i < segments; ++i)
-	{
-		double s, c;
-		SimMath::sinCosDet((double)angle, s, c);
-		const float px = (float)SimMath::addD(SimMath::mulD(c, (double)radius), (double)pos.x);
-		const float py = (float)SimMath::addD(SimMath::mulD(s, (double)radius), (double)pos.y);
-		sum = SimMath::pc24Add(logic.getGroundHeight(px, py), sum);
-		angle = SimMath::sseAdd(angle, step);
-	}
-	return SimMath::sseDiv(sum, SimMath::sseFromInt32(segments));
-}
-
 // RW 0x68E4E2
 float shroudClearingRange(const Object &obj, ShroudManager &sm, const ShroudManager::TemplateVision &tv)
 {
@@ -1624,8 +1578,8 @@ float shroudClearingRange(const Object &obj, ShroudManager &sm, const ShroudMana
 	}
 	if (tv.bonusPerFoot > 0.0f)
 	{
-		const float ref = sm.groundReferenceFor(obj, tv);
-		float bonus = SimMath::pc24Mul(SimMath::pc24Sub(obj.getPosition()->z, ref), tv.bonusPerFoot);
+		// object + 0x1C4 (lane VISIONDEF-1: Object::visionGroundReference, kept by the object as retail does)
+		float bonus = SimMath::pc24Mul(SimMath::pc24Sub(obj.getPosition()->z, obj.visionGroundReference()), tv.bonusPerFoot);
 		// RW 0x68AF8E
 		if (bonus > tv.maxBonus)
 		{

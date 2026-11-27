@@ -136,6 +136,9 @@ public:
 	// the screen's acceptance stops ("[S-1400] ..." .. "[S-1405] ..."), each also a "create-a-hero-stop" note of the window manager when the screen is made
 	static const std::vector<std::string> &stopLines();
 
+	// lane CAHWHEEL-1 (NOT RETAIL, S-7186): on the Powers page a wheel notch moves the power matrix one line, as a press of its scroll bar's arrow
+	bool inputWheel(int delta) override;
+
 	// ---- state (tests, the device's preview) ----
 	char currentPage() const { return m_page; } ///< 'M', 'C', 'A', 'P', 'B' or 0
 	char previousPage() const { return m_previousPage; }
