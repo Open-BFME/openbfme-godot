@@ -200,6 +200,14 @@ Transform3D toTransform(const float *basis, const Coord3D &pos, float scale)
 	return Transform3D(basisG, Vector3(pos.x, pos.z, -pos.y));
 }
 
+// Matrix3D (3x4 world transform, columns X, Y, Z, position; the scale is in the basis) -> Godot (x, z, -y): the axis swap is a signed permutation, so the
+// entries are only moved and negated (the basis overload above multiplies the scale in)
+Transform3D toTransform(const Matrix3D &m)
+{
+	Basis basisG(Vector3(m.Row[0][0], m.Row[2][0], -m.Row[1][0]), Vector3(m.Row[0][2], m.Row[2][2], -m.Row[1][2]), Vector3(-m.Row[0][1], -m.Row[2][1], m.Row[1][1]));
+	return Transform3D(basisG, Vector3(m.Row[0][3], m.Row[2][3], -m.Row[1][3]));
+}
+
 PackedStringArray toPacked(const std::vector<std::string> &v)
 {
 	PackedStringArray a;
@@ -1928,8 +1936,17 @@ void GameWorld::refresh_view(size_t id, W3DInstancer *dyn, const LogicSnapshot *
 		{
 			entryXf = toTransform(d->getBasis(), d->entryPosition(e), d->getInstanceScale());
 		}
-		const bool entryXfChanged = xfChanged || e.constructionOffsetZ != ev.offsetZ;
+		// RW 0x006714C0: the drawable's instance matrix (SwayClientUpdate's pre-rotation) turns the model about its own base
+		Matrix3D swayed;
+		const bool entrySwayed = d->instanceMatrixTransform(e, swayed);
+		if (entrySwayed)
+		{
+			entryXf = toTransform(swayed);
+		}
+		const bool entryXfChanged = xfChanged || e.constructionOffsetZ != ev.offsetZ || entrySwayed != ev.entrySwayed || (entrySwayed && !(entryXf == ev.lastEntryXf));
 		ev.offsetZ = e.constructionOffsetZ;
+		ev.entrySwayed = entrySwayed;
+		ev.lastEntryXf = entryXf;
 		if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
 		{
 			// lane COMBAT-4: a W3DTruckDraw's tires (Drawable::advanceTires, RW 0x4CBFFB): the front set and the mid / rear sets turn about their Y

@@ -34,6 +34,7 @@ public:
 	};
 	struct Breeze
 	{
+		float direction = 0.0f; ///< the breeze's heading in radians (ScriptEngine::BreezeInfo::direction)
 		float directionX = 0.0f, directionY = 0.0f;
 		float intensity = 0.0f, lean = 0.0f, randomness = 0.0f;
 		int breezePeriod = 1;

@@ -91,6 +91,7 @@ struct ObjectSnapshot
 	// lane VISUAL-2 r2: while the shroud is displayed, the object has a shroud record (retail: partition data, Object + 0x4E4). objectShroud is 0 both for
 	// an ALWAYS_VISIBLE object and for one without a record (a contained object); FXList::doFXObj asks the cell at the position of the latter (RW 0x5E22C4)
 	bool shroudRecord = false;
+	bool burned = false;           ///< OBJECT_STATUS_BURNED (RW 0x008CD921, SwayClientUpdate::clientUpdate)
 	bool effectivelyDead = false;  ///< lane VISUAL-2: Object::isEffectivelyDead (the drawable's shroud grace is 3 s longer, RW 0x64849E: GameClient/DrawableShroud.h)
 	// lane OCCLUDE-1: the behind-building roles the object qualifies for at this frame (RTS3DSceneOcclusion::eligibility bits: occluder, occludee)
 	std::uint8_t occlusion = 0;

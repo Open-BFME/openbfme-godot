@@ -1029,6 +1029,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail_units.cpp
     # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
     tests/test_local_28.cpp
+    # SwayClientUpdate (RW 0x008CD514..0x008CD9CD)
+    tests/test_sway_client_update.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp

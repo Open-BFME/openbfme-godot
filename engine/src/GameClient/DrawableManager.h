@@ -116,6 +116,7 @@ public:
 	static std::string textureSwapStopLine(); // community PR #37: S-5015
 
 private:
+	void syncSway(const LogicSnapshot &snapshot); // RW 0x008CD675: every drawable's SwayClientUpdate modules take one client step
 	// What the draw runtimes of drawables said: classified (classifyDrawMessage), counted, never dropped. The runtime of a live drawable keeps
 	// collecting (the OnCreated hooks hide sub objects after the drawable exists), so a drawable's part is read when it dies and at report().
 	struct Sink

@@ -32,6 +32,7 @@
 #include "GameClient/LogicSnapshot.h"
 #include "GameClient/RenderInterpolation.h"
 #include "GameClient/StealthLook.h"
+#include "GameEngineDevice/W3DDevice/GameClient/W3DVegetationSway.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawServices.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLightDraw.h"
@@ -202,6 +203,16 @@ public:
 	unsigned getChangeCount() const { return m_changeCount; }
 
 	float getInstanceScale() const { return m_scale; }
+	// RW 0x006714C0 / 0x008CD70C: the drawable's instance matrix (SwayClientUpdate pre-rotates it); DrawableSway.cpp
+	const Matrix3D &getInstanceMatrix() const { return m_instanceMatrix; }
+	void setInstanceMatrix(const Matrix3D &xfrm);
+	bool hasInstanceMatrix() const { return m_hasInstanceMatrix; }
+	// RW 0x00B261F0 Matrix3D::Get_Z_Rotation on the drawable's world transform
+	float getZRotation() const;
+	// RW 0x008CD675: step the SwayClientUpdate modules of this drawable with the breeze
+	void updateSway(const W3DVegetationSway::Breeze &breeze, bool visible, bool burnedOrDead);
+	// the world transform of the model of `e` with the instance matrix applied; false when the drawable carries none
+	bool instanceMatrixTransform(const DrawEntry &e, Matrix3D &outMatrix) const;
 	void setInstanceScale(float scale) { m_scale = scale; }
 	// 0xAARRGGBB of the owner's colour, 0 when the owner has none
 	std::uint32_t getHouseColor() const { return m_houseColor; }
@@ -398,6 +409,8 @@ private:
 	float m_geometryHeight = -1.0f;          ///< RENDER-2: RW 0xAD1920 of the template's shapes (computed on first use)
 	std::vector<DrawEntry> m_entries;
 	std::vector<std::unique_ptr<DrawableModule>> m_clientModules;
+	Matrix3D m_instanceMatrix;      ///< RW 0x006714C0: pre-rotated by SwayClientUpdate
+	bool m_hasInstanceMatrix = false;
 	bool m_clientHidden = false; ///< lane CHAT-1
 	bool m_shadowsEnabled = true; ///< RW Drawable +0x114 bit 2 (TOP20 #24)
 	bool m_phantomLook = false;  ///< lane FBSIM-1: drawn as a dozer's phantom structure (0.4 opacity)
