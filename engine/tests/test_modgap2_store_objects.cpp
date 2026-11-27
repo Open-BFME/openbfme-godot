@@ -2,7 +2,10 @@
 #include "doctest.h"
 #include "CombatTestUtil.h"
 #include "Common/SpecialPower.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Module/StoreObjectsSpecialPower.h"
+#include "GameLogic/Module/UnportedModule.h"
 
 namespace {
 const char kObjects[] =
@@ -75,4 +78,54 @@ TEST_CASE("modgap2 store objects: ordered filtered targets survive a native snap
         CHECK(store->storedObjects()[0] == nearID);
         CHECK(store->storedObjects()[1] == farID);
     }
+}
+
+TEST_CASE("modgap2 store objects xfer: v2 round-trip, v1 UnportedUpdateModule compatibility, and v3 rejection")
+{
+    StoreWorld w;
+    Object *caster = w.unit("TestStoreCaster", 'A', 300, 300);
+    Object *near = w.unit("TestStoreUnit", 'A', 330, 300);
+    REQUIRE(caster);
+    REQUIRE(near);
+    auto *store = dynamic_cast<StoreObjectsSpecialPower *>(caster->findModule("StoreObjectsSpecialPower"));
+    REQUIRE(store);
+    const Coord3D at{ 300, 300, 0 };
+    store->initiateIntentToDoSpecialPower(store->abilityData()->m_specialPowerTemplate, nullptr, &at, 0, 0);
+    w.frames(20);
+    REQUIRE(store->storedObjects().size() == 1u);
+    REQUIRE(store->abilitiesTriggered() == 1u);
+
+    // v2 round-trip and version 3 rejection
+    XferSave v2Save;
+    store->xfer(v2Save);
+    REQUIRE(!v2Save.data().empty());
+    CHECK(v2Save.data().front() == 2);
+    {
+        XferLoad v2Load(v2Save.data());
+        store->xfer(v2Load);
+        CHECK(v2Load.atEnd());
+        CHECK(store->storedObjects().size() == 1u);
+    }
+    {
+        std::vector<std::uint8_t> badVer = v2Save.data();
+        badVer.front() = 3;
+        XferLoad badLoad(badVer);
+        CHECK_THROWS_AS(store->xfer(badLoad), XferException);
+    }
+
+    // Real v1 legacy payload produced by UnportedUpdateModule (version 1 + UpdateModule + m_calls)
+    UnportedUpdateModule legacy(caster, nullptr, 1);
+    legacy.update();
+    XferSave v1Save;
+    legacy.xfer(v1Save);
+    REQUIRE(!v1Save.data().empty());
+    CHECK(v1Save.data().front() == 1);
+
+    XferLoad v1Load(v1Save.data());
+    store->xfer(v1Load);
+    CHECK(v1Load.atEnd());
+    CHECK(store->storedObjects().empty());
+    CHECK_FALSE(store->isActive());
+    CHECK(store->packingState() == 0);
+    CHECK(store->abilitiesTriggered() == 0u);
 }

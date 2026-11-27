@@ -4,7 +4,10 @@
 
 #include "Common/SpecialPower.h"
 #include "GameLogic/Module/StoreObjectsSpecialPower.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Module/TeleportToCasterSpecialPower.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/PartitionManager.h"
 
 #include <cmath>
@@ -96,4 +99,53 @@ TEST_CASE("modgap2 teleport: without a list the allies around the target come to
 	CHECK(distance2D(*ally->getPosition(), *caster->getPosition()) <= 60.0f); // tolerance: findPositionAround's ring is MinDestinationRadius .. MaxDestinationRadius
 	CHECK(distance2D(*enemy->getPosition(), enemyPos) == 0.0f);
 	CHECK(distance2D(*far->getPosition(), farPos) == 0.0f);
+}
+
+TEST_CASE("modgap2 teleport xfer: v2 round-trip, v1 UnportedUpdateModule compatibility, and v3 rejection")
+{
+	TeleportWorld w;
+	Object *caster = w.unit("TestCaster", 'A', 300, 300);
+	Object *ally = w.unit("TestFollower", 'A', 700, 700);
+	REQUIRE(caster);
+	REQUIRE(ally);
+	auto *go = dynamic_cast<TeleportToCasterSpecialPower *>(caster->findModule("TeleportToCasterSpecialPower"));
+	REQUIRE(go);
+	const Coord3D there{ 700, 700, 0 };
+	go->initiateIntentToDoSpecialPower(go->abilityData()->m_specialPowerTemplate, nullptr, &there, 0, 0);
+	w.frames(1);
+	REQUIRE(go->isActive());
+
+	// v2 round-trip and version 3 rejection
+	XferSave v2Save;
+	go->xfer(v2Save);
+	REQUIRE(!v2Save.data().empty());
+	CHECK(v2Save.data().front() == 2);
+	{
+		XferLoad v2Load(v2Save.data());
+		go->xfer(v2Load);
+		CHECK(v2Load.atEnd());
+		CHECK(go->isActive());
+	}
+	{
+		std::vector<std::uint8_t> badVer = v2Save.data();
+		badVer.front() = 3;
+		XferLoad badLoad(badVer);
+		CHECK_THROWS_AS(go->xfer(badLoad), XferException);
+	}
+
+	// Real v1 legacy payload produced by UnportedUpdateModule (version 1 + UpdateModule + m_calls)
+	UnportedUpdateModule legacy(caster, nullptr, 1);
+	legacy.update();
+	XferSave v1Save;
+	legacy.xfer(v1Save);
+	REQUIRE(!v1Save.data().empty());
+	CHECK(v1Save.data().front() == 1);
+
+	XferLoad v1Load(v1Save.data());
+	go->xfer(v1Load);
+	CHECK(v1Load.atEnd());
+	CHECK_FALSE(go->isActive());
+	CHECK(go->packingState() == 0);
+	CHECK(go->triggerCount() == 0);
+	CHECK(go->abilitiesTriggered() == 0u);
 }

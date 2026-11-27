@@ -70,8 +70,43 @@ void StoreObjectsSpecialPower::crc(StateHasher &h) const {
     for (ObjectID id : m_objects) h.addU32(id);
 }
 
+// Version 2 is the native layout (SpecialAbilityUpdate::xfer + m_objects).
+// Version 1 is the pre-port UnportedUpdateModule shell (UpdateModule + m_calls), which resets base fields and m_objects to defaults.
 void StoreObjectsSpecialPower::xfer(Xfer &x) {
-    SnapshotXfer::version(x, 1, 1);
+    XferVersion v{ 1, 2 };
+    x.xferVersion(v);
+    if (v.current < 2) {
+        xferUpdateModule(x);
+        std::uint32_t legacyCalls = 0; // UnportedUpdateModule::m_calls
+        x.xferUnsignedInt(&legacyCalls);
+        m_triggerCount = 0;
+        m_packFramesLeft = 0;
+        m_effectExpiry = 0;
+        m_packingState = 0;
+        m_prepFrames = 0;
+        m_targetID = INVALID_ID;
+        m_targetPos = Coord3D{};
+        m_lastTargetPos = Coord3D{};
+        m_extra = 0;
+        m_persistentLeft = 0;
+        m_options = 0;
+        m_captureAccumulator = 0.0f;
+        m_active = false;
+        m_approachCounter = 0;
+        m_keepActive = false;
+        m_noTarget = false;
+        m_facingIssued = false;
+        m_facingDone = false;
+        m_withinRange = false;
+        m_chargeSpeed = false;
+        m_chargeMove = false;
+        m_customAnimFrame = 0;
+        m_abilitiesTriggered = 0;
+        m_captures = 0;
+        m_unported = 0;
+        m_objects.clear();
+        return;
+    }
     SpecialAbilityUpdate::xfer(x);
     // Native OpenBFME snapshots retain the ordered IDs needed by a later teleport.
     SnapshotXfer::ids(x, m_objects);
