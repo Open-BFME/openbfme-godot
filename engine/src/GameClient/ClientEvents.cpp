@@ -268,6 +268,7 @@ void ClientEventRecorder::pushFlush(Object &obj)
 		recaptureTransition = hadCaptured && startingCapture;
 		deferCapturePresentation = hadCaptured && (startingCapture || cancellingCapture);
 		const size_t subObjStart = m_events.size();
+		const std::uint64_t seqStart = m_seq;
 		// Dispatch before pushing the flush: Lua can append subobject events.
 		if (before != obj.getModelConditionBits()) m_logic.animationConditionEvents(obj, before);
 		before = obj.getModelConditionBits();
@@ -287,7 +288,12 @@ void ClientEventRecorder::pushFlush(Object &obj)
 				}
 			}
 			m_events.resize(subObjStart);
-			for (auto &ev : kept) m_events.push_back(std::move(ev));
+			m_seq = seqStart;
+			for (auto &ev : kept)
+			{
+				ev.seq = m_seq++;
+				m_events.push_back(std::move(ev));
+			}
 		}
 	}
 	ClientEvent &e = push(ClientEvent::MODEL_FLUSH, obj);

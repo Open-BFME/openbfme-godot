@@ -2506,6 +2506,7 @@ TEST_CASE("capture flag presentation: re-capturing a captured flag lowers the pr
 	}
 	CHECK(downFrames == 16);
 	CHECK(enteredFlagUp);
+	CHECK(drawables.report().errors.empty());
 }
 
 TEST_CASE("hero execution retail: Gimli and Rogash ground Leap commands launch their own Bezier behavior and land alive")

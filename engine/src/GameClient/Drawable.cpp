@@ -676,8 +676,23 @@ bool Drawable::hasPendingAnimationTransition() const
 	{
 		if (e.draw && e.draw->pendingStatePending())
 		{
+			// RW 0x4BF1DE -> 0x4BF214: a TransitionState that declares LuaEvent = OnStateEnter
+			// (e.g. CaptureFlag's Trans_CancelReraise) fires OnStateEnter on entry instead of
+			// waiting for the pending target state.
 			const AnimationStateInfo *st = e.draw->currentAnimationState();
-			if (st && st->stateName == "Trans_CancelReraise")
+			bool hasOnStateEnter = false;
+			if (st)
+			{
+				for (const LuaEventInfo &ev : st->luaEvents)
+				{
+					if (ev.when == 1)
+					{
+						hasOnStateEnter = true;
+						break;
+					}
+				}
+			}
+			if (hasOnStateEnter)
 			{
 				continue;
 			}
