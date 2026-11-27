@@ -47,15 +47,16 @@
 class ModuleFactory;
 class StateHasher;
 
+// RW 0x893871 (ctor; DONOR BFME2 0x004901BD; both editions), RW 0x893B42 (dtor)
 class LargeGroupBonusUpdateModuleData : public ModuleData
 {
 public:
-	unsigned m_updateRate = 0;            ///< + 8 (frames)
+	unsigned m_updateRate = 5;            ///< + 8 (frames; RW 0x893883 loads [0xDE93D4] = [0xD9F608] = LOGICFRAMES_PER_SECOND = 5)
 	ObjectFilter m_hordeMemberFilter;     ///< + 0xC
 	int m_count = 0;                      ///< + 0x10
 	float m_radius = 0.0f;                ///< + 0x14
-	bool m_alliesOnly = false;            ///< + 0x18
-	float m_rubOffRadius = 0.0f;          ///< + 0x1C
+	bool m_alliesOnly = true;             ///< + 0x18 (RW 0x8938B8: mov byte [esi+0x18], 1)
+	float m_rubOffRadius = 20.0f;         ///< + 0x1C (RW 0x8938AC: *(float*)0xBDBC6C = 20.0f)
 	std::vector<std::string> m_flagSubObjectNames; ///< + 0x20
 	std::string m_attributeModifier;      ///< + 0x2C
 	// lane MODS-3, edain-unchained.large-group-bonus (Edain Unchained's .lgbupd: the module data grows 0x30 -> 0x158; all zero = retail)
