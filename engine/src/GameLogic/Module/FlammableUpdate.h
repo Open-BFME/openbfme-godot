@@ -27,7 +27,10 @@
 //     burning sound starts (RW 0x88FE48, client); the object's FireSpreadUpdate starts spreading (RW 0x88EFA9) and its EntEnragedUpdate is told; status
 //     AFLAME; the script event 10 (RW 0x7379CB); aflame end = now + AflameDuration (FOREVER without one), burned frame = now + BurnedDelay (0 without),
 //     next damage = now + AflameDamageDelay (0 without); the update sleeps calcSleepDelay; SwapModelWhenAflame / SwapTextureWhenAflame set model condition
-//     bits 190 / 191; the FireFXList plays (client); with a custom anim time the special model condition state, the DISABLED type 4 until now + time - 1,
+//     bits 190 / 191; then the FireFXList (data + 0x28) runs (port PORT-61, RW 0x89031F .. 0x890434): for every entry (8 bytes: the FXList at +0, the bone's
+//     AsciiString at +4, both read per entry into a local at RW 0x890337) -- an entry with a bone AND an object with a drawable (RW 0x89034B / 0x890356): the
+//     bone's transform through the drawable (RW 0x672B5B, the result not tested) and FXList::doFXPos(fx, its translation, the transform, 0, 0) (RW 0x494615);
+//     else FXList::doFXObj(fx, the object, 0) (RW 0x4B1B5A); with a custom anim time the special model condition state, the DISABLED type 4 until now + time - 1,
 //     status 0x52 and the anim end = now + time, else the anim end = now; finally the update wakes next frame.
 //   * update (RW 0x890738): with an anim end set: before it, return 1; at it, clear it and (RunToWater) search water around the object (RW 0x890782, return 1). Without:
 //     an object under water (not SHIP) with an AI that is not (RW 0x664485, AIUpdateInterface::isMoving) shortens the aflame end to now + 3 * LOGICFRAMES_PER_SECOND and stops running to
@@ -60,9 +63,9 @@
 //     RW 0xC627A0 (RW 0x88ED46: the object has a FlammableUpdate whose status is NORMAL) is ignited (its FlammableUpdate's tryToIgnite); when none, with
 //     TheGlobalData + 0x18 -> + 0xBC set, a burnable terrain object (RW 0x67F52B / 0x68449B) is tried; then sleep calcNextSpreadDelay.
 // WHAT IS INFERENCE / NOT PORTED (stop S-983, reported per use):
-//   * the client parts (burning sound, FireFXList, the drawable flushes) and the body's slot 0x2C, RW 0x68F2F1(0), the script events 10 / 11 and the
+//   * the client parts (burning sound, the drawable flushes) and the body's slot 0x2C, RW 0x68F2F1(0), the script events 10 / 11 and the
 //     EntEnragedUpdate notification are not run;
-//   * BurnContained's passenger damage and the contain's slot 0x88(2), CustomAnimAndDuration's disable / status 0x52 are not ported (reported);
+//   * BurnContained's passenger damage and the contain's slot 0x88(2) are not ported (reported);
 //   * the search runs only with a map (TerrainLogic through the pathfinder): without one there is nothing to search and the object takes RW 0x890A15's
 //     no-water branch (the rage is forced), reported as a stop; the depth compare is the port's subf32 (RW's is an x87 double compare, the two differ by
 //     at most 1 ulp at the RunToWaterDepth border);
@@ -83,6 +86,16 @@
 class FlammableUpdateModuleData : public ModuleData
 {
 public:
+	// One FireFXList entry (RW's 8-byte element: the FXList pointer at +0, the bone's AsciiString at +4; the type-allocator's
+	// `_Construct` at RW 0x88FEA8 hashes the bone into its pool and stores only the string body, so the pointer is the entry + 4).
+	// The port keeps the list name as the INI wrote it (the client resolves it through TheFXListStore, as every FX call of the port does);
+	// "None" is no list and plays nothing (RW 0x73A302 stores NULL). A bone entry built by the parser is lower-cased by AsciiString's pool
+	// (RW 0x88FEA8), which the client's bone lookup expects.
+	struct FireFX
+	{
+		std::string fxList; ///< entry + 0: the FXList
+		std::string bone;   ///< entry + 4: the bone ("": the object itself, the ignition's doFXObj)
+	};
 	unsigned m_burnedDelay = 0;               ///< +8
 	unsigned m_aflameDuration = 0;            ///< +0xC
 	unsigned m_aflameDamageDelay = 0;         ///< +0x10
@@ -91,7 +104,7 @@ public:
 	float m_flameDamageLimit = 20.0f;         ///< +0x1C (RW 0xBDBC6C)
 	unsigned m_flameDamageExpiration = 25;    ///< +0x20: 5 * LOGICFRAMES_PER_SECOND (RW 0x890BF6)
 	int m_damageType = 6;                     ///< +0x24 FLAME
-	std::vector<std::string> m_fireFXList;    ///< +0x28 (client)
+	std::vector<FireFX> m_fireFXList;         ///< +0x28 (client): played at the ignition, RW 0x89031F .. 0x890434
 	bool m_setBurnedStatus = true;            ///< +0x34
 	bool m_swapModelWhenAflame = false;       ///< +0x35
 	bool m_swapModelWhenQuenched = false;     ///< +0x36

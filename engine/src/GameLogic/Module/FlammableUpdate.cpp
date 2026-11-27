@@ -23,6 +23,7 @@
 #include "GameLogic/ContainParseHooks.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Damage.h"
+#include "GameLogic/FXEvents.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/ObjectCreationList.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -63,15 +64,21 @@ void parseFireFXList(INI *ini, void *instance, void *, const void *)
 		}
 		TheFXListStore->parseFXListRef(entry); // unknown: INIException 3
 	}
-	const char *b = ini->getNextTokenOrNull(ini->getSepsColon());
-	if (b && AsciiStringUtil::compareNoCase(b, "BONE") == 0)
+	FlammableUpdateModuleData::FireFX fire;
+	fire.fxList = entry;
+	// RW 0x890D58: the optional keyword `BONE` compared with stricmp (RW 0xC11A5C, read at RW 0x890D5C), then RW 0x890D6A's string: the bone name read
+	// with the default separators (RW 0x890D76 builds the entry's AsciiString). No keyword stores no bone: the ignition's doFXObj on the object.
+	if (const char *b = ini->getNextTokenOrNull(ini->getSepsColon()))
 	{
-		if (const char *bone = ini->getNextTokenOrNull())
+		if (AsciiStringUtil::compareNoCase(b, "BONE") == 0)
 		{
-			entry += std::string(" ") + bone;
+			if (const char *bone = ini->getNextTokenOrNull())
+			{
+				fire.bone = bone;
+			}
 		}
 	}
-	d->m_fireFXList.push_back(entry);
+	d->m_fireFXList.push_back(fire); // RW 0x890D85: the 8-byte entry appended to the vector at data + 0x28
 }
 
 // RW 0x73B217 -> 0x73AA94 (parseAudioEventRTS): "NoSound" (any case) clears; otherwise TheAudio must know the event, else INIException 3
@@ -428,7 +435,7 @@ void FlammableUpdate::tryToIgnite()
 		spread->startFireSpreading(); // reads the object's AFLAME status, set above
 	}
 	m_status = FS_AFLAME; // RW 0x890251
-	noteStop(*obj, "FlammableUpdate: the ignition's client parts (burning sound, FireFXList), the body slot 0x2C, the script event 10 and EntEnragedUpdate are not run");
+	noteStop(*obj, "FlammableUpdate: the ignition's client parts (burning sound), the body slot 0x2C and the script event 10 are not run");
 	const unsigned now = logic.getFrame();
 	m_aflameEndFrame = m_data->m_aflameDuration > 0 ? now + m_data->m_aflameDuration : (unsigned)UPDATE_SLEEP_FOREVER;
 	m_burnedEndFrame = m_data->m_burnedDelay ? now + m_data->m_burnedDelay : 0;
@@ -443,6 +450,19 @@ void FlammableUpdate::tryToIgnite()
 	{
 		static const int kBurntTexture = CombatNames::modelCondition("BURNT_TEXTURE"); // bit 191
 		obj->setModelConditionState(kBurntTexture, true);
+	}
+	// RW 0x89031F .. 0x890434: the FireFXList (data + 0x28). Every entry is read into a local pair (the FXList RW 0x890337, the bone's AsciiString
+	// RW 0x89033C); the loop compares the two pointers (RW 0x890328 / 0x890431) and steps by the entry's 8 bytes (RW 0x89041E). An entry with a bone
+	// whose object has a drawable (RW 0x89034B tests the string's length, RW 0x890356 the drawable) plays at the bone: the drawable's bone transform
+	// (RW 0x672B5B, the result not tested; the local matrix at RW 0x890366 .. 0x8903B2 starts as the identity, RW 0xBd1908 = 1.0) and
+	// FXList::doFXPos(fx, its translation, the transform, 0 speed, no secondary) (RW 0x494615, its 5 arguments pushed at RW 0x8903DF .. 0x890403);
+	// any other entry: FXList::doFXObj(fx, the object, no secondary) (RW 0x4B1B5A, RW 0x89040D).
+	for (std::size_t i = 0; i < m_data->m_fireFXList.size(); ++i)
+	{
+		const FlammableUpdateModuleData::FireFX &fire = m_data->m_fireFXList[i];
+		FXEvent e = FXEventLog::objectEvent(FXEvent::OBJECT_FX, "FlammableUpdate FireFXList", logic.getFrame(), fire.fxList, *obj);
+		e.bone = fire.bone.empty() ? nullptr : &fire.bone; // RW 0x89034B: no bone takes the object path, as the client plays it
+		logic.fxEvents().emit(e);
 	}
 	if (m_data->m_customAnimFrames > 0)
 	{
