@@ -10,6 +10,7 @@
 #include "Common/XferLoad.h"
 #include "Common/XferSave.h"
 #include "GameLogic/Module/FadeAndDieOrnamentUpdate.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/ObjectCreationList.h"
 
 #include <cmath>
@@ -235,5 +236,50 @@ TEST_CASE("LOCAL-105 FadeAndDieOrnamentUpdate: xfer round-trip preserves parent,
 	std::vector<std::uint8_t> truncated = save.data();
 	truncated.pop_back();
 	XferLoad bad(truncated);
+	CHECK_THROWS_AS(mod->xfer(bad), XferException);
+}
+
+TEST_CASE("LOCAL-105 FadeAndDieOrnamentUpdate: xfer loads legacy v1 UnportedUpdateModule payload and resets fields (RW 0x007A7796, RW 0x008A7734)")
+{
+	Local105World cw;
+	const std::string err = cw.w.load(kOrnamentIni, INI_LOAD_OVERWRITE, "local105_v1.ini");
+	REQUIRE_MESSAGE(err.empty(), err);
+
+	Object *parent = cw.unit("Local105Parent", 'A', 100.0f, 100.0f);
+	Object *orn = cw.unit("Local105OrnamentStatic", 'A', 100.0f, 100.0f);
+	FadeAndDieOrnamentUpdate *mod = findOrnament(*orn);
+	REQUIRE(mod != nullptr);
+	mod->setParent(parent);
+
+	for (int i = 0; i < 3; ++i) cw.logic->runLogicFrame();
+	REQUIRE(mod->parentId() == parent->getID());
+	REQUIRE(mod->envelopeState() == OrnamentEnvelopeData::STATE_DECAY);
+	REQUIRE(mod->opacity() == 1.0f);
+
+	// Produce a real legacy v1 payload from UnportedUpdateModule::xfer (version 1 + UpdateModule + uint32_t m_calls).
+	UnportedUpdateModule legacy(orn, nullptr, MODULEINTERFACE_UPDATE);
+	legacy.update();
+	legacy.update();
+	XferSave v1Save;
+	legacy.xfer(v1Save);
+	REQUIRE(!v1Save.data().empty());
+	CHECK(v1Save.data().front() == 1);
+
+	XferLoad v1Load(v1Save.data());
+	mod->xfer(v1Load);
+	CHECK(v1Load.atEnd());
+	CHECK(mod->parentId() == INVALID_ID);
+	CHECK(mod->getParentObject() == nullptr);
+	CHECK(mod->opacity() == 0.0f);
+	CHECK(mod->envelopeState() == OrnamentEnvelopeData::STATE_INITIAL_DELAY);
+
+	// Verify v2 version byte and rejection of future version 3.
+	XferSave v2Save;
+	mod->xfer(v2Save);
+	std::vector<std::uint8_t> future = v2Save.data();
+	REQUIRE(!future.empty());
+	CHECK(future.front() == 2);
+	future.front() = 3;
+	XferLoad bad(future);
 	CHECK_THROWS_AS(mod->xfer(bad), XferException);
 }

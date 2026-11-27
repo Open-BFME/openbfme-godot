@@ -242,11 +242,12 @@ void FadeAndDieOrnamentUpdate::crc(StateHasher &hasher) const
 // and also preserves envelope runtime state (elapsedFrames, state).
 void FadeAndDieOrnamentUpdate::xfer(Xfer &x)
 {
-	const XferVersion ver = SnapshotXfer::version(x, 2, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
 	xferUpdateModule(x);
-	if (ver == 1)
+	if (v.current < 2)
 	{
-		unsigned legacyCalls = 0;
+		std::uint32_t legacyCalls = 0;
 		x.xferUnsignedInt(&legacyCalls);
 		m_parentId = INVALID_ID;
 		m_opacity = 0.0f;
