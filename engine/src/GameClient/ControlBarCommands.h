@@ -109,6 +109,17 @@ enum GUICommandType
 // lane QA-1: the retail name of a GUICommandType value (the Command token of CommandButton INI, RW 0xDA4D10); "" when out of range
 const char *GUICommandName(int command);
 
+// RW 0xC2BA90 (TheButtonBorderTypeNames, 6 names)
+enum ButtonBorderType
+{
+	BUTTON_BORDER_NONE = 0,
+	BUTTON_BORDER_BUILD = 1,
+	BUTTON_BORDER_UPGRADE = 2,
+	BUTTON_BORDER_ACTION = 3,
+	BUTTON_BORDER_SYSTEM = 4,
+	BUTTON_BORDER_ALTERED = 5,
+};
+
 
 // RW 0xDA4C88 (TheCommandOptionNames: bit = index)
 enum CommandOption : std::uint32_t
@@ -166,7 +177,9 @@ public:
 	bool m_affectsAllies = false;
 	std::vector<std::string> m_unitSpecificSound2; // BFME1 secondary command voice
 	std::vector<std::string> m_unitSpecificSound, m_setAutoAbilityUnitSound, m_unsetAutoAbilityUnitSound; ///< +0xC8 / +0xD4 / +0xE0 (S-200)
-	bool m_doubleClick = false, m_radial = false, m_inPalantir = false, m_showProductionCount = false; ///< +0x100 .. +0x104
+	bool m_doubleClick = false, m_radial = false, m_inPalantir = false; ///< +0x100 .. +0x102
+	bool m_altered = false;                   ///< RW +0x103 runtime altered state (ctor RW 0x75D662)
+	bool m_showProductionCount = false;       ///< +0x104
 	bool m_isClickable = true, m_showButton = true, m_requiresValidContainer = false; ///< +0x105 .. +0x107
 	int m_requireLevel = 0;                   ///< +0x108
 	bool m_autoAbility = false;               ///< +0x10C
@@ -187,6 +200,11 @@ public:
 	int m_createAHeroUICostIfSelected = 0;    ///< +0x2DC
 
 	bool hasOption(std::uint32_t option) const { return (m_options & option) != 0; }
+	// RW 0x75CBA5: returns BUTTON_BORDER_ALTERED if m_altered is set, else m_commandButtonBorder
+	int getButtonBorderType() const { return m_altered ? BUTTON_BORDER_ALTERED : m_commandButtonBorder; }
+	void setAltered(bool altered) { m_altered = altered; }
+	bool isAltered() const { return m_altered; }
+	int commandButtonBorder() const { return m_commandButtonBorder; }
 	// RW 0x75D1DC: the template of the final override
 	const ThingTemplate *getThingTemplate() const;
 	const CommandButton *getFinalOverride() const;

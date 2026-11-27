@@ -461,6 +461,8 @@ public:
 	// RW 0x68C327: the ProductionUpdate's queue interface, or null
 	ProductionUpdateInterface *getProductionUpdate() const;
 	BehaviorModule *findModuleByTag(NameKeyType tagKey) const;
+	// RW 0x691526: the first special power module interface whose template matches powerType (or null)
+	const class SpecialPowerModuleInterface *findSpecialPowerModuleInterface(int powerType) const;
 	// lane HORDE-2 (RW 0x68C0C5, the formation swap): `replacement` takes the place of `old` in the module list and becomes the cached contain when it is one; the old module
 	// is returned (the caller destroys it after the scheduler let go of it)
 	std::unique_ptr<BehaviorModule> friend_replaceModule(BehaviorModule *old, std::unique_ptr<BehaviorModule> replacement);

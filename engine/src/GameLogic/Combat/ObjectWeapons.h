@@ -162,8 +162,8 @@ public:
 	// RW 0x69213E: starts the pre-attack of the current weapon (no-op when the weapon has none or is not due)
 	void preFireCurrentWeapon(const Object *victim, const Coord3D *pos);
 	// lane FX-3: the target record RW 0x69213E writes before its weapon test (Object +0x3A8 .. +0x3B0 the victim's position or the given position, +0x3B4
-	// the victim's id or 0; zeroed by the Object constructor, RW 0x699BB6). Read only by the client: the draw scripts' CurDrawableIsCurrentTargetKindof
-	// (RW 0x73667D) and CurDrawableGetCurrentTargetBearing (RW 0x734A75). No logic code reads it, so it is not part of the state hash.
+	// the victim's id or 0; zeroed by the Object constructor, RW 0x699BB6). Read by the client, the draw scripts' CurDrawableIsCurrentTargetKindof
+	// (RW 0x73667D) and CurDrawableGetCurrentTargetBearing (RW 0x734A75), and in the logic by AimWeaponBehavior (RW 0x85E38F) only, whose crc hashes the position.
 	const Coord3D &drawTargetPosition() const { return m_drawTargetPos; }
 	ObjectID drawTargetID() const { return m_drawTargetID; }
 	// RW 0x69200A (victim) / 0x6920AD (position): fires the current weapon; true when the clip emptied and reloaded at once

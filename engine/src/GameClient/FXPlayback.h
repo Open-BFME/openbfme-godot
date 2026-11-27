@@ -97,6 +97,10 @@ public:
 	// Defines the GameData macros, then loads Data\INI\FXParticleSystem.ini and Data\INI\FXList.ini (the files of the retail
 	// subsystem legend). Returns the errors (empty = success); nothing is silently skipped.
 	std::vector<std::string> loadRetailData();
+	// PORT-330 (S-190): the parse-time answers of the game's TheAudio / TheEva tables (MakeWorldFXListParseServices), installed on this
+	// playback's FXList store before the FX files are parsed; the live game sets it right after its object world's load. Unset: the store keeps
+	// the names unvalidated and reports them (FXListStore::unverified). Not owned; must outlive the parse.
+	void setParseServices(FXListParseServices *services) { m_lists.setParseServices(services); }
 
 	// Loads INI text (FXParticleSystem / FXList blocks) as a file named `name` into the stores (tests, mods); returns the errors.
 	std::vector<std::string> loadIniText(const std::string &name, const std::string &text);

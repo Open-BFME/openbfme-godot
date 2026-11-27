@@ -440,7 +440,8 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 				const bool witchKing = hero == "MordorWitchKingOnFellBeast";
 				// pin: merge queue q64 (as above): ordered, Drogoth 4 strikes (3); Khamul and Morgomir 5 strikes, 1500 health, 20 of 20 killed (1425, 19); the
 				// Witch-king 6 strikes, 1350 health, 17 killed (1500, 19)
-				CHECK(ord.shots == (drogoth ? 4u : witchKing ? 6u : 5u));
+				// pin: merge queue q66 (measured once on the merged tree and at each merge point; #338's idle stance countdown, RW 0x7553AB / 0x743864: a Battle / HoldGround / Porcupine unit idle after a fight or a move guards where it stands again, moves the AI game, #363 keeps it): ordered, Khamul and Morgomir 4 strikes (5), 1500 health, 20 of 20 killed; Drogoth and the Witch-king unchanged
+				CHECK(ord.shots == (drogoth ? 4u : witchKing ? 6u : 4u));
 				CHECK(ord.lost == (drogoth ? 1500.0f : witchKing ? 1350.0f : 1500.0f));
 				CHECK(ord.membersKilled == (drogoth ? 20u : witchKing ? 17u : 20u));
 				continue;

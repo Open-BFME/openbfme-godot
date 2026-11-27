@@ -159,6 +159,8 @@ void MapObjectRuntime::createDrawModules(const MapObjectDrawables &drawables, si
 			if (const W3DTreeDrawModuleData *t = dynamic_cast<const W3DTreeDrawModuleData *>(m.data))
 			{
 				p.textureName = t->m_textureName;
+				// RW 0x4E8BDC .. 0x4E8C1B (shrub buffer) and RW 0x4EC976 .. 0x4EC9B5 (tree buffer) key tree types by (ModelName, TextureName)
+				++m_report.distinctTreeTypes[{ AsciiStringUtil::lowered(m.model), AsciiStringUtil::lowered(t->m_textureName) }];
 			}
 			break;
 		case W3D_DRAWKIND_PROP:
