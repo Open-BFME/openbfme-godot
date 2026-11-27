@@ -1167,6 +1167,33 @@ void GameLogic::dispatchScriptEvent(int slot, Object &self, const LuaEventArgs &
 }
 
 // lane NUGGET-1: RW 0x735F53 for an event found by name (see GameLogic.h)
+// RW 0x625759 GameLogic::deselectObject(obj, playerMask, affectClient)
+void GameLogic::deselectObject(Object &obj, std::uint32_t playerMask, bool affectClient)
+{
+	if (playerMask == 0)
+	{
+		return; // RW 0x625768
+	}
+	const ObjectID id = obj.getID();
+	for (int i = 0; i < m_players.getPlayerCount() && i < 32; ++i)
+	{
+		Player *p = m_players.getNthPlayer(i);
+		if (!p || ((playerMask >> i) & 1u) == 0)
+		{
+			continue;
+		}
+		std::vector<ObjectID> &sel = p->selection();
+		sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
+		if (affectClient)
+		{
+			if (ObjectClientHooks *c = obj.clientHooks())
+			{
+				c->deselectDrawable(obj);
+			}
+		}
+	}
+}
+
 void GameLogic::dispatchNamedScriptEvent(const std::string &name, Object &self, const LuaEventArgs &args)
 {
 	if (m_namedScriptEventProc)

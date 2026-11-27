@@ -105,6 +105,9 @@ public:
 	void setIndestructible(bool on) override { m_indestructible = on; } // lane SCRIPT-2 (RW 0x8C3326)
 	bool isIndestructible() const override { return m_indestructible; }
 	void attemptHealing(DamageInfo &info) override;
+	// TOP20 #21 (ActiveBody.cpp): the burning death's cap test (RW 0x8C4169 .. 0x8C41DD) and the capped hit's tail (RW 0x8C476C .. 0x8C47BD)
+	bool burningDeathCaps(const Object &obj, int damageType, const Object *container, const class ContainModuleInterface *hordeHelper) const;
+	void startBurningDeath(class ContainModuleInterface *hordeHelper);
 	float estimateDamage(const DamageInfoInput &input) const override;
 	float getDodgePercent() const override { return m_data->m_dodgePercent; }
 	std::string getGrabObjectName() const override { return m_data->m_grabObject; } // RW 0x8C281E (lane BACKLOG-1)

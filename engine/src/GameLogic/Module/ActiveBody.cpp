@@ -32,6 +32,10 @@
 #include "Common/AsciiString.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AI/AIStateMachine.h"
+#include "GameLogic/FXEvents.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Object/Object.h"
 
 #include <cstddef>
@@ -673,9 +677,30 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 		}
 	}
 	const float previous = m_currentHealth;
+	// TOP20 #21: the burning death's body half (BurningDeathBehavior + 0x51, BurningDeathFX + 0x54); its AI half is AIBurningDeathState
+	bool clipped = false;                          // RW EBP - 0x11
+	ContainModuleInterface *hordeHelper = nullptr; // RW EBP - 0x2C
 	if (amount > 0.0f || info.m_input.m_kill)
 	{
-		// (10) the burning death fire cap is stop S-322 (the burn module and the status masks are not ported); (11) kill takes the whole health
+		// (10) RW 0x8C4107 .. 0x8C411F: a contained object's container's horde interface (its contain + 0x258, slot 0x7C); RW 0x8C4169 .. 0x8C4214: the cap
+		Object *outer = obj.getContainedBy();
+		if (outer)
+		{
+			ContainModuleInterface *c = outer->getContain();
+			hordeHelper = c && c->getHordeContainInterface() ? c : nullptr;
+		}
+		if (burningDeathCaps(obj, type, outer, hordeHelper))
+		{
+			// RW 0x8C41DF .. 0x8C4214: health (vslot 0x10, x87) - 1.0f (RW 0xBD1908) stored as a float; the smaller of it and the amount; a change marks the hit
+			const float limit = SimMath::subf32(getHealth(), 1.0f);
+			const float capped = limit > amount ? amount : limit; // fcompi; ja keeps the amount
+			if (capped != amount)                                  // ucomiss; lahf; test ah, 0x44; jnp
+			{
+				amount = capped;
+				clipped = true;
+			}
+		}
+		// (11) kill takes the whole health (RW 0x8C4218, after the cap: a capped kill stays capped and does not die, as RW)
 		if (info.m_input.m_kill)
 		{
 			amount = m_currentHealth;
@@ -737,15 +762,16 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 		{
 			notifyDamageStateChange(&info, stateBefore, m_curDamageState);
 		}
-		// (18) death: health <= 0 and the hit took health
-		if (m_currentHealth <= 0.0f && previous > 0.0f)
+		// (18) death: health <= 0 and the hit took health; TOP20 #21, RW 0x8C458A .. 0x8C45C0: a capped hit scores the kill too (RW 0x6955BC(obj, 1)) and
+		// skips the death (the unit dies when its burning death ends)
+		if (clipped || (m_currentHealth <= 0.0f && previous > 0.0f))
 		{
 			if (Object *killer = logic.findObjectByID(info.m_input.m_sourceID))
 			{
 				killer->scoreTheKill(obj);
 			}
 			// RW 0x8C4593: RespawnBody owns the death callback when RespawnUpdate exists.
-			if (!dynamic_cast<RespawnUpdate *>(obj.findModule("RespawnUpdate")))
+			if (!clipped && !dynamic_cast<RespawnUpdate *>(obj.findModule("RespawnUpdate")))
 			{
 				DieModuleInterface::Event event;
 				event.sourceId = info.m_input.m_sourceID;
@@ -775,6 +801,71 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 	}
 	// (19) doDamageFX (RW 0x8C2F02, lane FX-2)
 	doDamageFX(info);
+	if (clipped)
+	{
+		startBurningDeath(hordeHelper);
+	}
+}
+
+// TOP20 #21, RW 0x8C4169 .. 0x8C41DD: the cap applies to an object with an AI (+ 0x260) whose body data has BurningDeathBehavior (+ 0x51), none of the statuses
+// of RW 0xDE9B14 (built by RW 0x85189C(0, 0x3A, 0x3D, 0x5A): INSIDE_GARRISON, ENCLOSED, IS_LEAVING_FACTORY; test RW 0x75CDC4 on Object + 0x94), none of the
+// model conditions of RW 0xDE9B28 (RW 0x665074(0, 0x81, 0x67, 0x69): STONED, CLIMBING, RAPPELLING; test RW 0x6632E9 on Object + 0x10C), a hit of type 6 (FLAME)
+// or 0x17 (LOGICAL_FIRE), no stunned physics (+ 0x264, its + 0x5C), and either no container or a container with a horde interface
+bool ActiveBody::burningDeathCaps(const Object &obj, int damageType, const Object *container, const ContainModuleInterface *hordeHelper) const
+{
+	if (!obj.getAIUpdateInterface() || !m_data->m_burningDeathBehavior)
+	{
+		return false;
+	}
+	static const unsigned kInsideGarrison = (unsigned)CombatNames::status("INSIDE_GARRISON");      // 0x3A
+	static const unsigned kEnclosed = (unsigned)CombatNames::status("ENCLOSED");                    // 0x3D
+	static const unsigned kLeavingFactory = (unsigned)CombatNames::status("IS_LEAVING_FACTORY");     // 0x5A
+	if (obj.testStatus(kInsideGarrison) || obj.testStatus(kEnclosed) || obj.testStatus(kLeavingFactory))
+	{
+		return false;
+	}
+	static const int kStoned = CombatNames::modelCondition("STONED");         // 0x81
+	static const int kClimbing = CombatNames::modelCondition("CLIMBING");     // 0x67
+	static const int kRappelling = CombatNames::modelCondition("RAPPELLING"); // 0x69
+	if (obj.testModelCondition(kStoned) || obj.testModelCondition(kClimbing) || obj.testModelCondition(kRappelling))
+	{
+		return false;
+	}
+	if (damageType != DAMAGE_FLAME && damageType != DAMAGE_LOGICAL_FIRE) // RW 0x8C41B8 / 0x8C41BD: 6, 0x17
+	{
+		return false;
+	}
+	if (const PhysicsBehavior *phys = obj.physicsModule(); phys && phys->isStunned())
+	{
+		return false; // RW 0x8C41C2 .. 0x8C41D3
+	}
+	return !container || hordeHelper; // RW 0x8C41D5 .. 0x8C41DD
+}
+
+// TOP20 #21, RW 0x8C476C .. 0x8C47BD (after doDamageFX and the repulsor status): a capped hit lets the object out of its horde (the horde interface's slot 0x38,
+// RW 0x87393E), leaves a locked temporary state (RW 0x663082 -> 0x66309C), makes AI command 0x53 from CMD_FROM_AI (RW 0x8C3EC3(2): AIBurningDeathState) and plays
+// BurningDeathFX (+ 0x54) on the object with no other object (FXList::doFXObj RW 0x4B1B5A(fx, obj, 0))
+void ActiveBody::startBurningDeath(ContainModuleInterface *hordeHelper)
+{
+	Object &obj = *getObject();
+	if (hordeHelper)
+	{
+		hordeHelper->removeFromContain(&obj); // RW 0x8C4779 .. 0x8C477C
+	}
+	if (AIUpdateInterface *ai = obj.getAIUpdateInterface())
+	{
+		if (ai->stateMachineOrNull() && ai->stateMachineOrNull()->temporaryStateLocked())
+		{
+			ai->emotionLeaveAIState(); // RW 0x8C477F .. 0x8C4792
+		}
+		ai->aiBurningDeath(CMD_FROM_AI); // RW 0x8C4797 .. 0x8C479E
+	}
+	const std::string &fx = m_data->m_burningDeathFX;
+	if (FXEventLog::isFXName(fx)) // RW 0x8C47AA .. 0x8C47AF: none ("None" or unset) plays nothing
+	{
+		GameLogic &logic = obj.logic();
+		logic.fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, "BurningDeathFX", logic.getFrame(), fx, obj));
+	}
 }
 
 // RW 0x8C2F02 doDamageFX (lane FX-2). The body's DamageFX (+0xFC) is the one of the armour set chosen for the object's armour flags (the ArmorSet's DamageFX
