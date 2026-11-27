@@ -203,7 +203,9 @@ private:
 		kFlung = 4,     ///< bit 2: FlingForce threw the body (its timers wait while it flies)
 		kLanded = 8     ///< bit 3: the flung body is down
 	};
-	void beginSlowDeath(const DieModuleInterface::Event &event); // RW 0x860E93 (SlowDeathBehaviorInterface slot 0)
+protected:
+	virtual void beginSlowDeath(const DieModuleInterface::Event &event); // RW 0x860E93 (SlowDeathBehaviorInterface slot 0)
+private:
 	void doPhase(SlowDeathPhase phase);
 	float heightAboveTerrain() const;
 	const SlowDeathBehaviorModuleData *m_data;
