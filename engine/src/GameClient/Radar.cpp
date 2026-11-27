@@ -3,6 +3,71 @@
 
 #include "GameClient/Radar.h"
 
+Radar *TheRadar = nullptr; // RW 0xDE4AB8 / BFME2 0x00DEC2D4
+
+Radar::Radar() : m_ctx(nullptr)
+{
+	TheRadar = this;
+}
+
+Radar::Radar(HudContext &ctx) : m_ctx(&ctx)
+{
+	TheRadar = this;
+}
+
+Radar::~Radar()
+{
+	if (TheRadar == this)
+	{
+		TheRadar = nullptr;
+	}
+	for (RadarMarker *m : m_markers)
+	{
+		if (m)
+		{
+			m->m_radar = nullptr;
+			if (m->m_released)
+			{
+				delete m;
+			}
+		}
+	}
+	m_markers.clear();
+}
+
+// RW 0x6D8711 / BFME2 0x002D76BB
+void RadarMarker::DeleteReference()
+{
+	if (--m_refCount <= 0)
+	{
+		m_released = true;
+		if (!m_radar)
+		{
+			delete this;
+		}
+	}
+}
+
+// vslot 12 / 0x30, RW 0x44F0FA / BFME2 0x4C9CF7
+RadarMarker *Radar::createMarker(const std::string &markerType)
+{
+	auto marker = new RadarMarker(this, markerType);
+	m_markers.push_back(marker);
+	return marker;
+}
+
+void Radar::removeMarker(RadarMarker *marker)
+{
+	for (auto it = m_markers.begin(); it != m_markers.end(); ++it)
+	{
+		if (*it == marker)
+		{
+			m_markers.erase(it);
+			break;
+		}
+	}
+}
+
 #include "Common/ArchiveFileSystem.h"
 #include "Common/Player.h"
 #include "GameClient/TGAFile.h"
@@ -28,7 +93,7 @@
 
 bool Radar::setupFromTerrain()
 {
-	const TerrainLogic *t = m_ctx.logic.terrain();
+	const TerrainLogic *t = m_ctx->logic.terrain();
 	if (!t)
 	{
 		m_ready = false;
@@ -61,7 +126,7 @@ bool Radar::setupFromTerrain()
 		for (int x = 0; x < kCells; ++x)
 		{
 			const float wx = (float)x * xSample, wy = (float)y * ySample;
-			const float ground = m_ctx.logic.getGroundHeight(wx, wy);
+			const float ground = m_ctx->logic.getGroundHeight(wx, wy);
 			const int z = (int)ground;
 			float waterZ = 0.0f;
 			if (!(t->getStandingWaterHeight(wx, wy, waterZ) && waterZ > ground))
@@ -119,7 +184,7 @@ const std::vector<std::uint8_t> &Radar::terrainImage(int size)
 		{
 			float wx, wy;
 			radarToWorld((float)x + 0.5f, (float)y + 0.5f, size, wx, wy);
-			const float v = m_ctx.logic.getGroundHeight(wx, wy);
+			const float v = m_ctx->logic.getGroundHeight(wx, wy);
 			h[(size_t)y * (size_t)size + (size_t)x] = v;
 			lo = std::min(lo, v);
 			hi = std::max(hi, v);
@@ -243,8 +308,8 @@ void Radar::drawRect(int x, int y, int w, int h, int ul[2], int lr[2]) const
 
 std::vector<std::int16_t> Radar::shroudAlpha() const
 {
-	const ShroudManager *sm = m_ctx.logic.shroud();
-	const Player *local = m_ctx.localPlayer();
+	const ShroudManager *sm = m_ctx->logic.shroud();
+	const Player *local = m_ctx->localPlayer();
 	if (!m_ready || !sm || !sm->displayed() || !local)
 	{
 		return {};
@@ -322,21 +387,21 @@ std::vector<Radar::Blip> Radar::blips(int size) const
 	{
 		return out;
 	}
-	for (Object *o = m_ctx.logic.getFirstObject(); o; o = o->getNextObject())
+	for (Object *o = m_ctx->logic.getFirstObject(); o; o = o->getNextObject())
 	{
 		Player *owner = o->getControllingPlayer();
 		if (o->isDestroyed() || o->getContainedBy() || !owner || !owner->hasTeamColor() || !HudObjects::isSelectable(*o))
 		{
 			continue; // map props, neutral scenery and the horde members (the horde is the blip) are not on the radar
 		}
-		if (ShroudManager *sm = m_ctx.logic.shroud())
+		if (ShroudManager *sm = m_ctx->logic.shroud())
 		{
-			if (sm->displayed() && m_ctx.localPlayer() && sm->clientObjectStatus(*o, m_ctx.localPlayer()->getPlayerIndex()) == OBJECTSHROUD_SHROUDED)
+			if (sm->displayed() && m_ctx->localPlayer() && sm->clientObjectStatus(*o, m_ctx->localPlayer()->getPlayerIndex()) == OBJECTSHROUD_SHROUDED)
 			{
 				continue; // VIS-1: the local player cannot see it
 			}
 		}
-		if (InvisibilityManager::clientLook(*o, m_ctx.localPlayer()) == 5)
+		if (InvisibilityManager::clientLook(*o, m_ctx->localPlayer()) == 5)
 		{
 			continue; // lane STEALTH-1: an enemy's invisible, undetected object is not drawn (RW 0x81AA03 state 5), nor on the radar
 		}
@@ -344,7 +409,7 @@ std::vector<Radar::Blip> Radar::blips(int size) const
 		worldToRadar(o->getPosition()->x, o->getPosition()->y, size, b.x, b.y);
 		b.color = owner->getPlayerColor() | 0xFF000000u;
 		b.radius = o->isKindOfName("STRUCTURE") ? 3 : 2;
-		b.mine = owner == m_ctx.localPlayer();
+		b.mine = owner == m_ctx->localPlayer();
 		b.object = o->getID();
 		out.push_back(b);
 	}
@@ -382,15 +447,15 @@ unsigned long long Radar::shroudVersion(const ShroudView *view)
 
 unsigned long long Radar::shroudVersion() const
 {
-	const ShroudManager *sm = m_ctx.logic.shroud();
+	const ShroudManager *sm = m_ctx->logic.shroud();
 	return sm ? sm->stats().edges * 2 + (sm->displayed() ? 1 : 0) : 0;
 }
 
 std::vector<std::uint8_t> Radar::shroudedImage(int size)
 {
 	std::vector<std::uint8_t> img = terrainImage(size);
-	const ShroudManager *sm = m_ctx.logic.shroud();
-	const Player *local = m_ctx.localPlayer();
+	const ShroudManager *sm = m_ctx->logic.shroud();
+	const Player *local = m_ctx->localPlayer();
 	if (!sm || !sm->displayed() || !local || img.size() < (size_t)size * (size_t)size * 4)
 	{
 		return img;
@@ -419,12 +484,12 @@ bool Radar::viewBox(int size, float out[8]) const
 	{
 		return false;
 	}
-	const ICoord2D s = m_ctx.view.size();
+	const ICoord2D s = m_ctx->view.size();
 	const ICoord2D corners[4] = { { 0, 0 }, { s.x, 0 }, { s.x, s.y }, { 0, s.y } };
 	for (int i = 0; i < 4; ++i)
 	{
 		Coord3D w;
-		if (!m_ctx.view.screenToTerrain(corners[i], m_ctx.logic, w, 30000.0f))
+		if (!m_ctx->view.screenToTerrain(corners[i], m_ctx->logic, w, 30000.0f))
 		{
 			return false;
 		}
@@ -458,7 +523,8 @@ std::vector<std::string> Radar::acceptanceStops()
 		"(A8R8G8B8), so the copy happens; an art TGA other than uncompressed 24/32-bit is refused with an error (retail's texture loader takes it)",
 		"[S-2450] radar objects (RADAR-1): INFERENCE: within a radar list and priority the newer object (the higher id) is drawn first (RW 0x6D9042 inserts a new "
 		"object before the older ones of its priority); re-adds by capture, disguise or the map boundary are not tracked",
-		"[S-2451] radar markers (RADAR-1): RadarMarkerClientUpdate (crates: PingOneRing / PingBeacon) and the marker list TheRadar moves (RW 0x44EDAE) are not ported",
+		"[S-2451] radar markers (RADAR-1, narrowed): RadarMarkerClientUpdate (crates: PingOneRing / PingBeacon) and the marker list TheRadar moves (RW 0x44EDAE) are "
+		"ported (Radar::createMarker, drawEvents' marker loop); no Drawable calls the module's clientUpdate yet, so a live game creates no marker",
 		"[S-2452] radar events (RADAR-1, narrowed): the 64 events (RW 0x6D93EB, tryEvent RW 0x6D9B4D, expiry RW 0x6D8E2B), the attacks of the local player's "
 		"objects (RW 0x67B4B7 -> tryUnderAttackEvent RW 0x6D9BF3) and the Palantir pings (RW 0x44DE58: CreateRadarPing / MoveRadarPing / FadeOutRadarPing) are "
 		"ported; lane BACKLOG3: the scripts' radar event actions (RW 0x7BC221 / 0x7BC250 / 0x7C0B61, with TheEva's position RW 0x5DD1F3 for the Space jump), "
@@ -1025,7 +1091,7 @@ bool Radar::viewBoxCorners(float ulx, float uly, int width, int height, float ou
 	// RW 0x44D2C4: TheTacticalView vslot 0x34, ZH View::getScreenCornerWorldPointsAtZ: the view's corners (0, 0), (w, 0), (w, h), (0, h) at the terrain average
 	// height (Radar + 0x1C). INFERENCE (stop S-2455): retail rebuilds the box's shape only when the zoom or the angle changed (RW 0x450274 .. 0x4502CB) and moves
 	// it with the camera's position (RW 0x44D4A9 .. 0x44D4C3); here the corners are projected at every draw
-	const ICoord2D s = m_ctx.view.size();
+	const ICoord2D s = m_ctx->view.size();
 	const ICoord2D corners[4] = { { 0, 0 }, { s.x, 0 }, { s.x, s.y }, { 0, s.y } };
 	const float kx = (m_maxX - m_minX) * 0.0078125f, ky = (m_maxY - m_minY) * 0.0078125f; // RW 0xBDAD58
 	for (int i = 0; i < 4; ++i)
@@ -1035,7 +1101,7 @@ bool Radar::viewBoxCorners(float ulx, float uly, int width, int height, float ou
 		// the terrain average near the map's edge) still gives its point. The box used to vanish in those views (a rejected corner dropped it). INFERENCE: a
 		// ray parallel to the plane (d.z == 0: Find_X_At_Z divides by zero in retail) draws no box
 		Coord3D o, d;
-		if (!m_ctx.view.screenToRay(corners[i], o, d) || d.z == 0.0f)
+		if (!m_ctx->view.screenToRay(corners[i], o, d) || d.z == 0.0f)
 		{
 			return false;
 		}
@@ -1292,9 +1358,12 @@ void Radar::noteAttacks(GameLogic &logic)
 		{
 			if (tryUnderAttackEvent(*o->getPosition()))
 			{
-				m_ctx.ui.requestAttackFlash();            // RW 0x6D9BF3 -> RW 0x71C7E4: the control bar's blink
-				m_ctx.ui.message(underAttackLabel(*o));   // lane BACKLOG3: RW 0x6D9BF3's message
-				m_ctx.ui.requestMiscSound(underAttackSound(*o)); // RW 0x6D9BF3: MiscAudio 0 / 1 (NoSound in RotWK's data)
+				if (m_ctx)
+				{
+					m_ctx->ui.requestAttackFlash();            // RW 0x6D9BF3 -> RW 0x71C7E4: the control bar's blink
+					m_ctx->ui.message(underAttackLabel(*o));   // lane BACKLOG3: RW 0x6D9BF3's message
+					m_ctx->ui.requestMiscSound(underAttackSound(*o)); // RW 0x6D9BF3: MiscAudio 0 / 1 (NoSound in RotWK's data)
+				}
 			}
 		}
 	}
@@ -1389,7 +1458,10 @@ void Radar::drawEvents(int ulx, int uly, int width, int height, std::vector<Ping
 		{
 			if (e.type != RADAR_EVENT_BEACON)
 			{
-				m_ctx.ui.requestMiscSound("GenericRadarEvent");
+				if (m_ctx)
+				{
+					m_ctx->ui.requestMiscSound("GenericRadarEvent");
+				}
 			}
 			e.soundPlayed = true;
 		}
@@ -1437,6 +1509,67 @@ void Radar::drawEvents(int ulx, int uly, int width, int height, std::vector<Ping
 			fade(p);
 		}
 	}
+	// RW 0x44EDAE / BFME2 0x0004F515: markers update their movie ping positions
+	for (auto it = m_markers.begin(); it != m_markers.end(); )
+	{
+		RadarMarker *marker = *it;
+		if (!marker)
+		{
+			it = m_markers.erase(it);
+			continue;
+		}
+		if (marker->isReleased())
+		{
+			if (marker->pingId() >= 0 && marker->pingId() < (int)m_pings.size())
+			{
+				m_pings[(size_t)marker->pingId()].released = true;
+			}
+			delete marker;
+			it = m_markers.erase(it);
+			continue;
+		}
+		float rx = 0.0f, ry = 0.0f;
+		worldToRadar(marker->position().x, marker->position().y, kCells, rx, ry);
+		rx = std::clamp(rx, 0.0f, (float)(kCells - 1));
+		ry = std::clamp(ry, 0.0f, (float)(kCells - 1));
+		const float px = (float)(rx * width / kCells + ulx);
+		const float py = (float)((kCells - 1 - ry) * height / kCells + uly);
+
+		if (marker->pingId() < 0)
+		{
+			Ping p;
+			p.id = m_nextPingId++;
+			if (m_nextPingId >= 0xFFFF)
+			{
+				m_nextPingId = 0;
+			}
+			p.name = marker->markerType();
+			p.x = px;
+			p.y = py;
+			marker->setPingId((int)m_pings.size());
+			m_pings.push_back(p);
+		}
+		else if (marker->pingId() < (int)m_pings.size())
+		{
+			Ping &p = m_pings[(size_t)marker->pingId()];
+			if (std::fabs((double)(px - p.x)) >= 0.5 || std::fabs((double)(py - p.y)) >= 0.5)
+			{
+				if (p.created)
+				{
+					PingCall c;
+					c.kind = PingCall::Move;
+					c.id = p.id;
+					c.x = px;
+					c.y = py;
+					calls.push_back(c);
+				}
+				p.x = px;
+				p.y = py;
+			}
+		}
+		++it;
+	}
+
 	// the Palantir's update (RW 0x6D7B00 .. 0x6D7B16: every ping of its list): a new ping is created at its last position (RW 0x6D5A9D)
 	for (Ping &p : m_pings)
 	{
@@ -1481,6 +1614,13 @@ void Radar::drawEvents(int ulx, int uly, int width, int height, std::vector<Ping
 		if (e.ping >= 0)
 		{
 			e.ping = moved[(size_t)e.ping];
+		}
+	}
+	for (RadarMarker *marker : m_markers)
+	{
+		if (marker && marker->pingId() >= 0 && marker->pingId() < (int)moved.size())
+		{
+			marker->setPingId(moved[(size_t)marker->pingId()]);
 		}
 	}
 }

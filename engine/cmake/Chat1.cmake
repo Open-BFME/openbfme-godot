@@ -6,6 +6,7 @@ set(OPENBFME_CHAT1_CLIENT_SOURCES
     src/GameClient/InGameUIMessages.cpp                 # the InGameUI message lines (chat lines and GUI notices)
     src/GameClient/GUI/AptScreens/AptInGameChat.cpp     # InGameChat.apt
     src/GameClient/BeaconClientUpdate.cpp               # the multiplayer beacon's client module (minimap pulses, hidden for enemies)
+    src/GameClient/RadarMarkerClientUpdate.cpp          # the radar marker / ping client update module (S-2451)
 )
 set(OPENBFME_CHAT1_TESTS
     tests/test_chat1.cpp

@@ -80,10 +80,49 @@ class Player;
 #include <string>
 #include <vector>
 
+class RadarMarker
+{
+public:
+	RadarMarker(class Radar *radar, const std::string &markerType)
+		: m_radar(radar), m_markerType(markerType)
+	{
+	}
+	virtual ~RadarMarker() = default;
+
+	void setPosition(const Coord3D &pos) { m_worldPos = pos; }
+	const Coord3D &position() const { return m_worldPos; }
+	const std::string &markerType() const { return m_markerType; }
+
+	// RW 0x6D8711 / BFME2 0x002D76BB
+	void DeleteReference();
+
+	int pingId() const { return m_pingId; }
+	void setPingId(int id) { m_pingId = id; }
+	bool isReleased() const { return m_released; }
+
+private:
+	friend class Radar;
+	class Radar *m_radar = nullptr;
+	std::string m_markerType;
+	Coord3D m_worldPos{ 0.0f, 0.0f, 0.0f };
+	int m_refCount = 1;
+	int m_pingId = -1;
+	bool m_released = false;
+};
+
+extern Radar *TheRadar; // RW 0xDE4AB8 / BFME2 0x00DEC2D4
+
 class Radar
 {
 public:
-	explicit Radar(HudContext &ctx) : m_ctx(ctx) {}
+	Radar();
+	explicit Radar(HudContext &ctx);
+	virtual ~Radar();
+
+	// vslot 12 / 0x30, RW 0x44F0FA / BFME2 0x4C9CF7
+	virtual class RadarMarker *createMarker(const std::string &markerType);
+	void removeMarker(class RadarMarker *marker);
+	const std::vector<class RadarMarker *> &markers() const { return m_markers; }
 
 	// the world rectangle the radar shows (the playable map); false when the logic has no terrain
 	bool setupFromTerrain();
@@ -313,6 +352,7 @@ public:
 	static std::vector<std::string> acceptanceStops();
 
 private:
+	std::vector<RadarMarker *> m_markers;
 	std::vector<Event> m_events;
 	RadarEventRecord m_radarEvents[kMaxEvents];
 	int m_nextEvent = 0;               ///< + 0x142C
@@ -331,7 +371,7 @@ private:
 	double m_clockSeconds = 0.0;       ///< lane RADAR-1: render time not yet a whole client frame
 	bool m_forced = false;             ///< Radar + 0x11 (cleared by the reset RW 0x6D8E25, set by every update RW 0x6D8E41)
 	std::vector<std::int16_t> shroudAlphaOf(int countX, int countY, float cell, const std::function<CellShroudStatus(int, int)> &statusOf) const;
-	HudContext &m_ctx;
+	HudContext *m_ctx = nullptr;
 	bool m_ready = false;
 	float m_minX = 0, m_minY = 0, m_maxX = 1, m_maxY = 1;
 	float m_terrainAverageZ = 0.0f; ///< lane RADAR-1 (Radar + 0x1C)
