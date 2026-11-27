@@ -761,6 +761,7 @@ endif()
 # ---- unit tests --------------------------------------------------------------------------
 if(OPENBFME_BUILD_TESTS)
 include(cmake/AudioFixtures.cmake)
+include(cmake/Local132.cmake)
 add_executable(openbfme_tests
     ${OPENBFME_PORT426_TESTS}
     ${OPENBFME_PORT330_TESTS}
@@ -1091,6 +1092,7 @@ add_executable(openbfme_tests
     tests/test_econ_retail.cpp
     tests/test_falsedef_retail.cpp
     tests/test_capcrash1.cpp
+    ${OPENBFME_LOCAL132_TESTS}
     # lane VISIONDEF-1: the vision height bonus's ground reference (Object + 0x1C4)
     tests/test_visiondef1_retail.cpp
     tests/test_local_81.cpp
