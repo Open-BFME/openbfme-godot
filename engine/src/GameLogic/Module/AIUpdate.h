@@ -92,6 +92,7 @@ public:
 	// adds its own fields after the base's. A load goes into the module of the same object, made from the same template
 	void xferAIState(class Xfer &x); ///< the module as one transaction (a refused load leaves it as it was: AIXfer::transaction)
 	virtual void xferAIStateBody(class Xfer &x);
+	virtual void loadPostProcess() {} // RW 0x00667BEF
 	// lane SAVE-4e: the module's part of Object::xfer's module list (obfme:Objects): its own version, then UpdateModule's (the next call frame); every
 	// other field is xferAIState's in obfme:AIWorld (SAVE-4c), which a subclass extends through xferAIStateBody. Native (S-4220: retail's
 	// AIUpdateInterface::xfer RW 0x667416 holds the AI state here)

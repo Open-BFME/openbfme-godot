@@ -182,9 +182,40 @@ void DozerAIUpdate::registerWorkerClass(ModuleFactory &modules)
 	WorkerAIUpdate::registerClass(modules); // lane LUMBER1: the dozer half here, the supply half in WorkerAIUpdate
 }
 
+// RW 0x0088D1AC (dtor) / RW 0x0088D692 (scalar deleting dtor)
 DozerAIUpdate::~DozerAIUpdate()
 {
 	finishBuildingSound(); // RW 0x88D1F6
+}
+
+// RW 0x0088D186 (DozerAIUpdate::loadPostProcess):
+// calls AIUpdateInterface::loadPostProcess (RW 0x00667BEF), then if m_unplacedStructure (+0x568) != 0
+// tail-calls makePhantomStructureInert (RW 0x0088D0D8): clears dangling id if missing, else sets
+// effectively dead (RW 0x0068D950(1)) and removes from world if inWorld (RW 0x0068C18F).
+void DozerAIUpdate::loadPostProcess()
+{
+	AIUpdateInterface::loadPostProcess();
+	if (m_unplacedStructure == INVALID_ID)
+	{
+		return;
+	}
+	Object *self = getObject();
+	if (!self)
+	{
+		return;
+	}
+	GameLogic &logic = self->logic();
+	Object *phantom = logic.findObjectByID(m_unplacedStructure); // RW 0x0088D0ED
+	if (!phantom || phantom->isDestroyed())
+	{
+		m_unplacedStructure = INVALID_ID; // RW 0x0088D0F8
+		return;
+	}
+	phantom->friend_setEffectivelyDead(true); // RW 0x0088D104 -> 0x0068D950(1)
+	if (phantom->isInWorld()) // RW 0x0088D109
+	{
+		logic.friend_containLeaveWorld(*phantom); // RW 0x0088D114 -> 0x0068C18F
+	}
 }
 
 void DozerAIUpdate::onDelete()

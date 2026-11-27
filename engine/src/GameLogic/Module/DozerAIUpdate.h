@@ -162,6 +162,7 @@ public:
 
 	void crc(StateHasher &hasher) const override;
 	void xferAIStateBody(class Xfer &x) override; // lane SAVE-4c (AIUpdateSnapshot.cpp)
+	void loadPostProcess() override; // RW 0x0088D186 -> makePhantomStructureInert RW 0x0088D0D8
 	OBFME_MODULE_XFER(DozerAIUpdate) // lane SAVE-4e: its version and AIUpdateInterface's (its state: xferAIStateBody)
 
 	// RW 0x88CAF5: the base update, the repair validity check, the primary machine; never sleeps

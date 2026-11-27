@@ -120,7 +120,13 @@ void GameLogic::registerSnapshotBlocks()
 				m_aiWorld->xfer(x);
 			}
 		},
-		nullptr, { "pathfinder and AI movers", "objects" });
+		[this]() {
+			if (m_aiWorld)
+			{
+				m_aiWorld->loadPostProcess();
+			}
+		},
+		{ "pathfinder and AI movers", "objects" });
 	add4c("obfme:Shroud", kSaveLoadAndDeepCRC,
 		[this, present](Xfer &x) {
 			XferVersion v{ 1, 1 };
