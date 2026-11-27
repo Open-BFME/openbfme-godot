@@ -68,7 +68,7 @@ public:
 	const ContainedItemsList *getContainedItemsList() const override { return &m_contained; }
 	unsigned getContainCount() const override { return (unsigned)m_contained.size(); }
 	bool addToContain(Object *obj) override;    // RW 0x8674C2
-	void removeFromContain(Object *obj) override; // RW 0x8665BE
+	void removeFromContain(Object *obj, bool exposeStealthUnits = false) override; // RW 0x8665BE
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override; // RW 0x86603B
 	std::uint32_t getPlayerWhoEntered() const override { return m_playerEnteredMask; } // RW 0x5F2DC6, slot 0x144 (lane SCRIPT-4)
 	const ObjectStatusMaskType *getObjectStatusOfContained() const override;
@@ -88,6 +88,7 @@ public:
 	bool isExitBusy() const override { return false; }                                 // RW 0x9188EB
 	int reserveDoorForExit(const Object &obj) override { (void)obj; return 0; }        // RW 0x88B20C
 	void exitObjectViaDoor(Object *obj, int door) override;                            // RW 0x8682D9
+	void exitObjectInAHurry(Object *obj) override;                                     // RW 0x868759
 	// contain slots 0x158 / 0x15C / 0x160 (RW 0x8657D1 / 0x8657B6 / 0x867ACD): where an entering unit walks to and where a rider leaves: the container's position;
 	// a SHIP enters at the pathfinder's shore spot of its position when there is one (RW 0x6EFBB8 from slot 0x158; slot 0x15C asks slot 0x158; lane SHIP-1)
 	bool getEntryPosition(Coord3D &out) const override;
@@ -135,7 +136,7 @@ public:
 	bool isEnclosingContainerFor(const Object &obj) const;
 	bool ridersFireFromContainer() const;
 	// slot 0xA8 RW 0x866675: every rider through RW 0x865EB6 until the list is empty (the derived classes add their own parts)
-	virtual void removeAllContained();
+	virtual void removeAllContained(bool exposeStealthUnits = false);
 	// RW 0x865D3D OpenContain::addOrRemoveObjFromWorld: a rider of an ENCLOSED container leaves the world and its drawable hides; back in, it is teleported to
 	// the container (RW 0x696E63) and shown; the rider's own riders follow when this contain encloses them
 	void addOrRemoveObjFromWorld(Object *obj, bool add);
@@ -194,7 +195,7 @@ protected:
 	// already, or onContaining killed the rider or the container (see the body)
 	bool openContainAdd(Object *obj);
 	// RW 0x8665BE -> 0x865EB6
-	void openContainRemove(Object *obj);
+	void openContainRemove(Object *obj, bool exposeStealthUnits = false);
 	void objectOnContainedBy(Object *rider); // RW 0x6901AE
 	void objectOnRemovedFrom(Object *rider); // RW 0x69024C
 	void processDamageToRider(Object *rider); // RW 0x866B69

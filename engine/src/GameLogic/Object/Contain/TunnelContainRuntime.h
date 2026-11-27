@@ -17,15 +17,16 @@
 //     removeFromContain), isContainedHere RW 0x8811DD, the count RW 0x881072 and the list RW 0x8810AB (the tracker's);
 //   * the create interface RW 0xC5DC9C: onBuildComplete RW 0x8810C9 (once: the tracker's onTunnelCreated RW 0x8FA4C9, + 0x9E5 set);
 //   * update RW 0x8812B0: HordeGarrisonContain's RW 0x87C8DF, then with HealObjects (data + 0x98) the tracker heals every rider (RW 0x8FA359 -> 0x8FA190: a HEALING
-//     hit of MaxHealth / TimeForFullHeal per frame, the whole MaxHealth once the rider has been inside TimeForFullHeal frames), the tracker's nemesis;
+//     hit of MaxHealth / TimeForFullHeal per frame, the whole MaxHealth once the rider has been inside TimeForFullHeal frames), and refreshes the tracker's
+//     nemesis from the tunnel's recent enemy attacker (RW 0x881302 .. 0x88135F -> RW 0x8FA702);
+//   * the exit interface RW 0xC5DCAC: isExitBusy RW 0x87CE66 (from HordeGarrisonContain), reserveDoorForExit RW 0x88B20C, exitObjectViaDoor RW 0x87D3CA,
+//     exitObjectInAHurry RW 0x868759 (inherited from OpenContain);
 //   * the die interface RW 0x881272 (when the DieMux applies) and onDelete RW 0x881298 (OpenContain's RW 0x86708F first) leave the network (RW 0x88121A): the
 //     tracker's onTunnelDestroyed RW 0x8FA4E8 (the count, the id; the riders that entered by this tunnel now count as entered by the first tunnel left); the
-//     last tunnel lets every rider out (removeAllContained: RotWK's cave-in does not kill, ZH's did); otherwise a HORDE rider whose AI goal is this tunnel and
-//     whose members are not all in yet (horde slot 0xF4 false) is let out here (RW 0x881105). A sale is the same leave (contain slot 0x64 RW 0x8812A8,
-//     below): riders of a sold shaft that is not the last stay in the network.
+//     last tunnel lets every rider out (removeAllContained(false): RotWK's cave-in does not kill, ZH's did); otherwise a HORDE rider whose AI goal is this tunnel and
+//     whose members are all in (horde slot 0xF4) is let out here with exposeStealthUnits = true (RW 0x881105).
 // TunnelTracker (RW Player + 0x308): the tunnel ids + 0x8, the riders + 0x10 (count + 0x18), the tunnel count + 0x1C, the nemesis + 0x20 / + 0x24.
-// NOT PORTED (stop S-1107, TunnelContain::stopLine()): the tracker's nemesis (RW 0x8FA702 / 0x8FA451: read by the AI's tunnel network guard state, not ported),
-// the unload sound (the safe occlusion frame + 0x444 is set since lane OCCLUDE-1), the tunnel network guard AI, the exposed stealth units.
+// NOT PORTED (stop S-1107, TunnelContain::stopLine()): the unload sound (client side; the safe occlusion frame + 0x444 is set since lane OCCLUDE-1).
 
 #pragma once
 
@@ -61,11 +62,15 @@ public:
 	static int containMax(const GameLogic &logic);                                     // RW 0x8FA152
 	bool isValidContainerFor(const Object *obj, bool checkCapacity, const GameLogic &logic) const; // RW 0x8FA240
 	void addToContainList(Object *obj) { m_riders.push_back(obj); }                    // RW 0x8FA4B2
-	void removeFromContain(Object *obj);                                                // RW 0x8FA28C
+	void removeFromContain(Object *obj, bool exposeStealthUnits = false);               // RW 0x8FA28C
 	bool isInContainer(const Object *obj) const;                                        // RW 0x8FA2D7
 	void onTunnelCreated(const Object &tunnel);                                         // RW 0x8FA4C9
 	bool onTunnelDestroyed(const Object &tunnel, GameLogic &logic);                     // RW 0x8FA4E8: true when it was the last
 	void healObjects(float framesForFullHeal, unsigned now);                            // RW 0x8FA359 -> 0x8FA190
+	void updateNemesis(Object *target, GameLogic &logic);                               // RW 0x8FA702
+	Object *getCurNemesis(GameLogic &logic);                                            // RW 0x8FA451 (clears expired/stealthed/dead)
+	ObjectID curNemesisID() const { return m_nemesisID; }
+	unsigned nemesisTimestamp() const { return m_nemesisTimestamp; }
 	unsigned tunnelCount() const { return m_tunnelCount; }
 	const std::list<ObjectID> &tunnelIds() const { return m_tunnelIds; }
 	void crc(StateHasher &hasher) const;
@@ -74,10 +79,12 @@ public:
 	unsigned long long healHits() const { return m_healHits; }
 
 private:
-	std::list<ObjectID> m_tunnelIds; // + 0x08
-	ContainedItemsList m_riders;     // + 0x10
-	unsigned m_tunnelCount = 0;      // + 0x1C
-	unsigned long long m_healHits = 0; // a statistic
+	std::list<ObjectID> m_tunnelIds;       // + 0x08
+	ContainedItemsList m_riders;           // + 0x10
+	unsigned m_tunnelCount = 0;            // + 0x1C
+	ObjectID m_nemesisID = INVALID_ID;     // + 0x20 (RW 0x8FA451 / 0x8FA702)
+	unsigned m_nemesisTimestamp = 0;       // + 0x24
+	unsigned long long m_healHits = 0;     // a statistic
 };
 
 class TunnelContain : public GarrisonContain, public CreateModuleInterface
@@ -106,10 +113,10 @@ public:
 	// ---- ContainModuleInterface ----
 	const ContainedItemsList *getContainedItemsList() const override;
 	unsigned getContainCount() const override;
-	void removeFromContain(Object *obj) override;
+	void removeFromContain(Object *obj, bool exposeStealthUnits = false) override;
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override;
 	int getContainMax() const override;
-	void removeAllContained() override;
+	void removeAllContained(bool exposeStealthUnits = false) override;
 	// lane UI-1: the tunnel's contain table RW 0xC5DCE0 answers slot 0x10 with RW 0x9188EB (false), not GarrisonContain's true; slot 0xC8 stays true (RW 0x8BD372)
 	bool isGarrisonable() const override { return false; }
 

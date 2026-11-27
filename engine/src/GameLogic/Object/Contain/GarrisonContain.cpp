@@ -488,7 +488,7 @@ void GarrisonContain::setContainedOnHordeMembers(Object &rider)
 // ---------------------------------------------------------------------------------------------------------------------------------
 
 // RW 0x87D04B (HordeGarrisonContain) / RW 0x8665BE (OpenContain)
-void GarrisonContain::removeFromContain(Object *obj)
+void GarrisonContain::removeFromContain(Object *obj, bool exposeStealthUnits)
 {
 	if (!obj)
 	{
@@ -496,12 +496,13 @@ void GarrisonContain::removeFromContain(Object *obj)
 	}
 	if (!m_horde)
 	{
-		openContainRemove(obj);
+		openContainRemove(obj, exposeStealthUnits);
 		return;
 	}
+	(void)exposeStealthUnits; // RW 0x87D04B -> 0x87CE3D / 0x87CDD6 passes false (push 0) to OpenContain::removeFromContain
 	if (HordeContainInterface *h = hordeOf(*obj))
 	{
-		openContainRemove(obj);           // RW 0x87CE3D: OpenContain's removal ...
+		openContainRemove(obj, false);    // RW 0x87CE3D: OpenContain's removal ...
 		Object *rider = obj;              // ... and RW 0x990EE6: back into the world, not UNSELECTABLE
 		if (!rider->isInWorld())
 		{
@@ -526,7 +527,7 @@ void GarrisonContain::removeFromContain(Object *obj)
 		}
 		else
 		{
-			openContainRemove(obj);
+			openContainRemove(obj, false);
 			obj->setDrawableHidden(false); // RW 0x87D0A5 .. 0x87D0BF: a hidden drawable is shown
 		}
 	}
@@ -1118,7 +1119,7 @@ void GarrisonContain::validateRallyPoint()
 
 // RW 0x87B4DC GarrisonContain::removeAllContained: with riders (slot 0x114(0)) the exit position search (RW 0x87B3EC), OpenContain's RW 0x866675 (each rider
 // through RW 0x865EB6 until the list is empty), slot 0x50
-void GarrisonContain::removeAllContained()
+void GarrisonContain::removeAllContained(bool exposeStealthUnits)
 {
 	if (getContainCount() == 0)
 	{
@@ -1128,10 +1129,10 @@ void GarrisonContain::removeAllContained()
 	while (!m_contained.empty())
 	{
 		Object *r = m_contained.front();
-		removeFromContain(r);
+		removeFromContain(r, exposeStealthUnits);
 		if (!m_contained.empty() && m_contained.front() == r)
 		{
-			openContainRemove(r); // the horde garrison's removal of a member took another path: the list still holds it
+			openContainRemove(r, exposeStealthUnits); // the horde garrison's removal of a member took another path: the list still holds it
 		}
 		++m_openStats.ejectedOnDeath;
 	}

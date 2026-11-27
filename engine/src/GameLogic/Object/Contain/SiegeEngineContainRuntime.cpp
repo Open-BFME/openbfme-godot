@@ -222,19 +222,19 @@ bool SiegeEngineContainT<Base, Horde>::moodScanWhileContained() const
 
 // RW 0x87F099 / 0x87FEA4
 template <class Base, bool Horde>
-void SiegeEngineContainT<Base, Horde>::removeAllContained()
+void SiegeEngineContainT<Base, Horde>::removeAllContained(bool exposeStealthUnits)
 {
 	while (!m_crew.empty())
 	{
 		Object *c = m_crew.front();
-		this->removeFromContain(c); // contain slot 0xA4
+		this->removeFromContain(c, exposeStealthUnits); // contain slot 0xA4
 		if (!m_crew.empty() && m_crew.front() == c)
 		{
 			m_crew.pop_front(); // a removal that took another path (never in the ported classes)
 			--m_crewCount;
 		}
 	}
-	OpenContain::removeAllContained(); // RW 0x866675
+	OpenContain::removeAllContained(exposeStealthUnits); // RW 0x866675
 }
 
 // RW 0x87FDAD

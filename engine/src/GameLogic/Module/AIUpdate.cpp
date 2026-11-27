@@ -26,6 +26,7 @@
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIGuard.h"
+#include "GameLogic/AI/AITNGuard.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWaypointPath.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -689,6 +690,8 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	// lane PLAY-4 (RW 0x753755): AIGuardState 16 (RW 0x74109B) and AIGoingIdleState 0x4E (RW 0x7410C2), both ending in idle (AIGuard.cpp)
 	m->defineState(AI_GUARD, std::make_unique<AIGuardState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_GOING_IDLE, std::make_unique<AIGoingIdleState>(*m), AI_IDLE, AI_IDLE);
+	// PORT-203 (RW 0x754259): AITunnelNetworkGuardState 0x18 (AITNGuard.cpp)
+	m->defineState(AI_TUNNEL_NETWORK_GUARD, std::make_unique<AITunnelNetworkGuardState>(*m), AI_IDLE, AI_IDLE);
 	// lane SCRIPT-3: the waypoint path states (RW 0x753755: 2 as a team, 3 as individuals, 4 / 5 the exact forms; AIWaypointPath.cpp)
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_AS_TEAM, std::make_unique<AIFollowWaypointPathState>(*m, true, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, false), AI_IDLE, AI_IDLE);

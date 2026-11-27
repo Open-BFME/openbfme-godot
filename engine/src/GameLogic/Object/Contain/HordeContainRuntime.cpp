@@ -607,8 +607,9 @@ void HordeContain::reserveMemberGoals()
 	}
 }
 
-void HordeContain::removeFromContain(Object *obj)
+void HordeContain::removeFromContain(Object *obj, bool exposeStealthUnits)
 {
+	(void)exposeStealthUnits;
 	removeMember(obj, false);
 }
 

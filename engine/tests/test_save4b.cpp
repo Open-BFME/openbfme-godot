@@ -572,7 +572,7 @@ TEST_CASE("save4b T5: every load failure of SAVE-4b's blocks is a named error (t
 		CHECK(err == "block 'obfme:Objects': the module class ActiveBody (tag 'ModuleTag_Body') of 'Soldier' has no xfer of its own (it would inherit its base "
 					 "class's)");
 	}
-	SUBCASE("a tunnel network with a nemesis (RotWK's fields after the tunnel count, not ported: S-1107)")
+	SUBCASE("a tunnel network with a nemesis id past nextObjectID is refused by name (RW 0x8FA569)")
 	{
 		S4World w(kObjects);
 		Object *keep = w.make("Keep", w.teamOf("Bob"));
@@ -584,7 +584,7 @@ TEST_CASE("save4b T5: every load failure of SAVE-4b's blocks is a named error (t
 		tunnels[nemesisAt] = 5;
 		S4World other(kObjects);
 		CHECK(loadError(other, { "obfme:TunnelTracker" }, tunnels)
-			== "block 'obfme:TunnelTracker': the snapshot's tunnel network has a nemesis (object 5), which OpenBFME does not port (S-1107)");
+			== "block 'obfme:TunnelTracker': the snapshot's tunnel network has nemesis object 5 which is not below the next object id 1");
 	}
 }
 

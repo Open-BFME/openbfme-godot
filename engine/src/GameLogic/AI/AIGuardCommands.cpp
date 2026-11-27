@@ -21,6 +21,7 @@
 #include "Common/Team.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
 #include "GameLogic/AI/AIGuard.h"
+#include "GameLogic/AI/AITNGuard.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Object.h"
@@ -124,6 +125,29 @@ bool AIUpdateInterface::aiGuardTeam(const Team &team, int mode, CommandSourceTyp
 	m_machine->clear();          // RW 0x664BF6: vslot 0x14
 	setLastCommandSource(source); // RW 0x664C00: + 0x48
 	m_machine->setState(AI_GUARD); // RW 0x664C07: setState(0x10)
+	wakeUpNow();
+	return true;
+}
+
+// PORT-203: RW 0x7C8154 aiGuardTunnelNetwork -> aiDoCommand(AICMD 0x37) -> RW 0x664ABF privateGuardTunnelNetwork (AI vslot 0xF8):
+// rejects HORDE_MEMBER (status 0x26), !isMobile (RW 0x690E97), or PROJECTILE; sets m_guardMode (+0x4C), clears machine, sets last command source (+0x48),
+// enters state 0x18 (AI_TUNNEL_NETWORK_GUARD).
+bool AIUpdateInterface::aiGuardTunnelNetwork(int mode, CommandSourceType source)
+{
+	if (!acceptCommand(source, 0x37))
+	{
+		return false; // RW 0x667174
+	}
+	Object &obj = *getObject();
+	if (obj.testStatus((unsigned)CombatNames::statuses().hordeMember) || !GarrisonRules::isMobile(obj) ||
+		obj.isKindOf((unsigned)CombatNames::kinds().projectile))
+	{
+		return false; // RW 0x664AC6 .. 0x664AEB
+	}
+	m_guardMode = mode;                    // RW 0x664AEF: + 0x4C
+	m_machine->clear();                    // RW 0x664AF6: vslot 0x14
+	setLastCommandSource(source);          // RW 0x664B00: + 0x48
+	m_machine->setState(AI_TUNNEL_NETWORK_GUARD); // RW 0x664B07: setState(0x18)
 	wakeUpNow();
 	return true;
 }

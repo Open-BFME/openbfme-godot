@@ -898,8 +898,9 @@ bool HordeTransportContain::addToContain(Object *obj)
 }
 
 // RW 0x87A6D3
-void HordeTransportContain::removeFromContain(Object *obj)
+void HordeTransportContain::removeFromContain(Object *obj, bool exposeStealthUnits)
 {
+	(void)exposeStealthUnits; // RW 0x87A369 / 0x87A60F pass false (push 0) to OpenContain::removeFromContain
 	static const int hordeMember = statusBit("HORDE_MEMBER");
 	static const int weaponStateContained = CombatNames::modelCondition("WEAPONSTATE_CONTAINED");
 	enum { CONTAINED = 20 };
@@ -913,9 +914,9 @@ void HordeTransportContain::removeFromContain(Object *obj)
 			w->setWeaponSetFlag(CONTAINED, false); // RW 0x691106(0x14)
 		}
 	};
-	// RW 0x87A361: OpenContain's removal, CONTAINED cleared, RW 0x990EE6: back into the world, not UNSELECTABLE
+	// RW 0x87A361: OpenContain's removal (false), CONTAINED cleared, RW 0x990EE6: back into the world, not UNSELECTABLE
 	const auto removeRider = [this, &clearContainedWeaponSet](Object *o) {
-		openContainRemove(o);
+		openContainRemove(o, false);
 		clearContainedWeaponSet(o);
 		if (!o->isInWorld())
 		{
@@ -937,9 +938,9 @@ void HordeTransportContain::removeFromContain(Object *obj)
 		removeRider(obj);
 		return;
 	}
-	// RW 0x87A606: a member: OpenContain's removal (not in this list: nothing), TransportContain::onRemoving, CONTAINED and WEAPONSTATE_CONTAINED cleared, back into
-	// the world, a hidden drawable shown
-	openContainRemove(obj);
+	// RW 0x87A606: a member: OpenContain's removal (false; not in this list: nothing), TransportContain::onRemoving, CONTAINED and WEAPONSTATE_CONTAINED cleared,
+	// back into the world, a hidden drawable shown
+	openContainRemove(obj, false);
 	TransportContain::onRemoving(obj);
 	clearContainedWeaponSet(obj);
 	setCondition(*obj, weaponStateContained, false);

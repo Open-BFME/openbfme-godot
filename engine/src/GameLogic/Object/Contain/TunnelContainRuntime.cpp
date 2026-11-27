@@ -15,8 +15,10 @@
 #include "GameLogic/Damage.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/System/InvisibilityManager.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -72,8 +74,9 @@ bool TunnelTracker::isValidContainerFor(const Object *obj, bool checkCapacity, c
 	return true;
 }
 
-void TunnelTracker::removeFromContain(Object *obj)
+void TunnelTracker::removeFromContain(Object *obj, bool exposeStealthUnits)
 {
+	(void)exposeStealthUnits; // RW 0x8FA28C
 	auto it = std::find(m_riders.begin(), m_riders.end(), obj);
 	if (it != m_riders.end())
 	{
@@ -121,6 +124,55 @@ void TunnelTracker::healObjects(float framesForFullHeal, unsigned now)
 	}
 }
 
+// RW 0x8FA451 TunnelTracker::getCurNemesis
+Object *TunnelTracker::getCurNemesis(GameLogic &logic)
+{
+	if (m_nemesisID == INVALID_ID)
+	{
+		return nullptr;
+	}
+	const unsigned now = logic.getFrame();
+	if (m_nemesisTimestamp + 4u * (unsigned)LOGICFRAMES_PER_SECOND < now) // RW 0x8FA464 .. 0x8FA470
+	{
+		m_nemesisID = INVALID_ID;
+		return nullptr;
+	}
+	Object *target = logic.findObjectByID(m_nemesisID);
+	if (!target || InvisibilityManager::isStealthedAndUndetected(*target, nullptr) || target->isEffectivelyDead()) // RW 0x8FA48B .. 0x8FA4A9
+	{
+		m_nemesisID = INVALID_ID;
+		return nullptr;
+	}
+	return target;
+}
+
+// RW 0x8FA702 TunnelTracker::updateNemesis
+void TunnelTracker::updateNemesis(Object *target, GameLogic &logic)
+{
+	Object *cur = getCurNemesis(logic);
+	if (!cur)
+	{
+		if (!target)
+		{
+			return;
+		}
+		static const CombatNames::Kind &k = CombatNames::kinds();
+		static const int cavalry = CombatNames::kindOf("CAVALRY");
+		// RW 0x8FA719 .. 0x8FA726: STRUCTURE (7), INFANTRY (8), CAVALRY (9), AIRCRAFT (12)
+		if (!target->isKindOf((unsigned)k.structure) && !target->isKindOf((unsigned)k.infantry) &&
+			!target->isKindOf((unsigned)cavalry) && !target->isKindOf((unsigned)k.aircraft))
+		{
+			return;
+		}
+		m_nemesisID = target->getID();
+		m_nemesisTimestamp = logic.getFrame();
+	}
+	else if (cur == target)
+	{
+		m_nemesisTimestamp = logic.getFrame();
+	}
+}
+
 void TunnelTracker::crc(StateHasher &h) const
 {
 	h.addU32((std::uint32_t)m_tunnelIds.size());
@@ -134,6 +186,11 @@ void TunnelTracker::crc(StateHasher &h) const
 		h.addU32(o->getID());
 	}
 	h.addU32(m_tunnelCount);
+	if (m_nemesisID != INVALID_ID || m_nemesisTimestamp != 0) // baseline tunnel hashes without nemesis stay unchanged
+	{
+		h.addU32(m_nemesisID);
+		h.addU32(m_nemesisTimestamp);
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -167,9 +224,9 @@ void TunnelContain::registerClasses(ModuleFactory &modules)
 
 const char *TunnelContain::stopLine()
 {
-	return "[S-1107] TunnelContain (lane GARRISON-2): ported from RW 0x880E29 .. 0x881404 and the player's TunnelTracker RW 0x8FA152 .. 0x8FA4E8 (the network's "
-	       "riders, MaxTunnelCapacity, onBuildComplete, the heal, the last tunnel lets everyone out); not ported: the tracker's nemesis (RW 0x8FA702, read by the "
-	       "AI's tunnel network guard state, not ported), the unload sound of a rider that leaves (client), the exposed stealth units";
+	return "[S-1107] TunnelContain (lane GARRISON-2 / PORT-203): ported from RW 0x880E29 .. 0x881404 and the player's TunnelTracker RW 0x8FA152 .. 0x8FA749 "
+	       "(the network's riders, MaxTunnelCapacity, onBuildComplete, the heal, the nemesis, exitObjectInAHurry RW 0x868759, AITunnelNetworkGuardState 0x18, "
+	       "the last tunnel lets everyone out); not ported: the unload sound of a rider that leaves (client)";
 }
 
 TunnelTracker *TunnelContain::tracker() const
@@ -234,18 +291,18 @@ void TunnelContain::addToContainList(Object *obj)
 	}
 }
 
-void TunnelContain::removeFromContain(Object *obj)
+void TunnelContain::removeFromContain(Object *obj, bool exposeStealthUnits)
 {
-	GarrisonContain::removeFromContain(obj); // RW 0x87D04B
+	GarrisonContain::removeFromContain(obj, exposeStealthUnits); // RW 0x87D04B
 	if (TunnelTracker *t = tracker())
 	{
-		t->removeFromContain(obj); // RW 0x880F4E .. 0x880F6D (a no-op for an object not in the network)
+		t->removeFromContain(obj, exposeStealthUnits); // RW 0x880F4E .. 0x880F6D (a no-op for an object not in the network)
 	}
 }
 
-void TunnelContain::removeAllContained()
+void TunnelContain::removeAllContained(bool exposeStealthUnits)
 {
-	// RW 0x881367: a copy of the network's riders; a HORDE rider's members first (RW 0x880D7A through its contain's iterate), then the rider
+	// RW 0x881367: a copy of the network's riders; a HORDE rider's members first (RW 0x880D7A with exposeStealthUnits = true), then the rider
 	TunnelTracker *t = tracker();
 	if (!t)
 	{
@@ -261,10 +318,10 @@ void TunnelContain::removeAllContained()
 			const std::vector<Object *> members(m.begin(), m.end());
 			for (Object *member : members)
 			{
-				removeFromContain(member);
+				removeFromContain(member, true); // RW 0x8813C3 -> 0x880D7A: true
 			}
 		}
-		removeFromContain(r);
+		removeFromContain(r, exposeStealthUnits); // RW 0x8813D4
 	}
 }
 
@@ -301,7 +358,21 @@ UpdateSleepTime TunnelContain::update()
 	{
 		t->healObjects(m_tunnel->m_framesForFullHeal, getObject()->logic().getFrame());
 	}
-	// RW 0x881302 .. 0x881357: the last attacker of the tunnel becomes the network's nemesis (S-1107)
+	// RW 0x881302 .. 0x88135F: the last enemy attacker within LOGICFRAMES_PER_SECOND refreshes the network's nemesis
+	if (const ActiveBody *ab = dynamic_cast<const ActiveBody *>(getObject()->getBodyModule()))
+	{
+		if (ab->lastDamageFrame() != 0xFFFFFFFFu && ab->lastDamager() != INVALID_ID &&
+			ab->lastDamageFrame() + (unsigned)LOGICFRAMES_PER_SECOND > getObject()->logic().getFrame())
+		{
+			if (Object *attacker = getObject()->logic().findObjectByID(ab->lastDamager()))
+			{
+				if (getObject()->getRelationship(*attacker) == ENEMIES)
+				{
+					t->updateNemesis(attacker, getObject()->logic());
+				}
+			}
+		}
+	}
 	return UPDATE_SLEEP_NONE;
 }
 
@@ -348,13 +419,13 @@ void TunnelContain::leaveNetwork()
 			HordeContainInterface *h = hordeOfObject(*r);
 			if (h && !h->allMembersEntered()) // horde slot 0xF4 false
 			{
-				removeFromContain(r);
+				removeFromContain(r, true); // RW 0x88116E: push 1
 			}
 		}
 	}
 	else
 	{
-		removeAllContained(); // the last tunnel: everyone comes out (slot 0xA8 RW 0x881367)
+		removeAllContained(false); // the last tunnel: everyone comes out (slot 0xA8(false) RW 0x88124F -> 0x881367)
 	}
 	m_registered = false;
 }
@@ -440,13 +511,13 @@ void TunnelTracker::xfer(Xfer &x, GameLogic &logic)
 		m_riders.swap(loaded);
 	}
 	x.xferUnsignedInt(&m_tunnelCount);
-	ObjectID nemesis = INVALID_ID;
-	std::uint32_t nemesisFrame = 0;
-	x.xferObjectID(&nemesis);
-	x.xferUnsignedInt(&nemesisFrame);
-	if (nemesis != INVALID_ID || nemesisFrame != 0)
+	// RW 0x8FA569 tail: nemesis ObjectID (+ 0x20) and timestamp (+ 0x24)
+	x.xferObjectID(&m_nemesisID);
+	x.xferUnsignedInt(&m_nemesisTimestamp);
+	if (x.isLoading() && m_nemesisID != INVALID_ID && m_nemesisID >= logic.getNextObjectID())
 	{
-		throw XferException("the snapshot's tunnel network has a nemesis (object " + std::to_string(nemesis) + "), which OpenBFME does not port (S-1107)");
+		throw XferException("the snapshot's tunnel network has nemesis object " + std::to_string(m_nemesisID) + " which is not below the next object id " +
+			std::to_string(logic.getNextObjectID()));
 	}
 }
 
