@@ -1073,6 +1073,8 @@ add_executable(openbfme_tests
     tests/test_local_10.cpp
     # lane LOCAL-62 (capturing a production building cancels and releases its queue, RW 0x69974D -> RW 0x8A1666)
     tests/test_local_62.cpp
+    # lane LOCAL-75: ActionManager::canDoSpecialPowerAtObject target validation (RW 0x6A437A -> 0x82D925)
+    tests/test_local_75.cpp
     tests/test_local_91.cpp
     # lane LOCAL-17 (tree and shrub textures: W3DTreeDraw/TextureName)
     tests/test_local_17.cpp

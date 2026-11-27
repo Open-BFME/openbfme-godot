@@ -1101,8 +1101,11 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 // list names (CommandTrigger, +0x188) that is a SPECIAL_POWER with a template; else MSG_DO_SPECIAL_POWER (0x410) { id, options, NONE, NONE }. Source NONE: the
 // logic casts with the issuer's selection.
 // Location action checks use ActionManager's ported rules, matching the radius cursor; explicitly unported type tests retain its reported pass.
-// NOT PORTED (stop S-2000): object action checks (KindOf / module target filters) and the kind-of / option 0x10 / 0x200000 target drops before them.
-// An object of an allowed relationship passes those unported checks. The unit voice and selection flash are not ported here.
+// Object targets run ActionManager::canDoSpecialPowerAtObject (RW 0x6A437A -> 0x82D925: ObjectFilter, alive/dead, unit cost, readiness, shroud and ported
+// per-type rules; explicitly unported per-type/capture checks retain their pass).
+// NOT PORTED (stop S-2000): the kind-of / option 0x10 / 0x200000 target drops before ActionManager and explicitly unported per-type rules.
+// The at-object branch flashes the target and plays TargetObjectWithSpecialPowerSound
+// (RW 0x81E22B .. 0x81E26D); the unit voice is the HUD's observer (PlayUnitVoiceForMessage).
 int CommandTranslator::issueSpecialPower(const CommandButton &command, Object *target, const Coord3D *pos, EvaluateType type)
 {
 	const SpecialPowerTemplate *t = TheSpecialPowerStore && !command.m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(command.m_specialPowerName) : nullptr;
@@ -1177,7 +1180,28 @@ int CommandTranslator::evaluateGUISpecialPower(const CommandButton &command, Obj
 			obj = nullptr;
 		}
 	}
-	bool valid = (command.m_options & 7) && obj;
+	bool valid = false;
+	if ((command.m_options & 7) && obj)
+	{
+		// RW 0x81E60B -> 0x6A435C..0x6A438B: walk the selection with ActionManager::canDoSpecialPowerAtObject (RW 0x82D925).
+		// On refusal, drop obj to match RW 0x6A438B before the location/context fallback.
+		const SpecialPowerTemplate *power = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(command.m_specialPowerName) : nullptr;
+		for (ObjectID id : m_ctx.ui.selected())
+		{
+			Object *source = m_ctx.logic.findObjectByID(id);
+			bool unported = false;
+			const bool allowed = source && ActionManager::canDoSpecialPowerAtObject(*source, obj, CMD_FROM_PLAYER, power, command.m_options, true, &unported);
+			if (allowed || unported)
+			{
+				valid = true;
+				break;
+			}
+		}
+		if (!valid)
+		{
+			obj = nullptr;
+		}
+	}
 	const bool locationTarget = command.hasOption(COMMAND_OPTION_NEED_TARGET_POS);
 	const bool contextOnly = command.hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND) && !(command.m_options & (7u | COMMAND_OPTION_NEED_TARGET_POS));
 	// RW 0x81E147's final branch issues a targetless power for context-only

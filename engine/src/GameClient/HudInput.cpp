@@ -268,7 +268,7 @@ size_t HudInput::flush()
 {
 	const int local = m_ctx.localPlayer() ? m_ctx.localPlayer()->getPlayerIndex() : 0;
 	std::vector<ClientMessage> out = m_stream.propagate();
-	// PR #88 review fix 1: only while the gesture is live (placement active or a chord button still held). m_consumed outlives the order until
+	// PR fork issue 88 review fix 1: only while the gesture is live (placement active or a chord button still held). m_consumed outlives the order until
 	// the next press (it swallows the trailing release and clicks); cancelling the LookAt pointer on it left the camera dead after every order.
 	if (m_formation.gestureLive()) {
 		m_selection.setLeftMouseButton(false);
@@ -419,9 +419,9 @@ std::vector<std::string> HudInput::stops() const
 	std::vector<std::string> out = acceptanceStops();
 	// lane FACT-C (S-286 keeps the other context commands)
 	out.push_back("[S-2000] special power targets: a SPECIAL_POWER button waiting for its target sends RotWK's messages on the click (evaluateContextCommand RW 0x81E60B -> "
-				  "issueSpecialPowerCommand RW 0x81E147: AT_OBJECT for an object of a relationship the options allow, AT_LOCATION with the chained CommandTrigger buttons, "
-				  "source NONE); location targets use ActionManager's ported rules; object action checks (KindOf / module filters), unported per-type location rules "
-				  "and the kind-of / option 0x10 / 0x200000 target drops are not ported");
+				  "issueSpecialPowerCommand RW 0x81E147: AT_OBJECT after ActionManager::canDoSpecialPowerAtObject RW 0x82D925, AT_LOCATION with the chained CommandTrigger buttons, "
+				  "source NONE); location and object targets use ActionManager's ported rules (including ObjectFilter RW 0x7640C1); unported per-type rules "
+				  "and the kind-of / option 0x10 / 0x200000 target drops before ActionManager are not ported");
 	out.push_back("[S-2002] capture context command: a click on a building the selection can capture issues the first selected object's capture button (power type 0x1A / 0x1D) "
 				  "at it (RW 0x81E60B, canCaptureBuilding RW 0x82D0A1); not ported: a capture power's ObjectFilter (none in retail data; counted), the status pair + 0x438 / "
 				  "+ 0x110, the + 0x80 word, the shroud test, CAPTURE_FORBIDDEN, the per-player refusal RW 0x6943B2, stealth riders and the vision test");
@@ -494,7 +494,7 @@ void FormationPlacement::replayFirstPress(const ClientMessage &before)
 }
 
 // The checks begin() makes before it reads the terrain: the input gates, formation data with templates, the firing-arc pick at the pixel
-// and at least one eligible selected object. PR #88 review fix 2: translate() buffers a first press only when these pass, so a press that
+// and at least one eligible selected object. PR fork issue 88 review fix 2: translate() buffers a first press only when these pass, so a press that
 // cannot start a formation (placing a building, no eligible selection, BFME1 data without FormationAssistant.ini) reaches selection and
 // the LookAt translator in the same frame, as before.
 bool FormationPlacement::eligible(const ICoord2D &pixel, bool &rotatingArc, std::vector<ObjectID> &ids) const
@@ -551,7 +551,7 @@ bool FormationPlacement::begin(const ICoord2D &pixel, bool controller)
 	return true;
 }
 
-// PR #88 review fix 6: the drag angle and the template index go into MSG_DO_MOVETO_FORMATION, so they are computed with SimMath (one SSE
+// PR fork issue 88 review fix 6: the drag angle and the template index go into MSG_DO_MOVETO_FORMATION, so they are computed with SimMath (one SSE
 // rounding per operation, the CRT-identical atan2, the deterministic sin / cos of the sim handler AICommands::formationMove), never libm.
 void FormationPlacement::aim(const ICoord2D &pixel)
 {
@@ -609,7 +609,7 @@ void FormationPlacement::commit()
 	ui.formationActive = false;
 	ui.formationExpires = ui.clientFrame() + 45;
 	ui.clearAttackMoveToMode();
-	// PR #88 review fix 3: the order used the pending attack-move button; leave the GUI command mode too (GUICommandTranslator clears it
+	// PR fork issue 88 review fix 3: the order used the pending attack-move button; leave the GUI command mode too (GUICommandTranslator clears it
 	// after its own attack-move order), or the next left click would send MSG_DO_ATTACKMOVETO
 	if (guiAttackMove)
 		ui.setGUICommand(nullptr);

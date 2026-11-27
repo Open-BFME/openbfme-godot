@@ -8,6 +8,7 @@
 #include "Common/PlayerList.h"
 #include "Common/SpecialPower.h"
 #include "GameClient/ControlBarCommands.h"
+#include "GameLogic/ActionManager.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/AIUpdate.h"
@@ -287,9 +288,16 @@ void SpellCommands::castWithGroup(GameLogic &logic, const std::vector<Object *> 
 			return false;
 		}
 		SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(member, t);
-		// the ActionManager test (RW 0x82D5DA / 0x82DFB7 / 0x82D925, ported part): the module, fully ready, its requirements. The mod gate wraps the member
-		// loops' tests only (RW 0x76F6DA / 0x770B67), not the hero's
-		if (!sp || sp->getPercentReady() < 1.0f || !sp->requirementsMet() ||
+		// the ActionManager test (RW 0x82D5DA / 0x82DFB7 / 0x82D925): kind 2 runs ActionManager::canDoSpecialPowerAtObject (RW 0x770B67 / 0x770BD3 -> 0x82D925,
+		// source CMD_FROM_PLAYER, checkSourceRequirements true; explicitly unported per-type checks retain their pass), plus the module, readiness and
+		// requirements. The mod gate wraps the member loops' tests only (RW 0x76F6DA / 0x770B67), not the hero's
+		bool canCastAtObject = true;
+		if (kind == 2)
+		{
+			bool unported = false;
+			canCastAtObject = ActionManager::canDoSpecialPowerAtObject(member, target, CMD_FROM_PLAYER, t, options, true, &unported) || unported;
+		}
+		if (!canCastAtObject || !sp || sp->getPercentReady() < 1.0f || !sp->requirementsMet() ||
 			(gated && (kind == 0 || kind == 2) && ModEngineFeatures::has(ModEngineFeature::EdainUnchainedMultiExecuteGate) && !multiExecuteGateAllows(member, *t)))
 		{
 			++m_refused;

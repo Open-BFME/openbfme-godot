@@ -41,6 +41,9 @@ struct FacingWorld : combattest::CombatWorld
 		SpecialPowerModules::registerAll(w.modules);
 		spells.registerHandlers(dispatcher);
 		combat().setAutoAcquireEnabled(false);
+		// The power type casts at an object in RotWK: the group cast's ActionManager test (RW 0x770B67 -> 0x82D925) ends in the type switch
+		// RW 0x82DAD1 .. 0x82DAE9, which refuses SPECIAL_GENERAL_TARGETLESS (0x35 -> RW 0x82DC0E, false) and passes
+		// SPECIAL_AT_VISIBLE_GROUNDED_OBJECT (0x90 -> RW 0x82DCAE: not an AIRBORNE_TARGET).
 		const char *ini = R"ini(
 ExperienceLevel DirectionalHeroLevel1
  TargetNames = DirectionalHero
@@ -48,7 +51,7 @@ ExperienceLevel DirectionalHeroLevel1
  Rank = 1
 End
 SpecialPower DirectionalPower
- Enum = SPECIAL_GENERAL_TARGETLESS
+ Enum = SPECIAL_AT_VISIBLE_GROUNDED_OBJECT
  ReloadTime = 10000
 End
 Locomotor SlowTurningHero
