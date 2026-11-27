@@ -165,6 +165,12 @@ TEST_CASE("EvacuateDamage: a hit of the weapon orders every occupant out with CM
 	CHECK(e.orderedOut(second, tower, (unsigned)AI_EXIT));
 	CHECK(e.orderedOut(horde, tower, (unsigned)AI_HORDE_EXIT));
 	CHECK(e.moduleOf(tower)->hits().empty());
+	bool stop = false; // S-7590: the evacuation notes the inferences
+	for (const std::string &line : e.logic->report().stops)
+	{
+		stop = stop || line.rfind("[S-7590] EvacuateDamage", 0) == 0;
+	}
+	CHECK(stop);
 
 	e.frames(40);
 	CHECK(first->getContainedBy() == nullptr);

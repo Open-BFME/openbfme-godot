@@ -15,6 +15,7 @@
 #include "GameClient/ClientBehaviorModules.h"
 #include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
+#include "GameLogic/Module/SpecialEnemySenseUpdate.h"
 #include "GameLogic/Object/AttributeModifierPool.h"
 #include "GameLogic/Module/ExperienceUpgradeModules.h"
 #include "GameLogic/Module/SquishCollide.h"
@@ -63,6 +64,8 @@
 #include "GameLogic/Module/ThreatFinderUpdate.h" // PORT 17 (issue #73)
 #include "GameLogic/Module/AutoPickUpUpdate.h"
 #include "GameLogic/Module/BoredUpdate.h"
+#include "GameLogic/Module/AimWeaponBehavior.h"
+#include "GameLogic/Module/GiantBirdSlowDeathBehavior.h"
 
 #include <stdexcept>
 
@@ -138,6 +141,9 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	PickupStuffUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: a skirmish AI's hordes walk to the crates near them (S-1422)
 	AutoPickUpUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: the monsters' grab / eat scans and the WAKE_AUTO_PICKUP button (S-7160)
 	BoredUpdate::registerModule(modules); // lane MODCOMPAT-MOD1: an idle troll clubs a troll friend (S-7161)
+	AimWeaponBehavior::registerModule(modules); // the AIM_* model conditions of a unit with an aiming weapon (RW 0x85E30B)
+	SpecialEnemySenseUpdate::registerModule(modules); // SPECIAL_ENEMY_NEAR while an enemy of its filter is near (Sting, RW 0x89D7E6)
+	GiantBirdSlowDeathBehavior::registerModule(modules); // a flyer falls to the ground ahead, beside the buildings (RW 0x86511C)
 	LargeGroupAudioUpdate::registerClass(modules); // lane AUDIO-4: the logic half of the large group battle sounds
 	ClientBehaviorModules::registerAll(modules); // lane AUDIO-4: the footsteps (a ClientBehavior: the drawables make it, GameClient/)
 	SiegeModules::registerAll(modules); // lane SIEGE-1: SiegeDockingBehavior, SiegeDeploySpecialPower, StopSpecialPower, SiegeAIUpdate (after the AI classes)

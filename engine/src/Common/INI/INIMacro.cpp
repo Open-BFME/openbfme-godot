@@ -79,17 +79,28 @@ const INIMacroTable::Entry *INIMacroTable::find(const char *name) const
 //   5. any name character c with 'a' < c < 'z' (signed char compare) throws code 8
 //      "MACRO names must use UPPERCASE letters"  (a and z themselves pass)
 //   6. value = the remaining tokens joined with single spaces (B2/RW; B1 kept only the first)
-//   7. empty value throws code 8 "Error parsing MACRO"
+//      The tokens come from AsciiString::nextToken (RW 0x4366D0), which leaves its output alone when
+//      nothing is left of the line (RW 0x4366DC / 0x4366E2 -> 0x436783). The value's string is the one
+//      that took token 0 (RW 0x42D10D and 0x42D16E, both [ebp-0x10]), so a line that ends right after
+//      the name (`#define SUMMONED_HERO_WEAK`, Edain) defines it as the text "#define"
+//   7. empty value throws code 8 "Error parsing MACRO": separators but no token after the name
 //   8. duplicate hash throws code 8 "Duplicate MACRO names" (load type 5 overwrites instead)
+//   9. the pass ends at the first line that is not a define (RW 0x42D0FE -> 0x42D341, past the loop;
+//      BFME2 has the same jump); a lone-slash duplicate of a define is such a line. BFME1 data reads
+//      every line (B1T attempts/0x00853610.cpp:210-217: the loop runs to the last line and skips the
+//      others); BFME1's gamedata.ini defines its 2024 macros after its GameData block
 // ---------------------------------------------------------------------------------------------
 void INI::runDefinePass()
 {
-	static const char *kSeps = " \n\r\t";
 	for (TextFile::Line &line : m_lines)
 	{
 		if (line.text.compare(0, 7, "#define") != 0)
 		{
-			continue;
+			if (bfme1Data())
+			{
+				continue; // B1T 0x00853610.cpp:215
+			}
+			break; // RW 0x42D0FE
 		}
 
 		const std::string lineText = line.text;
@@ -107,24 +118,11 @@ void INI::runDefinePass()
 			}
 		}
 
-		std::vector<std::string> tokens;
-		size_t pos = 0;
-		while (pos < lineText.size())
-		{
-			const size_t b = lineText.find_first_not_of(kSeps, pos);
-			if (b == std::string::npos)
-			{
-				break;
-			}
-			size_t e = lineText.find_first_of(kSeps, b);
-			if (e == std::string::npos)
-			{
-				e = lineText.size();
-			}
-			tokens.push_back(lineText.substr(b, e - b));
-			pos = e;
-		}
-		const std::string name = tokens.size() > 1 ? tokens[1] : std::string();
+		std::string rest = lineText;
+		std::string value; // token 0, then the first token of the value: one string in retail
+		std::string name;
+		AsciiStringUtil::nextToken(rest, &value, nullptr);
+		AsciiStringUtil::nextToken(rest, &name, nullptr);
 
 		static const char kMapIni[] = "map.ini";
 		if (m_filename.size() >= sizeof(kMapIni) - 1 && m_filename.compare(m_filename.size() - (sizeof(kMapIni) - 1), std::string::npos, kMapIni) == 0)
@@ -141,14 +139,12 @@ void INI::runDefinePass()
 			}
 		}
 
-		std::string value;
-		for (size_t i = 2; i < tokens.size(); ++i)
+		AsciiStringUtil::nextToken(rest, &value, nullptr);
+		std::string more;
+		while (AsciiStringUtil::nextToken(rest, &more, nullptr))
 		{
-			if (i > 2)
-			{
-				value += ' ';
-			}
-			value += tokens[i];
+			value += ' ';
+			value += more;
 		}
 		if (value.empty())
 		{

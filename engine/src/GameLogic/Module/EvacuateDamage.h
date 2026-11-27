@@ -27,6 +27,7 @@
 // WHAT IS INFERENCE (OpenBFME): the name is kept without asking the weapon store (a name it lacks is no weapon's name); the orders go through a copy of the
 // list (RW: the live list); an occupant without an AI (RW reads its null AI) is skipped. The snapshot is OpenBFME native (S-4190): it also has the list (the
 // state hash takes it, and a peer that rejoins must have it).
+// STOP S-7590: the three inferences above (the name, the copied list, the skipped occupant); an evacuation notes the stop.
 
 #pragma once
 

@@ -11,6 +11,7 @@
 #include "Common/Player.h"
 #include "Common/Team.h"
 #include "GameClient/MapObjectRuntime.h"
+#include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Object.h"
 
 #include <algorithm>
@@ -20,6 +21,20 @@ DrawableManager::DrawableManager(WW3DAssetManager &assets, GameLogic &logic)
 {
 	m_slots.resize(1); // slot 0 unused
 	m_services.animationSounds = &m_animationSounds; // lane AUDIO-4
+	// LOCAL-25: the presentation physics samples the logic's terrain
+	const GameLogic *logicPtr = &logic; // the drawables are made by the game that owns this logic and die with it
+	m_services.groundHeight = [logicPtr](float x, float y, Coord3D *normal) -> float {
+		if (const TerrainLogic *terrain = logicPtr->terrain())
+		{
+			return terrain->getGroundHeight(x, y, normal);
+		}
+		if (normal)
+		{
+			*normal = Coord3D{ 0.0f, 0.0f, 1.0f };
+		}
+		return 0.0f;
+	};
+	m_services.clientFrame = &m_clientFrame;              // LOCAL-25: the step's gate (RW 0x67BE04)
 }
 
 DrawableManager::~DrawableManager() = default;
@@ -451,6 +466,8 @@ void DrawableManager::advance(double elapsedMs)
 			d->updateStealthLook(d->stealthParentId() != INVALID_ID ? findByObject(d->stealthParentId()) : nullptr);
 		}
 	}
+
+	advanceClientFrame(elapsedMs); // LOCAL-25: DrawablePhysics.cpp (client only)
 }
 
 void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha, bool interpolate)
@@ -599,10 +616,12 @@ void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha
 				{
 					d->reactToTransformChange(d->getPosition(), d->getOrientation()); // the modules ignore the old transform (AnimationSoundClientBehavior)
 				}
+				d->applyPhysicsXform(*prep.rec, prep.pose); // LOCAL-25: the ordered pass (the step draws the shared client random), once per client frame
 				continue;
 			}
 			d->startProjectileFade(*prep.rec, snapshot); // lane PROJ-2: RW 0x85EE00 for a launch the drawable has not seen (DrawableFade.cpp)
 			d->commitSync(prep);
+			d->applyPhysicsXform(*prep.rec, prep.pose); // LOCAL-25
 		}
 	}
 	// lane AUDIO-4: TheAnimationSoundModuleManager's client update (RW 0x83F321), after the animations advanced and the drawables moved

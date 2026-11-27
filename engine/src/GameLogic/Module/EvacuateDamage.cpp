@@ -29,6 +29,11 @@ namespace
 {
 typedef EvacuateDamageModuleData Data;
 
+// stop S-7590: the inferences of EvacuateDamage.h's WHAT IS INFERENCE, noted when the weapon orders a building's occupants out
+const char kStop[] =
+	"[S-7590] EvacuateDamage (RW 0x8BF12E, 0x8BF178 .. 0x8BF1EA) orders the occupants out; WeaponThatCausesEvacuation is kept by name without the weapon store, "
+	"the orders walk a copy of the contained list (retail: the live list) and an occupant without an AI is skipped (retail reads its null AI)";
+
 // RW 0xC70A88
 const FieldParse kFields[] = {
 	{ "WeaponThatCausesEvacuation", INI::parseAsciiString, nullptr, (int)offsetof(Data, m_weaponThatCausesEvacuation) }, // RW 0x8BEDF8
@@ -87,6 +92,7 @@ void EvacuateDamage::onDamage(const DamageInfo &info)
 void EvacuateDamage::evacuate()
 {
 	Object *obj = getObject();
+	obj->logic().noteStop(kStop);
 	ContainModuleInterface *contain = obj->getContain();
 	const ContainModuleInterface::ContainedItemsList *list = contain ? contain->getContainedItemsList() : nullptr; // vslot 0x118
 	if (!list)
