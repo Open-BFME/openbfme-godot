@@ -15,6 +15,10 @@
 constexpr int W3D_PALETTE_WIDTH_LOG2 = 10;
 constexpr int W3D_PALETTE_WIDTH = 1 << W3D_PALETTE_WIDTH_LOG2;
 constexpr int W3D_PALETTE_TEXELS_PER_PIVOT = 3;
+// lane LOCAL-38 (stop S-687): every instance's palette block starts with its render object's light environment (RTS3DScene::renderOneObject
+// RW 0x46F48E, LightEnvironmentClass RW 0x540250), three RGBA texels in front of its pivots (INSTANCE_CUSTOM.x points at the first pivot):
+// PointLight[0] position + range, its colour + the dropped global lights, the dynamic lights' ambient (W3DInstancer::update_object_lights)
+constexpr int W3D_PALETTE_LIGHT_TEXELS = 3;
 
 // The compile-time shape of one material. Equal keys share one Shader.
 struct W3DShaderKey

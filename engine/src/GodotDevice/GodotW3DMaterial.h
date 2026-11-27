@@ -179,6 +179,8 @@ private:
 // viewer light of W3D_Apply_Viewer_Lighting). Apply hands a map's light sets to them (SAGE directions -> Godot axes).
 void W3D_Ensure_Light_Globals();
 void W3D_Apply_Object_Lighting(const W3DObjectLighting &lighting);
+// lane LOCAL-38: the sets the last W3D_Apply_Object_Lighting / W3D_Apply_Viewer_Lighting handed to the shaders (SAS-scaled colours and their scale)
+const W3DObjectLighting &W3D_Current_Object_Lighting();
 // lane RENDER-4 (S-1651): the map's hardware fog (Weather HardwareFogEnable / Color / Start / End) for the W3D models and the CPU particles (the
 // globals w3d_fog / w3d_fog_color, W3DHardwareFog.h); colour 0..1 in retail's gamma space
 void W3D_Apply_Fog(bool enabled, const float color[3], float start, float end);

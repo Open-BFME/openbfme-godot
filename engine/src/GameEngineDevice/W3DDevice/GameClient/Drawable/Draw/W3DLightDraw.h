@@ -80,6 +80,7 @@ public:
 
 	float lightRadius() const;
 	RGBColor lightColor() const;
+	RGBColor lightAmbient() const; // lane LOCAL-38: Ambient * Intensity (Init_From_Point RW 0x53F90C)
 	Coord3D lightPosition() const;
 
 	void stepFlicker(float dt);

@@ -134,6 +134,17 @@ RGBColor W3DLightDraw::lightColor() const
 	return RGBColor{ base.red * m_height, base.green * m_height, base.blue * m_height };
 }
 
+RGBColor W3DLightDraw::lightAmbient() const
+{
+	// lane LOCAL-38: Ambient (+0xD4, RW 0x4CF1A0) times the current Intensity (+0xD0, written by RW 0x4CF479), as Init_From_Point RW 0x53F90C
+	if (!m_data)
+	{
+		return RGBColor{ 0.0f, 0.0f, 0.0f };
+	}
+	const RGBColor &base = m_data->m_ambient;
+	return RGBColor{ base.red * m_height, base.green * m_height, base.blue * m_height };
+}
+
 Coord3D W3DLightDraw::lightPosition() const
 {
 	if (m_data && !m_data->m_attachToBone.empty() && m_thing)
@@ -164,16 +175,20 @@ void W3DLightDraw::updateLight()
 	const Coord3D pos = lightPosition();
 	const RGBColor col = lightColor();
 	const float rad = lightRadius();
+	// lane LOCAL-38: LightEnvironmentClass::Add_Light reads the raw Diffuse (+0xE0) for its black filter (RW 0x540261) and adds
+	// Ambient (+0xD4) * Intensity (+0xD0, RW 0x53F90C) to the object's ambient; the ctor set both from the module data (RW 0x4CF18E .. 0x4CF1DC)
+	const RGBColor amb = lightAmbient();
+	const RGBColor raw = m_data->m_diffuse;
 	if (m_lightHandle < 0 || (size_t)m_lightHandle >= pool->lights().size())
 	{
 		if (m_enabled)
 		{
-			m_lightHandle = pool->addPersistent(pos, col, rad);
+			m_lightHandle = pool->addPersistent(pos, col, rad, &amb, &raw);
 		}
 	}
 	else
 	{
-		pool->updatePersistent(m_lightHandle, pos, col, rad, m_enabled);
+		pool->updatePersistent(m_lightHandle, pos, col, rad, m_enabled, &amb, &raw);
 	}
 }
 

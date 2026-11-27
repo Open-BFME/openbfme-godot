@@ -457,6 +457,7 @@ add_library(openbfme_core STATIC
     src/Libraries/WWVegas/WW3D2/meshrender.cpp
     src/Libraries/WWVegas/WW3D2/w3dstops.cpp
     src/Libraries/WWVegas/WW3D2/w3dshadergen.cpp
+    src/Libraries/WWVegas/WW3D2/lightenvironment.cpp
     src/Libraries/WWVegas/WW3D2/fxshadergen.cpp
     src/Libraries/WWVegas/WW3D2/w3dfxconvert.cpp
     src/Libraries/WWVegas/WW3D2/textureloader.cpp
@@ -1029,6 +1030,8 @@ add_executable(openbfme_tests
     tests/test_w3d_draw_retail_units.cpp
     # lane LOCAL-28 (W3DLightDraw as retail: object lights, both editions)
     tests/test_local_28.cpp
+    # lane LOCAL-38 (object lights as retail: LightEnvironmentClass per render object, both editions)
+    tests/test_local_38.cpp
     # lane MAPOBJ-1
     tests/test_mapobj_draw_data.cpp
     tests/test_mapobj_creation.cpp
