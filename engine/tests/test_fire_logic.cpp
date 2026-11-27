@@ -272,3 +272,46 @@ TEST_CASE("fire logic: CRC and snapshot xfer")
 	fire.changeBurnRateAll(-100);
 	CHECK(!fire.anyBurning());
 }
+
+// FireLogicSystem::changeFuelInArea span paint, RW 0x6864EA (called from RW 0x686BF5; DONOR BFME2 0x00285DC5):
+//   - RW 0x686532..0x686552: maxBurnRate clamped <= 0xfff, decay <= 0x3ff, resistance >= 0
+//   - RW 0x68660E..0x686623: decay (the cell's flammability) raised when the cell's is lower
+//   - RW 0x686626..0x686649: resistance lowered when the cell's is higher, 0 included
+TEST_CASE("FireLogicSystem::changeFuelInArea raises the decay and lowers the resistance to 0 (RW 0x6864EA)")
+{
+	static const char objects[] =
+		"Object DummyTarget\n"
+		"  KindOf = STRUCTURE\n"
+		"  Geometry = BOX\n"
+		"  GeometryMajorRadius = 5\n"
+		"  GeometryMinorRadius = 5\n"
+		"  GeometryHeight = 5\n"
+		"End\n";
+	CombatWorld w(objects, 50);
+	FireLogicSystem &fire = w.logic->fireLogic();
+	fire.newMap(0.0f, 0.0f, 200.0f, 200.0f);
+
+	// RW 0x68660E..0x686623: grass decay is 4; decay 50 raises it, so burn rate 15 dies within one 10-frame slice cycle
+	// (before the change decay stayed 4 and the cell kept burning at 11).
+	const Coord3D decayPos{ 40.0f, 40.0f, 0.0f };
+	fire.changeFuelInArea(decayPos, 4.0f, 10, 20, 50, 10, false);
+	fire.changeBurnRateInArea(decayPos, 4.0f, 15, false);
+	REQUIRE(fire.isCellBurning(4, 4));
+	for (int i = 0; i < 10; ++i)
+	{
+		fire.update();
+	}
+	CHECK(!fire.isCellBurning(4, 4));
+
+	// RW 0x686626..0x686649: grass resistance is 10; lowering cell (11, 10) to 0 lets burn rate 6 at (10, 10) spread to it (6 > 0, not 6 > 10).
+	const Coord3D neighborPos{ 110.0f, 100.0f, 0.0f };
+	fire.changeFuelInArea(neighborPos, 4.0f, 10, 20, 4, 0, false);
+	fire.changeBurnRate(10, 10, 10, 6, false);
+	REQUIRE(fire.isCellBurning(10, 10));
+	REQUIRE(!fire.isCellBurning(11, 10));
+	for (int i = 0; i < 10; ++i)
+	{
+		fire.update();
+	}
+	CHECK(fire.isCellBurning(11, 10));
+}

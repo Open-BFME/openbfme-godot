@@ -42,6 +42,7 @@ inline int cellToWorld(int cell)
 }
 } // namespace
 
+// RW 0x6875FB (FireLogicSystem::FireLogicSystem)
 FireLogicSystem::FireLogicSystem(GameLogic &logic)
 	: m_logic(logic)
 {
@@ -85,6 +86,7 @@ FireLogicSystem::FireLogicSystem(GameLogic &logic)
 	m_decayModifier = 0;
 }
 
+// RW 0x6876C2 (FireLogicSystem::~FireLogicSystem)
 FireLogicSystem::~FireLogicSystem()
 {
 	clearGrid();
@@ -94,6 +96,7 @@ FireLogicSystem::~FireLogicSystem()
 	}
 }
 
+// RW 0x6873F7 (FireLogicSystem::clearGrid / rva00286CC4)
 void FireLogicSystem::clearGrid()
 {
 	if (m_storage)
@@ -391,7 +394,7 @@ void FireLogicSystem::update()
 	m_80 = (m_80 + 1) % 10;
 }
 
-// RW 0x687053 (FireLogicSystem::ChangeBurnRate)
+// RW 0x687059 (FireLogicSystem::ChangeBurnRate)
 void FireLogicSystem::changeBurnRate(int x0, int x1, int y, int delta, bool onlyBurning)
 {
 	if (y < 0 || y >= m_numCols || x0 >= m_numRows || x1 < 0)
@@ -449,7 +452,7 @@ void FireLogicSystem::changeBurnRate(int x0, int x1, int y, int delta, bool only
 	}
 }
 
-// RW 0x6871EB (FireLogicSystem::ChangeBurnRate directional)
+// RW 0x6871E7 (FireLogicSystem::ChangeBurnRate directional)
 void FireLogicSystem::changeBurnRate(const Coord3D &origin, const Coord3D &dir, float threshold, int x0, int x1, int y, int delta, bool onlyBurning)
 {
 	if (y < 0 || y >= m_numCols || x0 >= m_numRows || x1 < 0)
@@ -513,7 +516,7 @@ void FireLogicSystem::changeBurnRate(const Coord3D &origin, const Coord3D &dir, 
 	}
 }
 
-// RW 0x6878D1 (FireLogicSystem::ChangeBurnRateInArea disc)
+// RW 0x6878D7 (FireLogicSystem::ChangeBurnRateInArea disc)
 void FireLogicSystem::changeBurnRateInArea(const Coord3D &pos, float radius, int delta, bool onlyBurning)
 {
 	if (radius <= 0.0f || delta == 0)
@@ -559,7 +562,7 @@ void FireLogicSystem::changeBurnRateInArea(const Coord3D &pos, float radius, int
 	}
 }
 
-// RW 0x687A7D (FireLogicSystem::ChangeBurnRateInArea directional)
+// RW 0x687B12 (FireLogicSystem::ChangeBurnRateInArea directional)
 void FireLogicSystem::changeBurnRateInArea(const Coord3D &pos, float radius, const Coord3D &dir, float cosArc, int delta, bool onlyBurning)
 {
 	if (radius <= 0.0f || delta == 0)
@@ -617,13 +620,18 @@ void FireLogicSystem::changeBurnRateAll(int delta)
 	}
 }
 
-// RW 0x686C13 (FireLogicSystem::ChangeFuelInArea)
+// RW 0x686BF5 (FireLogicSystem::ChangeFuelInArea) -> span paint RW 0x6864EA (both editions: DONOR BFME2 0x00285DC5)
 void FireLogicSystem::changeFuelInArea(const Coord3D &pos, float radius, int amount, int maxBurnRate, int decay, int resistance, bool onlyBurning)
 {
 	if (radius <= 0.0f || amount == 0)
 	{
 		return;
 	}
+	// RW 0x686532..0x686552: bitfield clamps before scanning the span
+	if (maxBurnRate > 0xfff) maxBurnRate = 0xfff;
+	if (decay > 0x3ff) decay = 0x3ff;
+	if (resistance < 0) resistance = 0;
+
 	int cx = worldToCell(pos.x);
 	int cy = worldToCell(pos.y);
 	int rad = (int)std::ceil(radius * 0.1f);
@@ -635,31 +643,43 @@ void FireLogicSystem::changeFuelInArea(const Coord3D &pos, float radius, int amo
 		int maxDx = (int)std::floor(std::sqrt((float)(rad * rad - dy * dy)));
 		int x0 = std::max(0, cx - maxDx);
 		int x1 = std::min(m_numRows - 1, cx + maxDx);
+		const float wy = (float)(((double)y + 0.5) * 10.0); // RW 0x686561..0x686570
 
 		for (int x = x0; x <= x1; ++x)
 		{
-			Cell *cell = &m_cells[x][y];
-			if (onlyBurning && cell->m_check < 1)
+			// RW 0x686577..0x6865A2: skip underwater cells
+			const float wx = (float)(((double)x + 0.5) * 10.0);
+			if (m_logic.terrain() && m_logic.terrain()->isUnderwater(wx, wy, 0.0f))
 			{
 				continue;
 			}
-			int fuel = (int)cell->m_fuel + amount;
+			Cell *cell = &m_cells[x][y];
+			if (onlyBurning && cell->m_check < 1) // RW 0x6865B7..0x6865C2
+			{
+				continue;
+			}
+			int fuel = (int)cell->m_fuel + amount; // RW 0x6865C8..0x6865E8
 			if (fuel < 0) fuel = 0;
 			if (fuel > 0xFFFF) fuel = 0xFFFF;
 			cell->m_fuel = (unsigned short)fuel;
 
-			if (maxBurnRate > 0 && (unsigned)maxBurnRate > cell->m_maxBurnRate)
+			// RW 0x6865EC..0x68660B: raise maxBurnRate if cell->m_maxBurnRate < maxBurnRate
+			if (cell->m_maxBurnRate < (unsigned)maxBurnRate)
 			{
-				cell->m_maxBurnRate = maxBurnRate;
+				cell->m_maxBurnRate = (unsigned)maxBurnRate & 0xfffu;
 			}
-			if (decay > 0 && (unsigned)decay < cell->m_flammability)
+			// RW 0x68660E..0x686623: raise decay (m_flammability) if cell->m_flammability < decay
+			if (cell->m_flammability < (unsigned)decay)
 			{
-				cell->m_flammability = decay;
+				cell->m_flammability = (unsigned)decay & 0x3ffu;
 			}
-			if (resistance > 0 && (unsigned)resistance < cell->m_resistance)
+			// RW 0x686626..0x686649: lower resistance if cell->m_resistance > resistance (including resistance == 0)
+			if (cell->m_resistance > (unsigned)resistance)
 			{
-				cell->m_resistance = resistance;
+				cell->m_resistance = (unsigned)resistance & 0xffu;
 			}
+			// RW 0x68664C: reset cell->m_type to 0 (neutral) so a refueled burnt-out cell can ignite again
+			cell->m_type = 0;
 		}
 	}
 }
@@ -709,6 +729,7 @@ void FireLogicSystem::unregisterTree(std::uint32_t treeId, const Coord3D &pos)
 	}
 }
 
+// RW 0x686668 (FireLogicSystem::ChangeCellToObjectFlammability)
 void FireLogicSystem::changeCellToObjectFlammability(int x, int y, const ThingTemplate *tmpl)
 {
 	if (!tmpl || x < 0 || x >= m_numRows || y < 0 || y >= m_numCols)
