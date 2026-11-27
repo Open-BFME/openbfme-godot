@@ -258,6 +258,10 @@
    "reason": "draw module setup of map objects: client side"
   },
   {
+   "glob": "src/GameClient/ParticleBoneFollow.cpp",
+   "reason": "ParticleSysBone particle systems following the animated bones of a model draw: drawing only"
+  },
+  {
    "glob": "src/GameClient/TerrainAtlas.cpp",
    "reason": "terrain texture atlas: rendering"
   },
