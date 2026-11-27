@@ -57,10 +57,29 @@ std::string reportEvaDamage(const std::string &event, const std::string &second,
 // AUDIO-2: the logic's unit voice events (retail calls the voice picker RW 0x8DEDBB from logic code with the client voice message types: ProductionUpdate
 // RW 0x8A2A48 posts 0x7DA (VoiceCreated) for the unit it made, GettingBuiltBehavior RW 0x857DB4 0x7E2 (VoiceFullyCreated), Object RW 0x69987C 0x7DF ...).
 // Fire-and-forget: the installed handler (the HUD's UnitVoiceResponse) plays the voice; nothing comes back into the logic. No handler: counted.
-typedef std::function<void(int voiceEvent, std::uint32_t objectId, std::uint32_t producerId)> UnitVoiceHandler;
+struct UnitVoiceParams
+{
+	int voiceEvent = 0;
+	std::uint32_t objectId = 0;
+	std::uint32_t producerId = 0;
+	const SpecialPowerTemplate *powerTemplate = nullptr;
+	std::uint32_t targetId = 0;
+	bool hasPosition = false;
+	float posX = 0.0f;
+	float posY = 0.0f;
+	float posZ = 0.0f;
+};
+typedef std::function<void(const UnitVoiceParams &params)> UnitVoiceHandler;
+typedef std::function<void(int voiceEvent, std::uint32_t objectId, std::uint32_t producerId)> LegacyUnitVoiceHandler;
 // `owner` identifies the registration (review r1 fix 1): uninstallUnitVoiceHandler(owner) removes the handler only when it is still that owner's, so a
 // second HUD's handler survives the first HUD's destruction. An empty function uninstalls whatever is installed.
 void installUnitVoiceHandler(UnitVoiceHandler handler, const void *owner = nullptr);
+inline void installUnitVoiceHandler(LegacyUnitVoiceHandler handler, const void *owner = nullptr)
+{
+	installUnitVoiceHandler([h = std::move(handler)](const UnitVoiceParams &p) {
+		h(p.voiceEvent, p.objectId, p.producerId);
+	}, owner);
+}
 void uninstallUnitVoiceHandler(const void *owner);
 std::uint64_t unitVoicesWithoutHandler();
 // the looping fire sounds (postWeaponFireSound): stops those whose FireSoundLoopTime ran out (RW FiringTracker::update 0x8E30DD); returns how many loop

@@ -86,7 +86,9 @@ const INIMacroTable::Entry *INIMacroTable::find(const char *name) const
 //   7. empty value throws code 8 "Error parsing MACRO": separators but no token after the name
 //   8. duplicate hash throws code 8 "Duplicate MACRO names" (load type 5 overwrites instead)
 //   9. the pass ends at the first line that is not a define (RW 0x42D0FE -> 0x42D341, past the loop;
-//      BFME2 has the same jump); a lone-slash duplicate of a define is such a line
+//      BFME2 has the same jump); a lone-slash duplicate of a define is such a line. BFME1 data reads
+//      every line (B1T attempts/0x00853610.cpp:210-217: the loop runs to the last line and skips the
+//      others); BFME1's gamedata.ini defines its 2024 macros after its GameData block
 // ---------------------------------------------------------------------------------------------
 void INI::runDefinePass()
 {
@@ -94,7 +96,11 @@ void INI::runDefinePass()
 	{
 		if (line.text.compare(0, 7, "#define") != 0)
 		{
-			break;
+			if (bfme1Data())
+			{
+				continue; // B1T 0x00853610.cpp:215
+			}
+			break; // RW 0x42D0FE
 		}
 
 		const std::string lineText = line.text;

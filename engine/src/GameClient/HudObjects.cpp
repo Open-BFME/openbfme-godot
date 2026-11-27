@@ -498,26 +498,55 @@ bool hiddenFromDrag(const HudContext &ctx, const Object &obj)
 	return sm->clientObjectStatus(obj, local->getPlayerIndex()) >= OBJECTSHROUD_FOGGED;
 }
 
+// Port 101: RW 0x710A0C..0x710A15 / 0x710A41 (addDrawableToList RW 0x7108F2):
+// read ThingTemplate + 0x64C (SelectionPriority), or -1 when the template pointer is null
+int selectionPriorityOf(const Object &obj)
+{
+	if (const auto *tt = static_cast<const ThingTemplate *>(obj.getTemplate()))
+	{
+		return tt->selectionPriority();
+	}
+	return -1;
+}
+
 std::vector<Object *> objectsInRegion(const HudContext &ctx, const IRegion2D &region)
 {
 	std::vector<Object *> out;
 	const bool point = region.lo.x == region.hi.x && region.lo.y == region.hi.y;
 	if (point)
 	{
-		if (Object *o = pickForSelection(ctx, region.lo)) // RW 0x485CB8
+		if (Object *o = pickForSelection(ctx, region.lo)) // RW 0x485CB8 -> W3DView::pickDrawable RW 0x48AB28
 		{
-			out.push_back(o);
+			// RW 0x485D6F -> addDrawableToList RW 0x7108F2 (RW 0x710A47): priority < -1 returns 2 (not selected).
+			// W3DView::pickDrawable selects <= 1 drawable by collision tier and nearest ray hit without reading +0x64C.
+			if (selectionPriorityOf(*o) >= -1)
+			{
+				out.push_back(o);
+			}
 		}
 		return out;
 	}
 	static const int unselectable = ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
-	for (Object *obj = ctx.logic.getFirstObject(); obj; obj = obj->getNextObject())
+	static const int clickThrough = ObjectTemplateInfoBuilder::kindOfIndex("CLICK_THROUGH");
+	static const int baseFoundation = ObjectTemplateInfoBuilder::kindOfIndex("BASE_FOUNDATION");
+	int bestPriority = -1; // RW 0x7108A9: SelectionInfo::m_bestPriority = -1
+	// RW 0x485CD8 iterates TheGameClient->firstDrawable() (+0x104); GameClient::registerDrawable (RW 0x645487) calls Drawable::prependToList
+	// (RW 0x6717E0), visiting drawables newest-created first (reverse GameLogic registration order).
+	for (Object *obj = ctx.logic.getLastObject(); obj; obj = obj->getPrevObject())
 	{
 		if (!isPickable(*obj) || InvisibilityManager::clientLook(*obj, ctx.localPlayer()) == 5) // lane STEALTH-1
 		{
 			continue;
 		}
 		if (hiddenFromDrag(ctx, *obj) || ctx.ui.isClientHidden(obj->getID())) // lane VISUAL-2 r2; lane CHAT-1: an enemy's hidden beacon
+		{
+			continue;
+		}
+		// RW 0x83C3E1..0x83C3EE + RW 0x710929: drag SelectionInfo sets m_mustNotBe for CLICK_THROUGH (bit 76) and BASE_FOUNDATION (bit 104);
+		// RW 0x710964: canSelectDrawable -> Object::isSelectable (RW 0x68DE58) runs before SelectionPriority (RW 0x710A41).
+		if ((clickThrough >= 0 && obj->isKindOf((unsigned)clickThrough))
+			|| (baseFoundation >= 0 && obj->isKindOf((unsigned)baseFoundation))
+			|| !isSelectable(*obj, ctx.ui.getGUICommand()))
 		{
 			continue;
 		}
@@ -528,7 +557,7 @@ std::vector<Object *> objectsInRegion(const HudContext &ctx, const IRegion2D &re
 		Object *stand = obj;
 		if (obj->getContainedBy())
 		{
-			Object *producer = isSelectable(*obj) ? ctx.logic.findObjectByID(obj->getProducerID()) : nullptr;
+			Object *producer = ctx.logic.findObjectByID(obj->getProducerID());
 			if (!producer || !producer->isKindOfName("HORDE") || producer->testStatus(unselectable))
 			{
 				continue;
@@ -540,10 +569,22 @@ std::vector<Object *> objectsInRegion(const HudContext &ctx, const IRegion2D &re
 		{
 			continue;
 		}
-		if (px.x >= region.lo.x && px.x <= region.hi.x && px.y >= region.lo.y && px.y <= region.hi.y
-			&& std::find(out.begin(), out.end(), stand) == out.end())
+		if (px.x >= region.lo.x && px.x <= region.hi.x && px.y >= region.lo.y && px.y <= region.hi.y)
 		{
-			out.push_back(stand);
+			const int priority = selectionPriorityOf(*stand); // RW 0x710A0C..0x710A41
+			if (priority < -1) // RW 0x710A47..0x710A4F: return 2
+			{
+				continue;
+			}
+			if (priority > bestPriority) // RW 0x710A16..0x710A25: higher priority clears prior picks
+			{
+				out.clear();
+				bestPriority = priority;
+			}
+			if (std::find(out.begin(), out.end(), stand) == out.end()) // RW 0x710A19 jle -> RW 0x710A29 push_back (<= bestPriority stays)
+			{
+				out.push_back(stand);
+			}
 		}
 	}
 	return out;

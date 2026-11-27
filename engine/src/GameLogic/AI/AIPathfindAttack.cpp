@@ -3,7 +3,7 @@
 //
 // Lane PHYS-1, completed by lane ATTACKPATH-1: Pathfinder::findAttackPath, the search for a cell from which the attacker's weapon reaches its victim (ZH AIPathfind.cpp
 // findAttackPath; RotWK body RW 0x6FC18E, pathfinder vtable 0xC1B8D8 slot +8, tier B to BFME2 0x6FAD13 whose decomp source is the near-matching draft
-// pathfinder.cpp Pathfinder::FindAttackPath (2117 bytes; byte-matched since, then reverse/attempts/0x002fad13.cpp): every step below was read from the RotWK disassembly, the draft supplied the names.
+// pathfinder.cpp Pathfinder::FindAttackPath (2117 bytes; byte-matched since in the decomp's pathfinder.cpp): every step below was read from the RotWK disassembly, the draft supplied the names.
 // The ship variant RW 0x6FDE38 (slot +0xC, decomp PathfinderSidewaysAttack.cpp) is not ported: ships are not modelled by the pathfinder.)
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; lane PHYS-1 review r2 / r3, lane ATTACKPATH-1):
