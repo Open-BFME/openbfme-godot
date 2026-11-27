@@ -175,12 +175,23 @@ void PoisonedBehavior::crc(StateHasher &hasher) const
 	hasher.addI32(m_deathType);
 }
 
-// RW 0x00886326 / DONOR BFME2 0x004830A9
+// RW 0x00886326 / DONOR BFME2 0x004830A9. Version 2 is the native layout (UpdateModule + poison timers/damage/death type).
+// Version 1 is the pre-port UnportedUpdateModule shell (UpdateModule + m_calls), which resets poison state to defaults.
 void PoisonedBehavior::xfer(Xfer &x)
 {
-	xferUpdateModule(x); // RW 0x0088632F -> RW 0x00850C60
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
+	xferUpdateModule(x); // RW 0x0088632F -> RW 0x00850C60
+	if (v.current < 2)
+	{
+		std::uint32_t legacyCalls = 0; // UnportedUpdateModule::m_calls
+		x.xferUnsignedInt(&legacyCalls);
+		m_poisonDamageFrame = 0;
+		m_poisonOverallStopFrame = 0;
+		m_poisonDamageAmount = 0.0f;
+		m_deathType = DEATH_POISONED;
+		return;
+	}
 	x.xferUnsignedInt(&m_poisonDamageFrame);
 	x.xferUnsignedInt(&m_poisonOverallStopFrame);
 	x.xferReal(&m_poisonDamageAmount);

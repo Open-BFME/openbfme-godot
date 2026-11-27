@@ -14,6 +14,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/PoisonedBehavior.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
 
 #include <utility>
@@ -171,4 +172,60 @@ TEST_CASE("LOCAL-97 PoisonedBehavior: POISON hit ticks damage, sets tint, heals 
 
 		world.logic->setClientHooks(nullptr);
 	}
+}
+
+TEST_CASE("LOCAL-97 PoisonedBehavior xfer: v2 round-trip, v1 UnportedUpdateModule compatibility, and v3 rejection")
+{
+	combattest::CombatWorld world;
+	const std::string err = world.w.load(kPoisonIni, INI_LOAD_OVERWRITE, "poisoned_behavior.ini");
+	REQUIRE_MESSAGE(err.empty(), err);
+
+	Object *victim = world.unit("Local97PoisonVictim", 'A', 100.0f, 100.0f);
+	REQUIRE(victim != nullptr);
+	auto *pb = dynamic_cast<PoisonedBehavior *>(victim->findModule("PoisonedBehavior"));
+	REQUIRE(pb != nullptr);
+
+	// Poison the victim so all fields are non-default
+	{
+		DamageInfo poison;
+		poison.m_input.m_damageType = DAMAGE_POISON;
+		poison.m_input.m_deathType = DEATH_POISONED_BETA;
+		poison.m_input.m_amount = 15.0f;
+		victim->attemptDamage(poison);
+	}
+	REQUIRE(pb->poisonDamageAmount() == 15.0f);
+	REQUIRE(pb->poisonDeathType() == DEATH_POISONED_BETA);
+
+	// v2 round-trip and version 3 rejection
+	XferSave v2Save;
+	pb->xfer(v2Save);
+	REQUIRE(!v2Save.data().empty());
+	CHECK(v2Save.data().front() == 2);
+	{
+		XferLoad v2Load(v2Save.data());
+		pb->xfer(v2Load);
+		CHECK(v2Load.atEnd());
+	}
+	{
+		std::vector<std::uint8_t> badVer = v2Save.data();
+		badVer.front() = 3;
+		XferLoad badLoad(badVer);
+		CHECK_THROWS_AS(pb->xfer(badLoad), XferException);
+	}
+
+	// Real v1 legacy payload produced by UnportedUpdateModule (version 1 + UpdateModule + m_calls)
+	UnportedUpdateModule legacy(victim, pb->moduleData(), 5);
+	legacy.update();
+	XferSave v1Save;
+	legacy.xfer(v1Save);
+	REQUIRE(!v1Save.data().empty());
+	CHECK(v1Save.data().front() == 1);
+
+	XferLoad v1Load(v1Save.data());
+	pb->xfer(v1Load);
+	CHECK(v1Load.atEnd());
+	CHECK(pb->poisonDamageFrame() == 0u);
+	CHECK(pb->poisonOverallStopFrame() == 0u);
+	CHECK(pb->poisonDamageAmount() == 0.0f);
+	CHECK(pb->poisonDeathType() == DEATH_POISONED);
 }
