@@ -1,6 +1,6 @@
 // OpenBFME. GPL-3.0.
 //
-// DamageFieldUpdate (lane LOCAL-36, issue #286): Easterling fortress damage field, etc.
+// DamageFieldUpdate (lane LOCAL-36, fork issue 286): Easterling fortress damage field, etc.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001):
 //   * data (field table RW 0xC64018, after FireWeaponUpdateModuleData base):
@@ -45,7 +45,7 @@ public:
 class DamageFieldUpdate : public FireWeaponUpdate
 {
 public:
-	OBFME_MODULE_XFER(DamageFieldUpdate) // lane SAVE-4b: version 1.1 + victims list + FireWeaponUpdate
+	OBFME_MODULE_XFER(DamageFieldUpdate) // lane SAVE-4b: version 2 (victims + FireWeaponUpdate); version 1 is legacy UnportedUpdateModule
 	DamageFieldUpdate(Thing *thing, const DamageFieldUpdateModuleData *data);
 	~DamageFieldUpdate() override;
 
@@ -53,6 +53,7 @@ public:
 	void crc(StateHasher &hasher) const override;
 
 	const std::vector<ObjectID> &victims() const { return m_victims; }
+	const DamageFieldUpdateModuleData *moduleData() const { return m_data; }
 
 	static void registerClass(ModuleFactory &modules);
 

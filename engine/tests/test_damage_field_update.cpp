@@ -8,6 +8,7 @@
 #include "Common/XferSave.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/DamageFieldUpdate.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
 
 namespace
@@ -125,4 +126,58 @@ TEST_CASE("LOCAL-36: DamageFieldUpdate requires upgrade, hits entering enemies, 
 		CHECK(h1.value() == h2.value());
 
 	}
+}
+
+TEST_CASE("LOCAL-36 DamageFieldUpdate xfer: v2 round-trip, v1 UnportedUpdateModule compatibility, and v3 rejection")
+{
+	combattest::CombatWorld world;
+	const std::string err = world.w.load(kDamageFieldIni, INI_LOAD_OVERWRITE, "damage_field.ini");
+	REQUIRE_MESSAGE(err.empty(), err);
+
+	Object *fortress = world.unit("TestDamageFieldStructure", 'A', 200.0f, 200.0f);
+	Object *enemy = world.unit("TestVictimInfantry", 'B', 250.0f, 200.0f);
+	REQUIRE(fortress != nullptr);
+	REQUIRE(enemy != nullptr);
+	auto *df = dynamic_cast<DamageFieldUpdate *>(fortress->findModule("DamageFieldUpdate"));
+	REQUIRE(df != nullptr);
+
+	const UpgradeTemplate *upg = TheUpgradeCenter->findUpgrade("UpgradeTestDamageField");
+	REQUIRE(upg != nullptr);
+	fortress->giveUpgradeSelf(upg);
+	world.frames(1);
+	REQUIRE(df->victims().size() == 1u);
+	REQUIRE(df->shots() == 1u);
+
+	// v2 round-trip and v3 rejection
+	XferSave v2Save;
+	df->xfer(v2Save);
+	REQUIRE(!v2Save.data().empty());
+	CHECK(v2Save.data().front() == 2);
+	{
+		XferLoad v2Load(v2Save.data());
+		df->xfer(v2Load);
+		CHECK(v2Load.atEnd());
+	}
+	{
+		std::vector<std::uint8_t> badVer = v2Save.data();
+		badVer.front() = 3;
+		XferLoad badLoad(badVer);
+		CHECK_THROWS_AS(df->xfer(badLoad), XferException);
+	}
+
+	// Real v1 legacy payload produced by UnportedUpdateModule (version 1 + UpdateModule + m_calls)
+	UnportedUpdateModule legacy(fortress, df->moduleData(), 1);
+	legacy.update();
+	XferSave v1Save;
+	legacy.xfer(v1Save);
+	REQUIRE(!v1Save.data().empty());
+	CHECK(v1Save.data().front() == 1);
+
+	XferLoad v1Load(v1Save.data());
+	df->xfer(v1Load);
+	CHECK(v1Load.atEnd());
+	CHECK(df->victims().empty());
+	CHECK(df->shots() == 0u);
+	CHECK(df->unfiredUpdates() == 0u);
+	CHECK(df->singleWeapon() == nullptr);
 }

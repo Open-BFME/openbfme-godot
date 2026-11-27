@@ -135,11 +135,46 @@ UpdateSleepTime DamageFieldUpdate::update()
 	return nextSleep(); // RW 0x894BF5
 }
 
-// RW 0x00894C09 / DONOR BFME2 0x49157D
+// RW 0x00894C09 / DONOR BFME2 0x49157D. Version 2 is the native layout (victims + FireWeaponUpdate);
+// version 1 is the pre-port UnportedUpdateModule shell (UpdateModule + m_calls), which resets state to defaults.
 void DamageFieldUpdate::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
+	if (v.current < 2)
+	{
+		xferUpdateModule(x);
+		std::uint32_t legacyCalls = 0; // UnportedUpdateModule::m_calls
+		x.xferUnsignedInt(&legacyCalls);
+		m_victims.clear();
+		m_weapon.reset();
+		m_ownHost.reset();
+		m_shots = 0;
+		m_unfired = 0;
+		m_records.clear();
+		if (m_data)
+		{
+			Object *obj = getObject();
+			const std::uint32_t now = obj->logic().getFrame();
+			for (const FireWeaponNuggetData &n : m_data->m_nuggets)
+			{
+				const WeaponTemplate *tmpl = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(n.weaponName) : nullptr;
+				if (!tmpl)
+				{
+					continue;
+				}
+				Record r;
+				r.oneShot = n.oneShot;
+				r.fireFrame = n.fireDelay + now;
+				r.offset = n.offset;
+				r.weapon = std::make_unique<Weapon>(tmpl, PRIMARY_WEAPON, now);
+				r.weapon->setOwnerID(obj->getID());
+				weaponHost().loadExtraWeapon(*r.weapon);
+				m_records.push_back(std::move(r));
+			}
+		}
+		return;
+	}
 	SnapshotXfer::ids(x, m_victims);
 	FireWeaponUpdate::xfer(x);
 }
