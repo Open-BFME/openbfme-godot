@@ -21,11 +21,67 @@
 #include "GameLogic/Module/UpgradeModuleClasses.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 
 #include <variant>
 
 namespace PalantirCommandUI
 {
+// lane HORDEPORTRAIT-1: RW 0x694F06's first step (BFME2 Object::getObjectSelectedPortraitImage 0x2946AB, tier B: RotWK's body calls RW 0x694BF8, then
+// vslot 0x54 of the interface it returns, then RW 0x73D0A3 with the returned object's template, in the decomp's order). RW 0x694BF8 (BFME2 0x29439D) is
+// the horde object (the object itself when it is a HORDE, else the HORDE that contains it: RW 0x693A1A(false), Object::getHordeObject) and its contain's
+// horde interface (BFME2 0x28C197: contain vslot 0x7C, getHordeContainInterface); vslot 0x54 (BFME2 HordeContain 0x46CBCA with the callback 0x469689) is
+// the contained member that is not a BANNER with the highest experience (ExperienceTracker + 0x10; the first one wins a tie), none in an empty horde
+const Object *hordePortraitMember(const Object &obj)
+{
+	const Object *horde = obj.getHordeObject(false);
+	ContainModuleInterface *contain = horde ? horde->getContain() : nullptr;
+	if (!contain || !contain->getHordeContainInterface())
+	{
+		return nullptr;
+	}
+	const ContainModuleInterface::ContainedItemsList *members = contain->getContainedItemsList();
+	if (!members)
+	{
+		return nullptr;
+	}
+	static const int kBanner = ObjectTemplateInfoBuilder::kindOfIndex("BANNER"); // 164 (BFME2 0x469689: template mask word 68 from + 0x114)
+	const Object *best = nullptr;
+	float bestExperience = -1.0f;
+	for (const Object *member : *members)
+	{
+		if (!member || !member->getTemplate() || (kBanner >= 0 && member->isKindOf((unsigned)kBanner)))
+		{
+			continue;
+		}
+		const ExperienceTracker *tracker = member->getExperienceTracker();
+		const float experience = tracker ? tracker->getExperience() : 0.0f;
+		if (best && !(experience > bestExperience))
+		{
+			continue;
+		}
+		best = member;
+		bestExperience = experience;
+	}
+	return best;
+}
+
+namespace
+{
+// RW 0x73D0A3 -> 0x73CF31: the template's SelectPortrait (template +0x74)
+std::string templatePortrait(const ThingTemplate &t)
+{
+	if (const FieldValue *v = t.findField("SelectPortrait"))
+	{
+		if (const std::string *name = std::get_if<std::string>(v))
+		{
+			return *name;
+		}
+	}
+	return std::string();
+}
+} // namespace
+
 std::string objectPortrait(const Object &obj)
 {
 	// lane MODS-3: an ObjectImageUpgrade's SelectPortrait first (edain-unchained.object-image-upgrade, its hook 0xEF3331 at RW 0x694F06)
@@ -33,6 +89,12 @@ std::string objectPortrait(const Object &obj)
 	if (!upgraded.empty())
 	{
 		return upgraded;
+	}
+	// lane HORDEPORTRAIT-1: a horde (or a horde's member) shows the portrait of its most experienced member that is not a banner carrier (RW 0x694BF8 ->
+	// vslot 0x54 -> RW 0x73D0A3); the horde's own SelectPortrait only when it has no such member
+	if (const Object *member = hordePortraitMember(obj))
+	{
+		return templatePortrait(*member->getTemplate());
 	}
 	// RW 0x694F06 -> 0x73D0A3 -> 0x73CF31: the template's SelectPortrait (template +0x74)
 	const ThingTemplate *t = obj.getTemplate();
@@ -62,14 +124,7 @@ std::string objectPortrait(const Object &obj)
 			}
 		}
 	}
-	if (const FieldValue *v = t->findField("SelectPortrait"))
-	{
-		if (const std::string *name = std::get_if<std::string>(v))
-		{
-			return *name;
-		}
-	}
-	return std::string();
+	return templatePortrait(*t);
 }
 
 std::string portraitFor(const HudContext &ctx, ObjectID contextObject, const std::vector<ObjectID> &selected)
@@ -92,7 +147,8 @@ std::string portraitFor(const HudContext &ctx, ObjectID contextObject, const std
 		{
 			continue;
 		}
-		if (first && obj->getTemplate() && obj->getTemplate() == lastTemplate && !obj->isKindOfName("CREATE_A_HERO"))
+		// lane HORDEPORTRAIT-1: a horde's portrait is its members' (their experience decides), not its template's: hordes are compared one by one
+		if (first && obj->getTemplate() && obj->getTemplate() == lastTemplate && !obj->isKindOfName("CREATE_A_HERO") && !obj->getHordeObject(false))
 		{
 			continue;
 		}
@@ -411,8 +467,9 @@ CostModifierInfo costModifierInfo(const HudContext &ctx, ObjectID contextObject)
 std::vector<std::string> acceptanceStops()
 {
 	return {
-		"[S-760] Palantir portrait: a drawable's portrait uses SelectPortrait or a Create-a-Hero model-state PortraitImageName; the draw module's template override (RW 0x694BF8) and the local-player branch of the "
-		"kind-of bit +0x11F & 0x40 (RW 0x68FBD3) are not ported",
+		"[S-760] Palantir portrait: a drawable's portrait uses a horde's most experienced non-banner member's SelectPortrait (RW 0x694BF8 -> vslot 0x54, lane HORDEPORTRAIT-1; "
+		"the member choice is BFME2 HordeContain 0x46CBCA's, RotWK's slot body not read), else SelectPortrait or a Create-a-Hero model-state PortraitImageName; the local-player branch of the "
+		"kind-of bit +0x11F & 0x40 (RW 0x68FBD3) is not ported, and the portrait does not take RW 0x69194E's disguise template (BFME2 0x2911B7; the rank does)",
 	};
 }
 } // namespace PalantirCommandUI
