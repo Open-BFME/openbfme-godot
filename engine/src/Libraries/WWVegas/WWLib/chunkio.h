@@ -8,7 +8,7 @@
 // Addition: Had_Error() reports a chunk whose declared size runs past its parent or the buffer,
 // which ZH would only notice as short reads later. With `allowTruncatedEnd` (the asset loader) a
 // chunk that runs past the END of the buffer opens instead, as ZH's file reads do: Was_Truncated()
-// says so, a read past the end is still an error, and the next Open_Chunk at the end returns false
+// says so, Cur_Chunk_Length() is clamped to the remaining buffer bytes so loader allocation checks stay bounded, and the next Open_Chunk at the end returns false
 // without one.
 
 #pragma once

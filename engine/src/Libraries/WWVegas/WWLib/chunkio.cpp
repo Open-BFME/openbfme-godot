@@ -41,7 +41,8 @@ bool ChunkLoadClass::Open_Chunk()
 	std::memcpy(&header.ChunkSize, Data + Offset + 4, 4);
 
 	// Bounds: the chunk must fit in its parent and in the buffer; with AllowTruncatedEnd one that runs past the end of the buffer opens, as ZH's
-	// FileClass reads do (Was_Truncated)
+	// FileClass reads do (Was_Truncated), but its length is clamped to the remaining bytes in the buffer so Cur_Chunk_Length()-based allocation
+	// checks in W3D loaders cannot allocate past the actual file size.
 	std::uint64_t end = (std::uint64_t)Offset + 8 + header.Get_Size();
 	if (end > Size)
 	{
@@ -51,6 +52,9 @@ bool ChunkLoadClass::Open_Chunk()
 			return false;
 		}
 		Truncated = true;
+		const std::uint64_t avail = Size - (Offset + 8);
+		const std::uint32_t clamped = avail > 0x7FFFFFFFu ? 0x7FFFFFFFu : (std::uint32_t)avail;
+		header.ChunkSize = (header.ChunkSize & 0x80000000u) | clamped;
 	}
 	if (StackIndex > 0)
 	{
@@ -142,6 +146,11 @@ std::uint32_t ChunkLoadClass::Seek(std::uint32_t nbytes)
 	}
 	if ((std::uint64_t)PositionStack[StackIndex - 1] + nbytes > HeaderStack[StackIndex - 1].Get_Size())
 	{
+		return 0;
+	}
+	if (Offset + nbytes > Size)
+	{
+		Error = true;
 		return 0;
 	}
 	Offset += nbytes;

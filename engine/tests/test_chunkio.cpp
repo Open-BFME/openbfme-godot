@@ -220,3 +220,34 @@ TEST_CASE("a mesh whose chunks disagree with its header is rejected")
 	CHECK_FALSE(Load_W3D_File(file.bytes.data(), file.bytes.size(), contents, &error));
 	CHECK(error.find("header says 4 vertices") != std::string::npos);
 }
+
+TEST_CASE("a truncated W3D chunk clamps Cur_Chunk_Length to the buffer so an oversized HLod LodCount cannot allocate gigabytes")
+{
+	// 56-byte file: 8-byte HLOD chunk header claiming 0x7fffffff bytes + 8-byte HLOD_HEADER chunk header + 40-byte W3dHLodHeaderStruct
+	W3dHLodHeaderStruct lh = {};
+	lh.Version = W3D_MAKE_VERSION(1, 0);
+	lh.LodCount = 0x0fffffffu;
+	setName(lh.Name, sizeof(lh.Name), "EVIL_HLOD");
+	setName(lh.HierarchyName, sizeof(lh.HierarchyName), "EVIL_SKL");
+	ChunkWriter hlodBody;
+	hlodBody.chunk(W3D_CHUNK_HLOD_HEADER, ChunkWriter::of(lh));
+
+	ChunkWriter file;
+	file.u32(W3D_CHUNK_HLOD);
+	file.u32(0x80000000u | 0x7fffffffu); // contains sub-chunks, absurd declared length
+	file.bytes.insert(file.bytes.end(), hlodBody.bytes.begin(), hlodBody.bytes.end());
+	REQUIRE(file.bytes.size() == 8u + 8u + sizeof(W3dHLodHeaderStruct));
+
+	// ChunkLoadClass clamps Cur_Chunk_Length() to the actual remaining buffer bytes
+	ChunkLoadClass cload(file.bytes.data(), file.bytes.size(), true);
+	REQUIRE(cload.Open_Chunk());
+	CHECK(cload.Was_Truncated());
+	CHECK(cload.Cur_Chunk_Length() == file.bytes.size() - 8u);
+
+	// Load_W3D_File rejects LodCount cleanly instead of attempting a multi-gigabyte resize
+	W3DFileContents contents;
+	std::string error;
+	CHECK_FALSE(Load_W3D_File(file.bytes.data(), file.bytes.size(), contents, &error));
+	CHECK(error.find("LodCount") != std::string::npos);
+	CHECK(error.find("exceeds the HLod chunk") != std::string::npos);
+}
