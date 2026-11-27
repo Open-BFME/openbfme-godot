@@ -2273,6 +2273,7 @@ Dictionary AptMenuPlayer::get_backdrop_state() const
 	Dictionary d;
 	d["backdrop_image"] = toGodot(m->drawnBackdrop);
 	d["model_animation_frames"] = m->view3d.animationFrames();
+	d["model_faded"] = m->view3d.fadedViewers(); // lane VIEW3DFADE-1: active viewers whose model is faded out (not rendered)
 	const int background = m->shell && m->shell->wm ? m->shell->wm->backgroundLevel() : -1;
 	d["background_level"] = (int64_t)background;
 	const auto it = m->levelCommands.find(background);

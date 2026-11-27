@@ -190,6 +190,14 @@ TEST_CASE("ui2 View3D animation: the mode names (RW 0xDC3BC0), PLAY_TO_FRAME sto
 	AptView3DPixelBudget(w, h, 1920 * 1080);
 	CHECK(w == 2715);
 	CHECK(h == 763);
+	// lane VIEW3DFADE-1: a model whose every visible pivot is below 1/64 (Background.apt's SFE_MenuBkgrnd in a game: 0.0127) skips its renders
+	CHECK(AptView3DFadedOut(0.0f));
+	CHECK(AptView3DFadedOut(0.0127407433f));
+	CHECK(AptView3DFadedOut(0.015624f));
+	CHECK(AptView3DFadedOut(std::nanf("")));
+	CHECK_FALSE(AptView3DFadedOut(0.015625f));
+	CHECK_FALSE(AptView3DFadedOut(0.0485926f)); // the next frame of its fade in
+	CHECK_FALSE(AptView3DFadedOut(1.0f));
 	// Sol r1: which clips are a menu screen's: their target path's level among the shell's screens'
 	CHECK(AptView3DOnMenuLevel("_level1.Frame.instance1.MenuLogin", { 1 }));
 	CHECK(AptView3DOnMenuLevel("_level12.Frame", { 1, 12 }));

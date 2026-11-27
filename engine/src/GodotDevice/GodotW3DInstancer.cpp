@@ -2879,6 +2879,27 @@ bool W3DInstancer::get_bone_transform_native(int64_t instance, int bone, ::Matri
 	return true;
 }
 
+float W3DInstancer::get_instance_max_fade_native(int64_t instance) const
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size() || Instances[(size_t)instance].Removed)
+	{
+		return 0.0f;
+	}
+	const Instance &inst = Instances[(size_t)instance];
+	ensure_pose(instance);
+	const HTreePose &pose = pose_source(inst).Pose; // lane PERF-HD: a shared member is drawn with its group's pose
+	float best = 0.0f;
+	// the membership filters of write_buffers: a hidden sub object and an invisible pivot are not drawn
+	for (const DrawItem &d : Models[(size_t)inst.Model]->Draws)
+	{
+		const size_t bone = (size_t)d.Sub->BoneIndex;
+		if (!inst.HiddenSubs.empty() && inst.HiddenSubs[(size_t)d.SubIndex]) continue;
+		if (bone >= pose.IsVisible.size() || !pose.IsVisible[bone]) continue;
+		best = std::max(best, pose.PivotFade[bone] * inst.Opacity);
+	}
+	return best;
+}
+
 Dictionary W3DInstancer::get_stats() const
 {
 	Dictionary s;

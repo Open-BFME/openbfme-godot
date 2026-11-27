@@ -273,11 +273,28 @@ void AptView3DViewers::draw(RID item, const Rect2 &rect, const AptCanvasOp &op, 
 		slot.black->set_size(size);
 		slot.white->set_size(size);
 	}
-	RenderingServer *rs = RenderingServer::get_singleton();
-	rs->canvas_item_set_copy_to_backbuffer(item, true, rect);
-	rs->canvas_item_set_material(item, slot.material->get_rid());
-	rs->canvas_item_add_texture_rect(item, rect, slot.black->get_texture()->get_rid());
+	RenderingServer::get_singleton()->canvas_item_set_material(item, slot.material->get_rid());
+	slot.item = item;
+	slot.rect = rect;
+	fillComposite(slot, true); // endBuild's syncVisibility empties it again while the model is faded out
 	pose(slot, now);
+}
+
+void AptView3DViewers::fillComposite(Slot &slot, bool drawn)
+{
+	// lane VIEW3DFADE-1 (review): a faded-out viewer's composite item is emptied (no draw command, no copy of the screen), not hidden: the player's
+	// item pool resets an item's commands, material and back-buffer copy when it hands it out again, so an emptied item carries nothing into its
+	// next use (a hidden one hid the clip it was reused for)
+	SubViewport *black = Object::cast_to<SubViewport>(ObjectDB::get_instance(slot.blackId)); // gone once the owner frees its children
+	drawn = drawn && black;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->canvas_item_clear(slot.item);
+	rs->canvas_item_set_copy_to_backbuffer(slot.item, drawn, drawn ? slot.rect : Rect2());
+	if (drawn)
+	{
+		rs->canvas_item_add_texture_rect(slot.item, slot.rect, black->get_texture()->get_rid());
+	}
+	slot.itemEmpty = !drawn;
 }
 
 void AptView3DViewers::endBuild()
@@ -297,7 +314,14 @@ void AptView3DViewers::syncVisibility(bool forceHidden)
 	for (auto &kv : m_slots)
 	{
 		Slot &slot = kv.second;
-		const SubViewport::UpdateMode mode = slot.used && !slot.failed && visible ? SubViewport::UPDATE_ALWAYS : SubViewport::UPDATE_DISABLED;
+		// lane VIEW3DFADE-1: a faded-out model renders neither scene, and its composite (a copy of the screen and a full-clip pass) is emptied: over a
+		// model that draws nothing it would give back the screen behind it
+		const bool drawn = slot.used && !slot.failed && !slot.faded;
+		if (slot.used && !slot.failed && slot.item.is_valid() && slot.itemEmpty == drawn)
+		{
+			fillComposite(slot, drawn);
+		}
+		const SubViewport::UpdateMode mode = drawn && visible ? SubViewport::UPDATE_ALWAYS : SubViewport::UPDATE_DISABLED;
 		// Children can already be gone when the owner's destructor clears its retained canvas.
 		for (ObjectID id : { slot.blackId, slot.whiteId })
 		{
@@ -310,7 +334,7 @@ void AptView3DViewers::syncVisibility(bool forceHidden)
 		W3DInstancer *inst = Object::cast_to<W3DInstancer>(ObjectDB::get_instance(slot.instId));
 		if (inst)
 		{
-			inst->set_presentation_updates(mode == SubViewport::UPDATE_ALWAYS);
+			inst->set_presentation_updates(mode == SubViewport::UPDATE_ALWAYS); // pose() still poses a faded model (its fade can rise again)
 		}
 	}
 }
@@ -330,6 +354,7 @@ void AptView3DViewers::pose(Slot &slot, double now)
 		slot.inst->set_instance_pose_native(slot.instance, slot.clip, (double)slot.anim.frame(), std::string(), 0.0, 0.0);
 	}
 	slot.inst->update_now();
+	slot.faded = AptView3DFadedOut(slot.inst->get_instance_max_fade_native(slot.instance)); // lane VIEW3DFADE-1, applied by syncVisibility
 	::Matrix3D m;
 	if (slot.cameraBone >= 0 && slot.inst->get_bone_transform_native(slot.instance, slot.cameraBone, m))
 	{
@@ -357,6 +382,19 @@ Dictionary AptView3DViewers::animationFrames() const
 	return frames;
 }
 
+Array AptView3DViewers::fadedViewers() const
+{
+	Array faded;
+	for (const auto &entry : m_slots)
+	{
+		if (entry.second.used && !entry.second.failed && entry.second.faded)
+		{
+			faded.push_back(String(entry.first.c_str()));
+		}
+	}
+	return faded;
+}
+
 void AptView3DViewers::advance()
 {
 	syncVisibility();
@@ -368,6 +406,7 @@ void AptView3DViewers::advance()
 			pose(kv.second, now);
 		}
 	}
+	syncVisibility(); // lane VIEW3DFADE-1: a model that faded in or out in this pose renders (or stops) in this frame
 }
 
 } // namespace godot

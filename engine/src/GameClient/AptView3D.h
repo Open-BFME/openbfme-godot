@@ -64,6 +64,13 @@ void AptView3DPixelBudget(int &width, int &height, int budget);
 bool AptView3DOnMenuLevel(const std::string &path, const std::vector<int> &menuLevels);
 // RW 0x813514: the frame of a "_frame=<n>" command (atoi)
 int AptView3DFrameOf(const std::string &value);
+// lane VIEW3DFADE-1 (not retail: retail renders every View3D scene each frame, RW 0xB5470F): does a viewer whose model's largest visible fade is
+// `maxFade` (pivot fade times opacity, W3DInstancer::get_instance_max_fade_native) change no pixel, so it can skip its two renders and its composite?
+// Below 1/64. INFERENCE: retail blends such surfaces at that alpha (or scales an additive colour by it), which moves no frame buffer channel by
+// 4 / 255 or more. Background.apt's hide, a game's start, puts its View3D SFE_MenuBkgrnd back to its first frame (a pivot at fade 0.0127) and the
+// clip stays in the render list for the whole game: two window-sized 3D renders a frame for nothing (and the S-029 dither drew 1.3 % of its pixels
+// as dark dots)
+bool AptView3DFadedOut(float maxFade);
 
 class AptView3DAnimation
 {
