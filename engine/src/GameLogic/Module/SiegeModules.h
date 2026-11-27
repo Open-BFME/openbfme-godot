@@ -197,6 +197,7 @@ public:
 protected:
 	// the save of this base (SAVE-4b): UpdateModule's, the ready frame and the pause
 	void xferSpecialPowerUpdateBase(Xfer &x);
+	void resetSpecialPowerUpdateBase();
 	// RW 0x99135D: the timer's own readiness (the shared player frame for a SharedSynced template, else not paused and the ready frame reached)
 	bool readyImpl(bool insert) const;
 	// RW 0x9913BC: isReady through the vtable (a subclass's override), the paused percent, then the timer

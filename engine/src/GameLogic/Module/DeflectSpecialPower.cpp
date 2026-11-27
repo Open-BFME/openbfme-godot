@@ -124,10 +124,22 @@ void DeflectSpecialPower::crc(StateHasher &h) const
 	h.addBool(m_pending);
 }
 
-// RW 0x008C99FB: base xfer (RW 0x009912DB), early return on XFER_CRC (at 0x008C9A0D .. 0x008C9A12), else version 1 with m_active and m_pending
+// RW 0x008C99FB: version 2 is the native layout (SpecialPowerUpdateBase, early return on XFER_CRC, then m_active and m_pending).
+// Version 1 is the pre-port UnportedUpdateModule shell (UpdateModule + m_calls), which resets base and own fields to defaults.
 void DeflectSpecialPower::xfer(Xfer &x)
 {
-	SnapshotXfer::version(x, 1, 1);
+	XferVersion v{ 1, 2 };
+	x.xferVersion(v);
+	if (v.current < 2)
+	{
+		xferUpdateModule(x);
+		std::uint32_t legacyCalls = 0; // UnportedUpdateModule::m_calls
+		x.xferUnsignedInt(&legacyCalls);
+		resetSpecialPowerUpdateBase();
+		m_active = false;
+		m_pending = false;
+		return;
+	}
 	xferSpecialPowerUpdateBase(x);
 	if (x.getXferMode() == XFER_CRC)
 	{

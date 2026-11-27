@@ -7,7 +7,10 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/Module/DeflectSpecialPower.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Module/ProjectileModules.h"
 
 using namespace combattest;
@@ -201,4 +204,55 @@ TEST_CASE("modgap1 DeflectSpecialPower: the stop line names S-5601")
 	const std::string line = DeflectSpecialPower::stopLine();
 	CHECK(line.compare(0, 8, "[S-5601]") == 0);
 	CHECK(line.find("NO_COLLIDE") != std::string::npos);
+}
+
+TEST_CASE("modgap1 DeflectSpecialPower xfer: v2 round-trip, v1 UnportedUpdateModule compatibility, and v3 rejection")
+{
+	DeflectWorld w;
+	Object *spear = w.unit("DeflSpear", 'A', 400, 400);
+	DeflectSpecialPower *power = DeflectWorld::power(spear);
+	REQUIRE(power != nullptr);
+	power->setReadyFrame(123u);
+	power->pauseCountdown(true);
+	power->initiateIntentToDoSpecialPower(power->getSpecialPowerTemplate(), nullptr, nullptr, 0, 0);
+	REQUIRE(power->pending());
+	w.frames(2);
+	REQUIRE(power->isActive());
+
+	// v2 round-trip and version 3 rejection
+	const unsigned readyBefore = power->getReadyFrame();
+	REQUIRE(readyBefore == 125u); // 123 + 2 paused frames
+	XferSave v2Save;
+	power->xfer(v2Save);
+	REQUIRE(!v2Save.data().empty());
+	CHECK(v2Save.data().front() == 2);
+	{
+		XferLoad v2Load(v2Save.data());
+		power->xfer(v2Load);
+		CHECK(v2Load.atEnd());
+		CHECK(power->isActive());
+		CHECK(power->getReadyFrame() == readyBefore);
+	}
+	{
+		std::vector<std::uint8_t> badVer = v2Save.data();
+		badVer.front() = 3;
+		XferLoad badLoad(badVer);
+		CHECK_THROWS_AS(power->xfer(badLoad), XferException);
+	}
+
+	// Real v1 legacy payload produced by UnportedUpdateModule (version 1 + UpdateModule + m_calls)
+	UnportedUpdateModule legacy(spear, nullptr, 273);
+	legacy.update();
+	XferSave v1Save;
+	legacy.xfer(v1Save);
+	REQUIRE(!v1Save.data().empty());
+	CHECK(v1Save.data().front() == 1);
+
+	XferLoad v1Load(v1Save.data());
+	power->xfer(v1Load);
+	CHECK(v1Load.atEnd());
+	CHECK_FALSE(power->isActive());
+	CHECK_FALSE(power->pending());
+	CHECK(power->getReadyFrame() == 0u);
+	CHECK(power->isReady());
 }

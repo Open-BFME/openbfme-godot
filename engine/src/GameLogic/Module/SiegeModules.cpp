@@ -703,6 +703,14 @@ void SpecialPowerUpdateBase::xferSpecialPowerUpdateBase(Xfer &x)
 	x.xferReal(&m_pausedPercent);
 }
 
+void SpecialPowerUpdateBase::resetSpecialPowerUpdateBase()
+{
+	m_readyFrame = 0;
+	m_pauseCount = 0;
+	m_pauseFrame = 0;
+	m_pausedPercent = 0.0f;
+}
+
 void SpecialPowerUpdateBase::crc(StateHasher &h) const
 {
 	UpdateModule::crc(h);
