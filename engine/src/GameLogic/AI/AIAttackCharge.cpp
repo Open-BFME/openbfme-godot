@@ -246,17 +246,24 @@ void AIChargeTargetState::crc(StateHasher &h) const
 
 void AIChargeTargetState::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 2 };
+	XferVersion v{ 1, 2 }; // 2: m_setBeforeCharge (fork issue 395 Q3); v1 omits it and defaults to LOCOMOTORSET_NORMAL (RW 0x74D8C8)
 	x.xferVersion(v);
 	AIXfer::coord(x, m_goal);
 	x.xferBool(&m_done);
 	x.xferInt(&m_count);
-	x.xferInt(&m_setBeforeCharge);
-	if (x.isLoading())
+	if (v.current >= 2)
 	{
-		// RW 0x5E9AB1 (0x5E9B06): indices of the SET_* table. The fork remembers the entry set for
-		// onExit (RW 0x74D892 uses NORMAL); curLocomotorSet() can also be -1 before a set is chosen.
-		AIXfer::inRange(m_setBeforeCharge, -1, LOCOMOTORSET_COUNT - 1, "charge: the locomotor set before charging");
+		x.xferInt(&m_setBeforeCharge);
+		if (x.isLoading())
+		{
+			// RW 0x5E9AB1 (0x5E9B06): indices of the SET_* table. The fork remembers the entry set for
+			// onExit (RW 0x74D892 uses NORMAL); curLocomotorSet() can also be -1 before a set is chosen.
+			AIXfer::inRange(m_setBeforeCharge, -1, LOCOMOTORSET_COUNT - 1, "charge: the locomotor set before charging");
+		}
+	}
+	else if (x.isLoading())
+	{
+		m_setBeforeCharge = LOCOMOTORSET_NORMAL;
 	}
 	xferMove(x, ai().mover(), m_move);
 }

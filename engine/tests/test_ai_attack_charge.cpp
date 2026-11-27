@@ -7,13 +7,18 @@
 #include "doctest.h"
 #include "CombatTestUtil.h"
 
+#include "Common/XferLoad.h"
+#include "Common/XferSave.h"
 #include "GameLogic/AI/AIAttack.h"
+#include "GameLogic/AI/AIAttackCharge.h"
+#include "GameLogic/Locomotor.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/SpellEffectModules.h"
 #include "GameLogic/WeaponState.h"
 
 #include <cstdio>
+#include <cstring>
 
 using namespace combattest;
 
@@ -305,4 +310,99 @@ TEST_CASE("PORT-133 neighbour: the same weapon without CanFireWhileCharging neve
 	CHECK(maxX < 500.0f); // tolerance: it stops at its range (60 before the victim at 500) instead of running through; where exactly is the attack approach's
 	CHECK(ChargeWorld::health(victim) < h0); // tolerance: it strikes with the weapon itself (Damage 1 per shot; the shot count is the generic attack's)
 	CHECK(ChargeWorld::health(victim) > h0 - 50.0f); // tolerance: never the charge effect (50 per shot)
+}
+
+TEST_CASE("PORT-133 xfer: AIChargeTargetState v1/v2, locomotor range validation, and full snapshot round-trip")
+{
+	ChargeWorld w;
+	Object *charger = w.unit("P133Charger", 'A', 300, 300);
+	Object *victim = w.unit("P133Victim", 'B', 500, 300);
+	Object *plain = w.unit("P133Plain", 'A', 300, 400);
+	const ObjectID chargerId = charger->getID();
+	const ObjectID plainId = plain->getID();
+	w.frames(2);
+	w.order(charger, victim);
+	w.order(plain, victim);
+	w.frames(3);
+
+	auto *chargeAttack = dynamic_cast<AIAttackState *>(charger->getAIUpdateInterface()->stateMachine().currentState());
+	REQUIRE(chargeAttack);
+	REQUIRE(chargeAttack->attackMachine());
+	REQUIRE(chargeAttack->attackMachine()->currentStateId() == CHARGE_TARGET);
+
+	// Full snapshot round-trip preserves both MADE_CHARGE and existing MADE_GENERIC attacks with identical state hash
+	const auto hashBefore = w.logic->computeStateHash();
+	std::vector<std::uint8_t> snap;
+	std::string err;
+	REQUIRE_MESSAGE(w.logic->saveSnapshot(snap, &err), err);
+	w.frames(2);
+	REQUIRE_MESSAGE(w.logic->loadSnapshot(snap, &err), err);
+	CHECK(w.logic->computeStateHash() == hashBefore);
+	charger = w.logic->findObjectByID(chargerId);
+	plain = w.logic->findObjectByID(plainId);
+	REQUIRE(charger);
+	REQUIRE(plain);
+	chargeAttack = dynamic_cast<AIAttackState *>(charger->getAIUpdateInterface()->stateMachine().currentState());
+	REQUIRE(chargeAttack);
+	REQUIRE(chargeAttack->attackMachine());
+	CHECK(chargeAttack->attackMachine()->currentStateId() == CHARGE_TARGET);
+	auto *plainAttack = dynamic_cast<AIAttackState *>(plain->getAIUpdateInterface()->stateMachine().currentState());
+	REQUIRE(plainAttack);
+	REQUIRE(plainAttack->attackMachine());
+
+	// Direct AIChargeTargetState::xfer checks: v1 payload (no m_setBeforeCharge), invalid locomotor set, and version 3 refusal
+	AIUpdateInterface &ai = *charger->getAIUpdateInterface();
+	auto m = makeChargeAttackMachine(ai);
+	auto *st = dynamic_cast<AIChargeTargetState *>(m->findState(CHARGE_TARGET));
+	REQUIRE(st);
+
+	// Craft a v1 payload: version=1, goal=(10,20,30), done=false, count=1, hasMove=false
+	XferSave v1Save;
+	{
+		XferVersion v{ 1, 1 };
+		v1Save.xferVersion(v);
+		float gx = 10.0f, gy = 20.0f, gz = 30.0f;
+		v1Save.xferReal(&gx);
+		v1Save.xferReal(&gy);
+		v1Save.xferReal(&gz);
+		bool done = false;
+		int count = 1;
+		bool hasMove = false;
+		v1Save.xferBool(&done);
+		v1Save.xferInt(&count);
+		v1Save.xferBool(&hasMove);
+	}
+	XferLoad v1Load(v1Save.data());
+	st->xfer(v1Load);
+	CHECK(v1Load.atEnd());
+	CHECK(st->goal().x == 10.0f);
+	CHECK(st->goal().y == 20.0f);
+	CHECK(st->goal().z == 30.0f);
+
+	// v2 round-trip and out-of-range m_setBeforeCharge refusal
+	XferSave v2Save;
+	st->xfer(v2Save);
+	std::vector<std::uint8_t> bytes = v2Save.data();
+	REQUIRE(bytes.front() == 2);
+	{
+		XferLoad okLoad(bytes);
+		st->xfer(okLoad);
+		CHECK(okLoad.atEnd());
+	}
+	// Version 3 must throw XferException
+	{
+		std::vector<std::uint8_t> badVer = bytes;
+		badVer.front() = 3;
+		XferLoad badVerLoad(badVer);
+		CHECK_THROWS_AS(st->xfer(badVerLoad), XferException);
+	}
+	// Out-of-range m_setBeforeCharge (-2 and LOCOMOTORSET_COUNT) must throw XferException
+	// Layout: 1 (ver) + 12 (goal) + 1 (done) + 4 (count) = offset 18 for m_setBeforeCharge
+	for (std::int32_t badSet : { -2, (std::int32_t)LOCOMOTORSET_COUNT })
+	{
+		std::vector<std::uint8_t> bad = bytes;
+		std::memcpy(bad.data() + 18, &badSet, sizeof(badSet));
+		XferLoad badLoad(bad);
+		CHECK_THROWS_AS(st->xfer(badLoad), XferException);
+	}
 }
