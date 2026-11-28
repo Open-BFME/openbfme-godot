@@ -240,6 +240,16 @@ public:
 	// lane PERF-HD: every animated draw's advance is advanceIsLocal (and the tires are this drawable's): advanceAnimation touches only this drawable
 	bool advanceIsLocal() const;
 	void advanceAnimationLocal(double elapsedMs); ///< advanceAnimation without the host's chunk name (nothing it runs reports through the host)
+	// RW 0x4BF1DE -> 0x4BF214: defer CAPTUREFLAG OnStateEnter sub-objects and colour until TRANS_FlagDown / TRANS_FlagDownCancel completes.
+	struct DeferredSubObject
+	{
+		std::string name;
+		bool visible = false;
+		bool permanent = false;
+	};
+	bool hasPendingAnimationTransition() const;
+	void applyOrDeferCapturePresentation(std::vector<DeferredSubObject> subObjects, bool hasHouse, std::uint32_t house);
+	void flushPendingCapturePresentation();
 	void advanceTires(DrawEntry &e, double elapsedMs); ///< lane COMBAT-4: W3DTruckDraw's tire spin (RW 0x4CBFFB)
 	void stepLightDraw(DrawEntry &e, double elapsedMs); ///< lane LOCAL-28: the W3DLightDraw entry's flicker / pulse step (DrawableLight.cpp)
 
@@ -438,5 +448,14 @@ private:
 	float m_presentationBasis[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 	Coord3D m_presentationPosition;
 
+	struct PendingCapturePresentation
+	{
+		bool active = false;
+		std::vector<DeferredSubObject> subObjects;
+		bool hasHouseColor = false;
+		std::uint32_t houseColor = 0;
+	};
+	PendingCapturePresentation m_pendingCapturePresentation;
+	void applyCapturePresentationNow(const std::vector<DeferredSubObject> &subObjects, bool hasHouse, std::uint32_t house);
 	void setFadeHidden(bool hidden); ///< RW 0x6718FB (bumps the change count when it changes)
 };

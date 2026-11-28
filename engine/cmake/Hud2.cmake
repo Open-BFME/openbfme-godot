@@ -7,6 +7,7 @@ set(OPENBFME_HUD2_SOURCES
 set(OPENBFME_HUD2_TESTS
     tests/test_hudpassive1.cpp
     tests/test_hud2_palantir.cpp
+    tests/test_hud_mod_widescreen.cpp
     tests/test_hud2_radar.cpp
     tests/test_hud3_palantir_layout.cpp
 )

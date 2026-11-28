@@ -22,6 +22,7 @@
 #pragma once
 
 #include "GameClient/GUI/AptScreen.h"
+#include "GameClient/GUI/AptScreens/AptWidescreen.h"
 #include "GameClient/SpellBookUI.h"
 #include "GameLogic/GameMessage.h"
 
@@ -69,6 +70,7 @@ private:
 	int computeLayout() const; // RW 0x822DD7
 	void hideInGameBackground(); // lane INGAMEBG-1: RW 0x82289A / 0x8232ED
 	SpellStoreModel m_model;
+	AptWidescreen::SqueezeCache m_squeeze; // a mod's SpellStore.apt authored for 16:9 (AptWidescreen.h)
 	GameLogic *m_logic = nullptr;
 	Player *m_player = nullptr;
 	const GameTextSource *m_text = nullptr;

@@ -748,7 +748,21 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 			// PORT-330 (S-190): the FXList blocks the FX player parses are checked against the same TheAudio / TheEva tables the world loaded.
 			// Port fix: a world the map cache or the settings dropped above leaves none (the services went with it), never a dangling pointer
 			m_fxPlayer->setParseServices(m_world ? m_world->fxListParseServices() : nullptr);
-			const Dictionary fx = m_fxPlayer->setup(fs);
+			// the FX files are read with the #define table retail's FX load sees (macros a mod defines in an earlier file, e.g. Water.ini #include);
+			// a world whose load never reached the FX subsystems is an error, never the GameData macros alone
+			Dictionary fx;
+			if (m_world && m_world->report().macrosBeforeFXTaken)
+			{
+				fx = m_fxPlayer->setupWithMacros(fs, m_world->report().macrosBeforeFX);
+			}
+			else if (m_world)
+			{
+				errors.push_back("FX: the object world's INI load did not reach TheFXParticleSystemManager (no FX macro table)");
+			}
+			else
+			{
+				fx = m_fxPlayer->setup(fs);
+			}
 			m_fxSetupErrors = fx.get("errors", Array());
 			for (int64_t i = 0; i < m_fxSetupErrors.size(); ++i)
 			{

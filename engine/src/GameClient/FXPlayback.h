@@ -101,6 +101,9 @@ public:
 	// playback's FXList store before the FX files are parsed; the live game sets it right after its object world's load. Unset: the store keeps
 	// the names unvalidated and reports them (FXListStore::unverified). Not owned; must outlive the parse.
 	void setParseServices(FXListParseServices *services) { m_lists.setParseServices(services); }
+	// The same with the #define table retail's FX files see (SubsystemLoadReport::macrosBeforeFX of the game's object world) in place of the GameData
+	// macros: a mod may define the macros its FX use in any file loaded before them (the live game passes it)
+	std::vector<std::string> loadRetailData(const INIMacroTable &macrosBeforeFX);
 
 	// Loads INI text (FXParticleSystem / FXList blocks) as a file named `name` into the stores (tests, mods); returns the errors.
 	std::vector<std::string> loadIniText(const std::string &name, const std::string &text);
@@ -172,6 +175,8 @@ public:
 private:
 	class Environment;
 	class Services;
+
+	std::vector<std::string> loadRetailData(const INIMacroTable *macrosBeforeFX); // null: the GameData macros
 
 	ArchiveFileSystem &m_fs;
 	INIEnvironment m_iniEnv;

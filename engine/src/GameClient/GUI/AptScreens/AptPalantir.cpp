@@ -934,7 +934,7 @@ void AptPalantir::setViewportSize(int width, int height)
 	{
 		return;
 	}
-	const float scale = std::min(1.0f, ((float)height / stageHeight) / ((float)width / stageWidth));
+	const float scale = AptWidescreen::correction(stageWidth, stageHeight, width, height, m_squeeze.of(root->timelineFile));
 	for (AptCharacterInst *child : root->children())
 	{
 		const std::string &name = child->instName();

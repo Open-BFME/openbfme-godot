@@ -200,6 +200,16 @@ FXServices &FXPlayback::services()
 
 std::vector<std::string> FXPlayback::loadRetailData()
 {
+	return loadRetailData(nullptr);
+}
+
+std::vector<std::string> FXPlayback::loadRetailData(const INIMacroTable &macrosBeforeFX)
+{
+	return loadRetailData(&macrosBeforeFX);
+}
+
+std::vector<std::string> FXPlayback::loadRetailData(const INIMacroTable *macrosBeforeFX)
+{
 	std::vector<std::string> errors;
 	auto run = [&](const char *what, auto &&fn) {
 		try
@@ -215,11 +225,18 @@ std::vector<std::string> FXPlayback::loadRetailData()
 			errors.push_back(std::string(what) + ": " + e.what());
 		}
 	};
-	// retail defines its #define macros in gamedata.ini before any other content file loads (spec ini-and-object-model 3.4)
-	run("GameData.ini macros", [&] {
-		INI ini(m_iniEnv);
-		ini.preprocessFile("Data\\INI\\GameData.ini", INI_LOAD_OVERWRITE);
-	});
+	if (macrosBeforeFX)
+	{
+		m_iniEnv.macros = *macrosBeforeFX;
+	}
+	else
+	{
+		// retail defines its #define macros in gamedata.ini before any other content file loads (spec ini-and-object-model 3.4)
+		run("GameData.ini macros", [&] {
+			INI ini(m_iniEnv);
+			ini.preprocessFile("Data\\INI\\GameData.ini", INI_LOAD_OVERWRITE);
+		});
+	}
 	run("FXParticleSystem.ini", [&] {
 		INI ini(m_iniEnv);
 		ini.load("Data\\INI\\FXParticleSystem.ini", INI_LOAD_OVERWRITE);
