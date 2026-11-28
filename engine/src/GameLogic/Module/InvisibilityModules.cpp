@@ -11,8 +11,12 @@
 #include "GameLogic/Module/SpecialAbilityModules.h"
 
 #include "Common/AsciiString.h"
+#include "Common/Audio/AudioEntryPoints.h"
+#include "Common/Audio/AudioLog.h"
+#include "GameLogic/UnitSpecificSound.h"
 #include "Common/INIException.h"
 #include "Common/Player.h"
+#include "Common/PlayerList.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -723,6 +727,28 @@ void StealthUpdate::swapDisguise()
 }
 
 // RW 0x7767A9
+namespace
+{
+// RW 0x007766C4 (key 0x2A SoundStealthOn) / RW 0x007766DD (key 0x2B SoundStealthOff), called from StealthUpdate::evaluate
+// (RW 0x00777310: 0x00777726, 0x007777D0, 0x00777891, 0x00777921; DONOR BFME2 0x00374389 / 0x003743A2 in StealthUpdateLogic.cpp).
+// INFERENCE: the drawable check RW 0x70E013 is taken as true (every retail logic object has one); the row is read from the template
+// (following map.ini overrides), not through the draw module's sound selectors (RW 0x676A8A asks them first; S-701).
+void playStealthSound(const Object &obj, const char *row)
+{
+	const ThingTemplate *tt = obj.getTemplate();
+	if (!tt)
+	{
+		return;
+	}
+	const std::string sound = UnitSpecificSound::templateSound(*tt->getFinalOverride(), row);
+	if (!sound.empty())
+	{
+		AudioLog::Scope scope(row);
+		AudioApi::playSoundForObject(sound, obj.getID());
+	}
+}
+} // namespace
+
 void StealthUpdate::markAsDetected(unsigned frames, int mode, Object *detector, bool horde)
 {
 	(void)mode;     // the client notification's mode
@@ -757,6 +783,10 @@ void StealthUpdate::markAsDetected(unsigned frames, int mode, Object *detector, 
 				return;
 			}
 		}
+	}
+	if (obj->testStatus((unsigned)b.stealthed))
+	{
+		playStealthSound(*obj, "SoundStealthOff"); // RW 0x00777891 -> RW 0x007766DD (key 0x2B)
 	}
 	setStatusAll(b.detected, true); // RW 0x776896
 	if (m_disguiseTemplate) // RW 0x7768A2: a disguise ends (lane STEALTH-2)
@@ -1015,6 +1045,7 @@ UpdateSleepTime StealthUpdate::evaluate()
 		}
 		if (!obj->testStatus((unsigned)b.stealthed))
 		{
+			playStealthSound(*obj, "SoundStealthOn"); // RW 0x00777726 -> RW 0x007766C4 (key 0x2A)
 			setStatusAll(b.stealthed, true); // RW 0x777799
 		}
 	}
@@ -1026,6 +1057,7 @@ UpdateSleepTime StealthUpdate::evaluate()
 		}
 		if (obj->testStatus((unsigned)b.stealthed))
 		{
+			playStealthSound(*obj, "SoundStealthOff"); // RW 0x007777D0 -> RW 0x007766DD (key 0x2B)
 			setStatusAll(b.stealthed, false); // RW 0x777842
 			if (ToggleHiddenSpecialAbilityUpdate *th = ToggleHiddenSpecialAbilityUpdate::of(*obj)) // RW 0x777849 -> 0x7760B7 (lane STEALTH-2)
 			{
@@ -1038,6 +1070,10 @@ UpdateSleepTime StealthUpdate::evaluate()
 	// RW 0x777862: the detection
 	if (now > m_detectionExpires && obj->testStatus((unsigned)b.detected))
 	{
+		if (const Player *owner = obj->getControllingPlayer(); owner && owner == logic.players().getLocalPlayer()) // RW 0x0077790D -> RW 0x0068B749
+		{
+			playStealthSound(*obj, "SoundStealthOn"); // RW 0x00777921 -> RW 0x007766C4 (key 0x2A)
+		}
 		setStatusAll(b.detected, false); // RW 0x777993; the garrison notice (contain slot 0x50) is not ported
 	}
 	return sleep();
