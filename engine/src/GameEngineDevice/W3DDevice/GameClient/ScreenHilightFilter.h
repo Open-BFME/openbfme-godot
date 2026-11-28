@@ -4,7 +4,7 @@
 // the glow shaders. Client / draw code only; GodotGlowEffect.cpp runs the same arithmetic on the GPU.
 //
 // TARGET FACTS (RotWK game.dat, stop S-001 caveat; BFME2 decomp ScreenHilightFilterPreRender.cpp / ScreenHilightFilter.cpp /
-// W3DShaderManagerPerformGlow.cpp / W3DShaderGaussianVector.cpp for the donors, RotWK addresses read here):
+// W3DShaderManager.cpp (performGlow, createGaussianVector) for the donors, RotWK addresses read here):
 //  - Kernel (W3DShaderManager::createGaussianVector, RW 0x477969, called by the filter's init RW 0x4FA394 and by its preRender RW 0x4FA423 / on the
 //    dirty byte RW 0x4FA8E7): parameters (components 2, taps = GlowDiameter, coefficient0 = RadiusScale1, amplitude0 = Amplitude1, coefficient1 =
 //    RadiusScale2, amplitude1 = Amplitude2; RW 0x4FA907 .. 0x4FA944). scale = 15.0 (RW 0xBDC6CC) / taps; above 1.0 it becomes (1 - scale) * 0.5 + scale.

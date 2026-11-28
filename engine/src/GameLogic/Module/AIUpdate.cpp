@@ -652,7 +652,9 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 {
 	std::unique_ptr<AIStateMachine> m = std::make_unique<AIStateMachine>(*this, machineName());
 	// B1 AIStateMachineConstructor.cpp (ids), ZH AIStates.cpp (states and their success / failure transitions: the move states fall back to idle)
-	m->defineState(AI_IDLE, std::make_unique<AIIdleState>(*m), AI_IDLE, AI_IDLE);
+	// RW 0x7537E0 .. 0x7537EE: the idle state's failure goes to 0x4E, AIGoingIdleState (onEnter RW 0x743864 tells the StancesBehavior onMoveEnd and fails on
+	// to idle); the idle state's stance countdown (RW 0x7553AB) is what fails it
+	m->defineState(AI_IDLE, std::make_unique<AIIdleState>(*m), AI_IDLE, AI_GOING_IDLE);
 	// lane PLAY-4: RotWK's move states 1 and 0x1A end in AIGoingIdleState 0x4E (RW 0x753755), which tells the stances the move ended, then goes idle
 	m->defineState(AI_MOVE_TO, std::make_unique<AIMoveToMachineState>(*m), AI_GOING_IDLE, AI_GOING_IDLE);
 	m->defineState(AI_FOLLOW_PATH, std::make_unique<AIFollowPathState>(*m, false), AI_IDLE, AI_IDLE);
@@ -850,6 +852,7 @@ UpdateSleepTime AIUpdateInterface::update()
 			if (Object *t = attackMoveTarget())
 			{
 				aiAttackObject(t, CMD_FROM_AI);
+				setVictimAutoAcquired(); // lane APPROACHGIVEUP-1: RW 0x7558AB (retail switches its own machine; the port's command cleared the flag first)
 			}
 		}
 	}
@@ -1553,6 +1556,21 @@ void AIUpdateInterface::aiHordeExit(Object *container, CommandSourceType source)
 	setLastCommandSource(source);
 	m_machine->setState(AI_HORDE_EXIT);
 	wakeUpNow();
+}
+
+// RW 0x66491A (AI command 0x2E)
+void AIUpdateInterface::aiFleeFromObject(Object *from, CommandSourceType source)
+{
+	(void)from;
+	if (!acceptCommand(source, 0x2E))
+	{
+		return; // RW 0x667174: aiDoCommand's gate (lane MODULES-3) before the command
+	}
+	if (!GarrisonRules::isMobile(*getObject())) // RW 0x664920: RW 0x690E97
+	{
+		return;
+	}
+	aiUnported("aiFleeFromObject (AI command 0x2E: state 20, RW 0x66491A)", source);
 }
 
 void AIUpdateInterface::aiUnported(const char *command, CommandSourceType)
@@ -2352,6 +2370,10 @@ void AIUpdateInterface::crc(StateHasher &h) const
 	h.addU32(m_moveAwayRequesters[1]);
 	h.addBool(m_canPathThroughUnits);
 	h.addBool(m_attackMoveActive);
+	if (m_victimAutoAcquired) // lane APPROACHGIVEUP-1: RW AI + 0x3C7, hashed while set
+	{
+		h.addU32(0x3C7u);
+	}
 	if (m_attitude != 0) // lane SCRIPT-3: hashed once a script changed it
 	{
 		h.addI32(0x218 + m_attitude);

@@ -170,7 +170,7 @@ public:
 	{
 		unsigned moodAttackCheckRate = 2u * (unsigned)LOGICFRAMES_PER_SECOND; ///< + 0x18 frames (INI MoodAttackCheckRate, ms); lane TARGET-1: the module data constructor RW 0x66E8FF sets 2 seconds
 		unsigned autoAcquire = 0;          ///< ZH AutoAcquireEnemiesWhenIdle flags: 1 Yes, 2 STEALTHED, 4 No, 8 NOTWHILEATTACKING, 16 ATTACK_BUILDINGS
-		float stopChaseDistance = 0.0f;
+		float stopChaseDistance = 500.0f; ///< + 0x20 (INI StopChaseDistance); lane APPROACHGIVEUP-1: the module data constructor RW 0x66E92A sets 500 (RW 0xBDD97C)
 		bool standGround = false;
 		bool canAttackWhileContained = false; ///< lane IDLE-1: CanAttackWhileContained (RW field table 0xC0F530, + 0x25, parseBool RW 0x42E558)
 		std::string attackPriority = "DefaultAttackPriority"; ///< lane TARGET-1: + 0x44, the module data constructor RW 0x66E8FF
@@ -313,6 +313,8 @@ public:
 	void aiExit(Object *container, CommandSourceType source);
 	// AI command 0x3E -> RW 0x664767: AIHordeExitState (53)
 	void aiHordeExit(Object *container, CommandSourceType source);
+	// RW 0x881FF3: AI command 0x2E -> AI vslot 0x13C RW 0x66491A: nothing for an object that cannot move (RW 0x690E97); else state 20 (flee), not ported: counted (S-221)
+	void aiFleeFromObject(Object *from, CommandSourceType source);
 
 	// ---- lane LUMBER1: the supply commands (GameLogic/AI/AIHarvest.h, GameLogic/AI/AIDock.h) ----
 	// RW 0x771655 aiHarvest (AI command 0x19) -> privateHarvest RW 0x664657: a mobile object goes to AI_HARVEST (47) with the position as its goal
@@ -526,6 +528,7 @@ public:
 		}
 		stancesOnCommand(source);
 		cancelBloodthirstyCommand(*getObject(), command, target);
+		m_victimAutoAcquired = false; // lane APPROACHGIVEUP-1: RW 0x66A9EE (this + 0x3A7 on the secondary base = AI + 0x3C7), every command past the gate
 		commandAccepted(source, command, target);
 		return true;
 	}
@@ -540,6 +543,12 @@ public:
 	virtual void commandAccepted(CommandSourceType source, int command, Object *target) { (void)source; (void)command; (void)target; }
 	// lane LUMBER1: a command arrives, before aiDoCommand's gate (WorkerAIUpdate RW 0x8AE798 clears its harvest model conditions there); default nothing
 	virtual void commandArriving() {}
+	// lane APPROACHGIVEUP-1: RW AI + 0x3C7, "the victim came from a mood scan": set (1) right after a scan hands its target to an attack (the idle state RW
+	// 0x755539, the attack-move RW 0x7558AB, the attack-follow waypoint path RW 0x755E77, the formation march RW 0x750067, the giant bird's follow path RW
+	// 0x76B428; the approach's turret retarget RW 0x74A32D / 0x74A4E1 / 0x74AFDE is not ported, S-7162), cleared by the constructor (RW 0x66F001) and by
+	// every command (acceptCommand). The attack approach applies StopChaseDistance only to such a victim (RW 0x749FDC). Saved (AI snapshot version 6)
+	bool victimAutoAcquired() const { return m_victimAutoAcquired; }
+	void setVictimAutoAcquired() { m_victimAutoAcquired = true; }
 	void setPreventPlayerCommands(bool on) { m_preventPlayerCommands = on; } // RW + 0x3C5 (the nugget start / stop with PreventPlayerCommands)
 	bool preventPlayerCommands() const { return m_preventPlayerCommands; }
 	// RW + 0x3C4: the panic cower's short cower (MinCowerTime / 4); its writer is not identified (S-1027), only state 21's exit clears it
@@ -684,6 +693,7 @@ private:
 	std::vector<std::string> m_locomotorNotes;
 	// lane MODULES-3
 	bool m_preventPlayerCommands = false; // RW + 0x3C5
+	bool m_victimAutoAcquired = false;    // RW + 0x3C7 (lane APPROACHGIVEUP-1)
 	bool m_fastCower = false;             // RW + 0x3C4
 	unsigned m_minCowerTime = 0, m_maxCowerTime = 0;
 	bool m_animalInterface = false, m_animalAfraidOfCastles = true; ///< lane CASTLEAREA-1 (see hasAnimalInterface)

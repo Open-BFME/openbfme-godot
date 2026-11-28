@@ -126,10 +126,13 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 	std::vector<std::string> candidates = resolved.Tried;
 	// lane WOTR-1 [inference]: a few retail textures exist only as .png in the compiled folder (LivingMap's LM_MinasTirith; the compiled-only .jpg
 	// ones, LM_Smoke and EXLavaSeq, are Resolve_Packed_W3D_Texture's); the retail loader's order for them was not read
-	if (!flatLayout)
+	if (resolved.Probed && !flatLayout)
 	{
 		const std::string dds = W3D_Compiled_Texture_Path(name);
-		candidates.push_back(dds.substr(0, dds.size() - 4) + ".png");
+		if (dds.size() > 4)
+		{
+			candidates.push_back(dds.substr(0, dds.size() - 4) + ".png");
+		}
 	}
 	Ref<Texture2D> texture;
 	for (const std::string &path : candidates)
@@ -176,9 +179,14 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 	}
 	if (texture.is_null())
 	{
-		std::string tried;
-		for (const std::string &path : candidates) tried += (tried.empty() ? "" : ", ") + path;
-		((Array)m_report["errors"]).push_back(toGodot("texture not found: " + name + " (tried " + tried + ")"));
+		// A name without an extension is never opened by retail's loader (RW 0x530D59: no dot, no candidate): the surface
+		// draws the 1 x 1 texture of RW 0x53193E and retail logs nothing, so neither does this report.
+		if (resolved.Probed)
+		{
+			std::string tried;
+			for (const std::string &path : candidates) tried += (tried.empty() ? "" : ", ") + path;
+			((Array)m_report["errors"]).push_back(toGodot("texture not found: " + name + " (tried " + tried + ")"));
+		}
 		return texture;
 	}
 	m_textureCache[key] = texture;

@@ -603,6 +603,9 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // pin: merge queue q63 (#355 ForceHordesToLowLOD, AIData + 0xBB; retail aidata.ini sets it): every horde member is created with the hashed status
 // CREATE_DRAWABLE_WITH_LOW_DETAIL (bit 55, RW 0x86A151 / 0x86B282 / 0x8A25E4), so the big battle, the allied blob and the skirmish move from their first
 // horde. Measured once on the merged tree with OPENBFME_PERF1_REGEN=1 and at the merge points (#350 moves nothing; #358's equals the merged tree's).
+// pin: merge queue q65 (APPROACHGIVEUP-1, the attack approach's give-up, RW 0x749D46, S-7162: the approach state hashes the owner's position at
+// its start, RW state + 0x58, and the AIs' units give up fleeing or unreachable victims): the big battle and the skirmish move. Measured once on the merged
+// tree with OPENBFME_PERF1_REGEN=1 and at APPROACHGIVEUP-1's merge point (equal); POSTERNPLOT-1 keeps them.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
 	// Ambient movement: target idle wandering adds RNG draws and origin state,

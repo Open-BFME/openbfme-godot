@@ -374,6 +374,8 @@ void SlowDeathBehavior::onDie(const DieModuleInterface::Event &event)
 	{
 		return;
 	}
+	static const int kMoving = CombatNames::modelCondition("MOVING");
+	const bool moving = obj->testModelCondition(kMoving); // before ai->onDie clears it
 	if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
 	{
 		if (ai->isAiInDeadState())
@@ -418,7 +420,9 @@ void SlowDeathBehavior::onDie(const DieModuleInterface::Event &event)
 		SlowDeathBehavior *pick = candidates[i];
 		if (pick->isDieApplicable(event) && pick->canBeginSlowDeath())
 		{
+			pick->m_movingAtDeath = moving;
 			pick->beginSlowDeath(event);
+			pick->m_movingAtDeath = false;
 			return;
 		}
 		candidates[i] = candidates.back();

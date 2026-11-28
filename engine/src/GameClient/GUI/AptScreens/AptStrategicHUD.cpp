@@ -187,7 +187,6 @@ void AptStrategicHUD::setViewportSize(int width, int height, bool fit)
 	}
 	// As in AptPalantir::setViewportSize: cancel only the extra horizontal stretch. Keep the authored matrices intact so timeline animation,
 	// native-image rendering and input all use the same corrected geometry. Fit mode already has a uniform stage mapping.
-	const float scale = fit ? 1.0f : std::min(1.0f, ((float)height / stageHeight) / ((float)width / stageWidth));
 	for (const auto &part : m_parts)
 	{
 		// As in the battle HUD, these two are placed dynamically in stage coordinates.
@@ -200,6 +199,8 @@ void AptStrategicHUD::setViewportSize(int width, int height, bool fit)
 		{
 			continue;
 		}
+		// A part loaded as its own movie (StrategicPalantir.apt) carries that movie; a mod may have authored it for 16:9
+		const float scale = fit ? 1.0f : AptWidescreen::correction(stageWidth, stageHeight, width, height, m_partSqueeze[part.first].of(clip->asSprite() ? clip->asSprite()->timelineFile : nullptr));
 		float anchor = 0.0f; // stats, palantir and its attached selection details tray
 		if (part.first == "EndTurnButton")
 		{

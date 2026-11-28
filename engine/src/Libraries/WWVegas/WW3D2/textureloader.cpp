@@ -52,9 +52,22 @@ void addCandidates(const std::string &lowerName, const std::function<bool(const 
 }
 } // namespace
 
+// RW 0x530D29: the loader replaces the three characters after the last dot of the name. Without a dot it writes no
+// candidate at all (`test edi, edi / je 0x530DE1`, RW 0x530D59) and leaves both file pointers null, which is the state
+// the texture creation RW 0x53193E turns into the 1 x 1 0xFFFF00FF texture (RW 0x531B07 .. 0x531B44).
+bool W3D_Texture_Name_Is_Probed(const std::string &name)
+{
+	return name.find_last_of('.') != std::string::npos;
+}
+
 TextureResolution Resolve_W3D_Texture(const std::string &name, const std::function<bool(const std::string &)> &exists, bool flatLayout)
 {
 	TextureResolution out;
+	out.Probed = W3D_Texture_Name_Is_Probed(name);
+	if (!out.Probed)
+	{
+		return out;
+	}
 	std::string lower = AsciiStringUtil::lowered(name);
 	addCandidates(lower, exists, out, flatLayout);
 	return out;
@@ -63,6 +76,7 @@ TextureResolution Resolve_W3D_Texture(const std::string &name, const std::functi
 TextureResolution Resolve_Packed_W3D_Texture(const std::string &name, const std::function<bool(const std::string &)> &exists, bool flatLayout)
 {
 	auto result = Resolve_W3D_Texture(name, exists, flatLayout);
+	if (!result.Probed) return result; // RW 0x530D59: no dot, no file is attempted, so the packed stream is not tried either
 	if (result.Found || flatLayout) return result;
 	std::string stem = AsciiStringUtil::lowered(name);
 	const auto dot = stem.find_last_of('.');

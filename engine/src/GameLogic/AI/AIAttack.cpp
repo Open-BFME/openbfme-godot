@@ -12,9 +12,11 @@
 #include "Common/Team.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIMove.h"
 #include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIWaypointPath.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -554,11 +556,99 @@ bool AIAttackApproachState::inRange() const
 	return AttackVictimInRange(machine());
 }
 
+namespace
+{
+// AI module data + 0x24 (StandGround), the owner's layer (RW 0x68BBE0) a raised one (above 0x10: the wall layers), and no quick path to the victim
+// (AIUpdateInterface::isQuickPathAvailable RW 0x66403D -> Pathfinder::quickDoesPathExist RW 0x6F5BB0 from the owner's position with its own set). RW 0x66403D's
+// other branch (an object with a contain that is a SHIP and GARRISON: the path test with a DTransportShipLocomotor) cannot meet a wall layer and is not ported
+bool raisedStandGroundWithoutPath(Object &source, Object &victim)
+{
+	AIUpdateInterface *a = source.getAIUpdateInterface();
+	if (!a || !a->combatSettings().standGround || !((int)AIWorld::objectLayer(source) > 0x10))
+	{
+		return false;
+	}
+	return !a->world().pathfinder().quickDoesPathExist(a->adapter(), source.getPosition(), victim.getPosition(), nullptr);
+}
+
+// team prototype + 0x216 (AttackCommonTarget), as AIHunt.cpp / AIGuard.cpp read it
+bool teamAttacksCommonTarget(const Team *t)
+{
+	return t && t->getPrototype() && t->getPrototype()->getDict().getBool("teamAttackCommonTarget");
+}
+
+float squaredLength(float x, float y, float z) // the decomp's z * z + y * y + x * x (SSE float)
+{
+	return SimMath::addf32(SimMath::addf32(SimMath::mulf32(z, z), SimMath::mulf32(y, y)), SimMath::mulf32(x, x));
+}
+} // namespace
+
+bool AIAttackApproachState::canApproachVictim(const Coord3D &pos)
+{
+	AIUpdateInterface &a = ai();
+	const ObjectWeapons *w = owner().getWeapons();
+	const Weapon *weapon = w ? w->currentWeapon() : nullptr; // RW 0x68B58C(0)
+	float range = 0.0f;
+	bool melee = false;
+	if (weapon)
+	{
+		range = w->currentAttackRange();                                     // RW 0x6CA8BD (RW 0x6FB754 takes max(150, it))
+		melee = weapon->getTemplate() && weapon->getTemplate()->m_meleeWeapon; // + 0x125
+	}
+	return a.world().pathfinder().canApproachToTarget(a.adapter(), a.locomotorInfo(), pos, range, melee, false);
+}
+
+bool AIAttackApproachState::chaseLimitExceeded(Object &source, Object &victim)
+{
+	// RW 0x749FB2 .. 0x74A0DF (BFME2 decomp AIAttackApproachTargetStateOnEnter.cpp:1875-1919, same shape): no limit inside the guard (state 0x10), the hunt (0x11)
+	// or the attack-follow waypoint path as a team (0x23) (RW 0x660AC1: the AI machine's current state), for a victim no mood scan chose (AI + 0x3C7 clear),
+	// or for a team member whose prototype attacks a common target while the team has one (RW 0x7A3E36, asked whatever the tests before it said)
+	AIUpdateInterface &a = ai();
+	const unsigned state = a.currentStateId();
+	bool check = state != (unsigned)AI_HUNT && state != (unsigned)AI_GUARD && state != (unsigned)AI_ATTACK_FOLLOW_WAYPOINT_PATH_AS_TEAM;
+	if (!a.victimAutoAcquired())
+	{
+		check = false;
+	}
+	Team *team = source.getTeam();
+	if (teamAttacksCommonTarget(team) && AIHuntState::teamTarget(*team, source.logic()))
+	{
+		check = false;
+	}
+	// only a fleeing victim (RW 0x7468D5)
+	if (!check || !AttackTargetFleeing(source, victim))
+	{
+		return false;
+	}
+	float range = a.combatSettings().stopChaseDistance; // module data + 0x20
+	if (!(0.0f < range))
+	{
+		return false;
+	}
+	const Coord3D &v = *victim.getPosition();
+	const Coord3D &o = *source.getPosition();
+	const float dist = (float)SimMath::length3d(SimMath::subf32(v.x, o.x), SimMath::subf32(v.y, o.y), SimMath::subf32(v.z, o.z)); // Coord3D::length RW 0x403111
+	const unsigned mood = a.moodMatrixValue(); // RW 0x664D7E
+	if (!(mood & 1u))
+	{
+		// a player that is not human: Sleep gives up at once, Alert / Aggressive scale the limit (AIData + 0x4C / + 0x50)
+		switch (mood & 0x1F00u)
+		{
+		case 0x100u: range = 0.0f; break;
+		case 0x800u: range = SimMath::mulf32(source.logic().settings().alertRangeModifier, range); break;
+		case 0x1000u: range = SimMath::mulf32(source.logic().settings().aggressiveRangeModifier, range); break;
+		default: break;
+		}
+	}
+	return range < dist;
+}
+
 StateReturnType AIAttackApproachState::onEnter()
 {
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
 	Object *victim = victimOf(machine());
+	m_ownerPosition = *source.getPosition(); // lane APPROACHGIVEUP-1: RW 0x74E6CE stores + 0x58 first (BFME2 decomp onEnter m_ownerPosition)
 	m_waiting = false; // RW 0x74E6CE clears + 0x71 before its first return
 	if (m_att->isAttackingObject() && victimGone(victim))
 	{
@@ -578,6 +668,14 @@ StateReturnType AIAttackApproachState::onEnter()
 	if (source.isKindOf((unsigned)CombatNames::kinds().immobile) || a.isImmobile())
 	{
 		return STATE_FAILURE; // a structure cannot walk to its target
+	}
+	if (victim && raisedStandGroundWithoutPath(source, *victim))
+	{
+		// lane APPROACHGIVEUP-1: RW 0x74E6CE (BFME2 decomp onEnter, after canPursue): a StandGround unit on a raised layer with no quick path to its victim
+		// waits two seconds (+ 0x71, + 0x68), then update fails it unless the victim came into range
+		m_waiting = true;
+		m_waitFrame = a.frame() + 2u * (unsigned)LOGICFRAMES_PER_SECOND;
+		return STATE_CONTINUE;
 	}
 	const Coord3D goal = victim ? *victim->getPosition() : machine().goalPosition();
 	m_prevVictimPos = goal;
@@ -657,6 +755,21 @@ StateReturnType AIAttackApproachState::update()
 			}
 		}
 	}
+	if (victim)
+	{
+		// lane APPROACHGIVEUP-1, RW 0x749F65: a StandGround unit on a raised layer with no quick path to its (out of range) victim waits ten seconds and fails
+		if (raisedStandGroundWithoutPath(owner(), *victim))
+		{
+			m_waiting = true;
+			m_waitFrame = a.frame() + 10u * (unsigned)LOGICFRAMES_PER_SECOND;
+			return STATE_CONTINUE;
+		}
+		// RW 0x749FB2 .. 0x74A0DF: a fleeing victim a mood scan chose is given up beyond StopChaseDistance
+		if (chaseLimitExceeded(owner(), *victim))
+		{
+			return STATE_FAILURE;
+		}
+	}
 	if (!m_move)
 	{
 		return STATE_FAILURE;
@@ -675,7 +788,24 @@ StateReturnType AIAttackApproachState::update()
 	const StateReturnType code = m_move->update();
 	if (code != STATE_CONTINUE)
 	{
-		return STATE_SUCCESS; // always success: failure would leave the attack (the aim state re-checks the range)
+		// lane APPROACHGIVEUP-1, RW 0x74A11F .. 0x74A1FC: the move ended out of range (the in-range success above; the view-blocked half of RW 0x744AAA is S-325).
+		// Success when the victim moved more than 10 since the last path (squared against 100, RW 0xBD88D8) or the owner moved more than 10 since the approach
+		// began: the aim state re-checks the range. Else Pathfinder::canApproachToTarget (RW 0x6FB754, the current weapon, not stopping at the first miss)
+		// false -> ten seconds' wait (RW 0x749F93), then the wait's failure; true -> success
+		if (victim)
+		{
+			const Coord3D &v = *victim->getPosition();
+			const Coord3D &o = *owner().getPosition();
+			const bool victimMoved = squaredLength(SimMath::subf32(v.x, m_prevVictimPos.x), SimMath::subf32(v.y, m_prevVictimPos.y), SimMath::subf32(v.z, m_prevVictimPos.z)) > 100.0f;
+			const bool ownerMoved = squaredLength(SimMath::subf32(m_ownerPosition.x, o.x), SimMath::subf32(m_ownerPosition.y, o.y), SimMath::subf32(m_ownerPosition.z, o.z)) > 100.0f;
+			if (!victimMoved && !ownerMoved && !canApproachVictim(v))
+			{
+				m_waiting = true;
+				m_waitFrame = a.frame() + 10u * (unsigned)LOGICFRAMES_PER_SECOND;
+				return STATE_CONTINUE;
+			}
+		}
+		return STATE_SUCCESS; // failure would leave the attack (the aim state re-checks the range)
 	}
 	return STATE_CONTINUE;
 }
@@ -700,6 +830,9 @@ void AIAttackApproachState::crc(StateHasher &h) const
 	h.addU32(m_approachFrame);
 	h.addBool(m_waiting);
 	h.addU32(m_waitFrame);
+	h.addFloat(m_ownerPosition.x); // lane APPROACHGIVEUP-1
+	h.addFloat(m_ownerPosition.y);
+	h.addFloat(m_ownerPosition.z);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------

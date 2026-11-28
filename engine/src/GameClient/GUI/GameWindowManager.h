@@ -174,6 +174,7 @@ public:
 	// ---- drawing -----------------------------------------------------------------------------------------------------------------------------
 	// Repaint every window into `out` (ZH winRepaint: BELOW windows, normal windows, ABOVE windows, each from the tail of the list).
 	void winRepaint(GadgetDrawList &out);
+	void setDrawList(GadgetDrawList *dl) { m_drawList = dl; }
 	int drawWindow(GameWindow *window);
 	// Draw primitives for the gadget draw functions (valid while a repaint runs).
 	void winDrawImage(const std::string &image, int startX, int startY, int endX, int endY, Color color = 0xFFFFFFFFu);
