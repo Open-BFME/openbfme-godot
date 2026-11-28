@@ -298,9 +298,9 @@ struct GameLogicSettings
 	bool builderFadeLoaded = false;
 	unsigned builderFadeOutFrames = 0;
 	unsigned builderFadeInFrames = 0;
-	// RW GlobalData +0xA88, parseUnsignedInt (seconds).
+	// RotWK GlobalData +0xA88, parseUnsignedInt (seconds); the constructor at RW 0x642F8D sets 10.
 	bool repairDamageDelayLoaded = false;
-	unsigned timeAfterDamageUntilRepairAllowed = 0;
+	unsigned timeAfterDamageUntilRepairAllowed = 10;
 	// lane FACT-A (GameData SellPercentage, RW GlobalData + 0xB94): a sold structure's refund share (BuildAssistant::update RW 0x79468B); loaded when a block read it
 	bool sellPercentageLoaded = false;
 	float sellPercentage = 0.0f;

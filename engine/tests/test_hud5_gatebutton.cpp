@@ -8,12 +8,16 @@
 
 #include "HudTestUtil.h"
 
+#include "Common/GameCommon.h"
 #include "Common/Player.h"
 #include "GameClient/ControlBar.h"
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/HudObjects.h"
 #include "GameClient/InGameHud.h"
+#include "GameLogic/Damage.h"
+#include "GameLogic/Module/ActiveBody.h"
+#include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Object/Object.h"
 
@@ -61,13 +65,13 @@ struct GateRig
 		}
 		return nullptr;
 	}
-	const ControlBarButton *toggle()
+	const ControlBarButton *button(GUICommandType command)
 	{
 		for (const std::vector<ControlBarButton> *list : { &hud->controlBar().palantirButtons(), &hud->controlBar().sideButtons(), &hud->controlBar().offBarButtons() })
 		{
 			for (const ControlBarButton &b : *list)
 			{
-				if (b.button && b.button->m_command == GUI_COMMAND_TOGGLE_GATE)
+				if (b.button && b.button->m_command == command)
 				{
 					return &b;
 				}
@@ -75,6 +79,7 @@ struct GateRig
 		}
 		return nullptr;
 	}
+	const ControlBarButton *toggle() { return button(GUI_COMMAND_TOGGLE_GATE); }
 	// the movie's own press of the button's arc position (the callback its clip calls on a click; test_build_hud does the same)
 	bool pressInMovie(const ControlBarButton &b)
 	{
@@ -144,6 +149,126 @@ TEST_CASE("hud5 gate button retail: the selected main gate's TOGGLE_GATE closes 
 	CHECK(g.count("MSG_OPEN_GATE") == 1);
 	CHECK(g.settle(*b, 2000) < 2000);
 	CHECK(b->isOpen());
+}
+
+TEST_CASE("hud5 gate button retail: Self Repair heals Helm's Deep's main gate and charges its owner once")
+{
+	if (!haveWorld("hud5 gate self-repair"))
+	{
+		return;
+	}
+	GateRig g(shared());
+	g.frames(20);
+	GameLogic &logic = g.rig.game->logic();
+	Object *gate = g.gate();
+	REQUIRE(gate);
+	Player &owner = *g.rig.local;
+	REQUIRE(gate->getControllingPlayer() == &owner);
+	auto *building = dynamic_cast<GettingBuiltBehavior *>(gate->findModule("GettingBuiltBehavior"));
+	REQUIRE(building);
+	BodyModuleInterface *body = gate->getBodyModule();
+	REQUIRE(body);
+	const float maxHealth = body->getMaxHealth();
+	const auto selectGate = [&]() {
+		auto &input = g.hud->input();
+		input.ui().deselectAll(false);
+		input.ui().selectObject(gate->getID());
+		// A selection has both a highlight and the simulation group used by
+		// the argument-free repair message (SelectionTranslator).
+		auto &selection = input.context().stream.append(MSG_CREATE_SELECTED_GROUP_NO_SOUND);
+		selection.appendBoolean(true);
+		selection.appendObjectID(gate->getID());
+		g.frames(8);
+		REQUIRE(owner.selection() == std::vector<ObjectID>{ gate->getID() });
+	};
+	selectGate();
+	const auto repair = [&]() { return g.button(GUI_COMMAND_START_SELF_REPAIR); };
+	REQUIRE(repair());
+	CHECK(repair()->state == ButtonState::Restricted);
+
+	DamageInfo damage;
+	damage.m_input.m_damageType = DAMAGE_UNRESISTABLE;
+	damage.m_input.m_amount = 2000.0f;
+	gate->attemptDamage(damage);
+	const float damagedHealth = body->getHealth();
+	REQUIRE(damagedHealth == 2000.0f); // The main gate has 4000 health and takes 2000 unresistable damage.
+	g.frames(2);
+	REQUIRE(repair());
+	CHECK(repair()->state == ButtonState::Restricted);
+	GameMessage order(MSG_START_SELF_REPAIR, owner.getPlayerIndex());
+	g.rig.game->commands().append(order);
+	logic.runLogicFrame();
+	CHECK_FALSE(building->isConstructing());
+	CHECK(body->getHealth() == damagedHealth);
+
+	const unsigned delayFrames = logic.settings().timeAfterDamageUntilRepairAllowed * LOGICFRAMES_PER_SECOND;
+	for (unsigned frame = 0; frame <= delayFrames; ++frame)
+	{
+		logic.runLogicFrame();
+	}
+	constexpr std::uint32_t price = 750; // Half the gate's 1500 build cost in the damaged state.
+	CHECK(building->rebuildCost(owner) == 750.0f);
+	owner.getMoney()->withdraw(owner.getMoney()->countMoney(), false);
+	owner.depositMoney(price - 1, false);
+	g.hud->update(0.033);
+	REQUIRE(repair());
+	CHECK(repair()->state == ButtonState::CantAfford);
+	g.rig.game->commands().append(order);
+	logic.runLogicFrame();
+	CHECK_FALSE(building->isConstructing());
+	CHECK(body->getHealth() == damagedHealth);
+	owner.depositMoney(price, false);
+	g.hud->update(0.033);
+	REQUIRE(repair());
+	REQUIRE(repair()->state == ButtonState::Active);
+	const auto spent = owner.getScoreKeeper().moneySpent();
+	REQUIRE(g.pressInMovie(*repair()));
+	g.frames(8); // LiveGame advances the input queue before running the next logic frame.
+	CHECK(g.count("MSG_START_SELF_REPAIR") == 1);
+	REQUIRE((building->isConstructing() || body->getHealth() == maxHealth));
+	CHECK(owner.getScoreKeeper().moneySpent() == spent + price);
+	g.rig.game->commands().append(order);
+	logic.runLogicFrame();
+	CHECK(owner.getScoreKeeper().moneySpent() == spent + price);
+	for (int frame = 0; frame < 300 && building->isConstructing(); ++frame)
+	{
+		logic.runLogicFrame();
+	}
+	CHECK_FALSE(building->isConstructing());
+	CHECK(body->getHealth() == maxHealth);
+
+	// The retail map keeps the gate selectable as rubble. Exercise the same
+	// Palantir action after a fatal hit as well as after ordinary damage.
+	const ObjectID gateId = gate->getID();
+	DamageInfo fatal = damage;
+	fatal.m_input.m_amount = maxHealth * 2.0f;
+	gate->attemptDamage(fatal);
+	for (unsigned frame = 0; frame <= delayFrames; ++frame)
+	{
+		logic.runLogicFrame();
+	}
+	REQUIRE(logic.findObjectByID(gateId) == gate);
+	REQUIRE(gate->isEffectivelyDead());
+	REQUIRE(body->getHealth() == 0.0f);
+	selectGate();
+	constexpr std::uint32_t rubblePrice = 1500;
+	CHECK(building->rebuildCost(owner) == 1500.0f);
+	owner.depositMoney(rubblePrice, false);
+	g.frames(4);
+	REQUIRE(repair());
+	REQUIRE(repair()->state == ButtonState::Active);
+	REQUIRE(g.pressInMovie(*repair()));
+	g.frames(8);
+	CHECK(g.count("MSG_START_SELF_REPAIR") == 2);
+	REQUIRE((building->isConstructing() || body->getHealth() == maxHealth));
+	CHECK(owner.getScoreKeeper().moneySpent() == spent + price + rubblePrice);
+	for (int frame = 0; frame < 300 && building->isConstructing(); ++frame)
+	{
+		logic.runLogicFrame();
+	}
+	CHECK_FALSE(building->isConstructing());
+	CHECK_FALSE(gate->isEffectivelyDead());
+	CHECK(body->getHealth() == maxHealth);
 }
 
 

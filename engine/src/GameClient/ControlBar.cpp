@@ -260,6 +260,29 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj, bool &comm
 			return StancesBehavior::of(obj) ? ButtonState::Enabled : ButtonState::Restricted;
 		case GUI_COMMAND_SET_STANCE:
 			return ButtonState::Enabled; // RW 0x942733: type 0x3A is in the default (available) arm
+		case GUI_COMMAND_START_SELF_REPAIR:
+		{
+			// RotWK only, RW 0x942D83: eligibility and affordability are the
+			// same checks as the logic's MSG_START_SELF_REPAIR handler.
+			if (obj.logic().edition() != GameEdition::RotWK201)
+			{
+				return ButtonState::Restricted;
+			}
+			const auto *building = dynamic_cast<const GettingBuiltBehavior *>(obj.findModule("GettingBuiltBehavior"));
+			if (!building)
+			{
+				return ButtonState::Hidden;
+			}
+			if (building->canRebuild())
+			{
+				return building->canAffordRebuild(*player) ? ButtonState::Active : ButtonState::CantAfford;
+			}
+			if (obj.isUnderConstruction())
+			{
+				return ButtonState::Hidden;
+			}
+			return building->isConstructing() ? ButtonState::Purchased : ButtonState::Restricted;
+		}
 		case GUI_COMMAND_TOGGLE_WEAPONSET:
 			// lane HUD-4: RW 0x942FC6: restricted while a non-horde contain of the object holds someone, else available
 			return WeaponSetToggle::isRestrictedByContain(obj) ? ButtonState::Restricted : ButtonState::Enabled;

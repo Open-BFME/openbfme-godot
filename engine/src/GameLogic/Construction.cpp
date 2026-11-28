@@ -549,7 +549,7 @@ std::vector<std::string> Construction::stopLines()
 		"inference: an object's own geometry is its template's shapes with its active flags",
 		"[S-654] RebuildWhenDead: the DisallowRebuildFilter scan (RW 0x857873) is ported over the object list (3D centre distance, any match blocks); a template without the "
 		"filter row blocks nothing (RW's default filter at data + 0x40 was not read: inference); what keeps a dead structure in the world is its own die modules (KeepObjectDie)",
-		"[S-656] repair: MSG_DO_REPAIR sends the selected dozers to repair (DozerAIUpdate::repair, the heal of RW 0x88DC46, free); the dispatcher case of MSG_DO_REPAIR was not read, and the "
-		"caller that makes the owner pay a structure's own repair (GettingBuiltBehavior slot 4 without force: ceil(calcCostToBuild * PercentOfBuildCostToRebuild<state>), RW 0x856227) was not found",
+		"[S-656] repair: MSG_DO_REPAIR sends the selected dozers to repair (DozerAIUpdate::repair, the heal of RW 0x88DC46, free). RotWK's MSG_START_SELF_REPAIR "
+		"(RW 0x77C3CF) starts a paid repair through GettingBuiltBehavior slot 4 without force. The separate neighborhood repair commands and BFME2 edition's self-repair are unverified",
 	};
 }

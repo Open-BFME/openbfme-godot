@@ -263,8 +263,9 @@ bool GettingBuiltBehavior::canRebuild() const
 	}
 	else
 	{
-		const GameLogicSettings &settings = getObject()->logic().settings();
-		if (!settings.repairDamageDelayLoaded)
+		const GameLogic &logic = getObject()->logic();
+		const GameLogicSettings &settings = logic.settings();
+		if (!settings.repairDamageDelayLoaded && logic.edition() != GameEdition::RotWK201)
 		{
 			throw std::runtime_error("GettingBuiltBehavior::canRebuild: TimeAfterDamageUntilRepairAllowed was not loaded");
 		}
