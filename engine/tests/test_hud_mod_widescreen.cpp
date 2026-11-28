@@ -162,11 +162,13 @@ TEST_CASE("mod widescreen retail: no BFME2 1.06 or RotWK 2.01 movie reads as aut
 		{
 			std::string error;
 			std::shared_ptr<const AptFile> file = loader.loadMovie(name, &error);
+			INFO(install.label, ": ", name);
+			// port fix (no fallbacks): a listed movie that does not load fails the test, never drops out of the check unseen
+			CHECK_MESSAGE(file, "the movie did not load: " << error);
 			if (!file)
 			{
-				continue; // a movie the corpus tests already report (Apt version, missing .const)
+				continue;
 			}
-			INFO(install.label, ": ", name);
 			CHECK(AptWidescreen::authoredSqueeze(*file) == 1.0f);
 			++movies;
 		}

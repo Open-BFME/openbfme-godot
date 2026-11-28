@@ -313,6 +313,8 @@ public:
 	void aiExit(Object *container, CommandSourceType source);
 	// AI command 0x3E -> RW 0x664767: AIHordeExitState (53)
 	void aiHordeExit(Object *container, CommandSourceType source);
+	// RW 0x881FF3: AI command 0x2E -> AI vslot 0x13C RW 0x66491A: nothing for an object that cannot move (RW 0x690E97); else state 20 (flee), not ported: counted (S-221)
+	void aiFleeFromObject(Object *from, CommandSourceType source);
 
 	// ---- lane LUMBER1: the supply commands (GameLogic/AI/AIHarvest.h, GameLogic/AI/AIDock.h) ----
 	// RW 0x771655 aiHarvest (AI command 0x19) -> privateHarvest RW 0x664657: a mobile object goes to AI_HARVEST (47) with the position as its goal

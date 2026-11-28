@@ -121,12 +121,32 @@ class CommandButton;
 //   * nothing when Percentage is not above 0 or the object is BLOODTHIRSTY (status 65, RW 0x44DDEC(0x41));
 //   * ThePartitionManager within Radius of the object's position, distance type 0, ITER_FASTEST, through RW 0xC1D660 (not the object), RW 0xC10E20 (alive),
 //     RW 0xC11DC0 (the object's ALLIES), RW 0xC0F374 (Object + 0x458 bit 3: never set) and the ObjectFilter for the object's controlling player (RW 0xBE4CC8);
-//   * for each hit in that order: a HERO object skips a HERO candidate when TheGameLogic + 0x9F is 0 (INFERENCE: RW 0x62D299 sets the byte to 1 when a game
-//     starts, so a game's heroes share with heroes); a candidate whose ExperienceTracker accepts experience (RW 0x79D322) makes value := fstp(value *
+//   * for each hit in that order: a HERO object skips a HERO candidate when TheGameLogic + 0x9F is 0 (PORT-301: RW 0x883428 reads the byte; the GameLogic
+//     constructor sets it to 1, RW 0x62D299, and script action 538 SET_HERO_EXPERIENCE_SHARING writes it, RW 0x7CDF99 -> RW 0x7BD3D1); a candidate whose
+//     ExperienceTracker accepts experience (RW 0x79D322) makes value := fstp(value *
 //     Percentage), then value := fstp(dropOff * value) and, above 0, ExperienceTracker::addExperiencePoints(value, true, true, true, false) (RW 0x79D833).
 //     The value is NOT restored per candidate: each one shares the previous one's share (retail's register reuse, [ebp + 8]);
 //   * the drop off (RW 0x88325B): DropOff == 1.0: max(0, 1 - |candidate - position| / Radius) with the length RW 0x4054F5 (x87 z*z + y*y + x*x, CRT sqrt,
 //     fstp) and SSE subtract / divide; any other DropOff: 1.0.
+// THE CLASS'S OWN FUNCTIONS THAT CARRY NO GAMEPLAY (each read from its first instruction; the class is bound by create RW 0x64BC96 -> constructor
+// RW 0x88314A -> vtable RW 0xC5EEA0): the port has every one of them -- the six that carry no gameplay are the shared module plumbing, ported once
+// for every module, so nothing below is a second path:
+//   * RW 0x4B612F (the ModuleData vtable RW 0xC5EEA0 slot + 0x38) the base ModuleData's empty tag name: an AsciiString built from the empty literal
+//     RW 0xDC62B8 through RW 0x435F30 (the port's ModuleData::getModuleTagName);
+//   * RW 0x8830A2 (the module vtable RW 0xC5EE6C slot 2) the class name: `mov eax, 0xC0B55C`, the literal "ShareExperienceBehavior" (the port's
+//     Module::getModuleClassName);
+//   * RW 0x8830A8 (slot 3) the module name key: the one-shot registration (the flag RW 0xDE91A0, the name key RW 0xDE919C built by RW 0x5487EC from
+//     the class name RW 0xC0B55C) (the port's Module::getModuleNameKey);
+//   * RW 0x8831AC (slot 0) the scalar deleting destructor: the destructor RW 0x883082, then operator delete RW 0x42F6A0 for argument bit 0 (the port's
+//     implicit destructor);
+//   * RW 0x88320F (the ModuleData vtable RW 0xC5EEA0 slot 0) the ModuleData's scalar deleting destructor: the destructor RW 0x88322B, then operator
+//     delete RW 0x42F6A0 for argument bit 0 (the port's implicit destructor);
+//   * RW 0x8E3BB1 (the module's xfer) the version (1, 1) RW 0x404F15 and the base xfer RW 0x850C60, nothing else (the port's xfer(): the share counter
+//     is the port's own diagnostics, not state, so it is not written);
+//   * RW 0x8831C8 (slot 4) the update: a debug trace and then UPDATE_SLEEP_FOREVER (mov eax, 0x3FFFFFFF) -- no state change; the port sleeps forever
+//     too (the constructor's friend_setNextCallFrame, RW 0x883196 -> RW 0x850C32, and update() answers UPDATE_SLEEP_FOREVER).
+// NOT PORTED (reported per use): the retail's debug trace in RW 0x8831C8 -- it needs the general Debug singleton (RW 0xDC62C0) the port has not
+// got; the trace changes nothing the player sees.
 class ShareExperienceBehaviorModuleData : public ModuleData
 {
 public:
@@ -142,7 +162,7 @@ class ShareExperienceBehavior : public UpdateModule
 public:
 	OBFME_MODULE_XFER(ShareExperienceBehavior) // lane SAVE-4b
 	ShareExperienceBehavior(Thing *thing, const ShareExperienceBehaviorModuleData *data); // RW 0x88314A
-	UpdateSleepTime update() override { return UPDATE_SLEEP_FOREVER; }
+	UpdateSleepTime update() override { return UPDATE_SLEEP_FOREVER; } // RW 0x8831C8: a debug trace and UPDATE_SLEEP_FOREVER, no state change
 	void share(float value); // RW 0x8832F0
 	static ShareExperienceBehavior *of(Object &obj); // RW 0x88305B
 	unsigned long long shares() const { return m_shares; }
@@ -150,7 +170,7 @@ public:
 private:
 	float dropOffFactor(const Coord3D &from, const Object &candidate) const; // RW 0x88325B
 	const ShareExperienceBehaviorModuleData *m_data;
-	unsigned long long m_shares = 0; // diagnostics (not state)
+	unsigned long long m_shares = 0; // diagnostics (not state): retail's xfer (RW 0x8E3BB1) saves nothing but the version and the base xfer (PORT-301)
 };
 
 // DamageFilteredCreateObjectDie (create RW 0x64C684, constructor RW 0x889222; vtables RW 0xC6134C, die RW 0xC61288 (module + 0x10), damage RW 0xC6127C

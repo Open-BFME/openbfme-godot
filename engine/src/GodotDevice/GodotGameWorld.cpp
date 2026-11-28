@@ -678,6 +678,12 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 	m_treeTopple.reset(); // lane SPELL-3
 		reset_streaks(); // the streak texture factory references the previous archive file system
 		m_fs = fs;
+		if (m_fxPlayer)
+		{
+			// PORT-330 port fix: the FX player (kept across setups) holds the old world's FXList parse services; they go with that world, so
+			// the player and its playback must not keep the pointer when this setup fails before the FX block hands them the new world's
+			m_fxPlayer->setParseServices(nullptr);
+		}
 		m_world.reset(new RetailObjectWorld(*fs->archive_fs()));
 		m_options.reset(new MapObjectOptions());
 		std::string error;
@@ -739,7 +745,24 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 				m_fxPlayer->set_name("LiveFX");
 				add_child(m_fxPlayer);
 			}
-			const Dictionary fx = m_fxPlayer->setup(fs);
+			// PORT-330 (S-190): the FXList blocks the FX player parses are checked against the same TheAudio / TheEva tables the world loaded.
+			// Port fix: a world the map cache or the settings dropped above leaves none (the services went with it), never a dangling pointer
+			m_fxPlayer->setParseServices(m_world ? m_world->fxListParseServices() : nullptr);
+			// the FX files are read with the #define table retail's FX load sees (macros a mod defines in an earlier file, e.g. Water.ini #include);
+			// a world whose load never reached the FX subsystems is an error, never the GameData macros alone
+			Dictionary fx;
+			if (m_world && m_world->report().macrosBeforeFXTaken)
+			{
+				fx = m_fxPlayer->setupWithMacros(fs, m_world->report().macrosBeforeFX);
+			}
+			else if (m_world)
+			{
+				errors.push_back("FX: the object world's INI load did not reach TheFXParticleSystemManager (no FX macro table)");
+			}
+			else
+			{
+				fx = m_fxPlayer->setup(fs);
+			}
 			m_fxSetupErrors = fx.get("errors", Array());
 			for (int64_t i = 0; i < m_fxSetupErrors.size(); ++i)
 			{
@@ -1399,8 +1422,6 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 		}
 	}
 	dyn->set_house_colors_enabled(m_houseColors);
-	// S-029 (1): no pivot-fade dither for the first two seconds of a game (the black dither pixels are conspicuous on snowy maps)
-	begin_fade_warmup();
 	dyn->set_playing(false); // time only enters through set_instance_pose
 	dyn->set_pose_culling(m_perf3Client); // PiP supplies an additional frustum when a second camera sees the live objects.
 	dyn->set_draw_culling(m_drawCulling); // lane GPUPERF-2: the same frusta decide what is drawn
@@ -1409,6 +1430,9 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	// loading screen covers the map; their meshes, textures and materials are then cached for the first spawn or first placement. Its own
 	// timing is outside static_layer_ms, so the load report's total does not count it twice.
 	prewarm_match_models(*dyn, timings);
+	// S-029 (1): no pivot-fade dither for the first two seconds of a game (the black dither pixels are conspicuous on snowy maps).
+	// Start it after the synchronous prewarm: a slow load must not consume the first played frames' warm-up.
+	begin_fade_warmup();
 
 	t0 = nowMs();
 	refresh_shroud(true);

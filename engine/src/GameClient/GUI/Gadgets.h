@@ -10,9 +10,17 @@
 #include "GameClient/GUI/GameWindowManager.h"
 
 // ---- push button (internal: list box arrows, combo drop-down, slider thumbs) -------------------------------------------------------------
+// ZH / RotWK PushButtonData (RW 0x729EA7: +0xC drawBorder, +0x10 borderColor)
+struct PushButtonData
+{
+	bool drawBorder = false;
+	Color borderColor = 0x00FFFFFF;
+};
+
 WindowMsgHandledType GadgetPushButtonInput(GameWindow *window, std::uint32_t msg, WindowMsgData mData1, WindowMsgData mData2);
 WindowMsgHandledType GadgetPushButtonSystem(GameWindow *window, std::uint32_t msg, WindowMsgData mData1, WindowMsgData mData2);
 void GadgetButtonSetText(GameWindow *g, const UnicodeString &text);
+void GadgetButtonSetBorder(GameWindow *g, Color color, bool draw); // RW 0x729EA7
 void W3DGadgetPushButtonDraw(GameWindow *window, WinInstanceData *instData);
 void W3DGadgetPushButtonImageDraw(GameWindow *window, WinInstanceData *instData);
 

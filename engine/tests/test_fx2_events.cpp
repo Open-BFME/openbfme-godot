@@ -1,13 +1,17 @@
 // OpenBFME. FX-2 tests: the logic's effect calls (GameLogic/FXEvents.h) - which events, at which frames, with which objects - on synthetic data
 // (combattest::CombatWorld), the state hash not touched by a sink, and the live effect player (GameClient/LiveFX) on a retail map: a trebuchet shelling a
 // orc pit plays its fire FX, the boulders' impact FX, the building's damage state FX and the fires of its damaged states, with no FXList the store lacks.
+#include "BigTestUtil.h"
 #include "CreepTestUtil.h"
 #include "doctest.h"
 #include "CombatTestUtil.h"
 #include "HudTestUtil.h"
 
+#include "Common/INI.h"
+#include "Common/SubsystemLegend.h"
 #include "GameClient/FXPlayback.h"
 #include "GameClient/LiveFX.h"
+#include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/DamageFX.h"
 #include "GameLogic/FXEvents.h"
 
@@ -1253,4 +1257,119 @@ TEST_CASE("TOP20-24 slow death: ShadowWhenDead No switches the corpse's shadows 
 	CHECK(shadows[0].first == offId);
 	CHECK(shadows[0].second == false);
 	CHECK(onId != offId);
+}
+
+TEST_CASE("fx2: FXPlayback::loadRetailData(macrosBeforeFX) resolves macros defined before TheFXParticleSystemManager (RW 0x63B02F)")
+{
+	const std::string fxList = "FXList FX_ModFade\n"
+							   "  DynamicDecal\n"
+							   "    DecalName = EXModFade\n"
+							   "    OpacityFadeTimeOne = MOD_FADE_ONE\n"
+							   "  End\n"
+							   "End\n";
+	Win32BIGFileSystem fsys;
+	std::string error;
+	auto archive = fsys.openArchiveFromMemory("fx.big",
+		std::make_shared<const std::vector<std::uint8_t>>(bigtest::makeBig("BIGF", { { "data\\ini\\gamedata.ini", "" }, { "data\\ini\\fxparticlesystem.ini", "" },
+																					 { "data\\ini\\default\\fxlist.ini", "" }, { "data\\ini\\fxlist.ini", fxList } })),
+		&error);
+	REQUIRE_MESSAGE(archive, error);
+	fsys.mountArchive(std::move(archive), "fx.big", false);
+
+	// GameData.ini's macros alone (no game load): the macro is unknown, the block is an error
+	FXPlayback alone(fsys, RandomAlgorithm::RotWK_GameDat_LCG);
+	const std::vector<std::string> errors = alone.loadRetailData();
+	REQUIRE(errors.size() == 1u);
+	CHECK(errors[0].find("OpacityFadeTimeOne") != std::string::npos);
+
+	// the table as the game's load had it before the FX subsystems (SubsystemLoadReport::macrosBeforeFX)
+	INIMacroTable macros;
+	REQUIRE(macros.define("MOD_FADE_ONE", "1000", false));
+	FXPlayback live(fsys, RandomAlgorithm::RotWK_GameDat_LCG);
+	CHECK(live.loadRetailData(macros).empty());
+	CHECK(live.fxLists().findFXList("FX_ModFade") != nullptr);
+}
+
+TEST_CASE("fx2: RunSubsystemIniLoad captures Water.ini #include macros into macrosBeforeFX for FXPlayback::loadRetailData (RW 0x63B02F)")
+{
+	const std::string legendIni =
+		"LoadSubsystem TheWritableGlobalData\n"
+		"  Loader = INI\n"
+		"  InitFile = Data\\INI\\GameData.ini\n"
+		"End\n"
+		"LoadSubsystem TheFXParticleSystemManager\n"
+		"  Loader = INI\n"
+		"  InitFile = Data\\INI\\FXParticleSystem.ini\n"
+		"End\n";
+	const std::string waterIni = "#include \"mod_fx_macros.inc\"\n";
+	const std::string modMacros = "#define MOD_WATER_FADE_ONE 1250\n";
+	const std::string fxParticlesIni = "#define MOD_AFTER_FX_CAPTURE 999\n";
+	const std::string fxList =
+		"FXList FX_WaterMacroFade\n"
+		"  DynamicDecal\n"
+		"    DecalName = EXModFade\n"
+		"    OpacityFadeTimeOne = MOD_WATER_FADE_ONE\n"
+		"  End\n"
+		"End\n";
+
+	Win32BIGFileSystem fsys;
+	std::string error;
+	auto archive = fsys.openArchiveFromMemory("mod_water_fx.big",
+		std::make_shared<const std::vector<std::uint8_t>>(bigtest::makeBig("BIGF", {
+			{ "data\\ini\\default\\subsystemlegendexpansion1.ini", legendIni },
+			{ "data\\ini\\gamedata.ini", "" },
+			{ "data\\ini\\water.ini", waterIni },
+			{ "data\\ini\\mod_fx_macros.inc", modMacros },
+			{ "data\\ini\\fxparticlesystem.ini", fxParticlesIni },
+			{ "data\\ini\\default\\fxlist.ini", "" },
+			{ "data\\ini\\fxlist.ini", fxList },
+			{ "data\\ini\\default\\water.ini", "" },
+			{ "data\\ini\\default\\fire.ini", "" },
+			{ "data\\ini\\fire.ini", "" },
+			{ "data\\ini\\default\\environment.ini", "" },
+			{ "data\\ini\\environment.ini", "" },
+			{ "data\\ini\\audiosettings.ini", "" },
+			{ "data\\ini\\default\\music.ini", "" },
+			{ "data\\ini\\default\\speech.ini", "" },
+			{ "data\\ini\\default\\soundeffects.ini", "" },
+			{ "data\\ini\\default\\ambientstream.ini", "" },
+			{ "data\\ini\\music.ini", "" },
+			{ "data\\ini\\soundeffects.ini", "" },
+			{ "data\\ini\\speech.ini", "" },
+			{ "data\\ini\\voice.ini", "" },
+			{ "data\\ini\\ambientstream.ini", "" },
+			{ "data\\ini\\miscaudio.ini", "" },
+			{ "data\\ini\\default\\eva.ini", "" },
+			{ "data\\ini\\eva.ini", "" },
+		})),
+		&error);
+	REQUIRE_MESSAGE(archive, error);
+	fsys.mountArchive(std::move(archive), "mod_water_fx.big", false);
+
+	// Real subsystem load: Water.ini's #include defines MOD_WATER_FADE_ONE before TheFXParticleSystemManager is reached.
+	INIEnvironment env;
+	env.fileSystem = &fsys;
+	SubsystemLegend legend;
+	legend.registerBlock(env.blocks);
+	INI ini(env);
+	SubsystemLoadOptions options;
+	SubsystemLoadReport report;
+	RunSubsystemIniLoad(legend, ini, options, report);
+
+	REQUIRE(report.errors.empty());
+	REQUIRE(report.macrosBeforeFXTaken);
+	REQUIRE(report.macrosBeforeFX.find("MOD_WATER_FADE_ONE") != nullptr);
+	CHECK(report.macrosBeforeFX.find("MOD_WATER_FADE_ONE")->value == "1250");
+	CHECK(report.macrosBeforeFX.find("MOD_AFTER_FX_CAPTURE") == nullptr);
+
+	// GameData.ini alone lacks the Water.ini #include macro
+	FXPlayback alone(fsys, RandomAlgorithm::RotWK_GameDat_LCG);
+	const std::vector<std::string> aloneErrors = alone.loadRetailData();
+	REQUIRE(aloneErrors.size() == 1u);
+	CHECK(aloneErrors[0].find("OpacityFadeTimeOne") != std::string::npos);
+
+	// Passing SubsystemLoadReport::macrosBeforeFX resolves the Water.ini #include macro in FXList.ini
+	FXPlayback live(fsys, RandomAlgorithm::RotWK_GameDat_LCG);
+	CHECK(live.loadRetailData(report.macrosBeforeFX).empty());
+	CHECK(live.fxLists().findFXList("FX_WaterMacroFade") != nullptr);
 }
