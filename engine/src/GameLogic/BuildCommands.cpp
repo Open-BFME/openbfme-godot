@@ -68,6 +68,7 @@ void BuildCommands::registerHandlers(GameLogicDispatch &dispatcher)
 	dispatcher.registerHandler(MSG_DOZER_CANCEL_CONSTRUCT, "BUILD-1", [this](GameLogic &l, const GameMessage &m) { return dozerCancel(l, m); });
 	dispatcher.registerHandler(MSG_RESUME_CONSTRUCTION, "BUILD-1", [this](GameLogic &l, const GameMessage &m) { return resumeConstruction(l, m); });
 	dispatcher.registerHandler(MSG_DO_REPAIR, "BUILD-1", [this](GameLogic &l, const GameMessage &m) { return repair(l, m); });
+	dispatcher.registerHandler(MSG_START_SELF_REPAIR, "BUILD-2", [this](GameLogic &l, const GameMessage &m) { return selfRepair(l, m); });
 	dispatcher.registerHandler(MSG_WALL_HUB_CONSTRUCT_SPAN, "BUILD-2", [this](GameLogic &l, const GameMessage &m) { return wallSpan(l, m); });
 }
 
@@ -325,6 +326,29 @@ bool BuildCommands::repair(GameLogic &logic, const GameMessage &m)
 				}
 			}
 		}
+	}
+	return true;
+}
+
+bool BuildCommands::selfRepair(GameLogic &logic, const GameMessage &m)
+{
+	if (m.getArgumentCount() != 0)
+	{
+		++m_stats.rejected;
+		return false;
+	}
+	if (logic.edition() != GameEdition::RotWK201)
+	{
+		refuse(m, "self-repair is verified only for RotWK 2.01");
+		return true;
+	}
+	// RW 0x77C3CF obtains the first member of the issuer's filtered group.
+	const auto selection = AICommands::selection(logic, m.getPlayerIndex());
+	Object *structure = selection.empty() ? nullptr : logic.findObjectByID(selection.front());
+	auto *building = structure ? dynamic_cast<GettingBuiltBehavior *>(structure->findModule("GettingBuiltBehavior")) : nullptr;
+	if (building && building->canRebuild() && building->canAffordRebuild(*structure->getControllingPlayer()))
+	{
+		building->startConstruction(false);
 	}
 	return true;
 }

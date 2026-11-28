@@ -17,6 +17,8 @@
 //     with damage type 8).
 //   * MSG_RESUME_CONSTRUCTION 1067 (RW 0x77AE9F): arg { object id of the structure }; the group's dozers resume (group call RW 0x77241C). MSG_DO_REPAIR 1066 (RW 0x77AE6B): the same
 //     arg shape, the group's dozers repair (RW 0x7723E6).
+//   * MSG_START_SELF_REPAIR 1117 (RW 0x77C3CF, RotWK only): no args. The first controlled object in the selection must be eligible and its owner must
+//     be able to pay. Its GettingBuiltBehavior starts construction with force = false (RW 0x8566DF).
 //   * the Dozer construct body (RW 0x88C217) calls the BuildAssistant legality at RW 0x88C2A5 with flags 0x49F and rejects a nonzero result: nothing is created, paid or changed (DozerAIUpdate::siteIsLegal,
 //     asked before the builder is told to idle). The plot path (RW 0x858701) has no such call.
 // INFERENCE (stop S-305, narrowed by PORT-212): Player::canBuild (RW 0x6AAA2E) is stood for by BuildAssistant::playerCanBuild (allowedToBuild RW 0x6AC856, Buildable, the
@@ -57,6 +59,7 @@ private:
 	bool dozerCancel(GameLogic &logic, const GameMessage &m);
 	bool resumeConstruction(GameLogic &logic, const GameMessage &m);
 	bool repair(GameLogic &logic, const GameMessage &m);
+	bool selfRepair(GameLogic &logic, const GameMessage &m);
 	void refuse(const GameMessage &m, const std::string &why);
 
 	Stats m_stats;

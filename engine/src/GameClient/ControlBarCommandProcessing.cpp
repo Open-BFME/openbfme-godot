@@ -222,6 +222,10 @@ bool ControlBar::pressButton(int slot, bool inPalantir, bool shift)
 			m.appendObjectID(m_source);
 			return true;
 		}
+		case GUI_COMMAND_START_SELF_REPAIR:
+			// RotWK RW 0x940AF0 -> 0x941A70: the message carries no arguments.
+			m_ctx.stream.append(MSG_START_SELF_REPAIR);
+			return true;
 		case GUI_COMMAND_TOGGLE_GATE:
 		case GUI_COMMAND_OPEN_GATE:
 		case GUI_COMMAND_CLOSE_GATE:
