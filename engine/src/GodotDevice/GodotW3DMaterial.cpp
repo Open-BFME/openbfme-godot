@@ -504,7 +504,7 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	}
 	TextureResolution res = Resolve_Packed_W3D_Texture(name, [&](const std::string &p) { return Fs.doesFileExist(p); }, isBfme1Data(Fs)); // community PR #36: the archives' layout
 	bool isPng = false;
-	if (!res.Found && !isBfme1Data(Fs) && name.size() > 4)
+	if (!res.Found && res.Probed && !isBfme1Data(Fs) && name.size() > 4)
 	{
 		// lane WOTR-2 [inference, as the W3DModelBuilder's WOTR-1 fallback]: a few retail textures exist only as .png in the compiled folder
 		// (LivingMap's LM_MinasTirith); the compiled-only .jpg ones (LM_Smoke, EXLavaSeq) resolve through Resolve_Packed_W3D_Texture above
@@ -521,7 +521,10 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	}
 	if (!res.Found)
 	{
-		if (!quietWhenMissing)
+		// A name without an extension (the W3D data's `None`, GBFARM_BIB / ANGPORTER.BUCKET / CAH_skull) is never opened by
+		// retail's loader (RW 0x530D59: no dot, no candidate), so its 1 x 1 texture (RW 0x53193E) is the whole story and
+		// retail logs nothing. The caller still draws W3D_MISSING_TEXTURE_COLOR, as before.
+		if (!quietWhenMissing && res.Probed)
 		{
 			errors.push_back("texture not found: " + name
 				+ (res.TerrainFolderPath.empty() ? std::string() : " (a file of that name exists only as " + res.TerrainFolderPath + ", which retail's texture lookup does not search: RW 0x477D1C)"));
