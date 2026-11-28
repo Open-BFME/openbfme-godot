@@ -1561,6 +1561,21 @@ void AIUpdateInterface::aiHordeExit(Object *container, CommandSourceType source)
 	wakeUpNow();
 }
 
+// RW 0x66491A (AI command 0x2E)
+void AIUpdateInterface::aiFleeFromObject(Object *from, CommandSourceType source)
+{
+	(void)from;
+	if (!acceptCommand(source, 0x2E))
+	{
+		return; // RW 0x667174: aiDoCommand's gate (lane MODULES-3) before the command
+	}
+	if (!GarrisonRules::isMobile(*getObject())) // RW 0x664920: RW 0x690E97
+	{
+		return;
+	}
+	aiUnported("aiFleeFromObject (AI command 0x2E: state 20, RW 0x66491A)", source);
+}
+
 void AIUpdateInterface::aiUnported(const char *command, CommandSourceType)
 {
 	++m_unportedCommands[command];

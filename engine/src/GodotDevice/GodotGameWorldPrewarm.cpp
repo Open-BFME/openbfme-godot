@@ -22,7 +22,6 @@
 #include "GameClient/CameraSettings.h"
 #include "GameClient/ControlBarCommands.h"
 #include "GameClient/MapUtil.h"
-#include "GameClient/PlacementGhost.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
 #include "GameLogic/Module/HordeContain.h"
 #include "GameLogic/Module/TransportContain.h"
@@ -31,9 +30,11 @@
 #include <godot_cpp/classes/display_server.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_int64_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <set>
@@ -56,6 +57,31 @@ std::string toNative(const String &s)
 {
 	CharString utf8 = s.utf8();
 	return std::string(utf8.get_data(), (size_t)utf8.length());
+}
+
+std::string houseOptions(const HouseColorParams &p)
+{
+	char opt[96];
+	std::snprintf(opt, sizeof(opt), "#%d&%d&%d&%d", p.kind, (int)p.colors[0], (int)p.colors[1], (int)p.colors[2]);
+	return opt;
+}
+
+// the live animated path's key: "#<model>#<kind>&<c0>&<c1>&<c2><swap suffix>"
+std::string animatedColoredKey(const std::string &model, const std::vector<TextureSwap> &swaps, const HouseColorParams &p)
+{
+	return "#" + model + houseOptions(p) + W3DInstancer::Texture_Swap_Suffix(swaps);
+}
+
+// the live static path's key: "<model><swap suffix>#palette&<kind>&<c0>&<c1>&<c2>"
+std::string staticColoredKey(const std::string &model, const std::vector<TextureSwap> &swaps, const HouseColorParams &p)
+{
+	return model + W3DInstancer::Texture_Swap_Suffix(swaps) + "#palette&" + std::to_string(p.kind) + "&" + std::to_string(p.colors[0]) + "&" +
+		std::to_string(p.colors[1]) + "&" + std::to_string(p.colors[2]);
+}
+
+std::string prewarmJobKey(const std::string &model, const std::vector<TextureSwap> &swaps, const HouseColorParams &color)
+{
+	return color.kind > 0 ? staticColoredKey(model, swaps, color) : model + W3DInstancer::Texture_Swap_Suffix(swaps);
 }
 
 double nowMs()
@@ -101,6 +127,41 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 		return;
 	}
 	const auto worldContext = m_world->enterContext(); // commands() / the templates read this world's stores
+	// The live draw path asks for a coloured model when m_houseColors is on and the owner colour is nonzero (Render_House_Color_Params
+	// kind 1). Prewarm the distinct player colours too; the local player's colour goes first so its initial pass and first waves cover
+	// the units the player sees and builds first.
+	std::vector<HouseColorParams> colors;
+	HouseColorParams localColor;
+	if (m_houseColors)
+	{
+		auto addColor = [&](const HouseColorParams &p) {
+			if (p.kind <= 0)
+			{
+				return;
+			}
+			for (const HouseColorParams &q : colors)
+			{
+				if (q.kind == p.kind && q.colors[0] == p.colors[0] && q.colors[1] == p.colors[1] && q.colors[2] == p.colors[2])
+				{
+					return;
+				}
+			}
+			colors.push_back(p);
+		};
+		if (const ::Player *local = m_game->players().getLocalPlayer())
+		{
+			localColor = Render_House_Color_Params(local->getPlayerColor(), 0, nullptr);
+			addColor(localColor);
+		}
+		for (int i = 0; i < m_game->players().getPlayerCount(); ++i)
+		{
+			const ::Player *player = m_game->players().getNthPlayer(i);
+			if (player && !player->isObserver())
+			{
+				addColor(Render_House_Color_Params(player->getPlayerColor(), 0, nullptr));
+			}
+		}
+	}
 	std::set<std::string> seenTemplates;
 	std::set<std::string> models; // lower-cased W3D names, the m_dynamicModels key
 	std::set<std::string> remainingSeen; // the other model-condition states, for the time waves
@@ -128,10 +189,25 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 		if (!name.empty() && AsciiStringUtil::compareNoCase(name, "None") != 0)
 		{
 			const std::string model = AsciiStringUtil::lowered(name);
-			const std::string key = model + W3DInstancer::Texture_Swap_Suffix(swaps);
-			if (remainingSeen.insert(key).second)
+			auto push = [&](const HouseColorParams &color) {
+				const PrewarmJob job{ model, swaps, color };
+				if (remainingSeen.insert(prewarmJobKey(job.model, job.swaps, job.color)).second)
+				{
+					remaining.push_back(job);
+				}
+			};
+			if (localColor.kind > 0)
 			{
-				remaining.push_back(PrewarmJob{ model, swaps });
+				push(localColor); // the local player's units / buildings first
+			}
+			push(HouseColorParams{}); // unowned / no-colour users keep the plain model
+			for (const HouseColorParams &color : colors)
+			{
+				if (color.kind != localColor.kind || color.colors[0] != localColor.colors[0] || color.colors[1] != localColor.colors[1] ||
+					color.colors[2] != localColor.colors[2])
+				{
+					push(color);
+				}
 			}
 		}
 	};
@@ -189,8 +265,8 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 				}
 			}
 		}
-		// the placement cursor (the flag the owner sees over the building site): the BUILD_PLACEMENT_CURSOR model condition
-		addModel(PlacementGhost::lookOf(*tt).model);
+		// The placement cursor is NOT added here: PlacementGhostRenderer owns a separate per-icon W3DInstancer and does not read
+		// m_dynamicModels, so a copy built in this instancer would never be reused by the ghost.
 		std::string commandSet;
 		if (const FieldValue *v = tt->findField("CommandSet"))
 		{
@@ -293,11 +369,31 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 		pending.pop_back();
 		addTemplate(entry.first, entry.second);
 	}
+	// The initial models above were built plain; every player colour also needs its live key for the first spawn / first state.
+	// The local colour is built in the load pass below; the other players' colours are queued, and the wave loop does not cap
+	// coloured jobs below.
+	for (const std::string &model : models)
+	{
+		for (const HouseColorParams &color : colors)
+		{
+			const PrewarmJob job{ model, {}, color };
+			if (remainingSeen.insert(prewarmJobKey(job.model, job.swaps, job.color)).second)
+			{
+				remaining.push_back(job);
+			}
+		}
+	}
 	CameraSettings camera;
 	std::string cameraError;
 	if (m_fs.is_valid() && m_fs->archive_fs() && CameraSettings::load(*m_fs->archive_fs(), camera, &cameraError))
 	{
 		addModel(camera.moveHintName); // the in-game UI's move hint (retail SCMoveHint)
+	}
+	else if (m_fs.is_valid() && m_fs->archive_fs())
+	{
+		const String error = cameraError.empty() ? String("CameraSettings::load failed") : toGodot(cameraError);
+		timings["camera_error"] = error;
+		UtilityFunctions::push_warning("GAME model preload camera settings: ", error);
 	}
 	for (const std::string &model : models)
 	{
@@ -312,6 +408,31 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 		}
 		m_dynamicModels[model] = id;
 	}
+	// The local player's colour is what the first played frames show: build those variants in the load pass, while the other players'
+	// colours wait for the waves (their units are usually farther away and appear later).
+	if (localColor.kind > 0)
+	{
+		PackedInt64Array palette;
+		for (int i = 0; i < 3; ++i)
+		{
+			palette.push_back((int64_t)localColor.colors[i]);
+		}
+		for (const std::string &model : models)
+		{
+			const std::string animated = animatedColoredKey(model, {}, localColor);
+			const std::string stationary = staticColoredKey(model, {}, localColor);
+			if (m_dynamicModels.count(animated) || m_dynamicModels.count(stationary))
+			{
+				continue;
+			}
+			const int64_t id = dyn.add_model_colored(toGodot(model), localColor.kind, palette);
+			if (id >= 0)
+			{
+				m_dynamicModels[animated] = id;
+				m_dynamicModels[stationary] = id;
+			}
+		}
+	}
 	// The rest of the present factions' / map's model-condition states go to the time waves, one spare-time model each.
 	m_prewarmQueue.clear();
 	m_prewarmCursor = 0;
@@ -320,12 +441,13 @@ void GameWorld::prewarm_match_models(W3DInstancer &dyn, Dictionary &timings)
 	const size_t waveLimit = prewarm::waveLimit(std::getenv("OPENBFME_PREWARM_WAVES_MAX"), remaining.size());
 	for (const PrewarmJob &job : remaining)
 	{
-		if (m_prewarmQueue.size() >= waveLimit)
+		// Coloured variants are the ordinary player-owned units / buildings; warm every one of them, not just the first
+		// waveLimit plain states. A limit on those would leave the other players' models for the first live spawn.
+		if (job.color.kind <= 0 && m_prewarmQueue.size() >= waveLimit)
 		{
 			break;
 		}
-		const std::string key = job.model + W3DInstancer::Texture_Swap_Suffix(job.swaps);
-		if (!m_dynamicModels.count(key))
+		if (!m_dynamicModels.count(prewarmJobKey(job.model, job.swaps, job.color)))
 		{
 			m_prewarmQueue.push_back(job);
 		}
@@ -371,8 +493,7 @@ void GameWorld::prewarm_wave_tick()
 		return;
 	}
 	const PrewarmJob job = m_prewarmQueue[m_prewarmCursor++];
-	const std::string key = job.model + W3DInstancer::Texture_Swap_Suffix(job.swaps);
-	if (m_dynamicModels.count(key))
+	if (m_dynamicModels.count(prewarmJobKey(job.model, job.swaps, job.color)))
 	{
 		m_prewarmNextMs = now + 100.0;
 		return;
@@ -382,11 +503,32 @@ void GameWorld::prewarm_wave_tick()
 		dyn->Set_Build_Texture_Swaps(job.swaps); // taken by the add below (stop S-5015)
 	}
 	const double t0 = nowMs();
-	const int64_t id = dyn->add_model(toGodot(job.model));
+	int64_t id = -1;
+	if (job.color.kind > 0)
+	{
+		PackedInt64Array palette;
+		for (int i = 0; i < 3; ++i)
+		{
+			palette.push_back((int64_t)job.color.colors[i]);
+		}
+		id = dyn->add_model_colored(toGodot(job.model), job.color.kind, palette);
+	}
+	else
+	{
+		id = dyn->add_model(toGodot(job.model));
+	}
 	const double builtMs = timing::elapsedMs(t0);
 	if (id >= 0)
 	{
-		m_dynamicModels[key] = id;
+		if (job.color.kind > 0)
+		{
+			m_dynamicModels[animatedColoredKey(job.model, job.swaps, job.color)] = id;
+			m_dynamicModels[staticColoredKey(job.model, job.swaps, job.color)] = id;
+		}
+		else
+		{
+			m_dynamicModels[job.model + W3DInstancer::Texture_Swap_Suffix(job.swaps)] = id;
+		}
 		++m_prewarmBuilt;
 	}
 	else

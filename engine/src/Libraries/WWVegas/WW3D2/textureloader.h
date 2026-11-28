@@ -27,12 +27,30 @@ struct TextureResolution
 	std::string Path;           // virtual path of the file that exists
 	bool IsDDS = false;
 	std::vector<std::string> Tried;
+	// False when retail's loader opens no file for this name at all (there is no extension to swap), so nothing can be
+	// found and nothing is missing: the caller draws retail's 1 x 1 missing texture and reports nothing. RW 0x530D29
+	// builds its candidates by locating the dot (strrchr, RW 0x530D45) and writing .dds / .tga / .jpg / .png after it;
+	// `test edi, edi / je 0x530DE1` (RW 0x530D59) leaves both file pointers (+0x10, +0x1C) null, and only that state
+	// makes the texture creation RW 0x53193E take its "no file bytes" branch (RW 0x531958 -> 0x531B02, then RW 0x531B07
+	// .. 0x531B44: a 1 x 1 0xFFFF00FF texture). Retail logs nothing for it: `game.dat` 2.01 holds no "texture not
+	// found" string (every string of the image scanned; "Unable to open %s" RW 0xBEAC50 is the file system's own log,
+	// whose one caller RW 0x575D79 is not a texture path). This is how the W3D data spells "no texture": the meshes of
+	// GBFARM_BIB, ANGPORTER.BUCKET and CAH_skull name the TEXTURE_NAME `None`, and an FX material parameter is `None`
+	// too — the same word AsciiString::isNone compares against (RW 0x437720 pushes RW 0xBD3BF8, `None`, and calls
+	// RW 0x4372C0's _stricmp). None of those names has a dot, so the loader never looks for a file called that.
+	bool Probed = true;
 	// Set only when nothing resolved: the file art\terrain\<name as written> exists. Retail's file name builder for a texture
 	// (GameFileClass::Set_Name, RW 0x477D1C: .tga / .dds / .png / .jpg names become Art/CompiledTextures/<first two characters>/<name>,
 	// or Art/Textures/<name> for apt_ names; nothing else) never looks in Art\Terrain; only the terrain texture loader (RW 0x709F77,
 	// prefix "Art\Terrain\") does. A model naming such a file is a missing texture in retail too: the file is reported, not used.
 	std::string TerrainFolderPath;
 };
+
+// True when retail's compiled-texture loader would open a file for this name. Its only name handling is replacing the
+// three characters after the last dot (RW 0x530D29; RW 0x530D45 strrchr, RW 0x530D61 .dds, RW 0x530D82 .tga,
+// RW 0x530DA3 .jpg, RW 0x530DC4 .png), so a name without a dot is never opened: its texture is the 1 x 1 0xFFFF00FF
+// of RW 0x53193E and no file is missing.
+bool W3D_Texture_Name_Is_Probed(const std::string &name);
 
 // flatLayout (community PR #36): the files are BFME1 data (isBfme1Data of the file system `exists` asks): art\textures\<stem>.dds / .<ext> / .jpg / .png
 TextureResolution Resolve_W3D_Texture(const std::string &name, const std::function<bool(const std::string &)> &exists, bool flatLayout = false);
