@@ -13,6 +13,7 @@
 #include "GameLogic/AI/AIGarrisonStates.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIGuard.h"
+#include "GameLogic/AI/AIEditionRules.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIMove.h"
 #include "GameLogic/AI/AIPathfind.h"
@@ -221,6 +222,11 @@ std::unique_ptr<AIStateMachine> AIAttackState::createAttackMachine()
 			m_machineMade = melee ? MADE_HORDE_MELEE : MADE_HORDE_RANGED;
 			return m;
 		}
+	}
+	// BFME1 0x1846D7: CanFireWhileCharging chooses kind 6 before melee.
+	if(owner().getTemplate()->bfme1Data()){
+		const auto *w=owner().getWeapons();const auto *cur=w?w->currentWeapon():nullptr;
+		if(cur && cur->getTemplate() && cur->getTemplate()->m_canFireWhileCharging){m_machineMade=MADE_BFME1_CHARGING;return makeBfme1ChargeMachine(a);}
 	}
 	// lane PHYS-1: attack kind 2 of RW 0x74CED6 makes the melee machine RW 0x744B71 (AIAttackMelee.cpp); the weapon is already chosen
 	m_meleeMachine = AttackUsesMeleeMachine(owner(), m_isAttackingObject ? machine().goalObject() : nullptr, m_isAttackingObject);
@@ -564,7 +570,7 @@ namespace
 bool raisedStandGroundWithoutPath(Object &source, Object &victim)
 {
 	AIUpdateInterface *a = source.getAIUpdateInterface();
-	if (!a || !a->combatSettings().standGround || !((int)AIWorld::objectLayer(source) > 0x10))
+	if (!AIEditionRules::forObject(source).usesSharedApproachGiveUp() || !a || !a->combatSettings().standGround || !((int)AIWorld::objectLayer(source) > 0x10))
 	{
 		return false;
 	}
@@ -600,6 +606,8 @@ bool AIAttackApproachState::canApproachVictim(const Coord3D &pos)
 
 bool AIAttackApproachState::chaseLimitExceeded(Object &source, Object &victim)
 {
+	// The shared team-target query below can clear a stale target. BFME1 must leave that state to its own acquisition path (S-5017).
+	if (!AIEditionRules::forObject(source).usesSharedApproachGiveUp()) return false;
 	// RW 0x749FB2 .. 0x74A0DF (BFME2 decomp AIAttackApproachTargetStateOnEnter.cpp:1875-1919, same shape): no limit inside the guard (state 0x10), the hunt (0x11)
 	// or the attack-follow waypoint path as a team (0x23) (RW 0x660AC1: the AI machine's current state), for a victim no mood scan chose (AI + 0x3C7 clear),
 	// or for a team member whose prototype attacks a common target while the team has one (RW 0x7A3E36, asked whatever the tests before it said)
@@ -792,7 +800,7 @@ StateReturnType AIAttackApproachState::update()
 		// Success when the victim moved more than 10 since the last path (squared against 100, RW 0xBD88D8) or the owner moved more than 10 since the approach
 		// began: the aim state re-checks the range. Else Pathfinder::canApproachToTarget (RW 0x6FB754, the current weapon, not stopping at the first miss)
 		// false -> ten seconds' wait (RW 0x749F93), then the wait's failure; true -> success
-		if (victim)
+		if (victim && AIEditionRules::forObject(owner()).usesSharedApproachGiveUp())
 		{
 			const Coord3D &v = *victim->getPosition();
 			const Coord3D &o = *owner().getPosition();

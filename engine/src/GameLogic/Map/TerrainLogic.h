@@ -25,6 +25,7 @@
 #pragma once
 
 #include "Common/MapObject.h"
+#include "GameLogic/Map/Bfme1BridgeGeometry.h"
 #include "GameClient/MapChunks.h"
 #include "GameEngineDevice/W3DDevice/GameClient/WorldHeightMap.h"
 
@@ -99,7 +100,14 @@ public:
 	bool getStandingWaterHeight(float x, float y, float &waterZ) const;
 	bool isUnderwater(float x, float y, float z) const;
 
+// Native bridge-list insertion is newest first (0x1AA780). Map bridge
+	// creation/classification is still S-161; clients must provide native corners.
+	void addBfme1Bridge(const Bfme1BridgeGeometry &b) { m_bfme1Bridges.insert(m_bfme1Bridges.begin(),b); }
+	const std::vector<Bfme1BridgeGeometry> &bfme1Bridges() const { return m_bfme1Bridges; }
+	bool bfme1InteractsWithBridgeEnd(int layer,const Coord3D &p,float radius) const;
+
 private:
+	std::vector<Bfme1BridgeGeometry> m_bfme1Bridges;
 	const WorldHeightMap *m_map = nullptr;
 	const MapChunks *m_chunks = nullptr;
 	std::vector<Waypoint> m_waypoints;

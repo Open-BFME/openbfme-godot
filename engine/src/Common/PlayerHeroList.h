@@ -1,7 +1,8 @@
 // OpenBFME. GPL-3.0.
 //
 // PlayerHeroList (lane HERO-1): RotWK's per-player list of the heroes a player can recruit or revive (RW Player + 0x758). The class name is descriptive
-// (INFERENCE: no retail symbol names it); BFME1 and Zero Hour have no such list (heroes there are UNIT_BUILD buttons), so every fact is the target's.
+// (INFERENCE: no retail symbol names it). BFME1 also has a legacy revival list at Player +0x684 (0x60-byte records; selector RVA 0x000FA8B0, availability RVA 0x000F9700).
+// The record/arithmetic facts below describe RotWK; BFME1 AI uses only the verified name/index/availability semantics.
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001), read from the disassembly:
 //   * layout: + 4 / + 8 a vector of 0xE8-byte records (begin / end), + 0x10 the owning player. The record (RW 0x780713 from a template, RW 0x780DD4 from a

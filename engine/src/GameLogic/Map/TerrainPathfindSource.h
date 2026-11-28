@@ -23,6 +23,7 @@ public:
 	bool thirdPlane(float x, float y) const override;
 	bool passagePlane(const Coord3D &pos) const override;
 	bool isUnderwater(float x, float y, float *waterZ, float *terrainZ) const override;
+	const std::vector<Bfme1BridgeGeometry> *bfme1Bridges() const override { return &m_terrain.bfme1Bridges(); }
 	float getGroundHeight(float x, float y) const override { return m_terrain.getGroundHeight(x, y); }
 
 	// the stops this source raises (S-160 items about the water and plane sources); empty when none applies

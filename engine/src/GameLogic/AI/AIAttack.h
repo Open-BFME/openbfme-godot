@@ -13,7 +13,7 @@
 // DONOR: ZH AIStates.cpp AIAttackState (5358-5700), AIAttackApproachTargetState (2555-2790), AIAttackAimAtTargetState (4904-5133), AIAttackFireWeaponState (5161-5330).
 //
 // WHAT IS INFERENCE / NOT PORTED (stop S-325): the Pursue state (a fleeing victim is chased by the Approach state's re-path), turrets, stealth, view blocking, garrison fire points,
-// guard / hunt / retaliation, attack area and attack squad. Lane APPROACHGIVEUP-1 ported the approach's give-up paths (RW 0x749D46: the chase limit of an auto-acquired
+// guard / hunt / retaliation, attack area and attack squad. Lane APPROACHGIVEUP-1 ported BFME2/RotWK's approach give-up paths (RW 0x749D46: the chase limit of an auto-acquired
 // fleeing victim, the wait-then-fail of an unreachable one, the raised StandGround wait; S-7162). The attack on a position
 // (state 9, lane PLAY-2) is ZH's AIAttackState(follow false, object false, force false) (AIStates.cpp:710; the BFME2 constructor row is not read).
 
@@ -24,6 +24,7 @@
 #include <memory>
 
 class Object;
+std::unique_ptr<AIStateMachine> makeBfme1ChargeMachine(class AIUpdateInterface &);
 
 // parent machine ids (B1)
 enum
@@ -122,7 +123,8 @@ public:
 		MADE_GENERIC = 1,
 		MADE_MELEE = 2,
 		MADE_HORDE_MELEE = 3,
-		MADE_HORDE_RANGED = 4
+		MADE_HORDE_RANGED = 4,
+		MADE_BFME1_CHARGING = 5
 	};
 
 private:

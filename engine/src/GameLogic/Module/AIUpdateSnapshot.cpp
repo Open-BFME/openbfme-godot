@@ -15,6 +15,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 
 #include "Common/Xfer.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/AI/AIXfer.h"
 #include "Common/PlayerList.h"
@@ -74,8 +75,12 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	// version 4 (lane BFME2CAMP1, M4): the team to guard (AI + 0x68), written only by an AI that has one
 	// version 5 (lane MODCOMPAT-MOD1): the machine kept while a temporary machine runs (RW AI + 0x34, beginTemporaryStateMachine), last, written only
 	// by an AI that keeps one
-	// version 6 (lane APPROACHGIVEUP-1): the auto-acquired victim flag (RW AI + 0x3C7, saved by RW 0x667416), last, written only by an AI that has it set
-	XferVersion v{ 1, (std::uint8_t)(x.isLoading() || m_victimAutoAcquired ? 6 : (m_temporaryKeptMachine ? 5 : (m_guardTeam != 0 ? 4 : (m_areaToGuard != -1 || m_attackInfoOverride ? 3 : 2)))) };
+	// Version 6 has one trailing acquisition bool in each edition: BFME1 +0x335, BFME2/RotWK +0x3C7.
+	// Their byte layouts match, but the runtime flags and readers remain edition-specific. Native versions 7/8 add retaliation/chase flags.
+	const bool bfme1 = getObject()->getTemplate()->bfme1Data();
+	const std::uint8_t commonVersion = m_temporaryKeptMachine ? 5 : (m_guardTeam != 0 ? 4 : (m_areaToGuard != -1 || m_attackInfoOverride ? 3 : 2));
+	const std::uint8_t savedVersion = bfme1 ? (m_nativeMelee.allowedToChase ? 8 : (m_nativeMelee.stopRetaliation ? 7 : (m_nativeMelee.autoTarget ? 6 : commonVersion))) : (m_victimAutoAcquired ? 6 : commonVersion);
+	XferVersion v{ 1, (std::uint8_t)(x.isLoading() ? (bfme1 ? 8 : 6) : savedVersion) };
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	for (std::uint32_t &w : m_luaConditionSnapshot)
@@ -330,13 +335,17 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	{
 		m_temporaryKeptMachine->xfer(x);
 	}
-	if (v.current >= 6)
+	if (v.current >= 6) x.xferBool(bfme1 ? &m_nativeMelee.autoTarget : &m_victimAutoAcquired);
+	else if (loading) { m_nativeMelee.autoTarget = false; m_victimAutoAcquired = false; }
+	if (bfme1 && v.current >= 7) x.xferBool(&m_nativeMelee.stopRetaliation);
+	else if (loading) m_nativeMelee.stopRetaliation = false;
+	if (bfme1 && v.current >= 8) x.xferBool(&m_nativeMelee.allowedToChase);
+	else if (loading) m_nativeMelee.allowedToChase = false;
+	if (loading)
 	{
-		x.xferBool(&m_victimAutoAcquired);
-	}
-	else if (loading)
-	{
-		m_victimAutoAcquired = false; // a version 2 .. 5 snapshot predates the flag (or was written with it clear)
+		if (bfme1) m_victimAutoAcquired = false;
+		else m_nativeMelee.autoTarget = false;
+		m_nativeMelee.responding = false; // transient callback stack, never a suspended continuation
 	}
 }
 

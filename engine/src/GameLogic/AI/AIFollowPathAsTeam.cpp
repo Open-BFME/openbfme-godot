@@ -3,6 +3,7 @@
 // See GameLogic/AI/AIFollowPathAsTeam.h.
 
 #include "GameLogic/AI/AIFollowPathAsTeam.h"
+#include "GameLogic/AI/AIEditionRules.h"
 
 #include "Common/StateHash.h"
 #include "GameLogic/AI/AIAttack.h"
@@ -211,7 +212,10 @@ StateReturnType AIFollowPathAsTeamState::update()
 			m_attackMachine->setGoalObject(victim->getID());
 			m_attackMachine->setState(AI_ATTACK_OBJECT);
 			a.setLastCommandSource(CMD_FROM_AI); // RW 0x750060
-			a.setVictimAutoAcquired();           // lane APPROACHGIVEUP-1: RW 0x750067, AI + 0x3C7 = 1
+			if (AIEditionRules::forObject(obj).usesSharedApproachGiveUp())
+			{
+				a.setVictimAutoAcquired(); // RW 0x750067; BFME1's formation callback remains outside this shared port (S-4463).
+			}
 			return STATE_CONTINUE;
 		}
 	}

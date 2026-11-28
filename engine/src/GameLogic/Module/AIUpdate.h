@@ -165,6 +165,9 @@ public:
 	// RW 0x698F06 -> the AI part: the unit is dead (its machine goes to AI_DEAD, its movers stop)
 	void onDie();
 	bool isAiInDeadState() const { return m_mover->isAiDead(); }
+	// BFME1 0x0022D0E0 calls the AI's exit-permission virtual. The
+	// base implementation returns FREE_TO_EXIT (0); aircraft can override.
+	virtual bool isPassengerFreeToExit(const Object &rider) const { (void)rider; return true; }
 	// the AI module's fields the mood scan reads (the module data is raw: S-326)
 	struct CombatSettings
 	{
@@ -184,6 +187,7 @@ public:
 	// lane TARGET-1: RotWK's getNextMoodTarget(calledByAI, calledDuringIdle) (RW 0x66844A): the target the unit's mood suggests (AI::findClosestEnemy with
 	// the mood's qualifiers and attack priority info), null when it looks for none now; calledByAI keeps the cadence (AI + 0x21C, MoodAttackCheckRate)
 	Object *getNextMoodTarget(bool calledByAI, bool calledDuringIdle);
+	Object *getNextBfme1MoodTarget(bool calledByAI, bool calledDuringIdle);
 	// AI + 0x70: the attack priority info (AttackPriority.h); null for an empty AttackPriority name
 	const AttackPriorityInfo *attackInfo();
 	// lane BFME2CAMP1: AI + 0x70 set to a set of the script engine's table (NAMED_ / TEAM_APPLY_ATTACK_PRIORITY_SET RW 0x7BBC5B / 0x7BF864, a team prototype's
@@ -291,6 +295,11 @@ public:
 	// (RW 0x853105, not wired: S-859)
 	void endTemporaryStateMachine();
 	bool hasTemporaryStateMachine() const { return m_temporaryKeptMachine != nullptr; } // RW AI + 0x34 != 0
+	// BFME1 0x001CFF30 / 0x0027D420: acquisition ownership and the
+	// synchronous reciprocal callback guard. All ownership flags are saved/hashed;
+	// responding is transient callback-stack state.
+	struct NativeMeleeState { bool autoTarget=false, responding=false, stopRetaliation=false, allowedToChase=false; };
+	NativeMeleeState &nativeMeleeState() { return m_nativeMelee; }
 
 	// ---- lane GARRISON-2: the turret (GameLogic/AI/TurretAI.h; RW AI + 0x20C, one slot) ----
 	TurretAI *turret() const { return m_turret.get(); }
@@ -527,6 +536,7 @@ public:
 			endTemporaryStateMachine(); // lane MODCOMPAT-MOD1: RW 0x66A91A .. 0x66A92A: an order that is not the AI's own ends the temporary machine
 		}
 		stancesOnCommand(source);
+		m_nativeMelee.autoTarget=false; // BFME1 aiDoCommand 0x00277780, +0x335; false/no reader in later editions.
 		cancelBloodthirstyCommand(*getObject(), command, target);
 		m_victimAutoAcquired = false; // lane APPROACHGIVEUP-1: RW 0x66A9EE (this + 0x3A7 on the secondary base = AI + 0x3C7), every command past the gate
 		commandAccepted(source, command, target);
@@ -547,8 +557,8 @@ public:
 	// 0x755539, the attack-move RW 0x7558AB, the attack-follow waypoint path RW 0x755E77, the formation march RW 0x750067, the giant bird's follow path RW
 	// 0x76B428; the approach's turret retarget RW 0x74A32D / 0x74A4E1 / 0x74AFDE is not ported, S-7162), cleared by the constructor (RW 0x66F001) and by
 	// every command (acceptCommand). The attack approach applies StopChaseDistance only to such a victim (RW 0x749FDC). Saved (AI snapshot version 6)
-	bool victimAutoAcquired() const { return m_victimAutoAcquired; }
-	void setVictimAutoAcquired() { m_victimAutoAcquired = true; }
+	bool victimAutoAcquired() const;
+	void setVictimAutoAcquired(bool attackAccepted = true);
 	void setPreventPlayerCommands(bool on) { m_preventPlayerCommands = on; } // RW + 0x3C5 (the nugget start / stop with PreventPlayerCommands)
 	bool preventPlayerCommands() const { return m_preventPlayerCommands; }
 	// RW + 0x3C4: the panic cower's short cower (MinCowerTime / 4); its writer is not identified (S-1027), only state 21's exit clears it
@@ -676,6 +686,7 @@ private:
 	unsigned m_nextMoodCheck = 0;                     ///< RW AI + 0x21C
 	bool m_randomlyOffsetMoodCheck = false;           ///< lane TARGET-1: RW AI + 0x3BC (0 from the constructor RW 0x66ECFE)
 	ObjectID m_orderedMeleeTarget = INVALID_ID;       ///< lane TARGET-1: RW AI + 0x1A4 (RW 0x66BD33 sets it, the mood scan reads and clears it)
+	NativeMeleeState m_nativeMelee;
 	const AttackPriorityInfo *m_attackInfo = nullptr; ///< lane TARGET-1: RW AI + 0x70 (derived: the module data's name through the script engine's table)
 	unsigned m_attackInfoGeneration = 0xFFFFFFFFu;    ///< the table generation m_attackInfo was looked up in (a cache key, not state)
 	bool m_attackInfoOverride = false;                ///< lane BFME2CAMP1: + 0x70 set by a script or the team (state: saved and hashed when set)

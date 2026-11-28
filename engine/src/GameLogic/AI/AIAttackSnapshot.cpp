@@ -46,6 +46,9 @@ void AIAttackState::xfer(Xfer &x)
 	case MADE_GENERIC:
 		loaded = makeGenericAttackMachine();
 		break;
+	case MADE_BFME1_CHARGING:
+		loaded=makeBfme1ChargeMachine(ai());
+		break;
 	case MADE_MELEE:
 		loaded = makeMeleeAttackMachine(ai(), this);
 		break;
@@ -58,7 +61,7 @@ void AIAttackState::xfer(Xfer &x)
 		}
 		break;
 	default:
-		throw XferException("ai attack: an attack machine of kind " + std::to_string(made) + " (0 .. 4)");
+		throw XferException("ai attack: an attack machine of kind " + std::to_string(made) + " (0 .. 5)");
 	}
 	if (loaded)
 	{

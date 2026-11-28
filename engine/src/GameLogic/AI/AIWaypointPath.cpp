@@ -3,6 +3,7 @@
 // See GameLogic/AI/AIWaypointPath.h.
 
 #include "GameLogic/AI/AIWaypointPath.h"
+#include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 
 #include "Common/StateHash.h"
 #include "Common/Team.h"

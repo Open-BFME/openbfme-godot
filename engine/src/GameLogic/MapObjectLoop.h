@@ -60,5 +60,7 @@ typedef std::function<void(Object &obj, const MapObjectDrawable &placement)> Aft
 // positioned and its map properties are applied.
 MapObjectLoopResult create(GameLogic &logic, const LoadedMap &map, const MapObjectDrawables &classified, const AfterCreate &afterCreate);
 
+void applyProperties(Object &,const Dict &,MapObjectLoopResult &);
+
 std::vector<std::string> stopLines();
 } // namespace MapObjectLoop

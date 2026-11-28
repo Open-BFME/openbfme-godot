@@ -8,9 +8,6 @@ unreached Campaign
 #
 # Fields BFME1's tables hold and its parsers reject: <block or module> <field>
 AIUpdateInterface AltTurret
-AODHordeContain NarrowPassageScale
-AODHordeContain UpdateWeaponSetFlagsOnHordeToo
-AODHordeContain UsePorcupineBody
 AODHordeContain VeterancyLevels
 AllowBannerSpawnUpgrade FXListUpgrade
 AllowBannerSpawnUpgrade RemovesUpgrades

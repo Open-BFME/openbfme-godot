@@ -69,6 +69,7 @@ struct ClientEvent
 		HERO_FLASH,      ///< RW 0x7BDD7A: name = exact template name, flashFrames = signed client-frame duration
 		CAH_STATISTICS,   ///< hero unique id and the matching statistic names, client profile data
 		MODEL_CONDITIONS, ///< lane SAVE-4e: flags, the object's whole set stored (Drawable::replaceModelConditionFlags RW 0x679512 takes a whole set)
+		RELEASE_CONTAINER_BONE, ///< BFME1 only: scale holds ReleaseSnappyness
 		EVA_DAMAGED,      ///< lane EVADAMAGE-1 (RW 0x67B4B7's Eva half): position (the object's, + 0x38), eva (the logic's part of the choice)
 		DESELECT_LOCAL,   ///< lane POSTERNPLOT-1 (RW 0x85834C): ownerIndex = the object's controlling player at the call (-1: none)
 	};
@@ -131,6 +132,7 @@ public:
 	void upgradeTexture(Object &obj, const TextureSwap &swap, bool enabled) override;
 	void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) override;
 	void replaceDrawable(Object &obj, const ThingTemplate *tmpl, bool hasColor, std::uint32_t color) override;
+	void releaseContainerBone(Object &obj, float snappyness) override;
 	void fadeIn(Object &obj, UnsignedInt frames) override;
 	void fadeOut(Object &obj, UnsignedInt frames) override;
 	void setShadowsEnabled(Object &obj, bool enabled) override;

@@ -2,6 +2,7 @@
 // See GameLogic/Module/AIUpdate.h for the sources and what is inference.
 
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/AI/AIEditionRules.h"
 #include "GameLogic/AI/AIDock.h"
 #include "GameLogic/AI/AIHarvest.h"
 #include "GameLogic/Module/AmbientAIUpdate.h"
@@ -11,6 +12,7 @@
 #include "GameLogic/AI/TurretAI.h"
 #include "Common/Thing/RawModuleData.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -34,6 +36,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
+#include "GameLogic/SkirmishAI/Bfme1SkirmishAI.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -703,6 +706,7 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	// lane LUMBER1 (RW 0x753755): AIDockState 14 (RW 0x740F01) and AIHarvestState 47 (RW 0x740F2C), both ending in idle
 	m->defineState(AI_DOCK, std::make_unique<AIDockState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_HARVEST, std::make_unique<AIHarvestState>(*m), AI_IDLE, AI_IDLE);
+	if (getObject()->getTemplate()->bfme1Data()) Bfme1SkirmishAI::defineTransportStates(*m);
 	return m;
 }
 
@@ -851,8 +855,7 @@ UpdateSleepTime AIUpdateInterface::update()
 		{
 			if (Object *t = attackMoveTarget())
 			{
-				aiAttackObject(t, CMD_FROM_AI);
-				setVictimAutoAcquired(); // lane APPROACHGIVEUP-1: RW 0x7558AB (retail switches its own machine; the port's command cleared the flag first)
+				setVictimAutoAcquired(aiAttackObject(t, CMD_FROM_AI)); // BFME1 0x001886AD; RW 0x7558AB.
 			}
 		}
 	}
@@ -2388,6 +2391,9 @@ void AIUpdateInterface::crc(StateHasher &h) const
 	h.addU32(m_nextMoodCheck);
 	h.addBool(m_randomlyOffsetMoodCheck); // lane TARGET-1: AI + 0x3BC / + 0x1A4
 	h.addU32(m_orderedMeleeTarget);
+	if(m_nativeMelee.allowedToChase){h.addU32(0x32F);h.addBool(true);}
+	if(m_nativeMelee.stopRetaliation){h.addU32(0x33A);h.addBool(true);}
+	if(m_nativeMelee.autoTarget){h.addU32(0x335);h.addBool(true);} // BFME1 only; false leaves later-edition hashes intact.
 	h.addBool(m_isInUpdate);
 	h.addBool(m_pendingValid);
 	h.addFloat(m_pendingPosition.x);
@@ -2449,6 +2455,19 @@ void AIUpdateInterface::registerClasses(ModuleFactory &modules)
 			{
 				return std::make_unique<HordeAIUpdate>(thing, data);
 			}
+			if (name == "HordeWorkerAIUpdate" && thing->asObject()->getTemplate()->bfme1Data())
+			{
+				// BFME1 1.03 ctor RVA 0x002C4A70 calls HordeAIUpdate's
+				// ctor 0x002C43A0. Its inherited attack-machine / command
+				// handoff must run as a horde, not the generic unit AI.
+				// Worker dispatch 0x002C5240 delegates non-worker orders
+				// to HordeAIUpdate dispatch 0x002C45E0.
+				// The worker-specific repair/task overrides remain S-5017.
+				auto worker = std::make_unique<HordeAIUpdate>(thing, data);
+				worker->friend_setNextCallFrame(thing->asObject()->logic().getFrame() + 5);
+				thing->asObject()->logic().noteStop("[S-5017] BFME1 HordeWorkerAIUpdate: inherited horde combat runs; worker repair/task overrides remain unported");
+				return worker;
+			}
 			if (name == "AnimalAIUpdate" || name == "WanderAIUpdate")
 			{
 				return std::make_unique<AmbientAIUpdate>(thing, data, name == "AnimalAIUpdate");
@@ -2468,4 +2487,20 @@ void AIUpdateInterface::finishExitQuickPath(const Coord3D &destination)
 		m_machine->setGoalPosition(destination);
 		m_machine->clearGoalAngle();
 	}
+}
+
+// BFME1's acquisition bit is +0x335 (0x00188090 / 0x001886AD), set only after an accepted command;
+// BFME2/RotWK +0x3C7 is set even after a rejected command (RW 0x755539 / 0x7558AB). Keep each edition's storage and readers separate.
+void AIUpdateInterface::setVictimAutoAcquired(bool attackAccepted)
+{
+	if (AIEditionRules::forObject(*getObject()).bfme1)
+	{
+		if (attackAccepted) Bfme1Melee::autoAcquired(*this);
+	}
+	else m_victimAutoAcquired = true;
+}
+
+bool AIUpdateInterface::victimAutoAcquired() const
+{
+	return AIEditionRules::forObject(*getObject()).usesSharedApproachGiveUp() && m_victimAutoAcquired;
 }

@@ -1083,7 +1083,7 @@ Written only once a threat question armed the cache, so games without UNIT_THREA
 | Where | Block / class | Version | Field (type) | An older save loads with |
 |---|---|---|---|---|
 | `Team.cpp` | Team | 5 (written with an armed cache) | the cached threat (real, + 0x120) and its deadline frame (unsigned, + 0x124), retail Team::xfer RW 0x7A5C06's order | versions 1 to 4: 0, 0 |
-| `Object.cpp` | Object | 3 (written with an armed cache) | the deadline frame (unsigned, + 0x468) and the cached threat (real, + 0x464), BFME2 1.06's order (ObjectDoXfer.cpp:715-716); RotWK's RW 0x697F28 does not save them (S-7184) | versions 1 and 2: 0, 0 |
+| `Object.cpp` | Object | BFME2/RotWK 3/6; BFME1 5/7 (3/5 with an armed shared cache; 6/7 whenever vision is set) | the deadline frame (unsigned, + 0x468) and the cached threat (real, + 0x464), BFME2 1.06's order (ObjectDoXfer.cpp:715-716); RotWK's RW 0x697F28 does not save them (S-7184) | BFME2/RotWK versions 1/2 and BFME1 versions 1..4: 0, 0; BFME1 retains its distinct version 3/4 indicator and collision/firing fields |
 
 ### BFME2CAMP1: the campaign, tutorial and rebuild-hole state (lane BFME2CAMP1, PR #137)
 
@@ -1093,6 +1093,7 @@ Every new field is versioned, and a block writes its new version only when the s
 |---|---|---|---|---|
 | Save header (`SaveGameFile`) | header | 4 | `campaignCarryover` (string: `CampaignCarryover::State::serialize`, "" for none); refused in a skirmish save or when it does not parse | versions 1 to 3: "" (no carry-over step at the mission's start) |
 | `GameLogicSnapshot.cpp` | obfme:GameLogic | 3 (written with a buildability override or a carry-over state) | the script buildability overrides (count; each: template name string, status int 0..3); the campaign carry-over state (bool present; the serialized state string) | versions 1 and 2: no overrides, no carry-over state |
+| `Object.cpp` | Object | BFME2/RotWK 6; BFME1 7 | the vision ground reference (real, + 0x1C4); both versions also carry the shared threat pair | earlier layouts: 0; upstream shared version 4 collides with BFME1 version 4 IDs and is explicitly rejected in BFME2/RotWK (S-4190); BFME1 versions 3/4/5 keep their original layouts |
 | `GameLogicSnapshot.cpp` | obfme:GameLogic | 6 (written only when the hero experience sharing switch is off; PORT-301, #351) | `m_heroExperienceSharing` (bool, GameLogic + 0x9F, after version 5's rank level limit) | versions 1 to 5: true (RW 0x62D299's default) |
 | `SpecialAbilityModules.cpp` | WeaponFireSpecialAbilityUpdate | 2 (#322) | none new: the weapon is made in the constructor (RW 0x895D98); the CRC pass returns after the version (RW 0x895C9F) | version 1: loads as before |
 | `HeroAbilityModules.cpp` | ShareExperienceBehavior | 2 (#351) | the version and the base xfer only (RW 0x8E3BB1); the port's share counter is no longer written | version 1: its counter is read and dropped |
@@ -1100,6 +1101,7 @@ Every new field is versioned, and a block writes its new version only when the s
 | `Team.cpp` | the team prototypes | 2 (written when a prototype names an attack priority set) | each prototype's attack priority set name (string) | version 1: no name |
 | `ScriptEngineXfer.cpp` | the script engine | 5 (always: CASTLEAREA-1's run-time trigger list extent at 4, MODCOMPAT-AI's completed upgrades at 5), 6 (written once a script edited the attack priorities) | the attack priority sets (bool; count; each: name string, default int, the template priorities as name / int pairs) | versions 2 and 3: the table as the map's INI made it |
 | `AIUpdateSnapshot.cpp` | AIUpdateInterface | 3 (an area guard or an attack info override), 4 (a team guard) | v3: the area to guard (int, checked against the map's areas), the attack info override (bool + name string); v4: the team to guard (team id) | versions 1 and 2: no area, no override; version 3: no team |
+| `AIUpdateSnapshot.cpp` | AIUpdateInterface | BFME2/RotWK 6; BFME1 6/7/8 | v6: one acquisition bool, shared +0x3C7 or native +0x335 by edition; native v7 adds stop-retaliation and v8 allowed-to-chase | versions 1..5: acquisition false; native v6 clears absent retaliation/chase flags; BFME2/RotWK reject v7/8 before state mutation. The two v6 trailers have identical bytes, with separate runtime storage and readers |
 | `AIUpdateSnapshot.cpp` | DozerAIUpdate | 3 | the rebuild flag (bool, + 0x4D0) | versions 1 and 2: false |
 | `AIStateMachineSnapshot.cpp` | the AI state machine | 2 (written with a goal squad) | the goal squad (bool; the member ids) | version 1: no squad |
 | `AIGuard.cpp` | the guard machine | 2 (an area guard), 3 (a team guard) | v2: the area (int, checked), its centre (coord) and centre flag (bool), the last area scan frame (uint); v3: the guarded team (team id) | version 1: no area; version 2: no team |

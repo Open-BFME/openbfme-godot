@@ -3,6 +3,7 @@
 // GiantBirdAIUpdate (lane FLY-1); see GiantBirdAIUpdate.h for the target facts, the donor and the stop.
 
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
+#include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 
 #include "Common/GameCommon.h"
 #include "Common/INI/HostRealText.h"

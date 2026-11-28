@@ -154,6 +154,9 @@ protected:
 	void onContaining(Object *obj, bool wasSelected) override; // RW 0x87BEC8
 	void onRemoving(Object *obj) override;                     // RW 0x87BFA6
 	const GarrisonContainModuleData &garrison() const { return *m_garrison; }
+	// Original-team slot: BFME1 +0xD4, RW +0xDC. Slaughter replaces it
+	// with the incoming team's identity when it replaces object upgrades.
+	std::uint32_t &originalTeamForVariant() { return m_originalTeam; }
 	bool hordeMemberInside(const Object &obj, Object **horde) const; // RW 0x990CB9
 	// RW 0x87B682: the interface's slot + 0x54 stores the team's id (0 for none); the container's own team is not touched
 	void setOriginalTeam(const Team *team);

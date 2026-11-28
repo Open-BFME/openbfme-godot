@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/AI/AIStateMachine.h for the sources and what is inference.
 
+#include "GameLogic/Object/Contain/Bfme1MeleeRuntime.h"
 #include "GameLogic/AI/AIStateMachine.h"
 
 #include "Common/GameCommon.h"
@@ -649,7 +650,7 @@ StateReturnType AIIdleState::update()
 		if (Object *target = self.getNextMoodTarget(true, true))
 		{
 			const bool attacked = self.aiAttackObject(target, CMD_FROM_AI);
-			self.setVictimAutoAcquired(); // lane APPROACHGIVEUP-1: RW 0x755539, after the command (which clears it) whether or not it ran
+			self.setVictimAutoAcquired(attacked); // BFME1 0x00188090 only after acceptance; RW 0x755539 even if the command was rejected
 			if (attacked)
 			{
 				return STATE_CONTINUE; // the machine changed state: the new state runs next

@@ -333,7 +333,7 @@ bool Pathfinder::quickDoesPathExist(const PathfindObject &obj, const Coord3D *fr
 {
 	// lane QPATH-1. TARGET RW 0x6F5BB0 (BFME2 0x6F477E, Open-BFME-2 58a44077a5 GameLogic/Pathfinder/pathfinder.cpp:2951); RotWK only moves Object's AI
 	// (+ 0x260, BFME2 + 0x258) and two template fields (+ 0x57C / + 0x644, BFME2 + 0x56C / + 0x634). The debug log lines are left out.
-	if (obj.isStatusImmobile())
+	if (!(m_world && m_world->usesScalarReservations()) && obj.isStatusImmobile())
 	{
 		return false; // RW 0x6F5C30: status 49 (IMMOBILE), "Failure 1"
 	}
@@ -350,16 +350,21 @@ bool Pathfinder::quickDoesPathExist(const PathfindObject &obj, const Coord3D *fr
 	{
 		return false;
 	}
-	if ((set.validSurfaces & (LOCOMOTORSURFACE_GROUND | LOCOMOTORSURFACE_WATER | LOCOMOTORSURFACE_CLIFF | LOCOMOTORSURFACE_AIR | LOCOMOTORSURFACE_DEEP_WATER)) == 0)
+	// BFME1 0x3EDF90 omits RW 0x6F5C30's IMMOBILE guard; 0x3EDFE3 tests 0x0F, RW 0x6F5CD4 tests 0x8F.
+	const auto surfaces=LOCOMOTORSURFACE_GROUND | LOCOMOTORSURFACE_WATER | LOCOMOTORSURFACE_CLIFF | LOCOMOTORSURFACE_AIR |
+		((m_world && m_world->usesScalarReservations()) ? 0 : LOCOMOTORSURFACE_DEEP_WATER);
+	if ((set.validSurfaces & surfaces) == 0)
 	{
 		return false; // RW 0x6F5CD4: set + 0x10 & 0x8F, "Failure 3"
 	}
 	// RW 0x6F5D06 / 0x6F5D16: both ends' layers from TerrainLogic::getLayerForDestination (RW 0x680A75, the port's getLayerAt), then their clamped cells
 	// (RW 0x6EA076) on them: a raised walkway's own grid, the ground grid for the ground, wall tops and ramps (the port keeps those as layers of the ground
 	// grid's cells: searchDestinationLayer)
-	const PathfindLayerEnum destLayer = getLayerAt(to->x, to->y, to->z);
-	PathfindCell *parentCell = getClippedCell(searchDestinationLayer(*from), from);
-	PathfindCell *goalCell = getClippedCell(searchDestinationLayer(*to), to);
+	const bool bfme1=m_world && m_world->usesScalarReservations();
+	const PathfindLayerEnum destLayer = bfme1 ? getLayerAt(obj,*to) : getLayerAt(to->x, to->y, to->z);
+	const auto fromLayer=bfme1 ? getLayerAt(obj,*from) : searchDestinationLayer(*from);
+	PathfindCell *parentCell = getClippedCell(isRaisedLayer(fromLayer)?fromLayer:LAYER_GROUND, from);
+	PathfindCell *goalCell = getClippedCell(isRaisedLayer(destLayer)?destLayer:LAYER_GROUND, to);
 	if (parentCell == nullptr || goalCell == nullptr)
 	{
 		return false; // retail's clamped lookup always finds a cell; the port's raised layers can lack one there (no retail counterpart)
@@ -378,6 +383,9 @@ bool Pathfinder::quickDoesPathExist(const PathfindObject &obj, const Coord3D *fr
 	// (getTerrainZone) lets OBSTACLE meet CLEAR. That is the port's table without the terrain flag (every adjacency, strict types), so the effective zone here
 	// is getEffectiveZone(mv, false, ..). INFERENCE (S-162): the port's "terrain variant" (getEffectiveZone(mv, true, ..)) is no retail table
 	zoneStorageType zone1 = m_zoneManager.getEffectiveZone(mv, false, parentCell->getZone());
+	// BFME1 0x3EE0F8: an obstacle whose effective start zone is zero succeeds
+	// before the destination is screened (the native "Success 2" route).
+	if(bfme1 && parentCell->getType()==PathfindCell::CELL_OBSTACLE && zone1==0)return true;
 	zoneStorageType zone2 = m_zoneManager.getEffectiveZone(mv, false, goalCell->getZone());
 	if (parentCell->getType() == PathfindCell::CELL_OBSTACLE || goalCell->getType() == PathfindCell::CELL_OBSTACLE)
 	{
@@ -425,6 +433,8 @@ struct LineInfo
 bool Pathfinder::canApproachToTarget(const PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &target, float weaponRange, bool meleeWeapon,
 	bool stopAtFirstMiss)
 {
+	const bool native=m_world && m_world->usesScalarReservations();
+	// BFME1 0x3F5E20 / callback 0x3EE9F0; RW 0x6FB754.
 	const float range = 150.0f < weaponRange ? weaponRange : 150.0f; // RW 0x6FB773 .. 0x6FB7B1
 	const PathfindMovement mv = makeMovement(&obj, loco);          // the record's + 0xC (RW 0x6EA04D)
 	int radius = 0;
@@ -443,7 +453,7 @@ bool Pathfinder::canApproachToTarget(const PathfindObject &obj, const PathfindLo
 			{
 				continue;
 			}
-			const Coord3D end{ SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(i), range), target.x), SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(j), range), target.y),
+			const Coord3D end{ native?SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW(i,range),target.x)):SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(i), range), target.x), native?SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW(j,range),target.y)):SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(j), range), target.y),
 				target.z };
 			bool noneYet = true; // + 0x1E (RW 0x6FB82F)
 			bool missed = false; // + 0x1F (RW 0x6FB833)
@@ -473,7 +483,7 @@ bool Pathfinder::canApproachToTarget(const PathfindObject &obj, const PathfindLo
 					return false;
 				}
 				Coord3D point;
-				adjustCoordToCell(x, y, center, point, to->getLayer() == LAYER_INVALID ? LAYER_GROUND : to->getLayer()); // 5.
+				adjustCoordToCell(x, y, native?true:center, point, to->getLayer() == LAYER_INVALID ? LAYER_GROUND : to->getLayer()); // 5.
 				if (quickDoesPathExist(obj, &from, &point, &loco)) // RW 0x6F625C -> 0x6F5BB0 (lane QPATH-1)
 				{
 					found = true;

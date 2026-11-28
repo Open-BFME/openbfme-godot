@@ -83,6 +83,9 @@ using NumericState::pc24DivW;
 using NumericState::pc24MulW;
 using NumericState::pc24SubW;
 using NumericState::sqrtPC24;
+// BFME1 AOD 0x00231354 / 0x00231450: FSIN consumes the wide
+// phase accumulator without an intervening float32 argument store.
+using NumericState::sinDD;
 
 // ---- float to integer conversions (the retail results for invalid input) ----
 using NumericState::cvttss2si;
