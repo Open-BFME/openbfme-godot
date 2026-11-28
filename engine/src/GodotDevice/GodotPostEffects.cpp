@@ -3,6 +3,7 @@
 #include "GodotDevice/GodotPostEffects.h"
 
 #include "GameEngineDevice/W3DDevice/GameClient/W3DLookupTablePostEffect.h"
+#include "GodotDevice/GodotGammaComposite.h"
 
 #include <godot_cpp/classes/compositor.hpp>
 #include <godot_cpp/classes/image.hpp>
@@ -27,16 +28,18 @@ namespace
 {
 // postfx_lookuptable.fxo ps_2_0 on retail's displayed values: texld r2 (frame), texld r1, r2, s1 (volume), lrp r0, BlendFactor, r1, r2. The buffer is
 // Godot's linear RGBA16F: encode with the sRGB curve Godot's output applies (GodotGammaComposite.h), saturate as the D3D9 frame buffer holds it, grade,
-// decode.
+// decode. lane GPUPERF-1 (fused, params.fused 1): the gamma composite's decode was left to this pass (GammaComposite::deferDecodeTo), so the buffer still
+// holds the displayed values the transparent pass blended: this pass decodes them as the decode pass would (rounded to the half float it stored), then
+// grades as before: the same values with one full-screen read and write less.
 const char *kCompute = R"GLSL(
 #version 450
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-layout(rgba16f, set = 0, binding = 0) uniform restrict image2D color_image;
+layout(rgba16f, set = 0, binding = 0) uniform coherent restrict image2D color_image;
 layout(set = 0, binding = 1) uniform sampler3D lookup;
 layout(push_constant, std430) uniform Params {
 	vec2 size;
 	float blend;
-	float pad;
+	float fused;
 } params;
 vec3 to_gamma(vec3 c) {
 	c = max(c, vec3(0.0));
@@ -52,7 +55,15 @@ void main() {
 		return;
 	}
 	vec4 c = imageLoad(color_image, uv);
-	vec3 g = clamp(to_gamma(c.rgb), 0.0, 1.0);
+	vec3 lin = c.rgb;
+	if (params.fused > 0.5) {
+		// the decode the gamma composite left to this pass, rounded to the half float its own pass would have stored: the separate passes' value
+		// stored and read back: the colour buffer's own rounding to half floats (the GPU's, which differs between vendors)
+		imageStore(color_image, uv, vec4(to_linear(c.rgb), c.a));
+		memoryBarrierImage();
+		lin = imageLoad(color_image, uv).rgb;
+	}
+	vec3 g = clamp(to_gamma(lin), 0.0, 1.0);
 	vec3 graded = texture(lookup, g).rgb;
 	c.rgb = to_linear(mix(g, graded, params.blend));
 	imageStore(color_image, uv, c);
@@ -107,8 +118,27 @@ std::string LookupTablePostEffect::problem() const
 void LookupTablePostEffect::_render_callback(int32_t p_effect_callback_type, RenderData *p_render_data)
 {
 	(void)p_effect_callback_type;
-	if (m_failed || m_suppressed.load() || !p_render_data || m_lookup.is_null())
+	if (!p_render_data)
 	{
+		return;
+	}
+	Ref<RenderSceneBuffersRD> buffers = p_render_data->get_render_scene_buffers();
+	if (buffers.is_null())
+	{
+		return;
+	}
+	// lane GPUPERF-1: the gamma composite's decode of this view may have been left to this pass; whenever the grade cannot run below, the decode runs
+	// alone (the picture is never left gamma-encoded)
+	const bool fused = GammaComposite::decodeDeferred(buffers->get_render_target());
+	auto bail = [&]() {
+		if (fused)
+		{
+			GammaComposite::decodeNow(buffers.ptr());
+		}
+	};
+	if (m_failed || m_suppressed.load() || m_lookup.is_null())
+	{
+		bail();
 		return;
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
@@ -128,6 +158,7 @@ void LookupTablePostEffect::_render_callback(int32_t p_effect_callback_type, Ren
 		{
 			m_failed = true;
 			m_problem = "S-1650: the lookup table compute shader did not compile; the map's colour grade is not applied";
+			bail();
 			return;
 		}
 		m_shader = rd->shader_create_from_spirv(spirv);
@@ -146,17 +177,14 @@ void LookupTablePostEffect::_render_callback(int32_t p_effect_callback_type, Ren
 		{
 			m_failed = true;
 			m_problem = "S-1650: the lookup table pipeline could not be created; the map's colour grade is not applied";
+			bail();
 			return;
 		}
 	}
 	const RID lookup = rs->texture_get_rd_texture(m_lookup->get_rid(), false);
 	if (!lookup.is_valid())
 	{
-		return; // the volume is not uploaded yet (its first frame)
-	}
-	Ref<RenderSceneBuffersRD> buffers = p_render_data->get_render_scene_buffers();
-	if (buffers.is_null())
-	{
+		bail(); // the volume is not uploaded yet (its first frame)
 		return;
 	}
 	const Vector2i size = buffers->get_internal_size();
@@ -172,6 +200,7 @@ void LookupTablePostEffect::_render_callback(int32_t p_effect_callback_type, Ren
 		{
 			m_failed = true;
 			m_problem = "S-1650: the 3D colour buffer is not RGBA16F; the map's colour grade is not applied";
+			bail();
 			return;
 		}
 		Ref<RDUniform> u0;
@@ -193,7 +222,7 @@ void LookupTablePostEffect::_render_callback(int32_t p_effect_callback_type, Ren
 		push.push_back((float)size.x);
 		push.push_back((float)size.y);
 		push.push_back(m_blend);
-		push.push_back(0.0f);
+		push.push_back(fused ? 1.0f : 0.0f);
 		const PackedByteArray bytes = push.to_byte_array();
 		const int64_t list = rd->compute_list_begin();
 		rd->compute_list_bind_compute_pipeline(list, m_pipeline);
@@ -203,6 +232,10 @@ void LookupTablePostEffect::_render_callback(int32_t p_effect_callback_type, Ren
 		rd->compute_list_end();
 	}
 	++m_passes;
+	if (fused)
+	{
+		++m_fusedPasses;
+	}
 }
 
 void MapPostEffectsHost::_bind_methods()
@@ -218,6 +251,7 @@ Dictionary MapPostEffectsHost::get_post_effect_stats() const
 	d["blend"] = m_effect.is_valid() ? m_effect->blend() : 0.0f;
 	d["problem"] = m_effect.is_valid() ? String(m_effect->problem().c_str()) : String();
 	d["suppressed"] = m_effect.is_valid() && m_effect->suppressed();
+	d["fused_passes"] = m_effect.is_valid() ? m_effect->fusedPasses() : (int64_t)0; // lane GPUPERF-1: passes that also did the gamma decode
 	return d;
 }
 
@@ -243,6 +277,7 @@ void MapPostEffectsHost::ensureOnCamera()
 	const int64_t n = effects.size();
 	if (n > 0 && Ref<CompositorEffect>(effects[n - 1]) == m_effect)
 	{
+		deferDecode(vp, effects);
 		return; // already last (after GammaComposite's decode)
 	}
 	for (int64_t i = n - 1; i >= 0; --i)
@@ -263,6 +298,31 @@ void MapPostEffectsHost::ensureOnCamera()
 	if (!known)
 	{
 		m_cameras.push_back(id);
+	}
+	deferDecode(vp, effects);
+}
+
+void MapPostEffectsHost::deferDecode(Viewport *vp, const TypedArray<Ref<CompositorEffect>> &effects)
+{
+	// lane GPUPERF-1: when the enabled effect just before the grade is the gamma composite's decode (nothing else, e.g. the pro camera's lens, works on
+	// the linear picture between them), the decode is left to the grade's pass this frame
+	if (!m_effect->get_enabled())
+	{
+		return;
+	}
+	for (int64_t i = effects.size() - 1; i >= 0; --i)
+	{
+		const Ref<CompositorEffect> e = effects[i];
+		if (e == m_effect || e.is_null() || !e->get_enabled())
+		{
+			continue;
+		}
+		const Ref<GammaCompositeEffect> g = e;
+		if (g.is_valid() && g->isDecode())
+		{
+			GammaComposite::deferDecodeTo(vp, m_effect);
+		}
+		return;
 	}
 }
 
