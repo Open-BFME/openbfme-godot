@@ -2,6 +2,7 @@
 // See GameLogic/AI/AIAttack.h for the target facts and the donors.
 
 #include "GameLogic/AI/AIAttack.h"
+#include "GameLogic/AI/AIAttackCharge.h"
 #include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIEmotionStates.h"
 #include "GameLogic/AI/TurretAI.h"
@@ -221,6 +222,13 @@ std::unique_ptr<AIStateMachine> AIAttackState::createAttackMachine()
 			m_machineMade = melee ? MADE_HORDE_MELEE : MADE_HORDE_RANGED;
 			return m;
 		}
+	}
+	// Attack kind 8 of RW 0x74CED6 (RW 0x74D01B .. 0x74D02A: CanFireWhileCharging) makes the charge machine RW 0x74523F (AIAttackCharge.cpp)
+	if (AttackUsesChargeMachine(owner()))
+	{
+		m_meleeMachine = false;
+		m_machineMade = MADE_CHARGE;
+		return makeChargeAttackMachine(a);
 	}
 	// lane PHYS-1: attack kind 2 of RW 0x74CED6 makes the melee machine RW 0x744B71 (AIAttackMelee.cpp); the weapon is already chosen
 	m_meleeMachine = AttackUsesMeleeMachine(owner(), m_isAttackingObject ? machine().goalObject() : nullptr, m_isAttackingObject);
