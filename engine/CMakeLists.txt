@@ -987,6 +987,7 @@ add_executable(openbfme_tests
     tests/test_w3d_fxconvert.cpp
     tests/test_w3d_stops.cpp
     tests/test_w3d_render.cpp
+    tests/test_w3d_hlod_bone.cpp
     tests/test_w3d_secondary_texture.cpp
     tests/test_w3d_retail_models.cpp
     tests/test_w3d_render_corpus.cpp
