@@ -110,7 +110,7 @@ public:
 	ShellCursorTooltip(const ShellCursorTooltip &) = delete;
 	ShellCursorTooltip &operator=(const ShellCursorTooltip &) = delete;
 	// for a window of (windowW, windowH), the pointer being the Apt player's; `metrics` measures at the stage's own size (the shell's gadget metrics)
-	void update(std::uint32_t nowMs, float windowW, float windowH, FontMetricsSource &metrics);
+	void update(std::uint32_t nowMs, float windowW, float windowH, FontMetricsSource &metrics, const std::string &directLabel = std::string());
 	const CursorTooltip &tooltip() const { return m_tip; }
 	const std::vector<std::string> &calls() const { return m_calls; } ///< "ShowToolTip 0.17 0.04" etc., in order
 	const std::vector<std::string> &errors() const { return m_errors; }

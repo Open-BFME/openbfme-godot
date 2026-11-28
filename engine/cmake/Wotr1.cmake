@@ -26,6 +26,7 @@ list(APPEND OPENBFME_SIM_SOURCES
 set(OPENBFME_WOTR1_SOURCES
     src/GameClient/GUI/AptScreens/AptStrategicHUD.cpp
     src/GameClient/GUI/AptScreens/AptStrategicConflictResults.cpp
+    src/GameClient/GUI/AptScreens/AptStrategicPlayerStatus.cpp
     src/GameClient/GUI/AptScreens/AptBannerUI.cpp
     src/GameClient/LivingWorldScoreScreen.cpp
     src/GameClient/GUI/Skirmish/LivingWorldSetupText.cpp

@@ -333,6 +333,31 @@ void hoverAll(MenuRig &r, int level, const std::string &movie, MenuTally &tally,
 }
 } // namespace
 
+TEST_CASE("hover1 retail: strategic direct tooltips use the cursor renderer and clear on rollout")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	MenuRig r(mount);
+	const std::string label = "STRATEGICHUD:ArmyCurrentOverMaxCommandPointsTooltip";
+	std::u16string expected;
+	REQUIRE(r.text.fetch(label, expected));
+	// The pointer is outside any button; no HandleOverButtons name can supply this text.
+	r.wm->apt().input().postMouseMove(1.0f, 1.0f);
+	r.tick(1);
+	for (int i = 0; i < r.settings.delayMs / 33 + 10; ++i)
+	{
+		r.nowMs += 33;
+		r.tip->update(r.nowMs, 1024, 768, r.metrics, label);
+	}
+	CHECK(r.tip->label() == label);
+	CHECK(r.tip->tooltip().shown() == expected);
+	for (int i = 0; i < 6; ++i)
+	{
+		r.nowMs += 33;
+		r.tip->update(r.nowMs, 1024, 768, r.metrics);
+	}
+	CHECK(r.tip->tooltip().shown().empty());
+}
+
 TEST_CASE("hover1 retail: the shell's window manager reports stop S-4610 exactly once the tool tips run")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
