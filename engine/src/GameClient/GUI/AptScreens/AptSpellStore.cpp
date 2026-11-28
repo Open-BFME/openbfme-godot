@@ -114,7 +114,7 @@ void AptSpellStore::setViewportSize(int width, int height)
 	{
 		return;
 	}
-	const float scale = std::min(1.0f, ((float)height / stageHeight) / ((float)width / stageWidth));
+	const float scale = AptWidescreen::correction(stageWidth, stageHeight, width, height, m_squeeze.of(root->timelineFile));
 	root->viewportTransform.a = scale;
 	root->viewportTransform.tx = stageWidth * 0.5f * (1.0f - scale);
 	// Presentation correction: SpellStore.apt's Title.instance1 contains the stage-wide

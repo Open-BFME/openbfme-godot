@@ -105,6 +105,7 @@ struct RenderSubObject
 	const W3dBoxStruct *Box = nullptr;
 	const ParticleEmitterDefClass *Emitter = nullptr;
 	std::string Reason;     // why a sub object is unresolved (ZH skips a null render object silently; here it is reported)
+	int BoneOutsideSkeleton = -1; // a LOD model's bone past the hierarchy, put on bone 0 as retail does (RW 0x59E9F2); -1 when it fits
 };
 
 // Create_Render_Obj's result: a bare mesh (one default pivot) or an HLOD with its hierarchy and sub objects.

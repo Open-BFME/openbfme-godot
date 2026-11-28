@@ -394,6 +394,16 @@ void WW3DAssetManager::Resolve_Sub_Object(const std::string &name, int bone, boo
 	out.Name = name;
 	out.BoneIndex = bone;
 	out.Aggregate = aggregate;
+	// HLodClass::Add_Lod_Model (RW 0x59E9E0, BFME2 0x59F2B0 the same): a LOD model whose bone is not in the hierarchy goes on bone 0
+	// (cmp ebx, [HTree + 0x10]; jl; xor ebx, ebx at RW 0x59E9F2), ZH's "(gth) survive ... Please re-export". A mod whose skeleton was
+	// re-exported without its HLOD (Edain 4.8.5.4's dbkasern_skn: bones up to 48 in DBKASERN_SKL's 35) is drawn like that. Aggregates
+	// take another path (Add_Sub_Object_To_Bone) and stay reported below.
+	if (!aggregate && bone >= tree.Num_Pivots() && tree.Num_Pivots() > 0)
+	{
+		out.BoneOutsideSkeleton = bone;
+		bone = 0;
+		out.BoneIndex = 0;
+	}
 	if (bone < 0 || bone >= tree.Num_Pivots())
 	{
 		out.Reason = "bone " + std::to_string(bone) + " is outside the hierarchy of " + std::to_string(tree.Num_Pivots()) + " pivots";

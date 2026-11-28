@@ -38,12 +38,15 @@
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
+#include "Libraries/WWVegas/WWMath/matrix3d.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 class Object;
+struct LocomotorTemplate;
 
 typedef std::uint32_t DrawableID;
 
@@ -80,6 +83,11 @@ struct DrawServices
 	DrawableFXHost *fx = nullptr; ///< lane FX-2 (null: EnteringStateFX and ParticleSysBone stay S-095)
 	AnimationSoundModuleManager *animationSounds = nullptr; ///< lane AUDIO-4: TheAnimationSoundModuleManager of the game's drawables
 	LightPulsePool *lightPulses = nullptr; ///< lane FEAT-BLDFX-1 / LOCAL-28: the game's dynamic light pool (W3DLightDraw's and FXList LightPulse's lights), null before the client effects exist
+	// LOCAL-25: terrain height and normal sampler for presentation physics (calcPitchRoll / suspension)
+	std::function<float(float x, float y, Coord3D *normal)> groundHeight;
+	// LOCAL-25: TheGameClient's frame (30 a second, RW vslot 0x7C of 0xDE4388), the gate of the presentation physics step (RW 0x67BDF6 .. 0x67BE17).
+	// Null (a test without the manager): every call steps
+	const unsigned *clientFrame = nullptr;
 };
 
 // One draw module of a drawable.
@@ -109,6 +117,46 @@ struct DrawEntry
 	const ModuleData *truckData = nullptr;
 	bool truckChecked = false;
 	bool isTruck = false;
+};
+
+// LOCAL-25: client presentation physics state (retail Drawable + 0x13C, RW 0x67BDC0 / donor 0x00270098)
+struct DrawableLocoInfo
+{
+	float m_pitch = 0.0f;
+	float m_pitchRate = 0.0f;
+	float m_roll = 0.0f;
+	float m_rollRate = 0.0f;
+	float m_yaw = 0.0f;
+	float m_accelerationPitch = 0.0f;
+	float m_accelerationPitchRate = 0.0f;
+	float m_accelerationRoll = 0.0f;
+	float m_accelerationRollRate = 0.0f;
+	float m_overlapZVel = 0.0f;
+	float m_overlapZ = 0.0f;
+	float m_wobble = 0.0f;
+	float m_yawModulator = 0.0f;
+	float m_pitchModulator = 0.0f;
+	// TWheelInfo (suspension wheel heights, donor 0x00276CFB):
+	float m_frontLeftHeightOffset = 0.0f;
+	float m_frontRightHeightOffset = 0.0f;
+	float m_rearLeftHeightOffset = 0.0f;
+	float m_rearRightHeightOffset = 0.0f;
+	float m_wheelAngle = 0.0f;
+	int m_framesAirborneCounter = 0;
+	int m_framesAirborne = 0;
+	// Giant bird roll (retail +0x140, RW 0x670E09 / donor 0x00270B0F):
+	float m_giantBirdRoll = 0.0f;
+
+	void springStep(float &rate, float position, float stiffness, float damping); // DrawablePhysics.cpp (client only)
+};
+
+// LOCAL-25: presentation physics transform angles and translation (retail Drawable::PhysicsXformInfo, RW 0x67BDC0)
+struct PhysicsXformInfo
+{
+	float m_totalPitch = 0.0f;
+	float m_totalRoll = 0.0f;
+	float m_totalYaw = 0.0f;
+	float m_totalZ = 0.0f;
 };
 
 class Drawable : public Thing
@@ -192,6 +240,16 @@ public:
 	// lane PERF-HD: every animated draw's advance is advanceIsLocal (and the tires are this drawable's): advanceAnimation touches only this drawable
 	bool advanceIsLocal() const;
 	void advanceAnimationLocal(double elapsedMs); ///< advanceAnimation without the host's chunk name (nothing it runs reports through the host)
+	// RW 0x4BF1DE -> 0x4BF214: defer CAPTUREFLAG OnStateEnter sub-objects and colour until TRANS_FlagDown / TRANS_FlagDownCancel completes.
+	struct DeferredSubObject
+	{
+		std::string name;
+		bool visible = false;
+		bool permanent = false;
+	};
+	bool hasPendingAnimationTransition() const;
+	void applyOrDeferCapturePresentation(std::vector<DeferredSubObject> subObjects, bool hasHouse, std::uint32_t house);
+	void flushPendingCapturePresentation();
 	void advanceTires(DrawEntry &e, double elapsedMs); ///< lane COMBAT-4: W3DTruckDraw's tire spin (RW 0x4CBFFB)
 	void stepLightDraw(DrawEntry &e, double elapsedMs); ///< lane LOCAL-28: the W3DLightDraw entry's flicker / pulse step (DrawableLight.cpp)
 
@@ -228,6 +286,16 @@ public:
 	void setReactionMuted(bool muted) { m_reactionMuted = muted; }
 	void prepareSync(const ObjectSnapshot &rec, UnsignedInt snapshotFrame, double alpha, bool interpolate, SyncPrep &out);
 	void commitSync(const SyncPrep &prep);
+
+	// LOCAL-25: presentation physics (RW 0x67BDC0 calcPhysicsXform, RW 0x67BE90 applyPhysicsXform, RW 0x670570 calcPitchRoll)
+	bool calcPitchRoll(const Coord3D &pos, const Coord3D &dir, const LocomotorTemplate *loco, float &pitch, float &roll);
+	bool calcPhysicsXform(const ObjectSnapshot &rec, const RenderInterpolation::Pose &pose, PhysicsXformInfo &info);
+	void applyPhysicsXform(const ObjectSnapshot &rec, const RenderInterpolation::Pose &pose);
+	void getPresentationPose(float outBasis[9], Coord3D &outPos) const;
+	Coord3D getPresentationPosition() const;
+	bool hasPhysicsXform() const { return m_hasPhysicsXform; }
+	const PhysicsXformInfo &lastPhysicsInfo() const { return m_lastPhysicsInfo; }
+	const DrawableLocoInfo *locoInfo() const { return m_locoInfo.get(); }
 	// lane PERF-3: the record DrawableManager::syncTransforms found for this drawable in `snapshot` (null: none), so the render side asks the same snapshot
 	// again without a search. syncedRecord answers only for the snapshot (and frame) of the last sync; otherwise `found` is false
 	void setSyncedRecord(const LogicSnapshot *snapshot, const ObjectSnapshot *rec)
@@ -365,5 +433,29 @@ private:
 	bool m_flagsDirty = false;           ///< lane ANIM-1: RW Drawable + 0x443
 	bool m_hasWeaponTiming = false;      ///< lane ANIM-1: the last flush's weapon cycle (RW 0x4BEE31 reads the object's when the draw applies the flags)
 	int m_weaponTimingFrames = 0;
+	// LOCAL-25: presentation physics helpers and state (RW 0x67BDC0 / RW 0x67BE90)
+	void calcPhysicsXformWheels(const LocomotorTemplate *loco, const ObjectSnapshot &rec, const RenderInterpolation::Pose &pose, PhysicsXformInfo &info);
+	void calcPhysicsXformTreads(const LocomotorTemplate *loco, const ObjectSnapshot &rec, const RenderInterpolation::Pose &pose, PhysicsXformInfo &info);
+	void calcPhysicsXformHugeFourLegs(const LocomotorTemplate *loco, const ObjectSnapshot &rec, const RenderInterpolation::Pose &pose, PhysicsXformInfo &info);
+	void calcPhysicsXformShip(const LocomotorTemplate *loco, const ObjectSnapshot &rec, const RenderInterpolation::Pose &pose, PhysicsXformInfo &info);
+	void calcPhysicsXformGiantBird(const LocomotorTemplate *loco, const ObjectSnapshot &rec, const RenderInterpolation::Pose &pose, PhysicsXformInfo &info);
+
+	std::unique_ptr<DrawableLocoInfo> m_locoInfo; ///< +0x13C
+	bool m_hasPhysicsXform = false;
+	bool m_physicsStepped = false;      ///< a step was made for m_physicsClientFrame
+	unsigned m_physicsClientFrame = 0;  ///< retail's stamp at the locomotor info + 0xAC (RW 0x67BE04 / 0x67BE17)
+	PhysicsXformInfo m_lastPhysicsInfo;
+	float m_presentationBasis[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+	Coord3D m_presentationPosition;
+
+	struct PendingCapturePresentation
+	{
+		bool active = false;
+		std::vector<DeferredSubObject> subObjects;
+		bool hasHouseColor = false;
+		std::uint32_t houseColor = 0;
+	};
+	PendingCapturePresentation m_pendingCapturePresentation;
+	void applyCapturePresentationNow(const std::vector<DeferredSubObject> &subObjects, bool hasHouse, std::uint32_t house);
 	void setFadeHidden(bool hidden); ///< RW 0x6718FB (bumps the change count when it changes)
 };

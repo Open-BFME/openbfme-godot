@@ -211,6 +211,9 @@ Dictionary FXPlayer::setupFrom(const Ref<RetailFileSystem> &fs, const INIMacroTa
 		m_hadDecals = false;
 	}
 	m_playback = std::make_unique<FXPlayback>(*fs->archive(), RandomAlgorithm::RotWK_GameDat_LCG);
+	// PORT-330 (S-190): the `Sound` / `EvaEvent*` names of a retail FXList block are checked against TheAudio's and TheEva's tables while the block
+	// parses (RW 0x73B217 -> 0x73AA94, RW 0x5DE588 -> 0x5DE0D8); the game's object world owns both, and its load precedes this one
+	m_playback->setParseServices(m_fxParseServices);
 	for (const std::string &e : macrosBeforeFX ? m_playback->loadRetailData(*macrosBeforeFX) : m_playback->loadRetailData())
 	{
 		errors.push_back(toGodot(e));

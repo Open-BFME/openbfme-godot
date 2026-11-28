@@ -13,9 +13,10 @@
 //   * no `Tracer` nugget (ZH has one; RW rejects it as an unknown field, code 5).
 //   * `INI::parseFXList` (RW 0x73a302) resolves the name at parse time: "None" (any case) gives NULL, an unknown name is
 //     a code-3 error `iniParseFXList -- FXList %s not found! ...`.
-//   * Sound.Name (RW 0x73b217) and EvaEvent names (RW 0x5de588) are validated against the audio and Eva registries at
-//     parse time in RW; those registries belong to other lanes: the validation is injected (FXListParseServices) and,
-//     when absent, reported through FXListStore::unverified() (stop S-190).
+//   * Sound.Name (RW 0x73b217 -> 0x73aa94, `Invalid Sound '%s'`) and EvaEvent names (RW 0x5de588 -> 0x5de0d8,
+//     `Expected a recognized Eva event name or 'None'`) are validated against TheAudio's and TheEva's tables while parsing in
+//     RW. Those tables are a world's, not this store's: the answers are injected as FXListParseServices, and a store parsed
+//     without them (a bare store in a unit test) reports the names through FXListStore::unverified() (stop S-190).
 //   * doFXPos / doFXObj run the nuggets in INI order; only the Weather filter applies on the position path; the cull
 //     test (FXList::shouldCull) lives in the static wrappers; every random draw uses the CLIENT stream.
 //
@@ -39,6 +40,7 @@
 #include <vector>
 
 class W3DDrawRandom;
+class AudioIniState;
 struct ObjectFilter; // GameLogic/ObjectFilter.h cannot share a translation unit with Common/ModelState.h (two ModelConditionFlags typedefs)
 
 class FXList;
@@ -152,15 +154,21 @@ public:
 };
 
 // ---- parse-time services ----------------------------------------------------------------------------------------
-// RW validates Sound and EvaEvent names while parsing; those registries are other lanes. Null members: not validated, and
-// the unverified list says so.
+// RW validates Sound and EvaEvent names while parsing (RW 0x73AA94 / RW 0x5DE0D8); the registries are TheAudio's and TheEva's, which a
+// world owns. Without services (a bare store in a unit test) nothing is validated and the unverified list says so (S-190).
 class FXListParseServices
 {
 public:
 	virtual ~FXListParseServices() = default;
-	virtual bool audioEventExists(const std::string &name) = 0; ///< TheAudio->findAudioEventInfo
-	virtual bool evaEventExists(const std::string &name) = 0;   ///< RW 0x5de0d8
+	/// TheAudio's findAudioEventInfo (vslot 0x12C): true when the event exists. A false answer is RW's `Invalid Sound '%s'` (RW 0x73AA94).
+	virtual bool audioEventExists(const std::string &name) = 0;
+	/// TheEva's name -> index (RW 0x5DE0D8): -1 when unknown; RW throws `Expected a recognized Eva event name or 'None'` then.
+	virtual int evaEventIndex(const std::string &name) = 0;
 };
+class RetailObjectWorld; // the object the services answer from
+/// The services of a world that owns those two tables (FXListParseServices.cpp): TheAudio's parsed event table and TheEva's name map. The object
+/// answers from the world's current state, so it stays right across RetailObjectWorld::reload().
+std::unique_ptr<FXListParseServices> MakeWorldFXListParseServices(const RetailObjectWorld &world);
 
 // ---- nuggets ------------------------------------------------------------------------------------------------------
 // Type tag = RW nugget +4. Types RW leaves at 0 (AttachedModel, Laser, TintDrawable, BuffNugget) get distinct values >= 100

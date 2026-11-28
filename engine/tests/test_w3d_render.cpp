@@ -722,3 +722,32 @@ TEST_CASE("texture resolution: packed model colours use JPEG after DDS and TGA, 
 	files = { stem + ".png" };
 	CHECK_FALSE(Resolve_Packed_W3D_Texture("GUShadowFaxH.tga", exists).Found);
 }
+
+TEST_CASE("texture resolution: names without an extension are never probed (RW 0x530D59)")
+{
+	int probes = 0;
+	auto exists = [&](const std::string &) {
+		++probes;
+		return true;
+	};
+	CHECK_FALSE(W3D_Texture_Name_Is_Probed("None"));
+	CHECK_FALSE(W3D_Texture_Name_Is_Probed("GBFARM_BIB"));
+	CHECK(W3D_Texture_Name_Is_Probed("Missing.tga"));
+
+	const TextureResolution plain = Resolve_W3D_Texture("None", exists);
+	CHECK_FALSE(plain.Probed);
+	CHECK_FALSE(plain.Found);
+	CHECK(plain.Tried.empty());
+	CHECK(probes == 0);
+
+	const TextureResolution packed = Resolve_Packed_W3D_Texture("GBFARM_BIB", exists);
+	CHECK_FALSE(packed.Probed);
+	CHECK_FALSE(packed.Found);
+	CHECK(packed.Tried.empty());
+	CHECK(probes == 0);
+
+	const TextureResolution withExt = Resolve_W3D_Texture("Missing.tga", [&](const std::string &) { return false; });
+	CHECK(withExt.Probed);
+	CHECK_FALSE(withExt.Found);
+	CHECK_FALSE(withExt.Tried.empty());
+}

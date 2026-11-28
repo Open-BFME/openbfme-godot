@@ -42,7 +42,7 @@ struct MapPlacedModel
 	W3DDrawKind kind = W3D_DRAWKIND_MODEL;
 	std::string className;
 	std::string modelName;           ///< the model of the state (case as the INI wrote it)
-	std::string textureName;         ///< W3DTreeDraw TextureName (not applied: S-111)
+	std::string textureName;         ///< W3DTreeDraw TextureName (RW 0x4E8C1B / RW 0x4EC9B5)
 	std::unique_ptr<W3DScriptedModelDraw> draw; ///< MODEL kind only
 	bool animated = false;           ///< W3DScriptedModelDraw::needsAdvance at build (S-090): advance() every render frame
 	bool hordeMember = false;
@@ -56,6 +56,7 @@ struct MapRuntimeReport
 	size_t modelDraws = 0, animated = 0, staticModels = 0;
 	size_t treeDraws = 0, propDraws = 0, floorDraws = 0;
 	std::map<std::string, size_t> distinctModels; ///< model name (lower case) -> entries
+	std::map<std::pair<std::string, std::string>, size_t> distinctTreeTypes; ///< (modelName, textureName) -> entries (RW 0x4E8BDC / RW 0x4EC976)
 	std::vector<std::string> errors; ///< runtime / model problems nothing explains, one line each
 	// Problems the retail data itself has, found by running the draw runtime over the corpus: an animation or model an INI names that no
 	// mounted archive holds (retail's lookup fails the same way), and hide / show requests naming a sub object the model does not have

@@ -115,12 +115,21 @@ void AIStateMachine::xfer(Xfer &x)
 	}
 }
 
-// AIIdleState::xfer RW 0x741850 is (1, 2): u16, two bools, u16; this port keeps the countdown offset and the init flag
+// AIIdleState::xfer RW 0x741850 is (1, 2): u16, two bools, u16; this port keeps the countdown offset, the stance countdown (retail's + 0x22) and the
+// init flag
 void AIIdleState::xfer(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 };
 	x.xferVersion(v);
 	x.xferUnsignedShort(&m_initialSleepOffset);
+	if (v.current >= 2)
+	{
+		x.xferUnsignedShort(&m_stancesCountdown); // PORT-226: retail's + 0x22
+	}
+	else
+	{
+		m_stancesCountdown = 5; // a version 1 snapshot predates it: 5, as RW 0x7489B6 (AIIdleState::onEnter) starts it on every entry
+	}
 	x.xferBool(&m_inited);
 }
 

@@ -42,6 +42,7 @@
 class GameLogic;
 class GameMessage;
 class Object;
+class SpecialPowerTemplate;
 class ThingTemplate;
 
 typedef SoundSelectors::RandomState SoundSelectorRandomState;
@@ -91,7 +92,8 @@ public:
 		VOICE_EVENT_ENTER_STATE_ATTACK = 0x7E6,
 		VOICE_EVENT_ENTER_STATE_MOVE = 0x7E7,
 		VOICE_EVENT_ENTER_STATE_ATTACKMOVE = 0x7E8,
-		VOICE_EVENT_BLOODTHIRSTY = 0x7E9
+		VOICE_EVENT_BLOODTHIRSTY = 0x7E9,
+		VOICE_EVENT_ENTER_STATE_SPECIAL_POWER = 0x7EC, ///< RW 0x8DFCE1: UnitSpecificSoundToUseAsEnterStateInitiateIntendToDoVoice
 	};
 
 	// one voice slot: RW's {Eva event id, audio event}
@@ -110,6 +112,7 @@ public:
 		Coord3D position;
 		bool air = false;
 		ObjectID producer = INVALID_ID; ///< VOICE_EVENT_CREATED / FULLY_CREATED: the object that made the unit
+		const SpecialPowerTemplate *powerTemplate = nullptr; ///< RW info + 0x10: special power template
 	};
 
 	// The client services (the device layer implements them). playSound: the audio event attached to the object (AudioApi::playSoundForObject); reportEva:

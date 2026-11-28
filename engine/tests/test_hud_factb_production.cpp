@@ -810,7 +810,20 @@ void foundEveryExpansion(const std::string &faction, Results &res)
 			const Coord3D site = siteFor(g, n++, 300.0f);
 			Object *pad = g.rig.make(e->name, site.x, site.y);
 			g.step(5);
+			// a pad is BASE_FOUNDATION: a drag box never takes it (RW 0x83C3E7..0x83C3EE, PORT-101), so g.select's drag fallback cannot. Where the
+			// rig's click misses the flat pad (the castle in front, or the pick volume), the pad is selected by a test hook (the UI mirror and the
+			// logic's group message appended to the command list, as test_ownerfix1_input): this test is about the pad's buttons (in the game a pad
+			// in view is clicked; one behind the castle is clicked after turning the camera)
 			if (!g.select(pad))
+			{
+				g.hud->input().ui().selectObject(pad->getID());
+				GameMessage group(MSG_CREATE_SELECTED_GROUP, g.rig.local->getPlayerIndex());
+				group.appendBooleanArgument(true);
+				group.appendObjectIDArgument(pad->getID());
+				g.rig.game->commands().append(group);
+				g.step(2);
+			}
+			if (!g.hud->input().ui().isSelected(pad->getID()))
 			{
 				res.fail(item, "the pad could not be selected with a click (selection " + g.selectionText() + ")");
 				g.logic().destroyObject(pad);
